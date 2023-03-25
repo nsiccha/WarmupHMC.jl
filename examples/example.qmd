@@ -1,0 +1,11 @@
+---
+title:  WarmupHMC.jl example
+jupyter: julia-1.8
+execute:
+  daemon: 999999
+---
+
+```{julia}
+using  WarmupHMC
+
+```

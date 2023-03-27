@@ -28,13 +28,13 @@ no_dimensions(what::DynamicObject) = length(what.distribution)
 logpdf_gradient(what::DynamicObject, parameters) = ForwardDiff.gradient(
   theta->logpdf(what, theta), parameters
 )
-# Distributions.logpdf(what::DynamicObject
-
 
 @dynamic_object IndependentKernel distribution::Distribution
+@dynamic_object IndependentKernel distribution::DynamicObject
 transition(what::IndependentKernel, last) = rand(what.distribution)
 
 @dynamic_object MetropolisKernel distribution::Distribution covariance_estimate
+@dynamic_object MetropolisKernel distribution::DynamicObject covariance_estimate
 jump_distribution(what::MetropolisKernel) = MvNormal(
   zeros(what.no_dimensions), what.covariance_estimate
 )
@@ -55,7 +55,7 @@ regularize(sample_covariance, no_draws, regularization_no_draws=5, regularizatio
 )
 covariance(what::DynamicObject) = cov(what.distribution)
 covariance_estimate(what::DynamicObject) = I 
-function remaining_covariance(what::DynamicObject)
+function covariance_remaining(what::DynamicObject)
   ce = what.covariance_estimate
   L = isa(ce, UniformScaling) ? I : cholesky(ce).L
   return L \ what.covariance / L'
@@ -76,39 +76,51 @@ function kernels(what::Warmup)
     scov = cov(samples)
     gcov = cov(gradients)
     if window.type == :metric
-      covariance_estimate = regularize(Symmetric(scov), window.no_iterations)
-      # covariance_estimate = regularize(Diagonal(sqrt.(diag(scov) ./ diag(gcov))), window.no_iterations)
+      # covariance_estimate = regularize(Symmetric(scov), window.no_iterations)
+      covariance_estimate = regularize(Diagonal(sqrt.(diag(scov) ./ diag(gcov))), window.no_iterations)
       current_kernel = DynamicObjects.update(
         current_kernel, covariance_estimate=covariance_estimate
       )
       push!(rv, current_kernel)
     end
-    # current_kernel = 
-    # push!(rv, Diagonal(diag(scov)))
-    # push!(rv, inv(Symmetric(gcov)))
-    # push!(rv, Diagonal(1 ./ diag(gcov)))
-    # push!(rv, Diagonal(sqrt.(diag(cov(gradients)) .\ diag(scov))))
-    # push!(rv, Diagonal(sqrt.(diag(cov(gradients)) .\ diag(scov))))
-    # println(eigen(scov).values)
-    # println(1 ./ eigen(gcov).values)
-    # println(eigen(scov).vectors' \ eigen(gcov).vectors)
   end
   return rv
 end
 
-
-function showcase(no_dimensions=10)
+showcase(no_dimensions::Integer=10) = showcase(
+  MvNormal(randn(no_dimensions), Diagonal(exp.(randn(no_dimensions))))
+)
+function showcase(distribution)
   sw = StanWarmup(1000)
-  distribution = MvNormal(randn(no_dimensions), Diagonal(exp.(randn(no_dimensions))))
   ikernels = Warmup(IndependentKernel(distribution), sw).kernels
   mkernels = Warmup(MetropolisKernel(distribution, I), sw).kernels
-  iconds = cond.(remaining_covariance.(ikernels))
-  mconds = cond.(remaining_covariance.(mkernels))
+  iconds = cond.(covariance_remaining.(ikernels))
+  mconds = cond.(covariance_remaining.(mkernels))
   conds = vcat(iconds, mconds)
   plot(
     [iconds, mconds], yaxis=:log, ylim=[1, maximum(conds)], marker=:circle
   )
 end
-
 showcase()
+```
+```{julia}
+@dynamic_object NealsFunnel centeredness::Vector
+no_dimensions(what::NealsFunnel) = 1+length(what.centeredness)
+Base.length(what::NealsFunnel) = what.no_dimensions
+centeredness_estimate(what::NealsFunnel) = ones(length(what.centeredness))
+centeredness_remaining(what::NealsFunnel) = what.centeredness_estimate - what.centeredness
+Statistics.cov(what::NealsFunnel) = I
+function Distributions.logpdf(what::NealsFunnel, parameters) 
+  log_sd = parameters[1]
+  sd = exp(log_sd)
+  logpdf(Normal(), log_sd) + sum(logpdf.(Normal.(0, sd.^what.centeredness_remaining), parameters[2:end]))
+end
+function Base.rand(what::NealsFunnel)
+  xis = randn(what.no_dimensions)
+  log_sd = xis[1]
+  sd = exp(log_sd)
+  return vcat(log_sd, sd.^what.centeredness_remaining .* xis[2:end])
+end
+
+showcase(NealsFunnel(zeros(5)))
 ``` 

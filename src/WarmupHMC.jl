@@ -3,7 +3,7 @@ module WarmupHMC
 export regularize, to_x1, to_xc, klp, klps#, klps_plot!
 
 using DynamicObjects
-using Distributions
+using Distributions, LinearAlgebra
 
 regularize(sample_covariance, no_draws, regularization_no_draws=5, regularization_constant=1e-3) = (
   no_draws / ((no_draws + regularization_no_draws) * (no_draws - 1)) * sample_covariance + regularization_constant * (regularization_no_draws / (no_draws + regularization_no_draws)) * I

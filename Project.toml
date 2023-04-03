@@ -9,6 +9,7 @@ DynamicObjects = "23d02862-63fe-4c6e-8fdb-1d52cbbd39d5"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [compat]
+DynamicObjects = "0.1"
 Distributions = "0.25"
 julia = "1"
 

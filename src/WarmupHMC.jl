@@ -19,6 +19,10 @@ to_xc(x1, mean, log_sd, centeredness) = (
 to_x1(xc, mean, log_sd, centeredness) = (
     mean + (xc - mean * centeredness) * exp(log_sd * (1 - centeredness))
 )
+to_xc(xcp, mean, log_sd, target_centeredness, previous_centeredness) = to_xc(
+    to_x1(xcp, mean, log_sd, previous_centeredness),
+    mean, log_sd, target_centeredness
+)
 # to_xc(x1, log_sd, centeredness) = x1 * exp(log_sd * (centeredness - 1))
 # klp(x1, log_sd, centeredness) = klp(to_xc.(x1, log_sd, centeredness), exp.(log_sd .* centeredness))
 klp(x1s, means, log_sds, centeredness) = klp(

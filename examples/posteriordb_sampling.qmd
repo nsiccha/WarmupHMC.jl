@@ -1,0 +1,14 @@
+---
+title:  Using posteriordb posteriors
+jupyter: julia-1.8
+execute:
+  daemon: 999999
+---
+```{julia}
+includet("common.jl")
+Random.seed!(1) 
+```
+
+```{julia}
+PDBPosterior("radon_mn-radon_hierarchical_intercept_noncentered").bridgestan_model
+```

@@ -1,7 +1,7 @@
 project:
   title: "Examples for WarmupHMC.jl"
   type: website
-  output-dir: ../docs/WarmupHMC.jl
+  output-dir: ../docs/quarto
 website:
   sidebar:
     style: "docked"

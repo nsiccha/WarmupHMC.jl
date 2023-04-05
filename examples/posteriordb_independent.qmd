@@ -1,0 +1,39 @@
+---
+title:  Using posteriordb reference draws
+jupyter: julia-1.8
+execute:
+  daemon: 999999
+---
+
+```{julia}
+includet("common.jl")
+Random.seed!(1) 
+```
+```{julia}
+es_draws = EightSchoolsDraws(PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws)
+
+nc_pu = ContinuousNoncentering(zeros(8))
+nc_es_draws = reparametrize(nc_pu, es_draws)
+nc_es_draws.scatter_funnel
+
+bc_es_pu = ContinuousNoncentering(es_draws.best_centeredness)
+bc_es_draws = reparametrize(bc_es_pu, es_draws)
+display(Line(1:es_draws.no_xcs, bc_es_pu.centeredness))
+Figure([
+    scatter_funnel(draws, i)
+    for i in 1:8, draws in [es_draws, nc_es_draws, bc_es_draws]
+])
+```  
+```{julia}
+mc_draws = MotorcycleDraws(PDBPosterior("mcycle_gp-accel_gp").unconstrained_draws)
+c_pu = ContinuousNoncentering(ones(mc_draws.no_xcs), previous_centeredness=0) 
+c_mc_draws = reparametrize(c_pu, mc_draws)
+bc_mc_pu = ContinuousNoncentering(mc_draws.best_centeredness, previous_centeredness=0)
+bc_mc_draws = reparametrize(bc_mc_pu, mc_draws)
+display(Line(1:mc_draws.no_xcs, bc_mc_pu.centeredness))
+
+Figure([
+    scatter_funnel(draws, i)
+    for i in 1:mc_draws.no_xcs, draws in [mc_draws, c_mc_draws, bc_mc_draws]
+])   
+```   

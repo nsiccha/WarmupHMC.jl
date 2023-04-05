@@ -1,0 +1,87 @@
+---
+title:  Using posteriordb reference draws
+jupyter: julia-1.8
+execute:
+  daemon: 999999
+---
+
+```{julia}
+# push!(LOAD_PATH,"../src/")
+includet("common.jl")
+using PosteriorDB
+using Statistics, LinearAlgebra, ForwardDiff, DataFrames
+using Plots
+using Random
+Random.seed!(1) 
+
+
+"""
+A posteriorDB posterior.
+"""
+@dynamic_object PDBPosterior name::String
+
+database(what::PDBPosterior) = PosteriorDB.database()
+posterior(what::PDBPosterior) = PosteriorDB.posterior(what.database, what.name)
+model(what::PDBPosterior) = PosteriorDB.model(what.posterior)
+dataset(what::PDBPosterior) = PosteriorDB.dataset(what.posterior)
+datastring(what::PDBPosterior) = PosteriorDB.load(what.dataset, String)
+reference_posterior(what::PDBPosterior) = PosteriorDB.reference_posterior(what.posterior)
+constrained_df(what::PDBPosterior) = DataFrame(PosteriorDB.load(what.reference_posterior))
+constrained_draws(what::PDBPosterior) = hcat([vcat(col...) for col in eachcol(what.constrained_df)]...)
+stan_file(what::PDBPosterior) = PosteriorDB.path(PosteriorDB.implementation(what.model, "stan"))
+bridgestan_model(what::PDBPosterior) = StanModel(stan_file=what.stan_file, data=what.datastring)
+unconstrained_draws(what::PDBPosterior) = (
+    bmod = what.bridgestan_model;
+    vcat([
+        param_unconstrain(bmod, collect(row))' for row in eachrow(what.constrained_draws)
+    ]...) 
+)
+  
+ 
+```
+```{julia}
+es_draws = EightSchoolsDraws(PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws)
+es_draws.scatter_funnel
+```  
+```{julia}
+Figure([
+    PlotSum([
+        kl_plot(es_subset, i) for i in 1:8
+    ])
+    for es_subset in subset.([es_draws], [4,8,16,32,64])
+]')
+```
+
+
+```{julia}
+"""
+Reparametrizations.
+"""
+@dynamic_type Reparametrization
+
+@dynamic_object PartialUncentering <: Reparametrization centeredness::Vector
+pad_left(what, to_match::AbstractVector) = what
+pad_left(what, to_match::AbstractMatrix) = what'
+reparametrize(what::PartialUncentering, parameters) = replace_xcs(
+    parameters,
+    to_xc.(parameters.xcs, parameters.means, parameters.log_sds, pad_left(what.centeredness, parameters.xcs))
+)
+unreparametrize(what::PartialUncentering, reparameters) = replace_xcs(
+    reparameters,
+    to_x1.(reparameters.xcs, reparameters.means, reparameters.log_sds, pad_left(what.centeredness, reparameters.xcs))
+)
+logjacobian(what::PartialUncentering, parameters, reparameters) = sum(
+    parameters.log_sds .* what.centeredness
+)
+
+pu = PartialUncentering(zeros(8))
+res_draws = reparametrize(pu, es_draws)
+res_draws.scatter_funnel
+```   
+
+```{julia} 
+es_model = BSModel(PDBPosterior("eight_schools-eight_schools_centered").bridgestan_model)
+res_model = ReparametrizedDistribution(es_model, pu)
+
+# logpdf(res_model, EightSchoolsDraw(zeros(10)))
+``` 

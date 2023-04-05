@@ -16,6 +16,9 @@ regularize(sample_covariance, no_draws, regularization_no_draws=5, regularizatio
 to_xc(x1, mean, log_sd, centeredness) = (
     mean * centeredness + exp(log_sd * (centeredness - 1)) * (x1 - mean)
 )
+to_x1(xc, mean, log_sd, centeredness) = (
+    mean + (xc - mean * centeredness) * exp(log_sd * (1 - centeredness))
+)
 # to_xc(x1, log_sd, centeredness) = x1 * exp(log_sd * (centeredness - 1))
 # klp(x1, log_sd, centeredness) = klp(to_xc.(x1, log_sd, centeredness), exp.(log_sd .* centeredness))
 klp(x1s, means, log_sds, centeredness) = klp(
@@ -26,5 +29,8 @@ klp(x1s, means, log_sds, centeredness) = klp(
 klp(xc, meanc, sdc) = mean(logpdf.(Normal.(meanc, sdc), xc)) + log(std(xc))
 klps(x1s, means, log_sds, cs) = [klp(x1s, means, log_sds, c) for c in cs]
 
-
+# @dynamic_object DiagonalScaling <: Reparametrization scaling::Vector
+# reparametrize(what::DiagonalScaling, parameters) = what.scaling .* parameters
+# unreparametrize(what::DiagonalScaling, reparameters) = what.scaling .\ reparameters
+# logjacobian(what::DiagonalScaling, ::Any, ::Any) = 0
 end

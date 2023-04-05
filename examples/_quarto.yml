@@ -1,0 +1,10 @@
+project:
+  title: "Examples for WarmupHMC.jl"
+  type: website
+  output-dir: ../docs/WarmupHMC.jl
+website:
+  sidebar:
+    style: "docked"
+    contents: auto
+execute:
+  freeze: auto

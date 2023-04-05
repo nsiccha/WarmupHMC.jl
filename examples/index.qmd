@@ -1,0 +1,5 @@
+---
+title:  WarmupHMC.jl examples
+---
+
+WIP, postdoctoral advisory recommended/required.

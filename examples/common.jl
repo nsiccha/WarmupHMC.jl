@@ -3,6 +3,7 @@ using BridgeStan
 using Distributions, ReverseDiff, ChainRulesCore 
 using PosteriorDB
 using Statistics, LinearAlgebra, ForwardDiff, DataFrames
+using LogDensityProblems
 using Plots
 using Random
 
@@ -91,7 +92,7 @@ parameters {
 
 https://github.com/stan-dev/posteriordb/blob/master/posterior_database/models/stan/eight_schools_centered.stan
 """
-@dynamic_object EightSchoolsDraws <: UnconstrainedDraws unconstrained_draws::Matrix
+@dynamic_object EightSchoolsDraws <: UnconstrainedDraws unconstrained_draws::AbstractMatrix
 xcs_start(what::EightSchoolsDraws) = 1
 xcs_end(what::EightSchoolsDraws) = 8
 means(what::EightSchoolsDraws) = what.unconstrained_draws[:, 9]
@@ -189,30 +190,43 @@ means(what::RadonHierarchicalInterceptCenteredDraws) = what.unconstrained_draws[
 log_sds(what::RadonHierarchicalInterceptCenteredDraws) = what.unconstrained_draws[:, 89]
 # x1s(what::RadonHierarchicalInterceptCenteredDraws) = what.unconstrained_draws[:, 1:8]
 
-
+"""
+A base type for distributions.
+"""
+@dynamic_type DynamicDistribution
+LogDensityProblems.logdensity(what::DynamicDistribution, parameters) = logpdf(what, parameters)
+LogDensityProblems.dimension(what::DynamicDistribution) = what.no_dimensions
+LogDensityProblems.capabilities(::Type{DynamicDistribution{T}}) where T = LogDensityProblems.LogDensityOrder{0}()
 """
 A wrapper around a BridgeStan model.
 """
-@dynamic_object BSModel model::StanModel
+@dynamic_object BSDistribution <: DynamicDistribution model::StanModel
 
-logpdfbs(what::BSModel, parameters::Vector) = log_density(what.model, parameters)
-# logpdfbs(what::BSModel, parameters::AbstractVector) = log_density(what.model, collect(parameters))
-Distributions.logpdf(what::BSModel, parameters::Vector) = logpdfbs(what, parameters)
-Distributions.logpdf(what::BSModel, parameters::AbstractVector) = logpdf(what, collect(parameters))
-function ChainRulesCore.rrule(::typeof(logpdfbs), what, parameters)
+no_dimensions(what::BSDistribution) = param_unc_num(what.model)
+bslogpdf(what::BSDistribution, parameters::Vector{Float64}) = log_density(what.model, parameters)
+bslogpdf(what::BSDistribution, parameters::AbstractVector{Float64}) = bslogpdf(what, collect(parameters))
+bslogpdf(what::BSDistribution, parameters::UnconstrainedDraw) = bslogpdf(what, parameters.unconstrained_draw)
+Distributions.logpdf(what::BSDistribution, parameters) = bslogpdf(what, parameters)
+# bslogpdf(what::BSDistribution, parameters::AbstractVector) = log_density(what.model, collect(parameters))
+# Distributions.logpdf(what::BSDistribution, parameters::AbstractVector) = logpdf(what, collect(parameters))
+function ChainRulesCore.rrule(::typeof(bslogpdf), what, parameters)
     rv = log_density_gradient(what.model, parameters)
     return rv[1], rva -> (NoTangent(), NoTangent(), rva .* rv[2])
 end
-ReverseDiff.@grad_from_chainrules logpdfbs(what, parameters::ReverseDiff.TrackedArray)
+ReverseDiff.@grad_from_chainrules bslogpdf(what, parameters::ReverseDiff.TrackedArray)
+
 
 """
 A reparametrized distribution.
 """
-@dynamic_object ReparametrizedDistribution distribution reparametrization
+@dynamic_object ReparametrizedDistribution <: DynamicDistribution distribution reparametrization
+no_dimensions(what::ReparametrizedDistribution) = what.distribution.no_dimensions
+wrapper(what::ReparametrizedDistribution) = identity
 Distributions.logpdf(what::ReparametrizedDistribution, reparameters) = (
+    reparameters = what.wrapper(reparameters);
     parameters = unreparametrize(what.reparametrization, reparameters);
     (
-        logpdfbs(what.distribution, collect(parameters)) 
+        logpdf(what.distribution, parameters) 
         + logjacobian(what.reparametrization, parameters, reparameters)
     )
 )
@@ -238,12 +252,11 @@ reparametrize(what::ContinuousNoncentering, parameters) = replace_xcs(
 unreparametrize(what::ContinuousNoncentering, reparameters) = replace_xcs(
     reparameters,
     to_xc.(
-        parameters.xcs, parameters.means, parameters.log_sds, 
-        pad_left(what.previous_centeredness, parameters.xcs),
-        pad_left(what.centeredness, parameters.xcs), 
+        reparameters.xcs, reparameters.means, reparameters.log_sds, 
+        pad_left(what.previous_centeredness, reparameters.xcs),
+        pad_left(what.centeredness, reparameters.xcs), 
     )
-    # to_x1.(reparameters.xcs, reparameters.means, reparameters.log_sds, pad_left(what.centeredness, reparameters.xcs))
 )
 logjacobian(what::ContinuousNoncentering, parameters, reparameters) = sum(
-    parameters.log_sds .* what.centeredness
+    parameters.log_sds .* (1 .- what.centeredness)
 )

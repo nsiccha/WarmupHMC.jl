@@ -6,9 +6,29 @@ execute:
 ---
 ```{julia}
 includet("common.jl")
+using AdvancedHMC
 Random.seed!(1) 
 ```
 
 ```{julia}
-PDBPosterior("radon_mn-radon_hierarchical_intercept_noncentered").bridgestan_model
+function showcase(centeredness=ones(8), n_samples=20_000, n_adapts=1_000, initial_stepsize=1.)
+    res_posterior = ReparametrizedDistribution(
+        BSDistribution(
+            PDBPosterior("eight_schools-eight_schools_centered").bridgestan_model,
+        ), 
+        ContinuousNoncentering(centeredness), wrapper=EightSchoolsDraw
+    )
+    initial_parameters = zeros(res_posterior.no_dimensions)
+    metric = DiagEuclideanMetric(res_posterior.no_dimensions)
+    hamiltonian = Hamiltonian(metric, res_posterior, ReverseDiff)
+    integrator = Leapfrog(initial_stepsize)
+    proposal = NUTS{MultinomialTS, GeneralisedNoUTurn}(integrator)
+    adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.8, integrator))
+    samples, stats = sample(hamiltonian, proposal, initial_parameters, n_samples, adaptor, n_adapts; progress=false)
+    EightSchoolsDraws(hcat(samples[1+n_adapts:end]...)')
+end
+showcase(ones(8)).scatter_funnel 
+```                    
+```{julia}
+showcase(zeros(8)).scatter_funnel 
 ```

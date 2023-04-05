@@ -1,0 +1,11 @@
+{
+  "hash": "a211f4fc8424066d77c77b2a85b3179f",
+  "result": {
+    "markdown": "---\ntitle: Using posteriordb reference draws\nexecute:\n  daemon: 999999\n---\n\n::: {.cell execution_count=1}\n``` {.julia .cell-code}\nincludet(\"common.jl\")\nRandom.seed!(1) \n```\n\n::: {.cell-output .cell-output-display execution_count=2}\n```\nTaskLocalRNG()\n```\n:::\n:::\n\n\n::: {.cell execution_count=2}\n``` {.julia .cell-code}\nes_draws = EightSchoolsDraws(PDBPosterior(\"eight_schools-eight_schools_centered\").unconstrained_draws)\n\nnc_es_draws = reparametrize(ContinuousNoncentering(zeros(8)), es_draws)\nnc_es_draws.scatter_funnel\n\nbc_es_pu = ContinuousNoncentering(es_draws.best_centeredness)\nbc_es_draws = reparametrize(bc_es_pu, es_draws)\ndisplay(Line(1:es_draws.no_xcs, bc_es_pu.centeredness))\nFigure([\n    scatter_funnel(draws, i)\n    for i in 1:8, draws in [es_draws, nc_es_draws, bc_es_draws]\n])\n```\n\n::: {.cell-output .cell-output-display}\n![](figs/15490374767798694674.png)\n\n:::\n\n::: {.cell-output .cell-output-display}\n```\n\n```\n:::\n\n::: {.cell-output .cell-output-display}\n![](figs/12634497691587505777.png)\n\n:::\n\n::: {.cell-output .cell-output-display execution_count=3}\n```\n\n```\n:::\n:::\n\n\n::: {.cell execution_count=3}\n``` {.julia .cell-code}\nmc_draws = MotorcycleDraws(PDBPosterior(\"mcycle_gp-accel_gp\").unconstrained_draws)\nc_pu = ContinuousNoncentering(ones(mc_draws.no_xcs), previous_centeredness=0) \nc_mc_draws = reparametrize(c_pu, mc_draws)\nbc_mc_pu = ContinuousNoncentering(mc_draws.best_centeredness, previous_centeredness=0)\nbc_mc_draws = reparametrize(bc_mc_pu, mc_draws)\ndisplay(Line(1:mc_draws.no_xcs, bc_mc_pu.centeredness))\n\nFigure([\n    scatter_funnel(draws, i)\n    for i in 1:mc_draws.no_xcs, draws in [mc_draws, c_mc_draws, bc_mc_draws]\n])   \n```\n\n::: {.cell-output .cell-output-display}\n![](figs/16493911581641236667.png)\n\n:::\n\n::: {.cell-output .cell-output-display}\n```\n\n```\n:::\n\n::: {.cell-output .cell-output-display}\n![](figs/17555401413819275497.png)\n\n:::\n\n::: {.cell-output .cell-output-display execution_count=4}\n```\n\n```\n:::\n:::\n\n\n",
+    "supporting": [
+      "posteriordb_independent_files"
+    ],
+    "filters": [],
+    "includes": {}
+  }
+}

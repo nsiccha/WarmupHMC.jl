@@ -1065,7 +1065,7 @@ version = "0.2.0"
 
 [[deps.WarmupHMC]]
 deps = ["Distributions", "DynamicObjects", "LinearAlgebra"]
-git-tree-sha1 = "141694a6c39b248985aa14d658c5c1e331fef2a2"
+git-tree-sha1 = "94a4521e2207cfe51a1a41e4b808d38095eef5df"
 repo-rev = "main"
 repo-url = "https://github.com/nsiccha/WarmupHMC.jl.git"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"

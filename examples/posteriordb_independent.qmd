@@ -12,8 +12,7 @@ Random.seed!(1)
 ```{julia}
 es_draws = EightSchoolsDraws(PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws)
 
-nc_pu = ContinuousNoncentering(zeros(8))
-nc_es_draws = reparametrize(nc_pu, es_draws)
+nc_es_draws = reparametrize(ContinuousNoncentering(zeros(8)), es_draws)
 nc_es_draws.scatter_funnel
 
 bc_es_pu = ContinuousNoncentering(es_draws.best_centeredness)

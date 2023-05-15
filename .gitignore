@@ -2,3 +2,6 @@
 *.html
 *_files
 .vscode
+figs
+*.so
+*.svg

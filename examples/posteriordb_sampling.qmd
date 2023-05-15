@@ -4,31 +4,227 @@ jupyter: julia-1.8
 execute:
   daemon: 999999
 ---
-```{julia}
-includet("common.jl")
-using AdvancedHMC
-Random.seed!(1) 
-```
-
-```{julia}
-function showcase(centeredness=ones(8), n_samples=20_000, n_adapts=1_000, initial_stepsize=1.)
-    res_posterior = ReparametrizedDistribution(
-        BSDistribution(
-            PDBPosterior("eight_schools-eight_schools_centered").bridgestan_model,
-        ), 
-        ContinuousNoncentering(centeredness), wrapper=EightSchoolsDraw
-    )
-    initial_parameters = zeros(res_posterior.no_dimensions)
-    metric = DiagEuclideanMetric(res_posterior.no_dimensions)
-    hamiltonian = Hamiltonian(metric, res_posterior, ReverseDiff)
-    integrator = Leapfrog(initial_stepsize)
-    proposal = NUTS{MultinomialTS, GeneralisedNoUTurn}(integrator)
-    adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.8, integrator))
-    samples, stats = sample(hamiltonian, proposal, initial_parameters, n_samples, adaptor, n_adapts; progress=false)
-    EightSchoolsDraws(hcat(samples[1+n_adapts:end]...)')
+```{.julia}
+if pwd()[end] != 's'
+    using Revise
+    using Pkg
+    cd("examples")
+    Pkg.activate(".")
 end
-showcase(ones(8)).scatter_funnel 
-```                    
-```{julia}
-showcase(zeros(8)).scatter_funnel 
+includet("common.jl")
+Random.seed!(1) 
+
+@dynamic_object MarkovChain distribution::DynamicDistribution no_draws initial_parameters adapt=false
+no_dimensions(what::MarkovChain) = what.distribution.no_dimensions
+metric(what::MarkovChain) = DiagEuclideanMetric(what.distribution.no_dimensions)
+hamiltonian(what::MarkovChain) = Hamiltonian(what.metric, what.distribution, ReverseDiff)
+integrator(what::MarkovChain) = Leapfrog(1.)
+completed(what::MarkovChain) = DynamicObjects.update(what, :stepsize_draws_stats)
+completed(what::MarkovChain, no_draws; kwargs...) = DynamicObjects.update(
+    what, no_draws=no_draws; kwargs...
+).completed
+
+function stepsize_draws_stats(what::MarkovChain)
+    no_draws = what.no_draws
+    initial_parameters = what.initial_parameters
+    adapt = what.adapt
+    hamiltonian = what.hamiltonian
+    integrator = what.integrator
+    proposal = NUTS{MultinomialTS, GeneralisedNoUTurn}(integrator)
+    if adapt
+        adaptor = StepSizeAdaptor(0.8, integrator)
+        samples, stats = sample(
+            hamiltonian, proposal, initial_parameters, no_draws, adaptor, no_draws; 
+            progress=true, verbose=false
+        )
+        AdvancedHMC.finalize!(adaptor)
+        return adaptor.state.ϵ, hcat(samples...)', stats
+    else
+        samples, stats = sample(
+            hamiltonian, proposal, initial_parameters, no_draws; 
+            progress=true, verbose=false
+        )
+        return 1., hcat(samples...)', stats
+    end
+end 
+stepsize(what::MarkovChain) = what.stepsize_draws_stats[1]
+draws(what::MarkovChain) = what.stepsize_draws_stats[2]
+stats(what::MarkovChain) = what.stepsize_draws_stats[3]
+unreparametrized_draws(what::MarkovChain) = unreparametrize(what.distribution, what.draws)
+unreparametrized_stds(what::MarkovChain) = std.(eachcol(what.unreparametrized_draws))
+unreparametrized_esss(what::MarkovChain) = ess(
+    reshape(what.unreparametrized_draws, (size(what.draws, 1), 1, size(what.draws, 2)))
+)
+unreparametrized_effs(what::MarkovChain) = what.unreparametrized_esss ./ sum(what.stats_df.n_steps)
+rescaled_distribution(what::MarkovChain) = rescale(what.distribution, [what.stepsize])
+final_parameters(what::MarkovChain) = what.draws[end, :]
+rescaled(what::MarkovChain) = MarkovChain(
+    what.rescaled_distribution, what.no_draws, what.stepsize .\ what.final_parameters, what.adapt
+)
+function reparametrized_distribution(what::MarkovChain)
+    display(what.stats_df_description)
+    repa_distribution = what.distribution
+    base_distribution = repa_distribution.distribution
+    if hasproperty(base_distribution, :wrapper)
+        draws = unreparametrize(repa_distribution, what.draws)
+        # println("Obtained odraws: $(typeof(odraws)), $(size(odraws))")
+        bc = base_distribution.wrapper(draws).best_centeredness
+        println("Obtained bc: $(bc)")
+        repa_distribution = recenter(base_distribution, bc)
+        # println("Recenterd distributions")
+        draws = reparametrize(repa_distribution, draws)
+        rescale(repa_distribution, std.(eachcol(draws)))
+    else
+        # repa_distribution = base_distribution
+        rescale(what.distribution, std.(eachcol(what.draws)))
+    end
+    # println("Reparametrized draws")
+    # rescale(repa_distribution, std.(eachcol(draws)))
+end   
+function reparametrized(what::MarkovChain)
+    repa_distribution = what.reparametrized_distribution
+    initial_parameters = reparametrize(
+        repa_distribution, unreparametrize(what.distribution, what.final_parameters)
+    )
+    MarkovChain(repa_distribution, what.no_draws, initial_parameters, what.adapt)
+end
+stats_df(what::MarkovChain) = DataFrame(what.stats)
+stats_df_description(what::MarkovChain) = describe(what.stats_df)[[1,3,9], 1:5]
+# MCMCDiagnosticTools.ess(what::MarkovChain) = ess(what.unreparametrized_draws)
+
+Base.show(io::IOContext{IOBuffer}, what::MarkovChain) = (
+    display(describe(what.stats_df)[[1,3,9], 1:5]);
+    display(PairPlots(what.draws))
+    # display(plot(what.distribution.reparametrization.reparametrizations[end].reparametrizations[end].centeredness))
+)  
+ 
+@dynamic_object MarkovChainComparison chains::AbstractVector 
+lhs(what::MarkovChainComparison) = what.chains[1]
+no_pairplot_parameters(what::MarkovChainComparison) = 20
+# pairplot_idxs(what::MarkovChainComparison) = sort(
+#         sample(axes(what.lhs.draws, 2), 
+#         min(what.no_pairplot_parameters, size(what.lhs.draws, 2)), replace=false
+#     )
+# )
+function pairplot_idxs(what::MarkovChainComparison)
+    # println(size(unreparametrized_esss(what.chains[1])))
+    # stds = hcat(unreparametrized_stds.(what.chains)...)
+    effs = hcat(unreparametrized_effs.(what.chains)...)
+
+    metric = vec(minimum(effs, dims=2))
+    no_parameters = length(metric)
+    sort(
+        sort(1:no_parameters, by=i->metric[i])[
+            1:min(no_parameters, what.no_pairplot_parameters)
+        ]
+    )
+end
+Base.show(io::IOContext{IOBuffer}, what::MarkovChainComparison) = (
+    display.(stats_df_description.(what.chains));
+    display(plot(hcat(unreparametrized_effs.(what.chains)...)));
+    pairplot_idxs = what.pairplot_idxs;
+    display(sum([
+        PairPlots(chain.unreparametrized_draws, pairplot_idxs) for chain in what.chains
+    ]))
+)
+
+initial_parameters(what::DynamicDistribution) = zeros(what.no_dimensions)
+initial_stepsize(what::DynamicDistribution) = 1.
+function adaptation(what::DynamicDistribution)
+    initial_parameters = what.initial_parameters
+    while !all(isfinite.(log_density_gradient(what.model, initial_parameters)[2]))
+        initial_parameters = randn(size(initial_parameters))
+    end
+    what = rescale(what, [what.initial_stepsize])
+    mc = MarkovChain(what, 75, what.initial_stepsize .\ initial_parameters, true).completed.rescaled
+    for no_draws in [25, 50, 100, 200, 500]
+        mc = completed(mc, no_draws).reparametrized
+    end
+    completed(mc, 50).rescaled
+end 
+adapted_draws(what::DynamicDistribution) = completed(what.adaptation, 1000, adapt=false)
 ```
+```{.julia}
+what = DynamicObjects.cached(
+    PDBPosterior("eight_schools-eight_schools_centered").bridgestan_distribution, 
+    :adapted_draws
+)
+whata = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("eight_schools-eight_schools_centered").bridgestan_distribution, 
+        wrapper=eight_schools_wrapper,
+        centeredness=1
+    ), 
+    :adapted_draws
+)
+MarkovChainComparison([whata, what])
+```
+```{.julia}
+what = DynamicObjects.cached(
+    PDBPosterior("radon_mn-radon_hierarchical_intercept_centered").bridgestan_distribution, 
+    :adapted_draws
+)
+whata = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("radon_mn-radon_hierarchical_intercept_centered").bridgestan_distribution, 
+        wrapper=radon_wrapper,
+        centeredness=1
+    ), 
+    :adapted_draws
+)
+MarkovChainComparison([whata, what])
+```   
+```{.julia}
+what = DynamicObjects.cached(
+    PDBPosterior("radon_all-radon_hierarchical_intercept_centered").bridgestan_distribution, 
+    :adapted_draws
+)
+whata = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("radon_all-radon_hierarchical_intercept_centered").bridgestan_distribution, 
+        wrapper=radon_wrapper,
+        centeredness=1
+    ), 
+    :adapted_draws
+)
+MarkovChainComparison([whata, what])
+```  
+```{.julia}
+what = DynamicObjects.cached(
+    PDBPosterior("radon_all-radon_variable_intercept_slope_centered").bridgestan_distribution, 
+    :adapted_draws
+)
+whata = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("radon_all-radon_variable_intercept_slope_centered").bridgestan_distribution, 
+        wrapper=radon_is_wrapper,
+        centeredness=1
+    ), 
+    :adapted_draws
+)
+MarkovChainComparison([whata, what])
+```     
+```{.julia}
+what = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("mcycle_gp-accel_gp").bridgestan_distribution, 
+        initial_parameters=vec(mean(PDBPosterior("mcycle_gp-accel_gp").unconstrained_draws, dims=1)),
+        initial_stepsize=1e-1
+    ), 
+    :adapted_draws
+) 
+whata = DynamicObjects.cached(
+    DynamicObjects.update(
+        PDBPosterior("mcycle_gp-accel_gp").bridgestan_distribution, 
+        wrapper=motorcycle_wrapper,
+        centeredness=0,
+        initial_parameters=vec(mean(PDBPosterior("mcycle_gp-accel_gp").unconstrained_draws, dims=1)),
+        initial_stepsize=1e-1
+    ), 
+    :adapted_draws
+)
+MarkovChainComparison([whata, what])
+# PairPlots(what.draws)
+```    
+```{.julia}
+```   

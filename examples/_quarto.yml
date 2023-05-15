@@ -1,10 +1,15 @@
 project:
-  title: "Examples for WarmupHMC.jl"
+  title: "WarmupHMC.jl examples"
   type: website
   output-dir: ../docs/quarto
 website:
   sidebar:
     style: "docked"
     contents: auto
+format:
+  html:
+    code-line-numbers: true
+jupyter: julia-warmup-1.8
 execute:
   freeze: auto
+  daemon: 3600

@@ -4,35 +4,294 @@ jupyter: julia-1.8
 execute:
   daemon: 999999
 ---
-
-```{julia}
+```{.julia}
+if pwd()[end] != 's'
+    using Revise
+    using Pkg
+    cd("examples")
+    Pkg.activate(".")
+    # Base.display(d::VSCodeServer.InlineDisplay, what::Plot) = display(d, what.figure)
+end
 includet("common.jl")
 Random.seed!(1) 
 ```
-```{julia}
-es_draws = EightSchoolsDraws(PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws)
+```{.julia}
+es_posterior = PDBPosterior(
+    "eight_schools-eight_schools_centered", distribution_info_wrapper=EightSchoolsInfo
+)
+# es_posterior = PDBPosterior(
+#     "mcycle_gp-accel_gp", distribution_info_wrapper=MotorcycleInfo
+# )
+es_draws_full = es_posterior.unconstrained_draws
+bc = es_draws_full.best_centeredness
+cs = range(0, 1, 21)
+fcs = [
+    fill(c, size(bc)) for c in cs 
+    # replace_xcs(bc, [i], [c])
+    # for c in cs, i in 1:length(bc)
+]
+es_draws = subset(es_draws_full, 1:20)
+ces_draws = DynamicObjects.update(es_draws, :gradients, :log_sds) 
+slosses = hcat(scalar_losses.([es_draws], fcs)...)'
+# flosses = hcat(fisher_scalar_losses.([ces_draws], fcs)...)'
+glosses = hcat(gradient_losses.([ces_draws], fcs)...)' 
+# fglosses = hcat(fisher_gradient_losses.([ces_draws], fcs)...)'
+wlosses = hcat(wasserstein_losses.([es_draws], fcs)...)'
+closses = hcat(cdf_losses.([es_draws], fcs)...)'
+sbc = cs[argmin.(eachcol(slosses))]
+gbc = cs[argmin.(eachcol(glosses))]
+# fgbc = cs[argmin.(eachcol(fglosses))] 
+wbc = cs[argmin.(eachcol(wlosses))] 
+lossess = [slosses, log.(glosses), wlosses, closses]
+plot([plot(losses) for losses in lossess]..., label="")
+# # gradient_update(es_draws, bc).gradients - xcs_gradient_update(ces_draws, bc).gradients
+# # sum([
+# #     Scatter(bc, (cs[argmin.(eachcol(losses))]), plot_kwargs=(label=i, alpha=.5))
+# #     for (i, losses) in enumerate(lossess)
+# # ]).figure
+# sum([
+#     Line(sort(cs[argmin.(eachcol(losses))]), 1:length(bc), plot_kwargs=(label=i, ))
+#     for (i, losses) in enumerate(lossess)
+# ], init=Line(sort(bc), 1:length(bc))).figure
 
-nc_es_draws = reparametrize(ContinuousNoncentering(zeros(8)), es_draws)
-nc_es_draws.scatter_funnel
+# plot_x(x, y) = scatter!(plot(cs, y), cs[argmin.(y)], minimum.(y), color=:red)
+# plot([
+#     scatter!(plot_x(cs, to_unit_range.(eachcol(losses))), bc, ones(length(bc)), color="black")
+#     # scatter(bc, cs[argmin.(eachcol(losses))])
+#     for losses in lossess
+# ]..., label="", size=(800, 800), xlim=[0,1], ylim=[0,1])
 
-bc_es_pu = ContinuousNoncentering(es_draws.best_centeredness)
-bc_es_draws = reparametrize(bc_es_pu, es_draws)
-display(Line(1:es_draws.no_xcs, bc_es_pu.centeredness))
-Figure([
-    scatter_funnel(draws, i)
-    for i in 1:8, draws in [es_draws, nc_es_draws, bc_es_draws]
+
+# heatmap_x(x, y, M) = scatter!(heatmap(x, y, M), y[argmin(M)[2]:argmin(M)[2]], x[argmin(M)[1]:argmin(M)[1]], color=:white, label="")
+# plot([
+#     scatter!(heatmap_x(cs, cs, losses), bc[2:2], bc[1:1]) 
+#     for losses in [slosses, flosses, glosses, fglosses]
+# ]..., layout=(2, :), size=(800, 800))
+# plot(cs, to_unit_range.([slosses, glosses]))
+# gradient_loss(es_draws, ones(8))
+# gradient_loss(es_draws, zeros(8))
+# PairPlots(es_draws)
+# @time es_bc = es_draws.best_centeredness
+# UnconstrainedDraws(
+#     EightSchoolsInfo(Dict("J"=>8)), 
+#     PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws
+# )
+# es_draws = EightSchoolsDraws(PDBPosterior("eight_schools-eight_schools_centered").unconstrained_draws)
+
+# nc_es_draws = reparametrize(ContinuousNoncentering(zeros(8)), es_draws)
+
+mxcs_idxs = es_draws_full.info.xcs_idxs
+es_draws = subset(es_draws_full, 1:1000) 
+# es_draws = es_draws_full#subset(es_draws_full, 1000) 
+
+update_losses(what, c) = DynamicObjects.update(
+    DynamicObjects.update(recenter(what, c), :gradients),
+    :all_gradient_losses, :all_fisher_gradient_losses
+)
+
+ces_draws = update_losses(es_draws, 1)
+bc_es_draws = update_losses(es_draws, bc)
+sbc_es_draws = update_losses(es_draws, sbc)
+gbc_es_draws = update_losses(es_draws, gbc)
+fgbc_es_draws = update_losses(es_draws, fgbc)
+bc_draws = [ces_draws, bc_es_draws, sbc_es_draws, gbc_es_draws, fgbc_es_draws]
+
+
+
+# Base.show(io::IO, mime::MIME{Symbol("application/vnd.julia-vscode.diagnostics")}, what::Plot) = (
+#     println(typeof.([io, mime, what]));
+#     Base.show(io, mime, what.figure)
+# ) 
+sum([
+    PairPlots(es_draws), 
+    PairPlots(bc_es_draws)', 
+]) |> display  
+sum([
+    PairPlots(es_draws.pcad), 
+    # PairPlots(bc_es_draws.pcad)', 
+    PairPlots(es_draws.whitened)', 
+]) |> display  
+sum([
+    PairPlots(es_draws.descaled.pcad), 
+    # PairPlots(bc_es_draws.pcad)', 
+    PairPlots(es_draws.descaled.whitened)', 
+]) |> display  
+
+# @dynamic_object DUMMY test::Integer
+# Base.show(what::DUMMY) = show(stdout, what)
+# Base.show(io::IO, what::DUMMY) = show(io, typeof.([io, what]))
+# Base.show(io::IO, mime::MIME, what::DUMMY) = show(io, mime, typeof.([io, mime, what]))
+# DUMMY(1) |> show 
+
+mins = log.([
+    minimum(vcat([draws.all_gradient_losses[:, mxcs_idxs[i]] for draws in bc_draws]...))
+    for i in 1:es_draws.info.no_xcs
 ])
-```  
-```{julia}
-mc_draws = MotorcycleDraws(PDBPosterior("mcycle_gp-accel_gp").unconstrained_draws)
-c_pu = ContinuousNoncentering(ones(mc_draws.no_xcs), previous_centeredness=0) 
-c_mc_draws = reparametrize(c_pu, mc_draws)
-bc_mc_pu = ContinuousNoncentering(mc_draws.best_centeredness, previous_centeredness=0)
-bc_mc_draws = reparametrize(bc_mc_pu, mc_draws)
-display(Line(1:mc_draws.no_xcs, bc_mc_pu.centeredness))
+maxs = log.([
+    maximum(vcat([draws.all_gradient_losses[:, mxcs_idxs[i]] for draws in bc_draws]...))
+    for i in 1:es_draws.info.no_xcs
+]) 
 
-Figure([
-    scatter_funnel(draws, i)
-    for i in 1:mc_draws.no_xcs, draws in [mc_draws, c_mc_draws, bc_mc_draws]
-])   
+scatter(bc_es_draws[:, mxcs_idxs[1]], bc_es_draws.gradients[:, mxcs_idxs[1]], alpha=.5)
+
+mno_xcs = es_draws.info.no_xcs 
+agl_idxs = sortperm.(eachcol(ces_draws.all_gradient_losses[:, mxcs_idxs]))
+
+Figure([ 
+    !ismissing(draws) ? (
+        scatter_funnel(
+            draws, i, log.(draws.all_gradient_losses[:, mxcs_idxs[i]]),
+            clim=(mins[i], maxs[i])
+        ) 
+        # SortedScatter(
+        #     draws[:, mxcs_idxs[i]], draws.gradients[:, mxcs_idxs[i]], 
+        #     log.(draws.all_gradient_losses[:, mxcs_idxs[i]]),
+        #     clim=(mins[i], maxs[i]) 
+        # )
+    )  : sum([
+        Line(
+            sort(draws.all_gradient_losses[:, mxcs_idxs[i]]), 
+            reverse(1:size(es_draws, 1)),
+            # draws.all_gradient_losses[agl_idxs[i], mxcs_idxs[i]],
+            plot_kwargs=(label=j, xaxis=:log)# xaxis=:log, yaxis=:log)
+        )
+        # Line(sort((draws.all_gradient_losses[:, mxcs_idxs[i]])), 1:size(es_draws, 1))
+        for (j, draws) in enumerate(bc_draws)
+    ])
+    for i in 1:mno_xcs, draws in vcat(bc_draws, missing)
+], plot_width=200, extra_figure_kwargs=(
+    margin=0mm,
+    xaxis=false, yaxis=false, xticks=false, yticks=false, 
+)) |> display
+
+Figure([ 
+    !ismissing(draws) ? (
+        # scatter_funnel(
+        #     draws, i, log.(draws.all_gradient_losses[:, mxcs_idxs[i]]),
+        #     clim=(mins[i], maxs[i])#, colorbar=draws === bc_draws[1] ? :left : :none
+        # ) 
+        SortedScatter(
+            draws[:, mxcs_idxs[i]], draws.gradients[:, mxcs_idxs[i]], 
+            log.(draws.all_gradient_losses[:, mxcs_idxs[i]]),
+            clim=(mins[i], maxs[i]) 
+        )
+    )  : sum([
+        Line(
+            sort(draws.all_gradient_losses[:, mxcs_idxs[i]]), 
+            reverse(1:size(es_draws, 1)),
+            # draws.all_gradient_losses[agl_idxs[i], mxcs_idxs[i]],
+            plot_kwargs=(label=j, xaxis=:log)# xaxis=:log, yaxis=:log)
+        )
+        # Line(sort((draws.all_gradient_losses[:, mxcs_idxs[i]])), 1:size(es_draws, 1))
+        for (j, draws) in enumerate(bc_draws)
+    ])
+    for i in 1:mno_xcs, draws in vcat(bc_draws, missing)
+], plot_width=200, extra_figure_kwargs=(
+    margin=0mm,
+    xaxis=false, yaxis=false, xticks=false, yticks=false, 
+))
+ 
+
+# Figure([ 
+#     scatter_funnel(draws, i, log.(draws.all_fisher_gradient_losses[:, mxcs_idxs[i]]))
+#     for i in 1:es_draws.info.no_xcs, draws in bc_draws
+# ], plot_width=200, extra_figure_kwargs=(
+#     margin=0mm,
+#     xaxis=false, yaxis=false, xticks=false, yticks=false, 
+# ))  
 ```   
+```{.julia}
+# mc_posterior = PDBPosterior(
+#     "mcycle_gp-accel_gp", distribution_info_wrapper=MotorcycleInfo
+# )
+# mc_draws = mc_posterior.unconstrained_draws
+# bc_mc_draws = reparametrize(ContinuousNoncentering(mc_draws.best_centeredness, 0), mc_draws)
+# Figure([ 
+#     scatter_funnel(draws, i)
+#     for i in 1:mc_draws.info.no_xcs, draws in [mc_draws, bc_mc_draws]
+# ], plot_width=200, extra_figure_kwargs=(
+#     margin=0mm,
+#     xaxis=false, yaxis=false, xticks=false, yticks=false, 
+#     markerstrokewidth=0,
+# ))
+# # @time mc_draws.best_centeredness
+# plot(
+#     [mc_draws.best_centeredness, best_centeredness(mc_draws, naive_loss)],
+# )
+# update_data(mc_posterior, Dict("NBgp_1"=>1)).data_string
+# mc_draws = mc_posterior.unconstrained_draws
+# # c_pu = ContinuousNoncentering(ones(mc_draws.no_xcs), previous_centeredness=0) 
+# # c_mc_draws = reparametrize(c_pu, mc_draws)
+# # bc_mc_pu = ContinuousNoncentering(mc_draws.best_centeredness, motorcycle_wrapper, previous_centeredness=0)
+# # bc_mc_draws = reparametrize(bc_mc_pu, mc_draws)
+# # display(Line(1:mc_draws.no_xcs, bc_mc_pu.centeredness))
+# # plot(mc_draws.best_centeredness)
+# bc = mc_draws.best_centeredness
+# bc_mc_draws = subset(
+#     reparametrize(
+#         ContinuousNoncentering(
+#             bc, motorcycle_wrapper, previous_centeredness=0
+#         ), 
+#         mc_draws
+#     ), 
+#     1:1000
+# )
+
+# # mc_draws = MotorcycleDraws(PDBPosterior("mcycle_gp-accel_gp").unconstrained_draws)[1:1000, 1:60]
+# # no_plots = 40
+# PairPlots(subset(mc_draws, 1:1000), 1:20, 1:66)
+# ```   
+# ```{.julia}
+# PairPlots(mc_draws, 21:40, 21:66)
+# ``` 
+# ```{.julia}
+# PairPlots(mc_draws, 41:66, 41:66)
+# ``` 
+# ```{.julia}
+# idxs = vcat(2:4, 45:47)
+# PairPlots(bc_mc_draws, idxs, idxs)
+# ```
+# ```{.julia}
+# PairPlots(mc_draws, idxs, idxs)
+# ``` 
+# ```{.julia}
+# cov_sqrt(what::UnconstrainedDraws) = sqrt(cov(what.unconstrained_draws))
+# pca_sqrt(what::UnconstrainedDraws) = (
+#     e = eigen(cov(what.unconstrained_draws));
+#     e.vectors * Diagonal(sqrt.(e.values))
+# )
+# Statistics.mean(what::UnconstrainedDraws) = mean(what.unconstrained_draws, dims=1)
+# whitened(what::UnconstrainedDraws) = DynamicObjects.update(
+#     what, unconstrained_draws=(
+#         what.unconstrained_draws .- what.mean
+#     ) / what.cov_sqrt' 
+# )
+# pcad(what::UnconstrainedDraws) = DynamicObjects.update(
+#     what, unconstrained_draws=(
+#         what.unconstrained_draws .- what.mean
+#     ) / what.pca_sqrt' 
+# ) 
+# PairPlots(mc_draws.whitened, 1:20, 1:66)
+# # mc_draws.unconstrained_draws .- reshape(mc_draws.mean, (1, :))
+# # Statistics.cov(what::UnconstrainedDraws) = cov(what.unconstrained_draws)
+# # corr(what) = (
+# #     C = cov(what);
+# #     S = Diagonal(sqrt.(diag(C)));
+# #     S \ C / S
+# # )
+
+# # square(x) = x^2
+# # argsort(x; kwargs...) = sort(1:length(x), by=i->x[i]; kwargs...)
+# # reverse(argsort(
+# #     maximum(abs.(eigen(cov(mc_draws.unconstrained_draws)).vectors), dims=2)
+# # ))'
+# ```  
+# ```{.julia}
+# # PairPlots(mc_draws.pcad, 1:20, 1:20)
+# PairPlots(mc_draws.pcad, 1:20, 1:66)
+# # reverse(argsort(
+# #     maximum(abs.(eigen(corr(mc_draws.unconstrained_draws)).vectors), dims=2)
+# # ))'
+# ``` 
+# ```{.julia}
+```

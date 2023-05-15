@@ -1,0 +1,215 @@
+---
+title:  Using posteriordb reference draws
+---
+```{julia}
+if pwd()[end] != 's'
+    using Revise
+    using Pkg
+    cd("examples")
+    Pkg.activate(".")
+    # Base.display(d::VSCodeServer.InlineDisplay, what::Plot) = display(d, what.figure)
+end
+includet("common.jl")
+Random.seed!(1) 
+```
+```{julia}
+"""
+parameters {
+    real mu;                                                // population mean of success log-odds
+    real<lower=0> sigma;                                    // population sd of success log-odds
+    vector[n_opponents] alpha;                              // success log-odds
+}
+"""
+@dynamic_object BinomInfo <: DistributionInfo data::Dict
+xcs_idxs(what::BinomInfo) = 3:2+what["n_opponents"]
+means_idxs(what::BinomInfo) = 1
+log_sds_idxs(what::BinomInfo) = 2
+centeredness(what::BinomInfo) = 1
+
+binom_dist(data_path) = (
+    json_string = read(open(data_path, "r"), String);
+    BSDistribution(StanModel(
+        stan_file="binom/model.stan", 
+        data=json_string
+    ), info=BinomInfo(JSON.parse(json_string)))
+)
+
+function nbc_draws(dist)
+    no_xcs = length(dist.info.xcs_idxs)
+    nc_draws = recenter(dist, zeros(no_xcs)).cached_unconstrained_chains
+    bc_draws = recenter(dist, nc_draws.best_centeredness).cached_unconstrained_chains
+    c_draws = recenter(dist, ones(no_xcs)).cached_unconstrained_chains
+
+    [nc_draws, bc_draws, c_draws] .|> (draws->recenter(draws, 1) |> update(:effs))
+end
+
+function effs_plot(dist, rel=false, means=true)
+    parameter_idxs = 1:dist.no_dimensions
+    nbc_draws = dist.cached_nbc_draws 
+    effs = getproperty.(nbc_draws, means ? :effs : :sq_effs)
+    sort_idxs = sortperm(vec(minimum(hcat(effs...), dims=2)))
+    effs = [eff[sort_idxs] for eff in effs]
+    if rel
+        effs = [eff ./ effs[2] for eff in effs]
+        Line(
+            parameter_idxs, effs, 
+            plot_kwargs=(ylim=(0, Inf), 
+            label=["non-centered" "adaptive" "centered"], color=[:blue :red :green])
+        )
+    else
+        Line(
+            parameter_idxs, effs, 
+            plot_kwargs=(ylim=(0, Inf), label=["non-centered" "adaptive"  "centered"])
+        )
+    end
+end 
+sq_effs_plot(dist) = effs_plot(dist, false, false)
+rel_effs_plot(dist) = effs_plot(dist, true)
+rel_sq_effs_plot(dist) = effs_plot(dist, true, false)
+
+function means_plot(dist)
+    parameter_idxs = 1:dist.no_dimensions
+    nbc_draws = dist.cached_nbc_draws 
+    means = mean.(nbc_draws, dims=1)
+    stds = std.(nbc_draws, dims=1)
+    rel_means = [(mean .- means[2])./stds[2] for mean in means][[1,3]]
+    rel_stds = [std./stds[2] for std in stds][[1,3]]
+    colors = [:blue, :green]
+    sum([
+        (
+            Scatter([i], [rel_means[i]], plot_kwargs=(label="", color=color)) 
+            + Line([i,i], rel_means[i] .+ [-1, +1] .* rel_stds[i], plot_kwargs=(label="", color=color))
+        )
+        for (color, rel_means, rel_stds) in zip(colors, rel_means, rel_stds)
+        for i in parameter_idxs
+    ])
+end
+
+summary_plot(dist) = Figure([
+    effs_plot(dist, rel, means)
+    for rel in [false, true], means in [true, false]
+    # dist.effs_plot, dist.rel_effs_plot, dist.means_plot
+])
+function convergence_plot(dist)
+    nbc_draws = dist.cached_nbc_draws
+    colors = [:blue, :red, :green]
+    reference_chains = recenter(dist.cached_reference_chains, 1)
+    sum([
+        Line(
+            cumsum(getproperty.(chain.all_stats, :n_steps))[1001:end],
+            global_convergence(reference_chains, chain),
+            plot_kwargs=(label="", color=color)
+        )
+        for (color, draws) in zip(colors, nbc_draws)
+        for chain in draws.chains
+    ]) |> update(
+        plot_kwargs=(xlim=(0, Inf), ylim=(-Inf, 1), yaxis=:log)
+    )
+end
+show_plots(dist) = display.([dist.cached_convergence_plot|> update(
+        plot_kwargs=(xlim=(0, Inf), ylim=(0, 1))
+    ), dist.cached_summary_plot])
+
+binom_dist("binom/data.json").cached_convergence_plot |> update(
+    plot_kwargs=(xlim=(0, Inf), ylim=(-Inf, 1), yaxis=:log)
+)
+# binom_dist("binom/data.json").cached_summary_plot
+# plot(
+#     [
+#         cumsum(getproperty.(chain.all_stats, :n_steps))[1001:end]
+#         for draws in binom_dist("binom/data.json").cached_nbc_draws
+#         for chain in draws.chains
+#     ],
+#     [
+#         update(chain, reference_distribution=binom_dist("binom/data.json")).global_convergence
+#         for draws in binom_dist("binom/data.json").cached_nbc_draws
+#         for chain in draws.chains
+#     ],
+#     xaxis=:linear, yaxis=:log, ylim=[1e-4, 1],
+#     label="", color=hcat(fill(:red, (1, 4)), fill(:blue, (1, 4)))
+# )
+# convergence_plot(binom_dist("binom/data.json"), binom_dist("binom/data.json").cached_unconstrained_draws)
+# convergence_plot(binom_dist("binom/data.json").cached_nbc_draws[1])
+# binom_dist("binom/data.json").cached_nbc_draws[1].esss
+# binom_dist("binom/data.json").cached_reference_chains.esss
+# nc_draws, bc_draws, c_draws = dist.nbc_draws
+# bc_draws = recenter(draws)
+# nc_draws = recenter(dist, zeros(size(bc_draws.centeredness))).cached_unconstrained_chains
+# bc_redraws = bc_draws.distribution.cached_unconstrained_chains
+
+# (
+#     PairPlots(recenter(nc_draws, 1), 1:10)
+#     + PairPlots(recenter(bc_redraws, 1), 1:10)
+#     + PairPlots(draws, 1:10) 
+#     # + PairPlots(recenter(draws, 0), 1:10)' 
+#     # + PairPlots(recenter(bc_redraws, 0), 1:10)' 
+# )
+
+# CenterednessComparison([nc_draws, bc_draws, c_draws])
+ 
+# Scatter(draws[:, 1], draws[:, 2]).figure
+# bc_draws = recenter(draws)
+# bc_dist = InfoDistribution(bc_draws.info)
+# logpdf(bc_dist, bc_draws[1,:])
+
+# logpdf(bc_draws.info.distribution, bc_draws.info, bc_draws[1,:])
+# logpdf_gradient(bc_info, bc_draws[1, :])
+# bc_redraws = DynamicObjects.update(
+#     DynamicObjects.cached(bc_dist, :unconstrained_draws),
+#     info=bc_draws.info
+# )
+# scatter(draws.best_centeredness, [
+#     nc_draws.best_centeredness,
+#     bc_draws.best_centeredness,
+#     draws.best_centeredness
+# ])
+```
+```{julia}
+binom_dist("binom/data2.json") |> show_plots;
+```
+```{julia}
+PDBPosterior(
+    "eight_schools-eight_schools_centered", info_wrapper=EightSchoolsInfo
+).bridgestan_distribution |> show_plots;
+```
+```{julia}
+PDBPosterior(
+    "radon_mn-radon_hierarchical_intercept_centered", info_wrapper=RadonICInfo
+).bridgestan_distribution |> show_plots;
+```
+```{julia}
+PDBPosterior(
+    "radon_mn-radon_variable_intercept_slope_centered", info_wrapper=RadonISCInfo
+).bridgestan_distribution |> show_plots;
+```
+```{.julia}
+PDBPosterior(
+    "radon_all-radon_hierarchical_intercept_centered", info_wrapper=RadonICInfo
+).bridgestan_distribution |> show_plots;
+```
+```{.julia}
+PDBPosterior(
+    "radon_all-radon_variable_intercept_slope_centered", info_wrapper=RadonISCInfo
+).bridgestan_distribution |> show_plots;
+```
+```{julia}
+
+# PairPlots(
+#     mcycle_dist("homoscedastic").cached_unconstrained_draws, 1:20
+# ) + PairPlots(
+#     recenter(mcycle_dist("homoscedastic_centered").cached_unconstrained_draws, 0), 1:20
+# )
+mcycle_dist("homoscedastic_centered") |> show_plots;
+using Serialization
+nc_draws = Serialization.deserialize("cache/unconstrained_chains_DynamicDistribution{:ReparametrizedDistribution}_6759533281334098494")
+nc_draws.thinned.thinned.centeredness_losses
+
+# Plotter(
+#     heatmap!,
+#     (nc_draws.thinned.centeredness_losses, )
+# ).figure
+nc_draws.thinned.best_centeredness_convergence_plot.figure
+```
+```{julia}
+ 
+```

@@ -53,12 +53,27 @@ display("$(round(cond(dist.transform))) -> $(round.(exp.(mean(log.(conds), dims=
 ```
 ```{julia}
 
-rdist = StdNormalPosterior(n_parameters)
-dist = WarmupHMC.ScaledLogDensity(
+rng = Xoshiro(0)
+n_parameters = 10
+rdist = ProductPosterior(fill(Laplace(), n_parameters))
+# rdist = ADgradient(:ReverseDiff, rdist; compile=Val(false))
+scaling = Diagonal((exp.(-sort(randn(rng, n_parameters)))))
+display(diag(scaling)')
+display(1 ./ diag(scaling)')
+rotation = qr(randn(rng, (n_parameters, n_parameters))).Q
+dist = ScaledLogDensity(
     rdist,
     scaling * rotation
 )
-trace = []
-approximately_whitened(dist, pack=(x,a)->push!(trace, x))
-xs = hcat(trace...)
+display(cond(dist.transform))
+
+dists = [
+    approximately_whitened(dist; n_iterations=1, rng=Xoshiro(i), twosided=ts)
+    for i in 1:40, ts in [true, :first, false]
+]
+dists = [
+    dist for dist in dists if all(isfinite.(dist.transform))
+]
+conds = cond.(getproperty.(dists, :transform))
+display("$(round(cond(dist.transform))) -> $(round.(exp.(mean(log.(conds), dims=1))))")
 ```

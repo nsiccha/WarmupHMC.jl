@@ -9,7 +9,7 @@ website:
 format:
   html:
     code-line-numbers: true
-jupyter: julia-warmup-1.8
+jupyter: julia-1.9
 execute:
   freeze: auto
   daemon: 3600

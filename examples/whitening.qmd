@@ -5,24 +5,19 @@ title:  Approximately whitening a normal distribution
 using WarmupHMC
 using LinearAlgebra, Distributions, LogDensityProblems, Random
 
-struct StdNormalPosterior
-    N::Int
-end
-LogDensityProblems.dimension(what::StdNormalPosterior) = what.N
-LogDensityProblems.capabilities(::Type{<:StdNormalPosterior}) = LogDensityProblems.LogDensityOrder{1}()
-LogDensityProblems.logdensity(::StdNormalPosterior, x) = sum(logpdf.(Normal(), x))
-LogDensityProblems.logdensity_and_gradient(what::StdNormalPosterior, x) = LogDensityProblems.logdensity(what, x), -x
+ProductPosterior = WarmupHMC.ProductPosterior
+ScaledLogDensity = WarmupHMC.ScaledLogDensity
 
 ```
 ```{julia}
 rng = Xoshiro(0)
 n_parameters = 20
-rdist = StdNormalPosterior(n_parameters)
+rdist = ProductPosterior(fill(Normal(), n_parameters))
 scaling = Diagonal((exp.(-sort(randn(rng, n_parameters)))))
 display(diag(scaling)')
 display(1 ./ diag(scaling)')
 rotation = qr(randn(rng, (n_parameters, n_parameters))).Q
-dist = WarmupHMC.ScaledLogDensity(
+dist = ScaledLogDensity(
     rdist,
     scaling * rotation
 )
@@ -32,18 +27,8 @@ dists = [
     for i in 1:40, ts in [true, :first, false]
 ]
 conds = cond.(getproperty.(dists, :transform))
-display((cond(dist.transform)))
-display(exp.(mean(log.(conds), dims=1)))
+display("$(round(cond(dist.transform))) -> $(round.(exp.(mean(log.(conds), dims=1))))")
 # display(mean(log.(conds[:, 1:2] ./ conds[:, 3]), dims=1))
-```
-```{julia}
-struct ProductPosterior{T}
-    dists::Vector{T}
-end
-LogDensityProblems.dimension(what::ProductPosterior) = length(what.dists)
-LogDensityProblems.capabilities(::Type{<:ProductPosterior}) = LogDensityProblems.LogDensityOrder{1}()
-LogDensityProblems.logdensity(what::ProductPosterior, x) = sum(logpdf.(what.dists, x))
-LogDensityProblems.logdensity_and_gradient(what::ProductPosterior, x) = LogDensityProblems.logdensity(what, x), gradlogpdf.(what.dists, x)
 ```
 ```{julia}
 rng = Xoshiro(0)
@@ -53,7 +38,7 @@ scaling = Diagonal((exp.(-2sort(randn(rng, n_parameters)))))
 display(diag(scaling)')
 display(1 ./ diag(scaling)')
 rotation = qr(randn(rng, (n_parameters, n_parameters))).Q
-dist = WarmupHMC.ScaledLogDensity(
+dist = ScaledLogDensity(
     rdist,
     scaling * rotation
 )
@@ -63,7 +48,17 @@ dists = [
     for i in 1:40, ts in [true, :first, false]
 ]
 conds = cond.(getproperty.(dists, :transform))
-display((cond(dist.transform)))
-display(exp.(mean(log.(conds), dims=1)))
+display("$(round(cond(dist.transform))) -> $(round.(exp.(mean(log.(conds), dims=1))))")
 # display(mean(log.(conds[:, 1:2] ./ conds[:, 3]), dims=1))
+```
+```{julia}
+
+rdist = StdNormalPosterior(n_parameters)
+dist = WarmupHMC.ScaledLogDensity(
+    rdist,
+    scaling * rotation
+)
+trace = []
+approximately_whitened(dist, pack=(x,a)->push!(trace, x))
+xs = hcat(trace...)
 ```

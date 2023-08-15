@@ -74,7 +74,7 @@ function approximate_whitening(
     dt = collect(Diagonal(fill(dt_mul, n_parameters)))
 
     a = lpdfg(x)
-    # pack(x, a)
+    pack(x, a)
     for iteration in 1:n_iterations
         dt[iteration:end, :] *= dt0
         v = randn(rng, n_parameters)
@@ -93,7 +93,7 @@ function approximate_whitening(
         end
         x = xr
         a = ar
-        # pack(x, a)
+        pack(x, a)
         dx = dt * dx
         da = dt * da
         v = dt * v
@@ -111,6 +111,14 @@ function approximate_whitening(
     dt ./= dt_mul
     return dt
 end
+
+struct ProductPosterior{T}
+    dists::Vector{T}
+end
+LogDensityProblems.dimension(what::ProductPosterior) = length(what.dists)
+LogDensityProblems.capabilities(::Type{<:ProductPosterior}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity(what::ProductPosterior, x) = sum(logpdf.(what.dists, x))
+LogDensityProblems.logdensity_and_gradient(what::ProductPosterior, x) = LogDensityProblems.logdensity(what, x), gradlogpdf.(what.dists, x)
 
 struct ScaledLogDensity{L, T} 
     logdensity::L

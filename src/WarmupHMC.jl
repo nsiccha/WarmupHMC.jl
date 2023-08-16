@@ -67,24 +67,41 @@ function approximate_whitening(
     logdensity; 
     dt0=1e-6, rng=Xoshiro(0), n_parameters = LogDensityProblems.dimension(logdensity), n_iterations=n_parameters, x=randn(rng, n_parameters),
     dt_speedup=8, dt_mul=1. / dt_speedup, pack=do_nothing,
-    twosided=false
+    twosided=false, vinit=:random, vrefresh=:all
 )
     lpdfg(x) = LogDensityProblems.logdensity_and_gradient(logdensity, x)[2]
     
     dt = collect(Diagonal(fill(dt_mul, n_parameters)))
 
     a = lpdfg(x)
+    v = if vinit == :random
+        randn(rng, n_parameters)
+    elseif vinit == :igradient
+        1 ./ a
+    else
+        0 .* a
+    end
     pack(x, a)
     for iteration in 1:n_iterations
         dt[iteration:end, :] *= dt0
-        v = randn(rng, n_parameters)
+        
         # dx = dt' * (v + .5 * (dt*a))
         dxv = dt' * v
         dxa = dt' * (dt * .5a)
         xr = x + dxv + dxa
         ar = lpdfg(xr)
+        if vrefresh == :all
+            v = randn(rng, n_parameters)
+        else
+            v += .5 * (dt * (a + ar))
+            if vrefresh == :fast
+                v[1:iteration] .= randn(rng, iteration)
+            elseif vrefresh == :slow
+                v[iteration+1:end] .= randn(rng, n_parameters-iteration)
+            end
+        end
 
-        dx, da, v = if twosided == true || twosided == :first && iteration == 1
+        dx, da, dir = if twosided == true || twosided == :first && iteration == 1
             xl = x - dxv + dxa
             al = lpdfg(xl)
             xr-xl,ar-al,ar-2a+al
@@ -96,12 +113,12 @@ function approximate_whitening(
         pack(x, a)
         dx = dt * dx
         da = dt * da
-        v = dt * v
-        v[1:iteration-1] .= 0
-        nv = v |> normalize
-        scale = sqrt(abs(dot(nv, dx) / dot(nv, da)))
-        if nv[iteration] != 1
-            hr = HouseholderReflector(nv, iteration)
+        dir = dt * dir
+        dir[1:iteration-1] .= 0
+        dir = dir |> normalize
+        scale = sqrt(abs(dot(dir, dx) / dot(dir, da)))
+        if dir[iteration] != 1
+            hr = HouseholderReflector(dir, iteration)
             dt = hr * dt
         end
         dt[iteration:end, :] ./= dt0

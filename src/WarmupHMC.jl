@@ -137,7 +137,7 @@ function approximate_whitening(
         dt[iteration, :] .*= scale
         dt0 = dt_speedup*scale
         if escalate_velocity
-            v[iteration+1:end] *= oscale
+            v[iteration+1:end] *= rscale
         end
     end
     dt ./= dt_mul

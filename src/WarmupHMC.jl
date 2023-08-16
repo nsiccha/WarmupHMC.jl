@@ -124,9 +124,9 @@ struct ScaledLogDensity{L, T}
     logdensity::L
     transform::T
 end
-ScaledLogDensity(what::ScaledLogDensity, transform) = ScaledLogDensity(
-    what.logdensity, what.transform * transform
-)
+# ScaledLogDensity(what::ScaledLogDensity, transform) = ScaledLogDensity(
+#     what.logdensity, what.transform * transform
+# )
 LogDensityProblems.dimension(what::ScaledLogDensity) = LogDensityProblems.dimension(
     what.logdensity
 )

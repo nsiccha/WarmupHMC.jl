@@ -81,7 +81,7 @@ function approximate_whitening(
     else
         0 .* a
     end
-    pack(x, a)
+    pack(x, v, a)
     for iteration in 1:n_iterations
         dt[iteration:end, :] *= dt0
         
@@ -110,7 +110,7 @@ function approximate_whitening(
         end
         x = xr
         a = ar
-        pack(x, a)
+        pack(x, v, a)
         dx = dt * dx
         da = dt * da
         dir = dt * dir

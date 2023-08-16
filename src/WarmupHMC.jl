@@ -120,7 +120,9 @@ function approximate_whitening(
         if dir[iteration] != 1
             hr = HouseholderReflector(dir, iteration)
             dt = hr * dt
-            v = hr * v
+            if vrefresh != :all
+                v = hr * v
+            end
         end
         dt[iteration:end, :] ./= dt0
         dt[iteration, :] .*= scale

@@ -151,6 +151,7 @@ function approximate_whitening(
             v[iteration+1:end] *= rscale
         end
     end
+    dt0 = 1.
     end
     dt ./= dt_mul
     return dt

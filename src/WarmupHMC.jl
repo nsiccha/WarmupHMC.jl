@@ -88,12 +88,12 @@ function approximate_whitening(
     pack(x, v, a)
     oscale = missing
     for iteration in 1:n_iterations
-        dt[iteration:end, :] *= dt0
         if vscale == :igradient
             v = v ./ (dt * a)
         elseif vscale isa Real
             v = v ./ abs.(dt * a).^vscale
         end
+        dt[iteration:end, :] *= dt0
         
         # dx = dt' * (v + .5 * (dt*a))
         dxv = dt' * v

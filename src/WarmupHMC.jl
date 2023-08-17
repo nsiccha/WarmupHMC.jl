@@ -99,6 +99,8 @@ function approximate_whitening(
                 v[1:iteration] .= randn(rng, iteration)
             elseif vrefresh == :slow
                 v[iteration:end] .= randn(rng, 1+n_parameters-iteration)
+            elseif vrefresh == :aslow
+                v[iteration:end] .+= randn(rng, 1+n_parameters-iteration)
             end
         end
 

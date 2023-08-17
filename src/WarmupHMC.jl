@@ -90,9 +90,9 @@ function approximate_whitening(
     for iteration in 1:n_iterations
         dt[iteration:end, :] *= dt0
         if vscale == :igradient
-            v = v ./ (dt * ar)
+            v = v ./ (dt * a)
         elseif vscale isa Real
-            v = v ./ abs.(dt * ar).^vscale
+            v = v ./ abs.(dt * a).^vscale
         end
         
         # dx = dt' * (v + .5 * (dt*a))

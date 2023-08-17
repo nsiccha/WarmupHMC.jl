@@ -68,7 +68,7 @@ function approximate_whitening(
     dt0=1e-6, rng=Xoshiro(0), n_parameters = LogDensityProblems.dimension(logdensity), n_iterations=n_parameters, x=randn(rng, n_parameters),
     dt_speedup=8, dt_mul=1. / dt_speedup, pack=do_nothing,
     twosided=false, vinit=:random, vrefresh=:all, sparse=:false, escalate_velocity=false,
-    tinit=:uniform
+    tinit=:uniform, vscale=:uniform
 )
     lpdfg(x) = LogDensityProblems.logdensity_and_gradient(logdensity, x)[2]
     
@@ -89,6 +89,9 @@ function approximate_whitening(
     oscale = missing
     for iteration in 1:n_iterations
         dt[iteration:end, :] *= dt0
+        if vscale == :igradient
+            v = v ./ (dt * a)
+        end
         
         # dx = dt' * (v + .5 * (dt*a))
         dxv = dt' * v

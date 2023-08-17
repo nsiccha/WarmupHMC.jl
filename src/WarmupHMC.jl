@@ -117,7 +117,7 @@ function approximate_whitening(
             v = vr
             a = ar
         end
-        pack(lpr, xr, vr, ar, acceptance_rate)
+        pack(lp, x, v, a, acceptance_rate)
         if vrefresh == :all || !accept
             v = randn(rng, n_parameters)
         else

@@ -87,7 +87,6 @@ function approximate_whitening(
     end
     pack(lp, x, v, a)
     oscale = missing
-    for repetition in 1:n_repetitions
     for iteration in 1:n_iterations
         if vscale == :igradient
             v = v ./ (dt * a)
@@ -150,8 +149,6 @@ function approximate_whitening(
         if escalate_velocity
             v[iteration+1:end] *= rscale
         end
-    end
-    dt0 = 1.
     end
     dt ./= dt_mul
     return dt

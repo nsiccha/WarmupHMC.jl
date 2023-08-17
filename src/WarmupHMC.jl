@@ -68,7 +68,7 @@ function approximate_whitening(
     dt0=1e-6, rng=Xoshiro(0), n_parameters = LogDensityProblems.dimension(logdensity), n_repetitions=1, n_iterations=n_parameters, x=randn(rng, n_parameters),
     dt_speedup=8, dt_mul=1. / dt_speedup, pack=do_nothing,
     twosided=false, vinit=:random, vrefresh=:all, sparse=:false, escalate_velocity=false,
-    tinit=:uniform, vscale=:uniform
+    tinit=:uniform, vscale=:uniform, mh=true
 )
     lpdfg(x) = LogDensityProblems.logdensity_and_gradient(logdensity, x)
     
@@ -101,16 +101,6 @@ function approximate_whitening(
         xr = x + dxv + dxa
         lpr, ar = lpdfg(xr)
         vr = v + .5 * (dt * (a + ar))
-        if vrefresh == :all
-            v = randn(rng, n_parameters)
-        else
-            v += .5 * (dt * (a + ar))
-            if vrefresh == :fast
-                v[1:iteration] .= randn(rng, iteration)
-            elseif vrefresh == :slow
-                v[iteration:end] .= randn(rng, 1+n_parameters-iteration)
-            end
-        end
 
         dx, da, dir = if twosided == true || twosided == :first && iteration == 1
             xl = x - dxv + dxa
@@ -119,9 +109,23 @@ function approximate_whitening(
         else
             xr-x,ar-a,ar-a
         end
-        x = xr
-        a = ar
+        accept = !mh || rand(rng) < exp((.5sum(vr.^2) - lpr) - (.5sum(v.^2) - lp))
+        if accept
+            lp = lpr
+            x = xr
+            v = vr
+            a = ar
+        end
         pack(lpr, xr, vr, ar)
+        if vrefresh == :all || !accept
+            v = randn(rng, n_parameters)
+        else
+            if vrefresh == :fast
+                v[1:iteration] .= randn(rng, iteration)
+            elseif vrefresh == :slow
+                v[iteration:end] .= randn(rng, 1+n_parameters-iteration)
+            end
+        end
         dx = dt * dx
         da = dt * da
         dir = dt * dir

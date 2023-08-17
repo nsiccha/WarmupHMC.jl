@@ -65,7 +65,7 @@ projected_out(x, n::AbstractVector) = x - n * (n' * x)
 
 function approximate_whitening(
     logdensity; 
-    dt0=1e-6, rng=Xoshiro(0), n_parameters = LogDensityProblems.dimension(logdensity), n_iterations=n_parameters, x=randn(rng, n_parameters),
+    dt0=1e-6, rng=Xoshiro(0), n_parameters = LogDensityProblems.dimension(logdensity), n_repetitions=1, n_iterations=n_parameters, x=randn(rng, n_parameters),
     dt_speedup=8, dt_mul=1. / dt_speedup, pack=do_nothing,
     twosided=false, vinit=:random, vrefresh=:all, sparse=:false, escalate_velocity=false,
     tinit=:uniform, vscale=:uniform
@@ -87,6 +87,7 @@ function approximate_whitening(
     end
     pack(lp, x, v, a)
     oscale = missing
+    for repetition in 1:n_repetitions
     for iteration in 1:n_iterations
         if vscale == :igradient
             v = v ./ (dt * a)
@@ -149,6 +150,7 @@ function approximate_whitening(
         if escalate_velocity
             v[iteration+1:end] *= rscale
         end
+    end
     end
     dt ./= dt_mul
     return dt

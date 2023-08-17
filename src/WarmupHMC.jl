@@ -85,7 +85,7 @@ function approximate_whitening(
     else
         0 .* a
     end
-    pack(lp, x, v, a)
+    pack(lp, x, v, a, 1.)
     oscale = missing
     for iteration in 1:n_iterations
         if vscale == :igradient
@@ -109,14 +109,15 @@ function approximate_whitening(
         else
             xr-x,ar-a,ar-a
         end
-        accept = !mh || rand(rng) < exp((.5sum(vr.^2) - lpr) - (.5sum(v.^2) - lp))
+        acceptance_rate = exp((.5sum(vr.^2) - lpr) - (.5sum(v.^2) - lp))
+        accept = !mh || rand(rng) < acceptance_rate
         if accept
             lp = lpr
             x = xr
             v = vr
             a = ar
         end
-        pack(lpr, xr, vr, ar)
+        pack(lpr, xr, vr, ar, acceptance_rate)
         if vrefresh == :all || !accept
             v = randn(rng, n_parameters)
         else

@@ -1,6 +1,6 @@
 module WarmupHMCDynamicHMCext
 
-using WarmupHMC, DynamicHMC, UnPack
+using WarmupHMC, DynamicHMC, UnPack, Random
 
 import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization
 

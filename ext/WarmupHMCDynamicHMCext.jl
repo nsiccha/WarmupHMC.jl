@@ -43,7 +43,12 @@ function initialize_reparametrization_state(rng, ℓ; kwargs...)
 end
 
 
-function warmup(sampling_logdensity, stage::Union{Nothing,InitialStepsizeSearch}, reparametrization_state::ReparametrizationState)
+function warmup(sampling_logdensity, stage::Nothing, reparametrization_state::ReparametrizationState)
+    @unpack reparametrization, warmup_state = reparametrization_state
+    warmup, warmup_state = warmup(sampling_logdensity, stage, warmup_state)
+    return warmup, ReparametrizationState(reparametrization, warmup_state)
+end
+function warmup(sampling_logdensity, stage::InitialStepsizeSearch, reparametrization_state::ReparametrizationState)
     @unpack reparametrization, warmup_state = reparametrization_state
     warmup, warmup_state = warmup(sampling_logdensity, stage, warmup_state)
     return warmup, ReparametrizationState(reparametrization, warmup_state)

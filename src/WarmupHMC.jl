@@ -191,6 +191,6 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 
 
 reparametrize(source, target, draw) = draw
-find_reparametrization(source, draw) = source
+find_reparametrization(source, draws::AbstractMatrix) = source
 mcmc_with_reparametrization(args...; kwargs...) = missing
 end

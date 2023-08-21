@@ -1,6 +1,6 @@
 module WarmupHMC
 
-export regularize, to_x1, to_xc, klp, klps, approximately_whitened#, klps_plot!
+export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization#, klps_plot!
 
 using DynamicObjects
 using Random, Distributions, LinearAlgebra
@@ -192,5 +192,5 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 
 reparametrize(source, target, draw) = draw
 find_reparametrization(source, draw) = source
-
+mcmc_with_reparametrization(args...; kwargs...) = missing
 end

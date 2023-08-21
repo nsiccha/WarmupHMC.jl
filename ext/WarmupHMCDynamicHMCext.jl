@@ -2,11 +2,9 @@ module WarmupHMCDynamicHMCext
 
 using WarmupHMC, DynamicHMC, UnPack
 
-import WarmupHMC: reparametrize, find_reparametrization
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization
 
 import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps
-
-export mcmc_with_reparametrization
 
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),

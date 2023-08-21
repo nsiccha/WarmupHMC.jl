@@ -190,5 +190,7 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 )
 
 
+reparametrize(source, target, draw) = draw
+find_reparametrization(source, draw) = source
 
 end

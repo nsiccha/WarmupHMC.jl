@@ -15,7 +15,7 @@ mcmc_keep_reparametrization(rng, ℓ, N; initialization = initialization,
    reporter = reporter)
    final_warmup_state = final_reparametrization_state.warmup_state
 @unpack κ, ϵ = final_warmup_state
-(; inference..., κ, ϵ)
+(; inference..., final_reparametrization_state)
 end
 
 function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;

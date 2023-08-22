@@ -189,8 +189,23 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
     logdensity, approximate_whitening(logdensity; kwargs...)'
 )
 
-
-reparametrize(source, target, draw) = draw
-find_reparametrization(source, draws::AbstractMatrix) = source
+reparametrization_parameters(::Any) = []
+reparametrize(source::Any, ::Any) = source
+# reparametrize(::Any, ::Any, draw::AbstractVector) = draw
+reparametrize(source, target, draws::AbstractMatrix) = hcat(
+    reparametrize.([source], [target], eachcol(draws))...
+)
+# lja(::Any, ::Any, draw::AbstractVector) = 0
+lja(source, target, draws::AbstractMatrix) = lja.([source], [target], eachcol(draws))
+lja_reparametrize(source, target, draws::AbstractMatrix) = lja(source, target, draws), reparametrize(source, target, draws)
+reparametrization_loss(source, target, draws::AbstractMatrix) = begin 
+    ljas, reparametrized = lja_reparametrize(source, target, draws)
+    mean(ljas) + sum(log.(std(reparametrized, dims=2)))
+end
+reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
+    loss(v) = reparametrization_loss(source, reparametrize(source, v), draws)
+end
+find_reparametrization(source, ::AbstractMatrix) = source
+find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 mcmc_with_reparametrization(args...; kwargs...) = missing
 end

@@ -1,4 +1,4 @@
-module WarmupHMCOptimReverseDiffext
+module WarmupHMCOptimReverseDiffExt
 
 using WarmupHMC, Optim, ReverseDiff
 

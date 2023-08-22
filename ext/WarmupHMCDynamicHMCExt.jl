@@ -1,4 +1,4 @@
-module WarmupHMCDynamicHMCext
+module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random
 

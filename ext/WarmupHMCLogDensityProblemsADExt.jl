@@ -1,4 +1,4 @@
-module WarmupHMCLogDensityProblemsADext
+module WarmupHMCLogDensityProblemsADExt
 
 using WarmupHMC, LogDensityProblemsAD
 

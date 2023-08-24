@@ -1,6 +1,6 @@
 module WarmupHMC
 
-export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization#, klps_plot!
+export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization, ConvenientLogDensityProblem#, klps_plot!
 
 using DynamicObjects
 using Random, Distributions, LinearAlgebra
@@ -208,4 +208,37 @@ end
 find_reparametrization(source, ::AbstractMatrix) = source
 find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 mcmc_with_reparametrization(args...; kwargs...) = missing
+
+
+logdensity_and_stuff(source, draw) = LogDensityProblems.logdensity(source, draw), nothing
+
+struct ConvenientLogDensityProblem{P,L,I}
+    prior::P
+    likelihood::L
+    draw_boundaries::Vector{I}
+    parameter_boundaries::Vector{I}
+end
+ConvenientLogDensityProblem(prior, likelihood) = begin
+    ConvenientLogDensityProblem(
+        prior, likelihood,  
+        vcat(0, cumsum(LogDensityProblems.dimension.(prior))), 
+        vcat(0, cumsum(length.(reparametrization_parameters.(prior)))), 
+    )
+end
+LogDensityProblems.dimension(source::ConvenientLogDensityProblem) = sum(LogDensityProblems.dimension.(source.prior))
+subdraws(source::ConvenientLogDensityProblem, draw::AbstractVector) = view.([draw], range.(1 .+ source.draw_boundaries[1:end-1], source.draw_boundaries[2:end]))
+subparameters(source::ConvenientLogDensityProblem, parameters) = view.([parameters], range.(1 .+ source.parameter_boundaries[1:end-1], source.parameter_boundaries[2:end]))
+reparametrization_parameters(source::ConvenientLogDensityProblem) = vcat(
+    reparametrization_parameters.(source.prior)...
+)
+
+@views LogDensityProblems.logdensity(source::ConvenientLogDensityProblem, draw::AbstractVector) = begin 
+    intermediates = logdensity_and_stuff.(
+        source.prior, subdraws(source, draw)
+    )
+    sum(first.(intermediates)) + sum(source.likelihood(last.(intermediates)...))
+end
+reparametrize(source::ConvenientLogDensityProblem, parameters) = ConvenientLogDensityProblem(reparametrize.(source.prior, subparameters(source, parameters)), source.likelihood, source.draw_boundaries, source.parameter_boundaries)
+reparametrize(source::ConvenientLogDensityProblem, target::ConvenientLogDensityProblem, draw::AbstractVector) = vcat(reparametrize.(source.prior, target.prior, subdraws(source, draw))...)
+lja(source::ConvenientLogDensityProblem, target::ConvenientLogDensityProblem, draw::AbstractVector) = sum(lja.(source.prior, target.prior, subdraws(source, draw)))
 end

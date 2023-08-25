@@ -191,13 +191,18 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 
 reparametrization_parameters(::Any) = []
 reparametrize(source::Any, ::Any) = source
-# reparametrize(::Any, ::Any, draw::AbstractVector) = draw
-reparametrize(source, target, draws::AbstractMatrix) = hcat(
-    reparametrize.([source], [target], eachcol(draws))...
-)
-# lja(::Any, ::Any, draw::AbstractVector) = 0
-lja(source, target, draws::AbstractMatrix) = lja.([source], [target], eachcol(draws))
-lja_reparametrize(source, target, draws::AbstractMatrix) = lja(source, target, draws), reparametrize(source, target, draws)
+lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
+    rv = lja_reparametrize.([source], [target], eachcol(draws))
+    first.(rv), hcat(second.(rv)...)
+end
+lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
+lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]
+# lja(source, target, draws::AbstractMatrix) = lja.([source], [target], eachcol(draws))
+reparametrize(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[2]
+reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[2]
+# reparametrize(source, target, draws::AbstractMatrix) = hcat(
+    # reparametrize.([source], [target], eachcol(draws))...
+# )
 reparametrization_loss(source, target, draws::AbstractMatrix) = begin 
     ljas, reparametrized = lja_reparametrize(source, target, draws)
     mean(ljas) + sum(log.(std(reparametrized, dims=2)))

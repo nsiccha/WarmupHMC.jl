@@ -193,7 +193,7 @@ reparametrization_parameters(::Any) = []
 reparametrize(source::Any, ::Any) = source
 lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
     rv = lja_reparametrize.([source], [target], eachcol(draws))
-    first.(rv), hcat(second.(rv)...)
+    first.(rv), hcat(last.(rv)...)
 end
 lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
 lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]
@@ -215,7 +215,13 @@ find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) =
 mcmc_with_reparametrization(args...; kwargs...) = missing
 
 
-logdensity_and_stuff(source, draw) = LogDensityProblems.logdensity(source, draw), nothing
+logdensity_and_stuff(source, draw::AbstractVector) = (
+    LogDensityProblems.logdensity(source, draw), nothing
+)
+logdensity_and_stuff(source, draws::AbstractMatrix) = begin 
+    rv = logdensity_and_stuff.([source], eachcol(draws))
+    first.(rv), last.(rv)
+end
 
 struct ConvenientLogDensityProblem{P,L,I}
     prior::P

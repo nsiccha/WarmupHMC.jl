@@ -189,6 +189,11 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
     logdensity, approximate_whitening(logdensity; kwargs...)'
 )
 
+
+struct Ignore end
+Base.:+(lhs::Ignore, ::Real) = lhs
+Base.:-(lhs::Ignore, ::Real) = lhs
+
 reparametrization_parameters(::Any) = []
 unconstrained_reparametrization_parameters(source::Any) = reparametrization_parameters(source)
 reparametrize(source::Any, ::Any) = source
@@ -258,3 +263,4 @@ reparametrize(source::ConvenientLogDensityProblem, parameters) = ConvenientLogDe
 reparametrize(source::ConvenientLogDensityProblem, target::ConvenientLogDensityProblem, draw::AbstractVector) = vcat(reparametrize.(source.prior, target.prior, subdraws(source, draw))...)
 lja(source::ConvenientLogDensityProblem, target::ConvenientLogDensityProblem, draw::AbstractVector) = sum(lja.(source.prior, target.prior, subdraws(source, draw)))
 end
+

@@ -190,7 +190,9 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 )
 
 reparametrization_parameters(::Any) = []
+unconstrained_reparametrization_parameters(source::Any) = reparametrization_parameters(source)
 reparametrize(source::Any, ::Any) = source
+unconstrained_reparametrize(source::Any, parameters::AbstractVector) = reparametrize(source, parameters)
 lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
     rv = lja_reparametrize.([source], [target], eachcol(draws))
     first.(rv), hcat(last.(rv)...)

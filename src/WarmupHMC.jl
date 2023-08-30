@@ -212,6 +212,9 @@ end
 reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
     loss(v) = reparametrization_loss(source, reparametrize(source, v), draws)
 end
+unconstrained_reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
+    loss(v) = reparametrization_loss(source, unconstrained_reparametrize(source, v), draws)
+end
 find_reparametrization(source, ::AbstractMatrix) = source
 find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 mcmc_with_reparametrization(args...; kwargs...) = missing

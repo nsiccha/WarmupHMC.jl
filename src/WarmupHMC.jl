@@ -190,7 +190,7 @@ approximately_whitened(logdensity; kwargs...) = ScaledLogDensity(
 )
 
 
-struct Ignore end
+struct Ignore <: Real end
 Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
 

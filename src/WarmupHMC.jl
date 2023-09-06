@@ -195,9 +195,7 @@ Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
 
 reparametrization_parameters(::Any) = []
-# unconstrained_reparametrization_parameters(source::Any) = reparametrization_parameters(source)
 reparametrize(source::Any, ::Any) = source
-# unconstrained_reparametrize(source::Any, parameters::AbstractVector) = reparametrize(source, parameters)
 lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
     rv = lja_reparametrize.([source], [target], eachcol(draws))
     first.(rv), hcat(last.(rv)...)
@@ -217,9 +215,9 @@ end
 reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
     loss(v) = reparametrization_loss(source, reparametrize(source, v), draws)
 end
-unconstrained_reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
-    loss(v) = reparametrization_loss(source, unconstrained_reparametrize(source, v), draws)
-end
+# unconstrained_reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
+#     loss(v) = reparametrization_loss(source, unconstrained_reparametrize(source, v), draws)
+# end
 find_reparametrization(source, ::AbstractMatrix) = source
 find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 mcmc_with_reparametrization(args...; kwargs...) = missing

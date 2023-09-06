@@ -195,9 +195,9 @@ Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
 
 reparametrization_parameters(::Any) = []
-unconstrained_reparametrization_parameters(source::Any) = reparametrization_parameters(source)
+# unconstrained_reparametrization_parameters(source::Any) = reparametrization_parameters(source)
 reparametrize(source::Any, ::Any) = source
-unconstrained_reparametrize(source::Any, parameters::AbstractVector) = reparametrize(source, parameters)
+# unconstrained_reparametrize(source::Any, parameters::AbstractVector) = reparametrize(source, parameters)
 lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
     rv = lja_reparametrize.([source], [target], eachcol(draws))
     first.(rv), hcat(last.(rv)...)
@@ -225,11 +225,11 @@ find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) =
 mcmc_with_reparametrization(args...; kwargs...) = missing
 
 
-logdensity_and_stuff(source, draw::AbstractVector) = (
+lpdf_and_invariants(source, draw::AbstractVector) = (
     LogDensityProblems.logdensity(source, draw), nothing
 )
-logdensity_and_stuff(source, draws::AbstractMatrix) = begin 
-    rv = logdensity_and_stuff.([source], eachcol(draws))
+lpdf_and_invariants(source, draws::AbstractMatrix) = begin 
+    rv = lpdf_and_invariants.([source], eachcol(draws))
     first.(rv), last.(rv)
 end
 
@@ -254,7 +254,7 @@ reparametrization_parameters(source::ConvenientLogDensityProblem) = vcat(
 )
 
 @views LogDensityProblems.logdensity(source::ConvenientLogDensityProblem, draw::AbstractVector) = begin 
-    intermediates = logdensity_and_stuff.(
+    intermediates = lpdf_and_invariants.(
         source.prior, subdraws(source, draw)
     )
     sum(first.(intermediates)) + sum(source.likelihood(last.(intermediates)...))

@@ -253,10 +253,10 @@ reparametrization_parameters(source::ConvenientLogDensityProblem) = vcat(
 )
 
 @views LogDensityProblems.logdensity(source::ConvenientLogDensityProblem, draw::AbstractVector) = begin 
-    intermediates = lpdf_and_invariants.(
-        source.prior, subdraws(source, draw)
+    intermediates = map(
+        lpdf_and_invariants, source.prior, subdraws(source, draw)
     )
-    sum(first.(intermediates)) + sum(source.likelihood(last.(intermediates)...))
+    sum(first.(intermediates)) + source.likelihood(intermediates)
 end
 reparametrize(source::ConvenientLogDensityProblem, parameters) = ConvenientLogDensityProblem(reparametrize.(source.prior, subparameters(source, parameters)), source.likelihood, source.draw_boundaries, source.parameter_boundaries)
 reparametrize(source::ConvenientLogDensityProblem, target::ConvenientLogDensityProblem, draw::AbstractVector) = vcat(reparametrize.(source.prior, target.prior, subdraws(source, draw))...)

@@ -14,6 +14,9 @@ end
 WarmupHMC.find_reparametrization(source::ADGradientWrapper, draws::AbstractMatrix) = begin
     WarmupHMC.reparametrize(source, WarmupHMC.find_reparametrization(parent(source), draws))
 end
+# WarmupHMC.reparametrize(::ADGradientWrapper, target::ContinuousMultivariateDistribution) = begin
+#     ADgradient(:ReverseDiff, target)
+# end
 # WarmupHMC.reparametrize(source::ADGradientWrapper, target::ADGradientWrapper, draw::AbstractVector) = begin 
 #     WarmupHMC.reparametrize(parent(source), parent(target), draw)
 # end

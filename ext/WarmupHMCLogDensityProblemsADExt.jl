@@ -11,6 +11,9 @@ import LogDensityProblemsAD: ADGradientWrapper
 WarmupHMC.lja_reparametrize(source::ADGradientWrapper, target::ADGradientWrapper, draw::AbstractVector) = begin 
     WarmupHMC.lja_reparametrize(parent(source), parent(target), draw)
 end
+WarmupHMC.find_reparametrization(source::ADGradientWrapper, draws::AbstractMatrix) = begin
+    WarmupHMC.reparametrize(source, WarmupHMC.find_reparametrization(parent(source), draws))
+end
 # WarmupHMC.reparametrize(source::ADGradientWrapper, target::ADGradientWrapper, draw::AbstractVector) = begin 
 #     WarmupHMC.reparametrize(parent(source), parent(target), draw)
 # end

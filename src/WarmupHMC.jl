@@ -222,6 +222,8 @@ end
 find_reparametrization(source, ::AbstractMatrix) = source
 find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 mcmc_with_reparametrization(args...; kwargs...) = missing
+mcmc_keep_reparametrization(args...; kwargs...) = missing
+
 
 
 lpdf_and_invariants(source, draw::AbstractVector) = (

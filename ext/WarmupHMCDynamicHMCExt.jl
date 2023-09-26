@@ -67,7 +67,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
     ϵs = Vector{Float64}(undef, N)
     mcmc_reporter = make_mcmc_reporter(reporter, N;
                                        currently_warmup = true,
-                                       tuning = M ≡ Nothing ? "stepsize" : "stepsize and $(M) metric")
+                                       tuning = M ≡ Nothing ? "stepsize" : "stepsize, $(M) metric and parametrization")
     Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
     for i in 1:N
         ϵ = current_ϵ(ϵ_state)
@@ -84,7 +84,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
             reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix)
         )
         κ = GaussianKineticEnergy(regularize_M⁻¹(sample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
-        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ)
+        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = reparametrization)
     end
     ((; posterior_matrix, tree_statistics, ϵs), ReparametrizationState(reparametrization, WarmupState(Q, κ, final_ϵ(ϵ_state))))
 end

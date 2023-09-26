@@ -195,7 +195,7 @@ struct Ignore <: Real end
 Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
 
-reparametrization_parameters(::Any) = []::Float64
+reparametrization_parameters(::Any) = Float64[]
 reparametrize(source::Any, ::Any) = source
 lja_reparametrize(source, target, draws::AbstractMatrix) = begin 
     rv = lja_reparametrize.([source], [target], eachcol(draws))

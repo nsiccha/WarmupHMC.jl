@@ -9,13 +9,14 @@ import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDen
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),
     algorithm = NUTS(), reporter = default_reporter())
-@unpack final_reparametrization_state, inference =
-mcmc_keep_reparametrization(rng, ℓ, N; initialization = initialization,
-   warmup_stages = warmup_stages, algorithm = algorithm,
-   reporter = reporter)
-   final_warmup_state = final_reparametrization_state.warmup_state
-@unpack κ, ϵ = final_warmup_state
-(; inference..., final_reparametrization_state)
+    @unpack final_reparametrization_state, inference = mcmc_keep_reparametrization(
+        rng, ℓ, N; initialization = initialization,
+        warmup_stages = warmup_stages, algorithm = algorithm,
+        reporter = reporter
+    )
+#    final_warmup_state = final_reparametrization_state.warmup_state
+# @unpack κ, ϵ = final_warmup_state
+    (; inference..., final_reparametrization_state)
 end
 
 function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
@@ -27,8 +28,7 @@ function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
     initial_reparametrization_state = initialize_reparametrization_state(rng, ℓ; initialization...)
     warmup, reparametrization_state = _warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state)
     inference = mcmc(sampling_logdensity, N, reparametrization_state)
-    (; initial_reparametrization_state, warmup, final_reparametrization_state = reparametrization_state, inference,
-     sampling_logdensity)
+    (; initial_reparametrization_state, warmup, final_reparametrization_state = reparametrization_state, inference, sampling_logdensity)
 end
 
 struct ReparametrizationState{R,W<:WarmupState}

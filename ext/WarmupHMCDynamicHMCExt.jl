@@ -84,7 +84,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
             reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix)
         )
         κ = GaussianKineticEnergy(regularize_M⁻¹(sample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
-        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = reparametrization)
+        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = reparametrization_parameters(reparametrization))
     end
     ((; posterior_matrix, tree_statistics, ϵs), ReparametrizationState(reparametrization, WarmupState(Q, κ, final_ϵ(ϵ_state))))
 end

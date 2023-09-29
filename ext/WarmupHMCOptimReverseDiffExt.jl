@@ -19,4 +19,18 @@ WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws::AbstractMat
     WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
 end
 
+WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws::AbstractMatrix; kwargs...) = begin 
+    init_arg = WarmupHMC.reparametrization_parameters(source)
+    if length(init_arg) == 1
+        loss = WarmupHMC.reparametrization_loss_function(source, draws)
+        optimization_result = optimize(
+            loss, init_arg, 
+            Optim.Options(iterations=100)
+        )
+        WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
+    else
+        WarmupHMC.find_reparametrization(:ReverseDiff, source, draws; kwargs...)
+    end
+end
+
 end

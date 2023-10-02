@@ -35,7 +35,7 @@ end
 reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
     loss(v) = reparametrization_loss(source, reparametrize(source, v), draws)
 end
-find_reparametrization(source::UnivariateDistribution, ::AbstractMatrix) = source
+find_reparametrization(source::UnivariateDistribution, ::AbstractMatrix; kwargs...) = source
 find_reparametrization(kind::Symbol, source, draws::AbstractMatrix; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
 # find_reparametrization_kwargs()
 function mcmc_with_reparametrization end

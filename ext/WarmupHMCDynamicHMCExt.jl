@@ -8,11 +8,11 @@ import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDen
 
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),
-    algorithm = NUTS(), reporter = default_reporter(); kwargs...)
+    algorithm = NUTS(), reporter = default_reporter(), kwargs...)
     @unpack final_reparametrization_state, inference = mcmc_keep_reparametrization(
         rng, ℓ, N; initialization = initialization,
         warmup_stages = warmup_stages, algorithm = algorithm,
-        reporter = reporter; kwargs...
+        reporter = reporter, kwargs...
     )
 #    final_warmup_state = final_reparametrization_state.warmup_state
 # @unpack κ, ϵ = final_warmup_state
@@ -23,7 +23,7 @@ function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
                           initialization = (),
                           warmup_stages = default_warmup_stages(),
                           algorithm = NUTS(),
-                          reporter = default_reporter(); kwargs...)
+                          reporter = default_reporter(), kwargs...)
     sampling_logdensity = SamplingLogDensity(rng, ℓ, algorithm, reporter)
     initial_reparametrization_state = initialize_reparametrization_state(rng, ℓ; initialization...)
     warmup, reparametrization_state = _warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state; kwargs...)

@@ -8,11 +8,11 @@ import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDen
 
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),
-    algorithm = NUTS(), reporter = default_reporter())
+    algorithm = NUTS(), reporter = default_reporter(); kwargs...)
     @unpack final_reparametrization_state, inference = mcmc_keep_reparametrization(
         rng, ℓ, N; initialization = initialization,
         warmup_stages = warmup_stages, algorithm = algorithm,
-        reporter = reporter
+        reporter = reporter; kwargs...
     )
 #    final_warmup_state = final_reparametrization_state.warmup_state
 # @unpack κ, ϵ = final_warmup_state
@@ -23,10 +23,10 @@ function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
                           initialization = (),
                           warmup_stages = default_warmup_stages(),
                           algorithm = NUTS(),
-                          reporter = default_reporter())
+                          reporter = default_reporter(); kwargs...)
     sampling_logdensity = SamplingLogDensity(rng, ℓ, algorithm, reporter)
     initial_reparametrization_state = initialize_reparametrization_state(rng, ℓ; initialization...)
-    warmup, reparametrization_state = _warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state)
+    warmup, reparametrization_state = _warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state; kwargs...)
     inference = mcmc(sampling_logdensity, N, reparametrization_state)
     (; initial_reparametrization_state, warmup, final_reparametrization_state = reparametrization_state, inference, sampling_logdensity)
 end
@@ -43,19 +43,27 @@ function initialize_reparametrization_state(rng, ℓ; kwargs...)
     )
 end
 
+function _warmup(sampling_logdensity, stages, initial_warmup_state; kwargs...)
+    foldl(stages; init = ((), initial_warmup_state)) do acc, stage
+        stages_and_results, warmup_state = acc
+        results, warmup_state′ = warmup(sampling_logdensity, stage, warmup_state; kwargs...)
+        stage_information = (stage, results, warmup_state = warmup_state′)
+        (stages_and_results..., stage_information), warmup_state′
+    end
+end
 
-function warmup(sampling_logdensity, stage::Nothing, reparametrization_state::ReparametrizationState)
+function warmup(sampling_logdensity, stage::Nothing, reparametrization_state::ReparametrizationState; kwargs...)
     @unpack reparametrization, warmup_state = reparametrization_state
     w, warmup_state = warmup(sampling_logdensity, stage, warmup_state)
     return w, ReparametrizationState(reparametrization, warmup_state)
 end
-function warmup(sampling_logdensity, stage::InitialStepsizeSearch, reparametrization_state::ReparametrizationState)
+function warmup(sampling_logdensity, stage::InitialStepsizeSearch, reparametrization_state::ReparametrizationState; kwargs...)
     @unpack reparametrization, warmup_state = reparametrization_state
     w, warmup_state = warmup(sampling_logdensity, stage, warmup_state)
     return w, ReparametrizationState(reparametrization, warmup_state)
 end
 
-function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_state::ReparametrizationState) where {M}
+function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_state::ReparametrizationState; kwargs...) where {M}
     @unpack rng, ℓ, algorithm, reporter = sampling_logdensity
     @unpack reparametrization, warmup_state = reparametrization_state
     @unpack Q, κ, ϵ = warmup_state
@@ -81,7 +89,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
     Q = evaluate_ℓ(ℓ, reparametrize(reparametrization, ℓ, Q.q); strict = true)
     if M ≢ Nothing
         reparametrization = find_reparametrization(
-            reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix)
+            reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix); kwargs...
         )
         κ = GaussianKineticEnergy(regularize_M⁻¹(sample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
         report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = WarmupHMC.reparametrization_parameters(reparametrization))

@@ -1,10 +1,10 @@
 module WarmupHMCDynamicHMCExt
 
-using WarmupHMC, DynamicHMC, UnPack, Random
+using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
 import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization
 
-import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step
+import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal
 
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),
@@ -88,6 +88,9 @@ Trying to recover...
     return source, Q
 end
 
+nansample_M⁻¹(::Type{Diagonal}, posterior_matrix) = Diagonal(vec(nanvar(posterior_matrix; dims = 2)))
+nansample_M⁻¹(::Type{Symmetric}, posterior_matrix) = Symmetric(nancov(posterior_matrix; dims = 2))
+
 function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_state::ReparametrizationState; kwargs...) where {M}
     @unpack rng, ℓ, algorithm, reporter = sampling_logdensity
     @unpack reparametrization, warmup_state = reparametrization_state
@@ -120,7 +123,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
             Q,
             posterior_matrix
         )
-        κ = GaussianKineticEnergy(regularize_M⁻¹(sample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
+        κ = GaussianKineticEnergy(regularize_M⁻¹(nansample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
         report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = WarmupHMC.reparametrization_parameters(reparametrization))
     end
     ((; posterior_matrix, tree_statistics, ϵs), ReparametrizationState(reparametrization, WarmupState(Q, κ, final_ϵ(ϵ_state))))

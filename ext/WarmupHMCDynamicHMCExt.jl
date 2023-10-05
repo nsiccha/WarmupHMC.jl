@@ -68,10 +68,11 @@ handle_reparametrization(reference, source, target, Q, reference_draws) = begin
         return target, evaluate_ℓ(target, reparametrize(source, target, Q.q); strict = true)
     catch e
         @warn """
-Failed to reparametrize to reference parameters: 
+Failed to reparametrize: 
     $source 
     $target 
     $draw
+    $(WarmupHMC.lpdf_and_invariants(source, draw, Ignore()))
     $e
 Trying to recover...
         """
@@ -84,7 +85,7 @@ Trying to recover...
         end
     end
     @warn """Failed to reparametrize all draws so far. Not reparametrizing!"""
-    return target, Q
+    return source, Q
 end
 
 function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_state::ReparametrizationState; kwargs...) where {M}

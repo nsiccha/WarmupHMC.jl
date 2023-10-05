@@ -66,7 +66,7 @@ end
 finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
     for draw in reverse(eachcol(posterior_matrix))
         try 
-            return evaluate_ℓ(reparametrization, draw; strict = true)
+            return evaluate_ℓ(reparametrization, collect(draw); strict = true)
         catch e
             @warn """
     Failed to evaluate log density: 
@@ -77,7 +77,7 @@ finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
             """
         end
     end
-    return evaluate_ℓ(reparametrization, posterior_matrix[:, 1])
+    return evaluate_ℓ(reparametrization, collect(posterior_matrix[:, 1]))
 end
 
 nansample_M⁻¹(::Type{Diagonal}, posterior_matrix) = Diagonal(vec(nanvar(posterior_matrix; dims = 2)))

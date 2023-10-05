@@ -12,16 +12,17 @@ include("deprecated.jl")
 struct Ignore <: Real end
 Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
+Base.:+(lhs::Test, ::Test) = lhs
 
 reparametrization_parameters(::Any) = Float64[]
 reparametrize(source::Any, ::Any) = source
 lja_reparametrize(source, target, draws::AbstractMatrix, lja=0.) = begin 
     lja_reparametrize(source, target, lpdf_and_invariants(source, draws, Ignore()), lja)
-    # rv = lja_reparametrize.([source], [target], eachcol(draws), lja)
+    # rv = lja_reparametrize.(Ref(source), Ref(target), eachcol(draws), lja)
     # first.(rv), hcat(last.(rv)...)
 end
 lja_reparametrize(source, target, draws::AbstractVector{<:NamedTuple}, lja=0.) = begin 
-    rv = lja_reparametrize.([source], [target], draws, [lja])
+    rv = lja_reparametrize.(Ref(source), Ref(target), draws, lja)
     first.(rv), hcat(last.(rv)...)
 end
 
@@ -41,15 +42,15 @@ lpdf_and_invariants(source, draw::AbstractVector, lpdf=0.) = begin
     lpdf += sum(logpdf.(source, draw))
     (;lpdf, draw)
 end
-lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.([source], eachcol(draws), [lpdf])
+lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.(Ref(source), eachcol(draws), lpdf)
 
 # lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
 # lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]
-# lja(source, target, draws::AbstractMatrix) = lja.([source], [target], eachcol(draws))
+# lja(source, target, draws::AbstractMatrix) = lja.(Ref(source), Ref(target), eachcol(draws))
 reparametrize(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[2]
 reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[2]
 # reparametrize(source, target, draws::AbstractMatrix) = hcat(
-    # reparametrize.([source], [target], eachcol(draws))...
+    # reparametrize.(Ref(source), Ref(target), eachcol(draws))...
 # )
 reparametrization_loss(source, target, draws) = begin 
     ljas, reparametrized = lja_reparametrize(source, target, draws)

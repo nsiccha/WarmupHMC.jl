@@ -76,6 +76,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
     mcmc_reporter = make_mcmc_reporter(reporter, N;
                                        currently_warmup = true,
                                        tuning = M ≡ Nothing ? "stepsize" : "stepsize, $(M) metric and parametrization")
+    Q0 = Q
     Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
     for i in 1:N
         ϵ = current_ϵ(ϵ_state)
@@ -86,7 +87,12 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         ϵ_state = adapt_stepsize(stepsize_adaptation, ϵ_state, stats.acceptance_rate)
         report(mcmc_reporter, i; ϵ = round(ϵ; sigdigits = REPORT_SIGDIGITS))
     end
-    Q = evaluate_ℓ(ℓ, reparametrize(reparametrization, ℓ, Q.q); strict = true)
+    Q = try
+        evaluate_ℓ(ℓ, reparametrize(reparametrization, ℓ, Q.q); strict = true)
+    catch e
+        @warn e
+        Q0
+    end
     if M ≢ Nothing
         reparametrization = find_reparametrization(
             reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix); kwargs...

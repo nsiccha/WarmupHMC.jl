@@ -26,7 +26,7 @@ function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
                           reporter = default_reporter(), kwargs...)
     sampling_logdensity = SamplingLogDensity(rng, ℓ, algorithm, reporter)
     initial_reparametrization_state = initialize_reparametrization_state(rng, ℓ; initialization...)
-    warmup, reparametrization_state = _warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state; kwargs...)
+    warmup, reparametrization_state = my_warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state; kwargs...)
     inference = mcmc(sampling_logdensity, N, reparametrization_state)
     (; initial_reparametrization_state, warmup, final_reparametrization_state = reparametrization_state, inference, sampling_logdensity)
 end
@@ -43,7 +43,7 @@ function initialize_reparametrization_state(rng, ℓ; kwargs...)
     )
 end
 
-function _warmup(sampling_logdensity, stages, initial_warmup_state; kwargs...)
+function my_warmup(sampling_logdensity, stages, initial_warmup_state; kwargs...)
     foldl(stages; init = ((), initial_warmup_state)) do acc, stage
         stages_and_results, warmup_state = acc
         results, warmup_state′ = warmup(sampling_logdensity, stage, warmup_state; kwargs...)

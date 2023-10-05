@@ -91,6 +91,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         evaluate_ℓ(ℓ, reparametrize(reparametrization, ℓ, Q.q); strict = true)
     catch e
         @warn e
+        @warn """Failed to reparametrize to reference parameters: $((reparametrization, ℓ, Q.q))"""
         Q0
     end
     if M ≢ Nothing

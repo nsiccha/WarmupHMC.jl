@@ -63,29 +63,21 @@ function warmup(sampling_logdensity, stage::InitialStepsizeSearch, reparametriza
     return w, ReparametrizationState(reparametrization, warmup_state)
 end
 
-handle_reparametrization(reference, source, target, Q, reference_draws) = begin
-    try 
-        return target, evaluate_ℓ(target, reparametrize(source, target, Q.q); strict = true)
-    catch e
-        @warn """
-Failed to reparametrize: 
-    $source 
-    $target 
-    $draw
-    $(WarmupHMC.lpdf_and_invariants(source, draw, Ignore()))
-    $e
-Trying to recover...
-        """
-    end
-    for rdraw in reverse(eachcol(reference_draws))
+finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
+    for draw in reverse(eachcol(posterior_matrix))
         try 
-            return target, evaluate_ℓ(target, reparametrize(reference, target, rdraw); strict = true)
+            return evaluate_ℓ(reparametrization, draw; strict = true)
         catch e
-            continue
+            @warn """
+    Failed to evaluate log density: 
+        $reparametrization
+        $draw
+        $e
+    Trying to recover...
+            """
         end
     end
-    @warn """Failed to reparametrize all draws so far. Not reparametrizing!"""
-    return source, Q
+    return evaluate_ℓ(reparametrization, posterior_matrix[:, 1])
 end
 
 nansample_M⁻¹(::Type{Diagonal}, posterior_matrix) = Diagonal(vec(nanvar(posterior_matrix; dims = 2)))
@@ -108,22 +100,17 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         ϵ = current_ϵ(ϵ_state)
         ϵs[i] = ϵ
         Q, stats = sample_tree(rng, algorithm, H, Q, ϵ)
-        posterior_matrix[:, i] = reparametrize(reparametrization, ℓ, Q.q)
+        posterior_matrix[:, i] = Q.q#reparametrize(reparametrization, ℓ, Q.q)
         tree_statistics[i] = stats
         ϵ_state = adapt_stepsize(stepsize_adaptation, ϵ_state, stats.acceptance_rate)
         report(mcmc_reporter, i; ϵ = round(ϵ; sigdigits = REPORT_SIGDIGITS))
     end
     if M ≢ Nothing
-        reparametrization, Q = handle_reparametrization(
-            ℓ, 
-            reparametrization,
-            find_reparametrization(
-                reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix); kwargs...
-            ),
-            Q,
-            posterior_matrix
-        )
-        κ = GaussianKineticEnergy(regularize_M⁻¹(nansample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
+        new_reparametrization = find_reparametrization(reparametrization, posterior_matrix; kwargs...)
+        posterior_matrix = reparametrize(reparametrization, new_reparametrization, posterior_matrix)
+        reparametrization = new_reparametrization
+        Q = finite_evaluate_ℓ(reparametrization, posterior_matrix)
+        κ = GaussianKineticEnergy(regularize_M⁻¹(nansample_M⁻¹(M, posterior_matrix), λ))
         report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = WarmupHMC.reparametrization_parameters(reparametrization))
     end
     ((; posterior_matrix, tree_statistics, ϵs), ReparametrizationState(reparametrization, WarmupState(Q, κ, final_ϵ(ϵ_state))))

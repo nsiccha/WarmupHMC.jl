@@ -72,7 +72,7 @@ finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
     Failed to evaluate log density: 
         $reparametrization
         $draw
-        $e
+        $(WarmupHMC.exception_to_string(e))
     Trying to recover...
             """
         end

@@ -24,8 +24,7 @@ lja_reparametrize(source, target, draws::AbstractVector{<:NamedTuple}, lja=0.) =
 end
 
 lja_reparametrize(source, target, draw::AbstractVector, lja=0.) = try 
-    lja, tdraw = lja_reparametrize(source, target, lpdf_and_invariants(source, draw), lja)
-    lja, collect(tdraw)
+    lja_reparametrize(source, target, lpdf_and_invariants(source, draw, Ignore()), lja)
 catch e
     @warn e
     NaN, NaN .* draw
@@ -44,8 +43,8 @@ lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariant
 # lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
 # lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]
 # lja(source, target, draws::AbstractMatrix) = lja.(Ref(source), Ref(target), eachcol(draws))
-reparametrize(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[2]
-reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[2]
+reparametrize(source::Any, target::Any, draw) = lja_reparametrize(source, target, draw, Ignore())[2]
+# reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[2]
 # reparametrize(source, target, draws::AbstractMatrix) = hcat(
     # reparametrize.(Ref(source), Ref(target), eachcol(draws))...
 # )

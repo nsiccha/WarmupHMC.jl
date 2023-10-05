@@ -55,7 +55,7 @@ reparametrization_loss(source, target, draws) = begin
     nanmean(ljas) + nansum(log.(nanstd(reparametrized, dims=2)))
 end
 reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
-    lais = lpdf_and_invariants.([source], eachcol(draws), Ignore())
+    lais = lpdf_and_invariants.([source], eachcol(draws), [Ignore()])
     loss(v) = reparametrization_loss(source, reparametrize(source, v), lais)
 end
 find_reparametrization(source::UnivariateDistribution, ::AbstractMatrix; kwargs...) = source

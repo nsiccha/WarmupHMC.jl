@@ -26,7 +26,14 @@ end
 lja_reparametrize(source, target, draw::AbstractVector, lja=0.) = try 
     lja_reparametrize(source, target, lpdf_and_invariants(source, draw, Ignore()), lja)
 catch e
-    @warn e
+    @warn """
+Failed to reparametrize: 
+$source 
+$target 
+$draw
+$(lpdf_and_invariants(source, draw, Ignore()))
+$e
+    """
     NaN, NaN .* draw
 end
 

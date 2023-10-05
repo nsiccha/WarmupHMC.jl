@@ -2,7 +2,7 @@ module WarmupHMCOptimReverseDiffExt
 
 using WarmupHMC, Optim, ReverseDiff
 
-WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws::AbstractMatrix; iterations=16, method=LBFGS(), compiled=false) = begin 
+WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws; iterations=16, method=LBFGS(), compiled=false) = begin 
     loss = WarmupHMC.reparametrization_loss_function(source, draws)
     init_arg = WarmupHMC.reparametrization_parameters(source)
     loss_g! = if compiled 
@@ -19,7 +19,7 @@ WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws::AbstractMat
     WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
 end
 
-WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws::AbstractMatrix; iterations=16, kwargs...) = begin 
+WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, kwargs...) = begin 
     init_arg = WarmupHMC.reparametrization_parameters(source)
     if length(init_arg) == 1
         loss = WarmupHMC.reparametrization_loss_function(source, draws)

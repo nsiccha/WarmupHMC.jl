@@ -1,6 +1,6 @@
 module WarmupHMC
 
-export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization, ConvenientLogDensityProblem#, klps_plot!
+export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization, ConvenientLogDensityProblem, Ignore#, klps_plot!
 
 using DynamicObjects
 using Random, Distributions, LinearAlgebra

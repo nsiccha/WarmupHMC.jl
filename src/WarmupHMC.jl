@@ -32,7 +32,7 @@ $source
 $target 
 $draw
 $(lpdf_and_invariants(source, draw, Ignore()))
-$e
+$(exception_to_string(e))
     """
     NaN, NaN .* draw
 end
@@ -71,5 +71,13 @@ find_reparametrization(kind::Symbol, source, draws; kwargs...) = find_reparametr
 function mcmc_with_reparametrization end
 function mcmc_keep_reparametrization end
 
+
+# Debug print exceptions:
+# https://stackoverflow.com/questions/72718578/julia-how-to-get-an-error-message-and-stacktrace-as-string
+function exception_to_string(e)
+    error_msg = sprint(showerror, e)
+    st = sprint((io,v) -> show(io, "text/plain", v), stacktrace(catch_backtrace()))
+    "Trouble doing things:\n$(error_msg)\n$(st)"
+end
 end
 

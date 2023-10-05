@@ -17,8 +17,6 @@ reparametrization_parameters(::Any) = Float64[]
 reparametrize(source::Any, ::Any) = source
 lja_reparametrize(source, target, draws::AbstractMatrix, lja=0.) = begin 
     lja_reparametrize(source, target, lpdf_and_invariants(source, draws, Ignore()), lja)
-    # rv = lja_reparametrize.(Ref(source), Ref(target), eachcol(draws), lja)
-    # first.(rv), hcat(last.(rv)...)
 end
 lja_reparametrize(source, target, draws::AbstractVector{<:NamedTuple}, lja=0.) = begin 
     rv = lja_reparametrize.(Ref(source), Ref(target), draws, lja)

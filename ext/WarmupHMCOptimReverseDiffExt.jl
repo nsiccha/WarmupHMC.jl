@@ -11,12 +11,23 @@ WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws; iterations=
     else 
         (g, arg) -> ReverseDiff.gradient!(g, loss, arg)
     end
-    optimization_result = optimize(
-        loss, loss_g!, init_arg, method, 
-        Optim.Options(iterations=iterations)
-    )
-    @debug optimization_result
-    WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
+    try
+        optimization_result = optimize(
+            loss, loss_g!, init_arg, method, 
+            Optim.Options(iterations=iterations)
+        )
+        @debug optimization_result
+        WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
+    catch e
+        @warn """
+Failed to reparametrize ($iterations, $method): 
+    $source
+    $draws
+    $(WarmupHMC.exception_to_string(e))
+Not reparametrizing...
+        """
+        source
+    end
 end
 
 WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, kwargs...) = begin 

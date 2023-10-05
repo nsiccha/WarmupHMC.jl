@@ -12,7 +12,6 @@ include("deprecated.jl")
 struct Ignore <: Real end
 Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
-Base.:+(lhs::Test, ::Test) = lhs
 
 reparametrization_parameters(::Any) = Float64[]
 reparametrize(source::Any, ::Any) = source

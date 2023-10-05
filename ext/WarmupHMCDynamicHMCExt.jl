@@ -63,6 +63,30 @@ function warmup(sampling_logdensity, stage::InitialStepsizeSearch, reparametriza
     return w, ReparametrizationState(reparametrization, warmup_state)
 end
 
+handle_reparametrization(reference, source, target, Q, reference_draws) = begin
+    try 
+        return target, evaluate_ℓ(target, reparametrize(source, target, Q.q); strict = true)
+    catch e
+        @warn """
+Failed to reparametrize to reference parameters: 
+    $source 
+    $target 
+    $draw
+    $e
+Trying to recover...
+        """
+    end
+    for rdraw in reverse(eachcol(reference_draws))
+        try 
+            return target, evaluate_ℓ(target, reparametrize(reference, target, rdraw); strict = true)
+        catch e
+            continue
+        end
+    end
+    @warn """Failed to reparametrize all draws so far. Not reparametrizing!"""
+    return target, Q
+end
+
 function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_state::ReparametrizationState; kwargs...) where {M}
     @unpack rng, ℓ, algorithm, reporter = sampling_logdensity
     @unpack reparametrization, warmup_state = reparametrization_state
@@ -76,8 +100,6 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
     mcmc_reporter = make_mcmc_reporter(reporter, N;
                                        currently_warmup = true,
                                        tuning = M ≡ Nothing ? "stepsize" : "stepsize, $(M) metric and parametrization")
-    Q0 = Q
-    Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
     for i in 1:N
         ϵ = current_ϵ(ϵ_state)
         ϵs[i] = ϵ
@@ -87,16 +109,15 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         ϵ_state = adapt_stepsize(stepsize_adaptation, ϵ_state, stats.acceptance_rate)
         report(mcmc_reporter, i; ϵ = round(ϵ; sigdigits = REPORT_SIGDIGITS))
     end
-    Q = try
-        evaluate_ℓ(ℓ, reparametrize(reparametrization, ℓ, Q.q); strict = true)
-    catch e
-        @warn e
-        @warn """Failed to reparametrize to reference parameters: $((reparametrization, ℓ, Q.q))"""
-        Q0
-    end
     if M ≢ Nothing
-        reparametrization = find_reparametrization(
-            reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix); kwargs...
+        reparametrization, Q = handle_reparametrization(
+            ℓ, 
+            reparametrization,
+            find_reparametrization(
+                reparametrization, reparametrize(ℓ, reparametrization, posterior_matrix); kwargs...
+            ),
+            Q,
+            posterior_matrix
         )
         κ = GaussianKineticEnergy(regularize_M⁻¹(sample_M⁻¹(M, reparametrize(ℓ, reparametrization, posterior_matrix)), λ))
         report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = WarmupHMC.reparametrization_parameters(reparametrization))
@@ -113,7 +134,7 @@ function mcmc(sampling_logdensity, N, reparametrization_state::Reparametrization
     tree_statistics = Vector{TreeStatisticsNUTS}(undef, N)
     mcmc_reporter = make_mcmc_reporter(reporter, N; currently_warmup = false)
     steps = mcmc_steps(sampling_logdensity, warmup_state)
-    Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
+    # Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
     for i in 1:N
         Q, tree_statistics[i] = mcmc_next_step(steps, Q)
         posterior_matrix[:, i] = reparametrize(reparametrization, ℓ, Q.q)

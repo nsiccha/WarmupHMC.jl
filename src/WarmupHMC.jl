@@ -53,6 +53,7 @@ reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametri
 # )
 reparametrization_loss(source, target, draws) = begin 
     ljas, reparametrized = lja_reparametrize(source, target, draws)
+    println((;ljas, reparametrized))
     nanmean(ljas) + nansum(log.(nanstd(reparametrized, dims=2)))
 end
 reparametrization_loss_function(source, draws::AbstractMatrix) = begin 

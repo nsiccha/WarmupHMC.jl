@@ -22,7 +22,6 @@ lja_reparametrize(source, target, draws::AbstractVector{<:NamedTuple}, lja=0.) =
     rv = lja_reparametrize.(Ref(source), Ref(target), draws, lja)
     first.(rv), hcat(last.(rv)...)
 end
-
 lja_reparametrize(source, target, draw::AbstractVector, lja=0.) = try 
     lja_reparametrize(source, target, lpdf_and_invariants(source, draw, Ignore()), lja)
 catch e
@@ -36,16 +35,15 @@ $(exception_to_string(e))
     """
     NaN, NaN .* draw
 end
-
 lja_reparametrize(::Any, ::Any, invariants::NamedTuple, lja=0.) = begin 
     lja, invariants.draw
 end
 
+lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.(Ref(source), eachcol(draws), lpdf)
 lpdf_and_invariants(source, draw::AbstractVector, lpdf=0.) = begin 
     lpdf += sum(logpdf.(source, draw))
     (;lpdf, draw)
 end
-lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.(Ref(source), eachcol(draws), lpdf)
 
 # lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
 # lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]

@@ -4,7 +4,7 @@ using WarmupHMC, Optim, ReverseDiff
 
 WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws; iterations=16, method=LBFGS(), compiled=false) = begin 
     loss = WarmupHMC.reparametrization_loss_function(source, draws)
-    init_arg = WarmupHMC.reparametrization_parameters(source)
+    init_arg = WarmupHMC.optimization_reparametrization_parameters(source)
     loss_g! = if compiled 
         loss_tape = ReverseDiff.compile(ReverseDiff.GradientTape(loss, init_arg))
         (g, arg) -> ReverseDiff.gradient!(g, loss_tape, arg)
@@ -20,7 +20,7 @@ WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws; iterations=
 end
 
 WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, kwargs...) = begin 
-    init_arg = WarmupHMC.reparametrization_parameters(source)
+    init_arg = WarmupHMC.optimization_reparametrization_parameters(source)
     try
         if length(init_arg) == 1
             loss = WarmupHMC.reparametrization_loss_function(source, draws)

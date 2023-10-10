@@ -2,7 +2,7 @@
 
 julia_version = "1.9.3"
 manifest_format = "2.0"
-project_hash = "74b087c9c1a6b5577290843c5b7523df02d78e28"
+project_hash = "a2889f7ecb4623bb029535881b59d5f16258ff60"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -149,14 +149,6 @@ deps = ["Calculus", "NaNMath", "SpecialFunctions"]
 git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
 uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
 version = "0.6.8"
-
-[[deps.DynamicObjects]]
-deps = ["Serialization"]
-git-tree-sha1 = "51d07bfa36bd5114fcd11f8c3dcf30a0f3221d0e"
-repo-rev = "main"
-repo-url = "https://github.com/nsiccha/DynamicObjects.jl"
-uuid = "23d02862-63fe-4c6e-8fdb-1d52cbbd39d5"
-version = "0.1.7"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"

@@ -2,7 +2,7 @@ module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
-import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters
 
 import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal
 
@@ -100,7 +100,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         ϵ = current_ϵ(ϵ_state)
         ϵs[i] = ϵ
         Q, stats = sample_tree(rng, algorithm, H, Q, ϵ)
-        posterior_matrix[:, i] = Q.q#reparametrize(reparametrization, ℓ, Q.q)
+        posterior_matrix[:, i] = Q.q
         tree_statistics[i] = stats
         ϵ_state = adapt_stepsize(stepsize_adaptation, ϵ_state, stats.acceptance_rate)
         report(mcmc_reporter, i; ϵ = round(ϵ; sigdigits = REPORT_SIGDIGITS))
@@ -111,7 +111,7 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         reparametrization = new_reparametrization
         Q = finite_evaluate_ℓ(reparametrization, posterior_matrix)
         κ = GaussianKineticEnergy(regularize_M⁻¹(nansample_M⁻¹(M, posterior_matrix), λ))
-        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = WarmupHMC.reparametrization_parameters(reparametrization))
+        report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = reparametrization_parameters(reparametrization))
     end
     ((; posterior_matrix, tree_statistics, ϵs), ReparametrizationState(reparametrization, WarmupState(Q, κ, final_ϵ(ϵ_state))))
 end
@@ -125,7 +125,6 @@ function mcmc(sampling_logdensity, N, reparametrization_state::Reparametrization
     tree_statistics = Vector{TreeStatisticsNUTS}(undef, N)
     mcmc_reporter = make_mcmc_reporter(reporter, N; currently_warmup = false)
     steps = mcmc_steps(sampling_logdensity, warmup_state)
-    # Q = evaluate_ℓ(reparametrization, reparametrize(ℓ, reparametrization, Q.q); strict = true)
     for i in 1:N
         Q, tree_statistics[i] = mcmc_next_step(steps, Q)
         posterior_matrix[:, i] = reparametrize(reparametrization, ℓ, Q.q)

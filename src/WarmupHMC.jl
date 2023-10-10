@@ -1,71 +1,80 @@
 module WarmupHMC
 
-export regularize, to_x1, to_xc, klp, klps, approximately_whitened, mcmc_with_reparametrization, ConvenientLogDensityProblem, Ignore#, klps_plot!
+export mcmc_with_reparametrization, Ignore
 
-using DynamicObjects
-using Random, Distributions, LinearAlgebra
-using LogDensityProblems
-using NaNStatistics
-
-include("deprecated.jl")
+using Distributions, LinearAlgebra, NaNStatistics
 
 struct Ignore <: Real end
 Base.:+(lhs::Ignore, ::Real) = lhs
 Base.:-(lhs::Ignore, ::Real) = lhs
 
-reparametrization_parameters(::Any) = Float64[]
-reparametrize(source::Any, ::Any) = source
-lja_reparametrize(source, target, draws::AbstractMatrix, lja=0.) = begin 
-    lja_reparametrize(source, target, lpdf_and_invariants(source, draws, Ignore()), lja)
+# Maybe replace NamedTuple by a custom type
+
+# IMPLEMENT THIS
+reparametrization_parameters(::Any) = NamedTuple()
+# IMPLEMENT THIS
+optimization_reparametrization_parameters(::Any) = Float64[]
+# IMPLEMENT THIS
+reparametrize(source, ::Any) = source
+reparametrize(source, target, draw::AbstractArray) = to_array(
+    source, lja_and_reparametrize(source, target, draw, Ignore())
+)
+# MAYBE IMPLEMENT THIS
+to_array(::Any, draw::NamedTuple) = draw.draw
+to_array(::Any, draw::AbstractVector) = draw
+to_array(::Any, draw::AbstractMatrix) = draw
+to_array(source, draw::AbstractVector{<:NamedTuple}) = hcat(to_array.(Ref(source), draw)...)
+
+# IMPLEMENT THIS
+lpdf_update(source, draw::NamedTuple, lpdf=0.) = begin
+    lpdf += sum(logpdf.(source, draw.draw))
+    (;lpdf)
 end
-lja_reparametrize(source, target, draws::AbstractVector{<:NamedTuple}, lja=0.) = begin 
-    rv = lja_reparametrize.(Ref(source), Ref(target), draws, lja)
-    getproperty.(rv, :lja), hcat(getproperty.(rv, :draw)...)
-end
-lja_reparametrize(source, target, draw::AbstractVector, lja=0.) = begin 
-    lja_reparametrize(source, target, lpdf_and_invariants(source, draw, Ignore()), lja)
-# catch e
-#     @warn """
-# Failed to reparametrize: 
-# $source 
-# $target 
-# $draw
-# $(lpdf_and_invariants(source, draw, Ignore()))
-# $(exception_to_string(e))
-#     """
-#     (lpdf=NaN, draw=NaN .* draw)
-end
-lja_reparametrize(::Any, ::Any, invariants::NamedTuple, lja=0.) = begin 
-    (;lja, invariants.draw)
+# IMPLEMENT THIS
+lja_update(::Any, ::Any, invariants::NamedTuple, lja=0.) = begin 
+    (;lja)
 end
 
-lpdf_and_invariants(source, draws::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.(Ref(source), eachcol(draws), lpdf)
-lpdf_and_invariants(source, draw::AbstractVector, lpdf=0.) = begin 
-    lpdf += sum(logpdf.(source, draw))
-    (;lpdf, draw)
-end
+lpdf_and_invariants(source, draw::NamedTuple, lpdf=0.) = merge(
+    draw, lpdf_update(source, draw, lpdf)
+)
+lpdf_and_invariants(source, draw::AbstractVector, lpdf=0) = lpdf_and_invariants(
+    source, (;draw), lpdf
+)
+lpdf_and_invariants(source, draw::AbstractMatrix, lpdf=0) = lpdf_and_invariants.(
+    Ref(source), eachcol(draw), lpdf
+)
+lja_and_reparametrize(source, target, draw::NamedTuple, lja=0.) = merge(
+    draw, lja_update(source, target, draw, lja)
+)
+lja_and_reparametrize(source, target, draw::AbstractVector, lja=0.) = lja_and_reparametrize(
+    source, target, lpdf_and_invariants(source, draw, Ignore()), lja
+)
+lja_and_reparametrize(source, target, draw::AbstractMatrix, lja=0.) = lja_and_reparametrize.(
+    Ref(source), Ref(target), eachcol(draw), lja
+)
+lja_and_reparametrize(source, target, draw::AbstractVector{<:NamedTuple}, lja=0.) = lja_and_reparametrize.(
+    Ref(source), Ref(target), draw, lja
+)
 
-# lja(source::Any, target::Any, draw::AbstractVector) = lja_reparametrize(source, target, draw)[1]
-# lja(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[1]
-# lja(source, target, draws::AbstractMatrix) = lja.(Ref(source), Ref(target), eachcol(draws))
-reparametrize(source::Any, target::Any, draw) = lja_reparametrize(source, target, draw, Ignore())[2]
-# reparametrize(source::Any, target::Any, draws::AbstractMatrix) = lja_reparametrize(source, target, draws)[2]
-# reparametrize(source, target, draws::AbstractMatrix) = hcat(
-    # reparametrize.(Ref(source), Ref(target), eachcol(draws))...
-# )
-reparametrization_loss(source, target, draws) = begin 
-    ljas, reparametrized = lja_reparametrize(source, target, draws)
+reparametrization_loss_function(::Any, ::AbstractMatrix) = error("This overload should generally be inefficient!")
+reparametrization_loss_function(source, draw::AbstractVector{<:NamedTuple}) = begin 
+    loss(v) = reparametrization_loss(source, reparametrize(source, v), draw)
+end
+reparametrization_loss(source, target, draw::AbstractVector{<:NamedTuple}) = begin 
+    tmp = lja_reparametrize(source, target, draw)
+    ljas = getproperty.(tmp, :lja)
+    reparametrized = to_array(source, tmp)
     nanmean(ljas) + nansum(log.(nanstd(reparametrized, dims=2)))
 end
-reparametrization_loss_function(source, draws::AbstractMatrix) = begin 
-    reparametrization_loss_function(source, lpdf_and_invariants(source, draws, Ignore()))
-end
-reparametrization_loss_function(source, draws::AbstractVector{<:NamedTuple}) = begin 
-    loss(v) = reparametrization_loss(source, reparametrize(source, v), draws)
-end
-find_reparametrization(source::UnivariateDistribution, ::Any; kwargs...) = source
-find_reparametrization(kind::Symbol, source, draws; kwargs...) = find_reparametrization(Val{kind}(), source, draws; kwargs...)
-# find_reparametrization_kwargs()
+
+# MAY IMPLEMENT THIS
+find_reparametrization(source, draw::AbstractMatrix; kwargs...) = find_reparametrization(
+    source, lpdf_and_invariants(source, draw, Ignore()); kwargs...
+)
+# IMPLEMENT THIS
+find_reparametrization(source, ::AbstractVector{<:NamedTuple}; kwargs...) = source
+find_reparametrization(kind::Symbol, source, draw; kwargs...) = find_reparametrization(Val{kind}(), source, draw; kwargs...)
 function mcmc_with_reparametrization end
 function mcmc_keep_reparametrization end
 

@@ -19,7 +19,7 @@ WarmupHMC.find_reparametrization(::Val{:ReverseDiff}, source, draws; iterations=
     WarmupHMC.reparametrize(source, Optim.minimizer(optimization_result))
 end
 
-WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, kwargs...) = begin 
+WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, strict=false, kwargs...) = begin 
     init_arg = WarmupHMC.optimization_reparametrization_parameters(source)
     try
         if length(init_arg) == 1
@@ -40,6 +40,7 @@ $(typeof(draws)), $(size(draws))
 $(WarmupHMC.exception_to_string(e))
 Not reparametrizing...
         """
+        strict && rethrow(e)
         source
     end
 end

@@ -36,7 +36,7 @@ WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, kw
         @warn """
 Failed to reparametrize ($iterations, $kwargs): 
 $source
-$draws
+$(typeof(draws)), $(size(draws))
 $(WarmupHMC.exception_to_string(e))
 Not reparametrizing...
         """

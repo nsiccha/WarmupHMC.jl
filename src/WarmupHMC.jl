@@ -24,6 +24,8 @@ to_array(::Any, draw::NamedTuple) = draw.draw
 to_array(::Any, draw::AbstractVector) = draw
 to_array(::Any, draw::AbstractMatrix) = draw
 to_array(source, draw::AbstractVector{<:NamedTuple}) = hcat(to_array.(Ref(source), draw)...)
+# MAYBE IMPLEMENT THIS
+to_nt(::Any, draw::AbstractVector) = (;draw)
 
 # IMPLEMENT THIS
 lpdf_update(source, draw::NamedTuple, lpdf=0.) = begin
@@ -39,7 +41,7 @@ lpdf_and_invariants(source, draw::NamedTuple, lpdf=0.) = merge(
     draw, lpdf_update(source, draw, lpdf)
 )
 lpdf_and_invariants(source, draw::AbstractVector, lpdf=0) = lpdf_and_invariants(
-    source, (;draw), lpdf
+    source, to_nt(source, draw), lpdf
 )
 lpdf_and_invariants(source, draw::AbstractMatrix, lpdf=0) = lpdf_and_invariants.(
     Ref(source), eachcol(draw), lpdf
@@ -53,16 +55,15 @@ lja_and_reparametrize(source, target, draw::AbstractVector, lja=0.) = lja_and_re
 lja_and_reparametrize(source, target, draw::AbstractMatrix, lja=0.) = lja_and_reparametrize.(
     Ref(source), Ref(target), eachcol(draw), lja
 )
-lja_and_reparametrize(source, target, draw::AbstractVector{<:NamedTuple}, lja=0.) = lja_and_reparametrize.(
-    Ref(source), Ref(target), draw, lja
-)
+lja_and_reparametrize(source, target, draw::AbstractVector{<:NamedTuple}, lja=0.) = 
+    lja_and_reparametrize.(Ref(source), Ref(target), draw, lja)
 
 reparametrization_loss_function(::Any, ::AbstractMatrix) = error("This overload should generally be inefficient!")
 reparametrization_loss_function(source, draw::AbstractVector{<:NamedTuple}) = begin 
     loss(v) = reparametrization_loss(source, reparametrize(source, v), draw)
 end
 reparametrization_loss(source, target, draw::AbstractVector{<:NamedTuple}) = begin 
-    tmp = lja_reparametrize(source, target, draw)
+    tmp = lja_and_reparametrize(source, target, draw)
     ljas = getproperty.(tmp, :lja)
     reparametrized = to_array(source, tmp)
     nanmean(ljas) + nansum(log.(nanstd(reparametrized, dims=2)))
@@ -74,7 +75,9 @@ find_reparametrization(source, draw::AbstractMatrix; kwargs...) = find_reparamet
 )
 # IMPLEMENT THIS
 find_reparametrization(source, ::AbstractVector{<:NamedTuple}; kwargs...) = source
-find_reparametrization(kind::Symbol, source, draw; kwargs...) = find_reparametrization(Val{kind}(), source, draw; kwargs...)
+find_reparametrization(kind::Symbol, source, draw; kwargs...) = find_reparametrization(
+    Val{kind}(), source, draw; kwargs...
+)
 function mcmc_with_reparametrization end
 function mcmc_keep_reparametrization end
 

@@ -25,7 +25,7 @@ to_array(::Any, draw::AbstractVector) = draw
 to_array(::Any, draw::AbstractMatrix) = draw
 to_array(source, draw::AbstractVector{<:NamedTuple}) = hcat(to_array.(Ref(source), draw)...)
 # MAYBE IMPLEMENT THIS
-to_nt(::Any, draw::AbstractVector) = (;draw)
+to_nt(::Any, draw::AbstractArray) = (;draw)
 
 # IMPLEMENT THIS
 lpdf_update(source, draw::NamedTuple, lpdf=0.) = begin

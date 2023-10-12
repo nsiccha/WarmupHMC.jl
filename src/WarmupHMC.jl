@@ -40,10 +40,10 @@ end
 lpdf_and_invariants(source, draw::NamedTuple, lpdf=0.) = merge(
     draw, lpdf_update(source, draw, lpdf)
 )
-lpdf_and_invariants(source, draw::AbstractVector, lpdf=0) = lpdf_and_invariants(
+lpdf_and_invariants(source, draw::AbstractVector, lpdf=0.) = lpdf_and_invariants(
     source, to_nt(source, draw), lpdf
 )
-lpdf_and_invariants(source, draw::AbstractMatrix, lpdf=0) = lpdf_and_invariants.(
+lpdf_and_invariants(source, draw::AbstractMatrix, lpdf=0.) = lpdf_and_invariants.(
     Ref(source), eachcol(draw), lpdf
 )
 lja_and_reparametrize(source, target, draw::NamedTuple, lja=0.) = merge(

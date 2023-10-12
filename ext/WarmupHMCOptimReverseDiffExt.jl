@@ -22,7 +22,9 @@ end
 WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, strict=false, kwargs...) = begin 
     init_arg = WarmupHMC.optimization_reparametrization_parameters(source)
     try
-        if length(init_arg) == 1
+        if length(init_arg) == 0
+            source
+        elseif length(init_arg) == 1
             loss = WarmupHMC.reparametrization_loss_function(source, draws)
             optimization_result = optimize(
                 loss, init_arg, 

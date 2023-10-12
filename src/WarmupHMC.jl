@@ -75,6 +75,7 @@ find_reparametrization(source, draw::AbstractMatrix; kwargs...) = find_reparamet
 )
 # IMPLEMENT THIS
 find_reparametrization(source, ::AbstractVector{<:NamedTuple}; kwargs...) = source
+find_reparametrization(source, ::Any; kwargs...) = source
 find_reparametrization(kind::Symbol, source, draw; kwargs...) = find_reparametrization(
     Val{kind}(), source, draw; kwargs...
 )

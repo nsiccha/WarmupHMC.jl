@@ -32,6 +32,9 @@ lpdf_update(source, draw::NamedTuple, lpdf=0.) = begin
     lpdf += sum(logpdf.(source, draw.draw))
     (;lpdf)
 end
+lpdf_update(::Tuple{}, draw::NamedTuple, lpdf=0.) = begin
+    (;lpdf)
+end
 # IMPLEMENT THIS
 lja_update(::Any, ::Any, invariants::NamedTuple, lja=0.) = begin 
     (;lja)

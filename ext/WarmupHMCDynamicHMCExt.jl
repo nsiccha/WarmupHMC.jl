@@ -106,9 +106,11 @@ function warmup(sampling_logdensity, tuning::TuningNUTS{M}, reparametrization_st
         report(mcmc_reporter, i; ϵ = round(ϵ; sigdigits = REPORT_SIGDIGITS))
     end
     if M ≢ Nothing
-        new_reparametrization = find_reparametrization(reparametrization, posterior_matrix; kwargs...)
-        posterior_matrix = reparametrize(reparametrization, new_reparametrization, posterior_matrix)
-        reparametrization = new_reparametrization
+        # new_reparametrization = find_reparametrization(reparametrization, posterior_matrix; kwargs...)
+        # posterior_matrix = reparametrize(reparametrization, new_reparametrization, posterior_matrix)
+        reparametrization, posterior_matrix = find_reparametrization_and_reparametrize(
+            reparametrization, posterior_matrix; kwargs...
+        )
         Q = finite_evaluate_ℓ(reparametrization, posterior_matrix)
         κ = GaussianKineticEnergy(regularize_M⁻¹(nansample_M⁻¹(M, posterior_matrix), λ))
         report(mcmc_reporter, "adaptation finished", adapted_kinetic_energy = κ, reparametrization = reparametrization_parameters(reparametrization))

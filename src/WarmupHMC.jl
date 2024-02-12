@@ -82,6 +82,12 @@ find_reparametrization(kind::Symbol, source, draw; kwargs...) = find_reparametri
 )
 function mcmc_with_reparametrization end
 function mcmc_keep_reparametrization end
+# MAY IMPLEMENT THIS
+find_reparametrization_and_reparametrize(reparametrization, posterior_matrix; kwargs...) = begin 
+    new_reparametrization = find_reparametrization(reparametrization, posterior_matrix; kwargs...)
+    posterior_matrix = reparametrize(reparametrization, new_reparametrization, posterior_matrix)
+    return new_reparametrization, posterior_matrix
+end
 
 
 # Debug print exceptions:

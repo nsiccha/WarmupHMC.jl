@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"

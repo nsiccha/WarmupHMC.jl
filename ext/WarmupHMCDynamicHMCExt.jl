@@ -68,7 +68,7 @@ finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
         try 
             return evaluate_ℓ(reparametrization, collect(draw); strict = true)
         catch e
-            @warn """
+            @info """
     Failed to evaluate log density: 
         $reparametrization
         $draw

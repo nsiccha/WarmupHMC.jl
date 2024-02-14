@@ -35,7 +35,7 @@ WarmupHMC.find_reparametrization(::Val{:Optim}, source, draws; iterations=16, st
             WarmupHMC.find_reparametrization(:ReverseDiff, source, draws; iterations=iterations, kwargs...)
         end
     catch e
-        @warn """
+        @info """
 Failed to reparametrize ($iterations, $kwargs): 
 $source
 $(typeof(draws)), $(size(draws))

@@ -97,5 +97,14 @@ function exception_to_string(e)
     st = sprint((io,v) -> show(io, "text/plain", v), stacktrace(catch_backtrace()))
     "Trouble doing things:\n$(error_msg)\n$(st)"
 end
+
+abstract type InfoStruct end
+Base.getproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) ? getfield(source, key) : getproperty(source.info, key)
+struct TuningConfig{T,I<:NamedTuple} <: InfoStruct
+    info::I
+    TuningConfig{T}(;kwargs...) where {T} = TuningConfig{T}((;kwargs...))
+    TuningConfig{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)
+end
+
 end
 

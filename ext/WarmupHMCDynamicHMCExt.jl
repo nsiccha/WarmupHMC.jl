@@ -168,7 +168,7 @@ TuningState(sampling_logdensity, tuning::TuningConfig{T}, reparametrization_stat
         tree_statistics=Vector{TreeStatisticsNUTS}(),
         H=Hamiltonian(κ, reparametrization),
         ϵ_state=initial_adaptation_state(tuning.stepsize_adaptation, ϵ),
-        counter=1
+        draw_counter=1, evaluation_counter=1
     )
 end
 # TuningState(tuning::TuningConfig{T}) where {T} = TuningState{T}(;
@@ -176,10 +176,11 @@ end
 #     rng, 
 # )
 # n_draws(state::TuningState) = size(state.posterior_matrix, 2)
+getpropertyor(what, key, default) = hasproperty(what, key) ? getproperty(what, key) : default
 done(state::TuningState) = if hasproperty(state, :done)
     state.done
 else
-    state.counter > state.target
+    state.draw_counter > getpropertyor(state, :draw_target, 0) && state.evaluation_counter > getpropertyor(state, :evaluation_target, 0)
 end
 step!(state::TuningState) = begin 
     @assert all(isfinite.(state.Q.q))
@@ -194,7 +195,9 @@ handle_transition!(state::TuningState, Q, stats) = begin
     push!(state.tree_statistics, stats)
 end
 posterior_matrix(::TuningConfig, ::Any) = error("unimplemented")
-handle_draw!(::TuningState, q) = error("unimplemented")
+handle_draw!(::TuningState, q) = begin 
+    state.draw_counter += 1
+end
 ReparametrizationState(state::TuningState) = ReparametrizationState(
     state.reparametrization, 
     WarmupState(
@@ -219,72 +222,47 @@ else
     GaussianKineticEnergy(state.cov)
 end
 
-# function warmup(sampling_logdensity, stage::TuningConfig{:pathfinder}, reparametrization_state::ReparametrizationState; kwargs...)
-#     @unpack reparametrization, warmup_state = reparametrization_state
-#     nruns = stage.nruns
-#     result_pf = if nruns in [1,-1] 
-#         rv = pathfinder(reparametrization; ndraws=1, init=warmup_state.Q.q)
-#         if nruns == -1
-#             rv.draws[:, 1] .= mean(rv.fit_distribution)
-#         end
-#         rv
-#     else
-#         multipathfinder(reparametrization, 1; nruns=nruns)
-#     end
-#     Q = evaluate_ℓ(reparametrization, collect(result_pf.draws[:, 1]); strict = true)
-#     κ = GaussianKineticEnergy(result_pf.fit_distribution.Σ)
-#     warmup_state = WarmupState(Q, κ, warmup_state.ϵ)
-#     return result_pf, ReparametrizationState(reparametrization, warmup_state)
-# end
 
-TuningConfig{:step}(target::Int, stepsize_adaptation=DualAveraging()) = TuningConfig{:step}(;target, stepsize_adaptation)
+TuningConfig{:step}(draw_target::Int, stepsize_adaptation=DualAveraging()) = TuningConfig{:step}(;draw_target, stepsize_adaptation)
 posterior_matrix(::TuningConfig{:step}, ::Any) = nothing
-handle_draw!(state::TuningState{:step}, ::Any) = begin 
-    state.counter += 1
-end
 
-TuningConfig{:diagonal}(target::Int, stepsize_adaptation=DualAveraging()) = TuningConfig{:diagonal}(;target, stepsize_adaptation)
-posterior_matrix(cfg::TuningConfig{:diagonal}, Q) = _empty_posterior_matrix(Q, cfg.target)
+TuningConfig{:diagonal}(draw_target::Int, stepsize_adaptation=DualAveraging()) = TuningConfig{:diagonal}(;draw_target, stepsize_adaptation)
+posterior_matrix(cfg::TuningConfig{:diagonal}, Q) = _empty_posterior_matrix(Q, cfg.draw_target)
 handle_draw!(state::TuningState{:diagonal}, q) = begin 
-    state.posterior_matrix[:, state.counter] .= q
-    state.counter += 1
+    state.posterior_matrix[:, state.draw_counter] .= q
+    state.draw_counter += 1
 end
 GaussianKineticEnergy(state::TuningState{:diagonal}) = GaussianKineticEnergy(
-    regularize_M⁻¹(Diagonal(vec(nanvar(state.posterior_matrix; dims = 2))), 5/state.target)
+    regularize_M⁻¹(Diagonal(vec(nanvar(state.posterior_matrix; dims = 2))), 5/state.draw_target)
 )
 
 TuningConfig{:mad}(
-    target::Int, thin=1, 
+    n_stored::Int, evaluation_target=n_stored, draw_target=0,
     stepsize_adaptation=DualAveraging()
 ) = TuningConfig{:mad}(;
-    target, stepsize_adaptation, thin, inner=0, accs=fill(-Inf, target)
+    n_stored, evaluation_target, draw_target, stepsize_adaptation, accs=fill(-Inf, n_stored)
 )
-posterior_matrix(cfg::TuningConfig{:mad}, Q) = _empty_posterior_matrix(Q, cfg.target)
+posterior_matrix(cfg::TuningConfig{:mad}, Q) = _empty_posterior_matrix(Q, cfg.n_stored)
 Hamiltonian(state::TuningState{:mad}) = Hamiltonian(
     state.κ, RecordingPosterior(state, state.reparametrization),
 )
 record!(state::TuningState{:mad}, draw, acc) = begin
-    state.inner += 1
-    if state.inner == state.thin
-        state.inner = 0
-        state.counter += 1
-    end
+    state.evaluation_counter += 1
     idx = argmin(state.accs)
     if acc > state.accs[idx] 
         state.posterior_matrix[:, idx] .= draw
         state.accs[idx] = acc
     end
 end
-handle_draw!(::TuningState{:mad}, ::Any) = nothing
 GaussianKineticEnergy(state::TuningState{:mad}) = GaussianKineticEnergy(
     Diagonal(vec(nanmad(state.posterior_matrix; dims = 2)).^2)
 )
 
-TuningConfig{:reparam}(target::Int, stepsize_adaptation=DualAveraging(); kwargs...) = TuningConfig{:reparam}(;target, stepsize_adaptation, reparametrization_kwargs=kwargs)
-posterior_matrix(cfg::TuningConfig{:reparam}, Q) = _empty_posterior_matrix(Q, cfg.target)
+TuningConfig{:reparam}(draw_target::Int, stepsize_adaptation=DualAveraging(); kwargs...) = TuningConfig{:reparam}(;draw_target, stepsize_adaptation, reparametrization_kwargs=kwargs)
+posterior_matrix(cfg::TuningConfig{:reparam}, Q) = _empty_posterior_matrix(Q, cfg.draw_target)
 handle_draw!(state::TuningState{:reparam}, q) = begin 
-    state.posterior_matrix[:, state.counter] .= q
-    state.counter += 1
+    state.posterior_matrix[:, state.draw_counter] .= q
+    state.draw_counter += 1
 end
 ReparametrizationState(state::TuningState{:reparam}) = ReparametrizationState(
     TuningState{:diagonal}(reparam(state))
@@ -305,14 +283,14 @@ reparam(state::TuningState{T}) where {T} = begin
 end
 
 TuningConfig{:mad_reparam}(
-    target::Int, thin=1, 
+    n_stored::Int, evaluation_target=n_stored, draw_target=0,
     stepsize_adaptation=DualAveraging(); 
     kwargs...
 ) = TuningConfig{:mad_reparam}(;
-    target, stepsize_adaptation, thin, reparametrization_kwargs=kwargs, 
-    inner=0, accs=fill(-Inf, target), 
+    n_stored, evaluation_target, draw_target, stepsize_adaptation, accs=fill(-Inf, n_stored),
+    reparametrization_kwargs=kwargs, 
 )
-posterior_matrix(cfg::TuningConfig{:mad_reparam}, Q) = _empty_posterior_matrix(Q, cfg.target)
+posterior_matrix(cfg::TuningConfig{:mad_reparam}, Q) = _empty_posterior_matrix(Q, cfg.n_stored)
 Hamiltonian(state::TuningState{:mad_reparam}) = Hamiltonian(
     state.κ, RecordingPosterior(state, state.reparametrization),
 )
@@ -321,16 +299,13 @@ record!(state::TuningState{:mad_reparam}, args...) = begin
     record!(tmp, args...)
     WarmupHMC.update!(state, tmp)
 end
-handle_draw!(::TuningState{:mad_reparam}, ::Any) = nothing
-ReparametrizationState(state::TuningState{:mad_reparam}) = begin
-    ReparametrizationState(
-        TuningState{:mad}(reparam(state))
+ReparametrizationState(state::TuningState{:mad_reparam}) = ReparametrizationState(
+    TuningState{:mad}(reparam(state))
 )
-end
 
 
 
-TuningConfig{:mod_step}(f::Function) = TuningConfig{:mod_step}(;f, target=0, stepsize_adaptation=DualAveraging())
+TuningConfig{:mod_step}(f::Function) = TuningConfig{:mod_step}(;f, draw_target=0, stepsize_adaptation=DualAveraging())
 posterior_matrix(::TuningConfig{:mod_step}, ::Any) = nothing
 final_ϵ(state::TuningState{:mod_step}) = state.f(state.ϵ)
 
@@ -346,8 +321,8 @@ warmup(sampling_logdensity, tuning::TuningConfig{:adaptive}, reparametrization_s
 end
 TuningConfig{:adaptive}(n_draws::Int, stages) = TuningConfig{:adaptive}(ts->length(ts) > n_draws / 4, stages)
 TuningConfig{:adaptive}(type::Symbol, args...; kwargs...) = TuningConfig{:adaptive}(Val{type}(), args...; kwargs...)
-TuningConfig{:adaptive}(::Val{T}, n_draws=1000, target=1023, args...; kwargs...) where {T} = TuningConfig{:adaptive}(n_draws, [
-    TuningConfig{T}(target, thin, args...; kwargs...)
+TuningConfig{:adaptive}(::Val{T}, n_draws=1000, draw_target=1023, args...; kwargs...) where {T} = TuningConfig{:adaptive}(n_draws, [
+    TuningConfig{T}(draw_target, thin, args...; kwargs...)
     for thin in [1,2,4,8,16,32,64,128,256]
 ])
 

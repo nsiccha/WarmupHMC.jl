@@ -77,7 +77,7 @@ finite_evaluate_ℓ(reparametrization, posterior_matrix) = begin
             """
         end
     end
-    return evaluate_ℓ(reparametrization, collect(posterior_matrix[:, 1]))
+    return evaluate_ℓ(reparametrization, collect(posterior_matrix[:, 1]); strict = true)
 end
 
 nansample_M⁻¹(::Type{Diagonal}, posterior_matrix) = Diagonal(vec(nanvar(posterior_matrix; dims = 2)))
@@ -259,7 +259,14 @@ reparam(state::TuningState{T}) where {T} = begin
     reparametrization, posterior_matrix = find_reparametrization_and_reparametrize(
         state.reparametrization, state.posterior_matrix; state.reparametrization_kwargs...
     )
-    Q = finite_evaluate_ℓ(reparametrization, posterior_matrix)
+    Q = try 
+        evaluate_ℓ(
+            reparametrization, 
+            reparametrize(state.reparametrization, reparametrization, state.Q.q)
+        )
+    catch e 
+        finite_evaluate_ℓ(reparametrization, posterior_matrix)
+    end
     TuningState{T}(merge(state.info, (;reparametrization, posterior_matrix, Q)))
 end
 

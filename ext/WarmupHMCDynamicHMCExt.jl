@@ -195,7 +195,7 @@ handle_transition!(state::TuningState, Q, stats) = begin
     push!(state.tree_statistics, stats)
 end
 posterior_matrix(::TuningConfig, ::Any) = error("unimplemented")
-handle_draw!(::TuningState, q) = begin 
+handle_draw!(state::TuningState, ::Any) = begin 
     state.draw_counter += 1
 end
 ReparametrizationState(state::TuningState) = ReparametrizationState(

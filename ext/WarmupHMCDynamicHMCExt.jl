@@ -227,7 +227,7 @@ GaussianKineticEnergy(state::TuningState{:diagonal}) = GaussianKineticEnergy(
 
 TuningConfig{:mad}(
     target::Int, thin=1, 
-    stepsize_adaptation=DualAveraging(γ=.1)
+    stepsize_adaptation=DualAveraging()
 ) = TuningConfig{:mad}(;
     target, stepsize_adaptation, thin, inner=0, accs=fill(-Inf, target)
 )
@@ -278,7 +278,7 @@ end
 
 TuningConfig{:mad_reparam}(
     target::Int, thin=1, 
-    stepsize_adaptation=DualAveraging(γ=.1, κ=1.); 
+    stepsize_adaptation=DualAveraging(); 
     kwargs...
 ) = TuningConfig{:mad_reparam}(;
     target, stepsize_adaptation, thin, reparametrization_kwargs=kwargs, 

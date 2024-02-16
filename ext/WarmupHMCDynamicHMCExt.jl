@@ -321,8 +321,8 @@ warmup(sampling_logdensity, tuning::TuningConfig{:adaptive}, reparametrization_s
 end
 TuningConfig{:adaptive}(n_draws::Int, stages) = TuningConfig{:adaptive}(ts->length(ts) > n_draws / 4, stages)
 TuningConfig{:adaptive}(type::Symbol, args...; kwargs...) = TuningConfig{:adaptive}(Val{type}(), args...; kwargs...)
-TuningConfig{:adaptive}(::Val{T}, n_draws=1000, draw_target=1023, args...; kwargs...) where {T} = TuningConfig{:adaptive}(n_draws, [
-    TuningConfig{T}(draw_target, thin, args...; kwargs...)
+TuningConfig{:adaptive}(::Val{T}, n_draws=1000, evaluation_target=1000, draw_target=5, args...; kwargs...) where {T} = TuningConfig{:adaptive}(n_draws, [
+    TuningConfig{T}(evaluation_target, thin*evaluation_target, thin*draw_target, args...; kwargs...)
     for thin in [1,2,4,8,16,32,64,128,256]
 ])
 

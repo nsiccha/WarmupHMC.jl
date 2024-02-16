@@ -99,12 +99,25 @@ function exception_to_string(e)
 end
 
 abstract type InfoStruct end
+
+Base.hasproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) || hasproperty(source.info, key)
 Base.getproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) ? getfield(source, key) : getproperty(source.info, key)
 struct TuningConfig{T,I<:NamedTuple} <: InfoStruct
     info::I
     TuningConfig{T}(;kwargs...) where {T} = TuningConfig{T}((;kwargs...))
     TuningConfig{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)
 end
+mutable struct TuningState{T,I<:NamedTuple} <: InfoStruct
+    info::I
+    TuningState{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)
+    TuningState{T}(;kwargs...) where {T} = TuningState{T}((;kwargs...))
+    TuningState{T}(other::TuningState) where {T} = TuningState{T}(other.info)
+end
+Base.setproperty!(source::T, key::Symbol, x) where {T<:TuningState} = hasfield(T, key) ? setfield!(source, key, x) : setfield!(source, :info, merge(source.info, (;key=>x)))
+update!(what::TuningState, info::NamedTuple) = begin 
+    what.info = merge(what.info, info)
+end
+update!(what::TuningState, other::TuningState) = update!(what, other.info)
 
 end
 

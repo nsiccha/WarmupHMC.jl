@@ -135,7 +135,17 @@ function mcmc(sampling_logdensity, N, reparametrization_state::Reparametrization
     (; posterior_matrix, tree_statistics)
 end
 
-import WarmupHMC: InfoStruct, TuningConfig
+import WarmupHMC: InfoStruct, TuningConfig, TuningState
+
+debug(state::TuningState) = if hasproperty(state, :tree_statistics)
+    n_draws = length(state.tree_statistics)
+    if n_draws > 0
+        dt = final_ϵ(state)
+        n_steps = sum(getproperty.(state.tree_statistics, :steps))
+        frac_divergent = sum(is_divergent.(getproperty.(state.tree_statistics, :termination))) / n_draws
+        display((;dt, n_draws, n_steps, avg_n_steps=n_steps/n_draws, frac_divergent))
+    end
+end
 
 function warmup(sampling_logdensity, tuning::TuningConfig, reparametrization_state::ReparametrizationState; kwargs...)
     state = TuningState(sampling_logdensity, tuning, reparametrization_state)
@@ -144,27 +154,6 @@ function warmup(sampling_logdensity, tuning::TuningConfig, reparametrization_sta
     end
     debug(state)
     ((; state.tree_statistics), ReparametrizationState(state))
-end
-
-mutable struct TuningState{T,I<:NamedTuple} <: InfoStruct
-    info::I
-    TuningState{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)
-    TuningState{T}(;kwargs...) where {T} = TuningState{T}((;kwargs...))
-    TuningState{T}(other::TuningState) where {T} = TuningState{T}(other.info)
-end
-Base.setproperty!(source::T, key::Symbol, x) where {T<:TuningState} = hasfield(T, key) ? setfield!(source, key, x) : setfield!(source, :info, merge(source.info, (;key=>x)))
-update!(what::TuningState, info::NamedTuple) = begin 
-    what.info = merge(what.info, info)
-end
-update!(what::TuningState, other::TuningState) = update!(what, other.info)
-debug(state::TuningState) = begin 
-    dt = final_ϵ(state)
-    n_draws = length(state.tree_statistics)
-    if n_draws > 0
-        n_steps = sum(getproperty.(state.tree_statistics, :steps))
-        frac_divergent = sum(is_divergent.(getproperty.(state.tree_statistics, :termination))) / n_draws
-        display((;dt, n_draws, n_steps, avg_n_steps=n_steps/n_draws, frac_divergent))
-    end
 end
 
 
@@ -182,8 +171,16 @@ TuningState(sampling_logdensity, tuning::TuningConfig{T}, reparametrization_stat
         counter=1
     )
 end
+# TuningState(tuning::TuningConfig{T}) where {T} = TuningState{T}(;
+#     tuning.info...,
+#     rng, 
+# )
 # n_draws(state::TuningState) = size(state.posterior_matrix, 2)
-done(state::TuningState) = state.counter > state.target
+done(state::TuningState) = if hasproperty(state, :done)
+    state.done
+else
+    state.counter > state.target
+end
 step!(state::TuningState) = begin 
     @assert all(isfinite.(state.Q.q))
     Q, stats = sample_tree(state.rng, state.algorithm, Hamiltonian(state), state.Q, current_ϵ(state.ϵ_state))
@@ -201,13 +198,44 @@ handle_draw!(::TuningState, q) = error("unimplemented")
 ReparametrizationState(state::TuningState) = ReparametrizationState(
     state.reparametrization, 
     WarmupState(
-        state.Q, 
+        evaluated_log_density(state), 
         GaussianKineticEnergy(state),
         final_ϵ(state)
     )
 )
-final_ϵ(state::TuningState) = final_ϵ(state.ϵ_state)
-GaussianKineticEnergy(state::TuningState) = state.κ
+evaluated_log_density(state::TuningState) = if hasproperty(state, :Q)
+    state.Q
+else
+    evaluate_ℓ(state.reparametrization, collect(state.q); strict=true)
+end
+final_ϵ(state::TuningState) = if hasproperty(state, :ϵ_state)
+    final_ϵ(state.ϵ_state)
+else
+    state.ϵ
+end
+GaussianKineticEnergy(state::TuningState) = if hasproperty(state, :κ)
+    state.κ
+else
+    GaussianKineticEnergy(state.cov)
+end
+
+# function warmup(sampling_logdensity, stage::TuningConfig{:pathfinder}, reparametrization_state::ReparametrizationState; kwargs...)
+#     @unpack reparametrization, warmup_state = reparametrization_state
+#     nruns = stage.nruns
+#     result_pf = if nruns in [1,-1] 
+#         rv = pathfinder(reparametrization; ndraws=1, init=warmup_state.Q.q)
+#         if nruns == -1
+#             rv.draws[:, 1] .= mean(rv.fit_distribution)
+#         end
+#         rv
+#     else
+#         multipathfinder(reparametrization, 1; nruns=nruns)
+#     end
+#     Q = evaluate_ℓ(reparametrization, collect(result_pf.draws[:, 1]); strict = true)
+#     κ = GaussianKineticEnergy(result_pf.fit_distribution.Σ)
+#     warmup_state = WarmupState(Q, κ, warmup_state.ϵ)
+#     return result_pf, ReparametrizationState(reparametrization, warmup_state)
+# end
 
 TuningConfig{:step}(target::Int, stepsize_adaptation=DualAveraging()) = TuningConfig{:step}(;target, stepsize_adaptation)
 posterior_matrix(::TuningConfig{:step}, ::Any) = nothing
@@ -291,7 +319,7 @@ Hamiltonian(state::TuningState{:mad_reparam}) = Hamiltonian(
 record!(state::TuningState{:mad_reparam}, args...) = begin
     tmp = TuningState{:mad}(state)
     record!(tmp, args...)
-    update!(state, tmp)
+    WarmupHMC.update!(state, tmp)
 end
 handle_draw!(::TuningState{:mad_reparam}, ::Any) = nothing
 ReparametrizationState(state::TuningState{:mad_reparam}) = begin

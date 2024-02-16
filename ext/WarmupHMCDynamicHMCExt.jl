@@ -185,7 +185,7 @@ end
 # n_draws(state::TuningState) = size(state.posterior_matrix, 2)
 done(state::TuningState) = state.counter > state.target
 step!(state::TuningState) = begin 
-    @assert all(isfinite.(Q.q))
+    @assert all(isfinite.(state.Q.q))
     Q, stats = sample_tree(state.rng, state.algorithm, Hamiltonian(state), state.Q, current_ϵ(state.ϵ_state))
     handle_transition!(state, Q, stats)
 end
@@ -226,7 +226,8 @@ GaussianKineticEnergy(state::TuningState{:diagonal}) = GaussianKineticEnergy(
 )
 
 TuningConfig{:mad}(
-    target::Int, thin=1, stepsize_adaptation=DualAveraging(γ=.1)
+    target::Int, thin=1, 
+    stepsize_adaptation=DualAveraging(γ=.1)
 ) = TuningConfig{:mad}(;
     target, stepsize_adaptation, thin, inner=0, accs=fill(-Inf, target)
 )
@@ -276,7 +277,9 @@ reparam(state::TuningState{T}) where {T} = begin
 end
 
 TuningConfig{:mad_reparam}(
-    target::Int, thin=1, stepsize_adaptation=DualAveraging(γ=.1); kwargs...
+    target::Int, thin=1, 
+    stepsize_adaptation=DualAveraging(γ=1., κ=1., t₀=0); 
+    kwargs...
 ) = TuningConfig{:mad_reparam}(;
     target, stepsize_adaptation, thin, reparametrization_kwargs=kwargs, 
     inner=0, accs=fill(-Inf, target), 

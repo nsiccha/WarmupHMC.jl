@@ -278,7 +278,7 @@ end
 
 TuningConfig{:mad_reparam}(
     target::Int, thin=1, 
-    stepsize_adaptation=DualAveraging(γ=1., κ=1., t₀=0); 
+    stepsize_adaptation=DualAveraging(γ=.1, κ=1.); 
     kwargs...
 ) = TuningConfig{:mad_reparam}(;
     target, stepsize_adaptation, thin, reparametrization_kwargs=kwargs, 

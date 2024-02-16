@@ -20,6 +20,6 @@ TuningState(sampling_logdensity, tuning::TuningConfig{:pathfinder}, reparametriz
     end
     q = collect(result_pf.draws[:, 1])
     cov = result_pf.fit_distribution.Σ
-    TuningState{:pathfinder}(;q, cov, ϵ, done=true, tree_statistics=[])
+    TuningState{:pathfinder}(;reparametrization, q, cov, ϵ, done=true, tree_statistics=[])
 end
 end

@@ -2,7 +2,7 @@ module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
-import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, ReparametrizationState, RecordingPosterior, record!, posterior_matrix, done, step!, handle_transition!, handle_draw!
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, ReparametrizationState, RecordingPosterior, handle_leaf!, posterior_matrix, done, step!, handle_transition!, handle_draw!
 
 import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal, is_divergent, EvaluatedLogDensity
 
@@ -241,8 +241,8 @@ posterior_matrix(cfg::TuningConfig{:mad}, Q) = _empty_posterior_matrix(Q, cfg.n_
 Hamiltonian(state::TuningState{:mad}) = Hamiltonian(
     state.κ, RecordingPosterior(state, state.reparametrization),
 )
-record!(state::TuningState{:mad}, draw::EvaluatedLogDensity, acc) = record!(state, draw.q, acc)
-record!(state::TuningState{:mad}, draw, acc) = begin
+handle_leaf!(state::TuningState{:mad}, draw::EvaluatedLogDensity, acc) = handle_leaf!(state, draw.q, acc)
+handle_leaf!(state::TuningState{:mad}, draw, acc) = begin
     state.evaluation_counter += 1
     idx = argmin(state.accs)
     if acc > state.accs[idx] 
@@ -290,9 +290,9 @@ posterior_matrix(cfg::TuningConfig{:mad_reparam}, Q) = _empty_posterior_matrix(Q
 Hamiltonian(state::TuningState{:mad_reparam}) = Hamiltonian(
     state.κ, RecordingPosterior(state, state.reparametrization),
 )
-record!(state::TuningState{:mad_reparam}, args...) = begin
+handle_leaf!(state::TuningState{:mad_reparam}, args...) = begin
     tmp = TuningState{:mad}(state)
-    record!(tmp, args...)
+    handle_leaf!(tmp, args...)
     WarmupHMC.update!(state, tmp)
 end
 ReparametrizationState(state::TuningState{:mad_reparam}) = ReparametrizationState(
@@ -328,7 +328,7 @@ import DynamicHMC: TrajectoryNUTS, leaf, logdensity, leaf_acceptance_statistic, 
 function leaf(trajectory::TrajectoryNUTS{Hamiltonian{K,P}}, z, is_initial) where {K, P<:RecordingPosterior}
     @unpack H, π₀, min_Δ, turn_statistic_configuration = trajectory
     Δ = is_initial ? zero(π₀) : logdensity(H, z) - π₀
-    !is_initial && record!(H.ℓ, z.Q, Δ)
+    !is_initial && handle_leaf!(H.ℓ, z.Q, Δ)
     isdiv = Δ < min_Δ
     v = leaf_acceptance_statistic(Δ, is_initial)
     if isdiv

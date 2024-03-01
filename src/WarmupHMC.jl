@@ -140,5 +140,11 @@ LogDensityProblems.logdensity_and_gradient(source::RecordingPosterior, draw::Abs
 )
 record!(source::RecordingPosterior, args...) = record!(source.recorder, args...)
 
+function posterior_matrix end
+function done end
+function step! end
+function handle_transition! end
+function handle_draw! end
+
 end
 

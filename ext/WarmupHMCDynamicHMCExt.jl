@@ -2,7 +2,7 @@ module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
-import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, ReparametrizationState, RecordingPosterior, record!
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, ReparametrizationState, RecordingPosterior, record!, posterior_matrix, done, step!, handle_transition!, handle_draw!
 
 import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal, is_divergent, EvaluatedLogDensity
 
@@ -166,6 +166,7 @@ TuningState(sampling_logdensity, tuning::TuningConfig{T}, reparametrization_stat
         draw_counter=1, evaluation_counter=1
     )
 end
+posterior_matrix(::TuningConfig, ::Any) = nothing
 # TuningState(tuning::TuningConfig{T}) where {T} = TuningState{T}(;
 #     tuning.info...,
 #     rng, 
@@ -189,7 +190,6 @@ handle_transition!(state::TuningState, Q, stats) = begin
     state.info = merge(state.info, (;Q, ϵ_state))
     push!(state.tree_statistics, stats)
 end
-posterior_matrix(::TuningConfig, ::Any) = error("unimplemented")
 handle_draw!(state::TuningState, ::Any) = begin 
     state.draw_counter += 1
 end

@@ -2,7 +2,7 @@ module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
-import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, RecordingPosterior, record!
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, ReparametrizationState, RecordingPosterior, record!
 
 import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal, is_divergent, EvaluatedLogDensity
 
@@ -29,11 +29,6 @@ function mcmc_keep_reparametrization(rng::AbstractRNG, ℓ, N::Integer;
     warmup, reparametrization_state = my_warmup(sampling_logdensity, warmup_stages, initial_reparametrization_state; kwargs...)
     inference = mcmc(sampling_logdensity, N, reparametrization_state)
     (; initial_reparametrization_state, warmup, final_reparametrization_state = reparametrization_state, inference, sampling_logdensity)
-end
-
-struct ReparametrizationState{R,W<:WarmupState}
-    reparametrization::R
-    warmup_state::W
 end
 
 function initialize_reparametrization_state(rng, ℓ; kwargs...)

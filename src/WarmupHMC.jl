@@ -98,6 +98,11 @@ function exception_to_string(e)
     "Trouble doing things:\n$(error_msg)\n$(st)"
 end
 
+struct ReparametrizationState{R,W}
+    reparametrization::R
+    warmup_state::W
+end
+
 abstract type InfoStruct end
 
 Base.hasproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) || hasproperty(source.info, key)

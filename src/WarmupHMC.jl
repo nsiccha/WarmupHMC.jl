@@ -98,20 +98,30 @@ function exception_to_string(e)
     "Trouble doing things:\n$(error_msg)\n$(st)"
 end
 
-struct ReparametrizationState{R,W}
-    reparametrization::R
-    warmup_state::W
-end
+# struct ReparametrizationState{R,W}
+#     reparametrization::R
+#     warmup_state::W
+# end
 
 abstract type InfoStruct end
 
 Base.hasproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) || hasproperty(source.info, key)
 Base.getproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key) ? getfield(source, key) : getproperty(source.info, key)
+
+struct ReparametrizationState{I<:NamedTuple} <: InfoStruct
+    info::I
+    ReparametrizationState(;kwargs...) = ReparametrizationState((;kwargs...))
+end
+ReparametrizationState(reparametrization, warmup_state) = ReparametrizationState(;
+    reparametrization, warmup_state
+)
+
 struct TuningConfig{T,I<:NamedTuple} <: InfoStruct
     info::I
     TuningConfig{T}(;kwargs...) where {T} = TuningConfig{T}((;kwargs...))
     TuningConfig{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)
 end
+
 mutable struct TuningState{T,I<:NamedTuple} <: InfoStruct
     info::I
     TuningState{T}(info::I) where {T,I<:NamedTuple} = new{T,I}(info)

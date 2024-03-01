@@ -2,9 +2,9 @@ module WarmupHMCDynamicHMCExt
 
 using WarmupHMC, DynamicHMC, UnPack, Random, NaNStatistics
 
-import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig
+import WarmupHMC: reparametrize, find_reparametrization, mcmc_with_reparametrization, mcmc_keep_reparametrization, reparametrization_parameters, find_reparametrization_and_reparametrize, TuningConfig, RecordingPosterior, record!
 
-import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal, is_divergent
+import DynamicHMC: default_warmup_stages, default_reporter, NUTS, SamplingLogDensity, _warmup, mcmc, WarmupState, initialize_warmup_state, warmup, InitialStepsizeSearch, TuningNUTS, _empty_posterior_matrix, TreeStatisticsNUTS, Hamiltonian, initial_adaptation_state, make_mcmc_reporter, evaluate_ℓ, current_ϵ, sample_tree, adapt_stepsize, report, REPORT_SIGDIGITS, GaussianKineticEnergy, regularize_M⁻¹, sample_M⁻¹, final_ϵ, mcmc_steps, mcmc_next_step, Symmetric, Diagonal, is_divergent, EvaluatedLogDensity
 
 function mcmc_with_reparametrization(rng, ℓ, N; initialization = (),
     warmup_stages = default_warmup_stages(),
@@ -246,6 +246,7 @@ posterior_matrix(cfg::TuningConfig{:mad}, Q) = _empty_posterior_matrix(Q, cfg.n_
 Hamiltonian(state::TuningState{:mad}) = Hamiltonian(
     state.κ, RecordingPosterior(state, state.reparametrization),
 )
+record!(state::TuningState{:mad}, draw::EvaluatedLogDensity, acc) = record!(state, draw.q, acc)
 record!(state::TuningState{:mad}, draw, acc) = begin
     state.evaluation_counter += 1
     idx = argmin(state.accs)
@@ -326,30 +327,13 @@ TuningConfig{:adaptive}(::Val{T}, n_draws=1000, evaluation_target=1000, draw_tar
     for thin in [1,2,4,8,16,32,64,128,256]
 ])
 
-
-
-mutable struct RecordingPosterior{R,P}
-    recorder::R
-    posterior::P
-end
-using LogDensityProblems
-LogDensityProblems.capabilities(::Type{<:RecordingPosterior}) = LogDensityProblems.LogDensityOrder{2}()
-LogDensityProblems.dimension(source::RecordingPosterior) = LogDensityProblems.dimension(source.posterior)
-LogDensityProblems.logdensity(source::RecordingPosterior, draw::AbstractVector) = LogDensityProblems.logdensity(
-    source.posterior, draw
-)
-LogDensityProblems.logdensity_and_gradient(source::RecordingPosterior, draw::AbstractVector) = LogDensityProblems.logdensity_and_gradient(
-    source.posterior, draw#record!(source, draw)
-)
-record!(source::RecordingPosterior, args...) = record!(source.recorder, args...) 
-
 import DynamicHMC: TrajectoryNUTS, leaf, logdensity, leaf_acceptance_statistic, leaf_turn_statistic
 
 
 function leaf(trajectory::TrajectoryNUTS{Hamiltonian{K,P}}, z, is_initial) where {K, P<:RecordingPosterior}
     @unpack H, π₀, min_Δ, turn_statistic_configuration = trajectory
     Δ = is_initial ? zero(π₀) : logdensity(H, z) - π₀
-    !is_initial && record!(H.ℓ, z.Q.q, Δ)
+    !is_initial && record!(H.ℓ, z.Q, Δ)
     isdiv = Δ < min_Δ
     v = leaf_acceptance_statistic(Δ, is_initial)
     if isdiv

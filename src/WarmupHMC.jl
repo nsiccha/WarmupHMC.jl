@@ -119,5 +119,21 @@ update!(what::TuningState, info::NamedTuple) = begin
 end
 update!(what::TuningState, other::TuningState) = update!(what, other.info)
 
+
+mutable struct RecordingPosterior{R,P}
+    recorder::R
+    posterior::P
+end
+using LogDensityProblems
+LogDensityProblems.capabilities(::Type{<:RecordingPosterior}) = LogDensityProblems.LogDensityOrder{2}()
+LogDensityProblems.dimension(source::RecordingPosterior) = LogDensityProblems.dimension(source.posterior)
+LogDensityProblems.logdensity(source::RecordingPosterior, draw::AbstractVector) = LogDensityProblems.logdensity(
+    source.posterior, draw
+)
+LogDensityProblems.logdensity_and_gradient(source::RecordingPosterior, draw::AbstractVector) = LogDensityProblems.logdensity_and_gradient(
+    source.posterior, draw
+)
+record!(source::RecordingPosterior, args...) = record!(source.recorder, args...)
+
 end
 

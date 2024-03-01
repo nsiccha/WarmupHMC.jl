@@ -111,6 +111,7 @@ Base.getproperty(source::T, key::Symbol) where {T<:InfoStruct} = hasfield(T, key
 struct ReparametrizationState{I<:NamedTuple} <: InfoStruct
     info::I
     ReparametrizationState(;kwargs...) = ReparametrizationState((;kwargs...))
+    ReparametrizationState(info::I) where {I<:NamedTuple} = new{I}(info)
 end
 ReparametrizationState(reparametrization, warmup_state) = ReparametrizationState(;
     reparametrization, warmup_state

@@ -1,7 +1,14 @@
 .jupyter_cache
 *.html
+*.quarto_ipynb
 *_files
 .vscode
 figs
 *.so
 *.svg
+_site
+os
+sys
+sysconfig
+getopt
+cache

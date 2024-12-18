@@ -1,0 +1,8 @@
+[deps]
+IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+PosteriorDB = "1c4bc282-d2f5-44f9-b6d1-8c4424a23ad4"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+StanLogDensityProblems = "a545de4d-8dba-46db-9d34-4e41d3f07807"
+WarmupHMC = "60658175-6863-4866-a322-ab51a11c0cfe"

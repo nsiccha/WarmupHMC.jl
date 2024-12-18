@@ -1,0 +1,51 @@
+```{julia}
+cd(dirname(Base.active_project()))
+using WarmupHMC, PosteriorDB, StanLogDensityProblems, Random, Logging, Serialization
+cached(f, path, args...; kwargs...) = begin 
+    mkpath(dirname(path))
+    isfile(path) && return Serialization.deserialize(path)
+    Serialization.serialize(path, nothing)
+    rv = try
+        println("Generating ", path, "...")
+        f(args...; kwargs...)
+    catch e
+        @error e
+        # rethrow()
+        nothing
+    end
+    Serialization.serialize(path, rv)
+    rv
+end
+begin 
+    pdb = PosteriorDB.database()
+    pdb_posterior(posterior_name) = begin
+        post = PosteriorDB.posterior(pdb, posterior_name)
+        PosteriorDB.posterior(pdb, posterior_name)
+        stan_path = PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(post), "stan"))
+        stan_problem = with_logger(ConsoleLogger(stderr, Logging.Error)) do 
+            WarmupHMC.NamedPosterior(StanProblem(
+                stan_path, 
+                PosteriorDB.load(PosteriorDB.dataset(post), String);
+                nan_on_error=true
+            ), posterior_name)
+        end
+    end
+    tmp = map(PosteriorDB.posterior_names(pdb)) do posterior_name
+        cached("cache/$posterior_name.jl") do 
+            rng = Random.default_rng()
+            WarmupHMC.adaptive_warmup_mcmc(rng, pdb_posterior(posterior_name))
+        end
+    end
+end
+```
+```{julia}
+using LinearAlgebra
+K = [
+    1 .1 .1 .1 .1
+    .1 1 .98 .98 .5
+    .1 .98 1 .98 .5
+    .1 .98 .98 1 .5
+    .1 .5 .5 .5 1.
+]
+cholesky(K)
+```

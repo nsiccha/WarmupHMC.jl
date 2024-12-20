@@ -1,51 +1,257 @@
+---
+title: "Adaptive warm-up for linear and non-linear transformations"
+---
+
+A previous approach to do automatic non-linear reparametrizations using MCMC draws has been found lacking,
+AFAICT mainly for two reasons:
+
+* **High start-up cost**: Especially in the early stages of warm-up, a lot of effort is spent to get just a handful of MCMC draws. These are usually strongly correlated, and are thus usually less than helpful in learning the linear transformation, and even less so for the non-linear transformation.
+* **Limited convergence due to statistical "fluctuations"**: Even in the later stages of warm-up, the number of MCMC draws will inherently be limited. If there are many linear and non-linear parameters that have to be learned, the inherent fluctuations in estimating the "ideal" parameters may be so large that the linear and/or non-linear transformation are not helpful. Aiming e.g. for [Stan's default final 500 warm-up draws](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning) will still generally lead to large sampling distributions of the "ideal" parameters, while VI methods employing SGD-type optimizers have a potentially limitless sample size in estimating the ideal parameters. 
+
+## Method & code
+
+### Method
+
+Working on an explanation, but see also the commented code below which includes an explanation in the docstring at the top. The docstring is also reproduced below:
+
+
+Adaptively learn 
+
+* a (currently only) linear transformation of the posterior that simplifies MCMC sampling,
+* a NUTS step size (using standard Dual Averaging)
+and return samples from the posterior. 
+
+The warm-up procedure is windowed and somehow insipred by [Stan](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)'s and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but differs in several important ways:
+
+* We initialize using Pathfinder!
+* Our warm-up windows aim to reach a certain number of GRADIENT EVALUATIONS , instead of a certain number of MCMC transitions (Stan).
+We start with a (default) target of 1000 gradient evaluations, and double that target after each warm-up window.
+* Instead of only using the posterior positions (Stan), we use the posterior POSITIONS AND GRADIENTS (like e.g. nutpie).
+* Instead of only using the MCMC/POSTERIOR positions and gradients (Stan and nutpie), 
+we also store and use the INTERMEDIATE positions and gradients, i.e. the ones that MCMC visits before returning the "final" new position. 
+We store up to (a default of) 1000 intermediate positions and gradients. 
+The stored intermediate positions get selected (pseudo-)randomly, and only get selected if the Hamiltonian error is small enough.
+* Instead of only learning a single (linear) transformation and upating that one repeatedly, we learn several transformations in parallel and
+at the end of each warm-up window select the one that minimizes a loss function. Currently, we learn three different linear transformations:
+    * Pathfinder's initial transformation, enriched by an updated additional diagonal scaling
+    * A standard diagonal "mass matrix".
+    * A novel, adaptive sequence of Householder transformations followed by diagonal scaling.
+The loss function that gets used to select the used linear transformation tries to reward transformations which turn the transformed posterior
+into something that's close to a Normal distribution without correlation. 
+For transformed positions p' and gradients g', the loss function is 
+    loss(p', g') = sum(log(std(p') * std(g'))^2), 
+which is zero for Normal distributions with zero correlations, independently of the samples positions and gradients. 
+* Instead of running the warm-up for a fixed number of windows, 
+we try to estimate when continuing warming up is harmful/useless and stop warming up then. To facilitate this, we
+    * only ever adapt the stepsize until (a default of) 50 MCMC transitions have ocurred in the current warm-up window,
+    * and try to predict cost (in terms of gradient evaluations) for finishing sampling with the current kernel vs. restarting warm-up with a new window.
+    The way we do this prediction will probably be changed in the future.
+By only ever having 50 stepsize adaptation MCMC transitions, we can start collecting posterio samples early.
+
+### Code: `adaptive_warmup_mcmc.jl`
+
+:::{.column-page}
+The main code can be found at [https://github.com/nsiccha/WarmupHMC.jl/blob/main/src/adaptive_warmup_mcmc.jl](https://github.com/nsiccha/WarmupHMC.jl/blob/main/src/adaptive_warmup_mcmc.jl), also reproduced below:
+```{.julia include="adaptive_warmup_mcmc.jl"} 
+```
+:::  
+
+## Sampling efficiency comparison: linear transformations
+
+The below table compares the adaptive warmup procedure with the "regular" linear warm-up procedure as used e.g. by Stan, as implemented in [DynamicHMC.jl](https://github.com/tpapp/DynamicHMC.jl). All benchmarks are run on my local machine using [BridgeStan.jl](https://roualdes.github.io/bridgestan/latest/) and [PosteriorDB.jl](https://github.com/sethaxen/PosteriorDB.jl). **This table only includes learning linear transformations.**
+
+Meaning of columns:
+
+* **Posterior**: The name of the posterior in [posteriordb](https://github.com/stan-dev/posteriordb).
+* **dimension**: The dimension of the posterior.
+* **#runs**: The number of individual chains run to compute the benchmark statistics (the next columns).
+* **Adaptive advantage**: The ratio of the mean sampling efficiency of the adaptive warm-up and the mean sampling efficiency of the regular warm-up. The chainwise sampling efficiency has been computed my dividing the minimum (over the parameters) effective sample size by the total number of gradient evaluations in that chain's run.
+* **Adaptive/Regular: min. ess**: The mean minimum effective sample size (for the mean) for the adaptive or regular warm-up respectively.
+* **Adaptive/Regular: #gradient evals**: The mean total number of gradient evaluations.
+
+Posteriors where the regular warm-up takes too long have been skipped so far due to time-reasons. 
+The table is sorted first by `#runs` (descending) and then by `Adaptive advantage` (ascending).  
+
 ```{julia}
-cd(dirname(Base.active_project()))
-using WarmupHMC, PosteriorDB, StanLogDensityProblems, Random, Logging, Serialization
-cached(f, path, args...; kwargs...) = begin 
-    mkpath(dirname(path))
-    isfile(path) && return Serialization.deserialize(path)
-    Serialization.serialize(path, nothing)
-    rv = try
-        println("Generating ", path, "...")
-        f(args...; kwargs...)
-    catch e
-        @error e
-        # rethrow()
-        nothing
-    end
-    Serialization.serialize(path, rv)
-    rv
+cd(dirname(Base.active_project()))   
+using WarmupHMC, PosteriorDB, StanLogDensityProblems, LogDensityProblems, Random, Logging, Serialization, DynamicObjects, DataFrames, IJulia, PrettyTables, OrderedCollections, Statistics
+interactive_table(df; kwargs...) = if IJulia.inited 
+    pretty_table(df;
+        backend=Val(:html),
+        show_subheader=false, 
+        table_class="interactive",
+        kwargs...
+    )
+else
+    pretty_table(df;
+        backend=Val(:text),
+        show_subheader=false, 
+        kwargs...
+    )
 end
-begin 
-    pdb = PosteriorDB.database()
-    pdb_posterior(posterior_name) = begin
-        post = PosteriorDB.posterior(pdb, posterior_name)
-        PosteriorDB.posterior(pdb, posterior_name)
-        stan_path = PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(post), "stan"))
-        stan_problem = with_logger(ConsoleLogger(stderr, Logging.Error)) do 
-            WarmupHMC.NamedPosterior(StanProblem(
-                stan_path, 
-                PosteriorDB.load(PosteriorDB.dataset(post), String);
-                nan_on_error=true
-            ), posterior_name)
+
+hl_better_f(data, i, j) = j== 4 && !ismissing(data[i,j]) && data[i,j] > 1
+hl_better = IJulia.inited ? HtmlHighlighter(
+    hl_better_f,
+    HtmlDecoration(color="blue", font_weight="bold")
+) : Highlighter(
+    hl_better_f,
+    crayon"blue bold"
+)
+hl_worse_f(data, i, j) = j== 4 && !ismissing(data[i,j]) && data[i,j] < 1
+hl_worse = IJulia.inited ? HtmlHighlighter(
+    hl_worse_f,
+    HtmlDecoration(color="red", font_weight="bold")
+) : Highlighter(
+    hl_worse_f,
+    crayon"blue bold"
+)
+relative!(args...; f=identity) = begin
+    for i in eachindex(args[1])
+        setindex!.(args, f.(getindex.(args, i) ./ maximum(skipmissing(getindex.(args, i)); init=-Inf)), i)
+    end
+    args
+end
+pad_missing(rows) = begin 
+    all_keys = OrderedSet()
+    for row in rows
+        union!(all_keys, keys(row))
+    end
+    map(row->merge((;Pair.(all_keys, missing)...), row), rows)
+end
+using DynamicHMC, MCMCDiagnosticTools
+const pdb = PosteriorDB.database()
+min_ess(x::AbstractMatrix) = minimum(
+    MCMCDiagnosticTools.ess(reshape(x', (size(x, 2), 1, size(x, 1))))
+)
+
+# https://github.com/JuliaLang/julia/blob/ff97facbc94089f6964782f0d2b961a5c8f7b813/base/timing.jl#L602-L630
+macro runtimed(ex)
+    quote
+        Base.Experimental.@force_compile
+        local stats = Base.gc_num()
+        local elapsedtime = time_ns()
+        Base.cumulative_compile_timing(true)
+        local compile_elapsedtimes = Base.cumulative_compile_time_ns()
+        local val = Base.@__tryfinally($(esc(ex)),
+            (elapsedtime = time_ns() - elapsedtime;
+            Base.cumulative_compile_timing(false);
+            compile_elapsedtimes = Base.cumulative_compile_time_ns() .- compile_elapsedtimes;
+        ))
+        local diff = Base.GC_Diff(Base.gc_num(), stats)
+        elapsedtime, gctime, compile_time = (elapsedtime, diff.total_time, compile_elapsedtimes[1])./1e9
+        (;val, runtime=elapsedtime-gctime-compile_time, gctime, compile_time, allocs=compile_time == 0 ? Base.gc_alloc_count(diff) : missing)
+    end
+end
+struct UncertainStatistic{F,V}
+    f::F
+    v::V
+end
+isvalid(::Missing) = false
+isvalid(::Nothing) = false
+isvalid(x::Real) = isfinite(x)
+mmean(x) = all(!isvalid, x) ? missing : mean(filter(isvalid, x))
+ratio((v1, v2)) = mmean(v1) / mmean(v2)
+UncertainMean{V} = UncertainStatistic{typeof(mean),V}
+UncertainRatio{V} = UncertainStatistic{typeof(ratio),V}
+umean(vals) = UncertainStatistic(mmean, vals)
+uratio(v1, v2) = UncertainStatistic(ratio, (v1, v2))
+Base.inv(s::UncertainRatio) = uratio(s.v[2], s.v[1])
+Base.show(io::IO, s::UncertainStatistic) = print(io, round2s(s.f(s.v)))
+Base.show(io::IO, ::MIME"text/plain", s::UncertainStatistic) = print(io, s)
+nonzero(x) = x == zero(x) ? one(x) : x
+round2s(x::Real) = for (t, m) in ((1e9, "G"), (1e6, "M"), (1e3, "k"), (1, ""), (0, " ")) #, (1e-3, "m"), (1e-6, "μ"), (1e-9, "n")
+    x > t && return replace("$(round(x/nonzero(t); sigdigits=2))$m", ".0$m"=>m)
+end
+round2(x::Real) = round(x; sigdigits=2)
+round2(::Missing) = missing
+Base.isless(x::Real, s::UncertainStatistic) = isless(x, s.f(s.v))
+Base.isless(s::UncertainStatistic, x::Real) = isless(s.f(s.v), x)
+Base.isless(s1::UncertainStatistic, s2::UncertainStatistic) = isless(s1.f(s1.v), s2.f(s2.v))
+# round2(x) = round(x; sigdigits=2)
+@dynamicstruct struct WarmupEvaluation 
+    posterior_name::String
+    cache_path = joinpath("cache", posterior_name)
+    posterior = PosteriorDB.posterior(pdb, posterior_name)
+    stan_path = PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(posterior), "stan"))
+    problem = with_logger(ConsoleLogger(stderr, Logging.Error)) do 
+        WarmupHMC.NamedPosterior(StanProblem(
+            stan_path, 
+            PosteriorDB.load(PosteriorDB.dataset(posterior), String);
+            nan_on_error=true
+        ), posterior_name)
+    end
+    dimension = LogDensityProblems.dimension(problem)
+    @cached cached_dimension = dimension
+    n_runs = 4
+    @cached regular = benchmark_mcmc(regular_warmup_mcmc, problem, regular; n_runs)
+    @cached adaptive = benchmark_mcmc(WarmupHMC.adaptive_warmup_mcmc, problem, adaptive; n_runs)
+    # @cached row = if !isnothing(row) && row.n_runs == n_runs
+        # row
+    @cached row = begin
+        let regular=DataFrame(regular), adaptive=DataFrame(adaptive), n_runs
+            regular_rel_eff = uratio(regular.min_eff, adaptive.min_eff)
+            adaptive_rel_eff = inv(regular_rel_eff)
+            (;
+                n_runs=min(size(regular, 1), size(adaptive, 1)), 
+                adaptive_rel_eff,
+                regular_min_ess=umean(regular.min_ess),
+                regular_gradient_eval_count=umean(regular.gradient_eval_count),
+                regular_min_eff=umean(regular.min_eff),
+                regular_allocs=umean(regular.allocs),
+                adaptive_min_ess=umean(adaptive.min_ess),
+                adaptive_gradient_eval_count=umean(adaptive.gradient_eval_count),
+                adaptive_min_eff=umean(adaptive.min_eff),
+                adaptive_allocs=umean(adaptive.allocs),
+            )
         end
     end
-    tmp = map(PosteriorDB.posterior_names(pdb)) do posterior_name
-        cached("cache/$posterior_name.jl") do 
-            rng = Random.default_rng()
-            WarmupHMC.adaptive_warmup_mcmc(rng, pdb_posterior(posterior_name))
-        end
-    end
 end
+benchmark_mcmc(f, prob, results; n_runs) = begin 
+    !isa(results, Vector) && (results = Any[benchmark_mcmc(f, prob; seed=1)])
+    !isa(results, Vector{Any}) && (results = Vector{Any}(results))
+    for i in 1+length(results):n_runs
+        println("Running benchmark $i")
+        push!(results, benchmark_mcmc(f, prob; seed=i))
+    end
+    results
+end
+benchmark_mcmc(f, prob; seed, kwargs...) = try
+    rng, prob = Xoshiro(seed), WarmupHMC.CountingPosterior(prob)
+    (;val, runtime, allocs) = @runtimed f(rng, prob; report=false).posterior_position
+    min_ess = Main.min_ess(val)
+    gradient_eval_count = prob.count[]
+    min_eff = min_ess / gradient_eval_count 
+    (;min_ess, gradient_eval_count, min_eff, runtime, allocs)
+catch e
+    @error e
+    (;min_ess=missing, gradient_eval_count=missing, min_eff=missing, runtime=missing, allocs=missing)
+end
+regular_warmup_mcmc(rng, prob; kwargs...) = begin 
+    tmp = mcmc_with_warmup(rng, prob, 1000; reporter=NoProgressReport())
+    (;posterior_position=tmp.posterior_matrix)
+end
+nothing
 ```
+
+:::{.column-page}
 ```{julia}
-using LinearAlgebra
-K = [
-    1 .1 .1 .1 .1
-    .1 1 .98 .98 .5
-    .1 .98 1 .98 .5
-    .1 .98 .98 1 .5
-    .1 .5 .5 .5 1.
-]
-cholesky(K)
+ensurepair(x::Pair) = x
+ensurepair(x::String) = x=>x
+restrictandrename(df, args...) = rename(df[!, collect(first.(ensurepair.(args)))], ensurepair.(args)...)
+df = map(enumerate(PosteriorDB.posterior_names(pdb)) |> collect |> reverse) do (i, posterior_name)
+    e = WarmupEvaluation(posterior_name)
+    (any(n->contains(posterior_name, n), [
+        "election88", "covid", "nn_rbm1b", "hmm"
+    ]) || e.cached_dimension > 640 || (IJulia.inited && !isfile(joinpath(e.cache_path, "row.sjl"))))  && return (;i, posterior_name, dimension=e.cached_dimension, n_runs=0)
+    merge((;i, posterior_name, dimension=e.cached_dimension), e.row) 
+end |> pad_missing |> DataFrame |> x->restrictandrename(sort!(x, [order(:n_runs, rev=true), :adaptive_rel_eff]), "posterior_name"=>"Posterior", "dimension", "n_runs"=>"#runs", "adaptive_rel_eff"=>"Adaptive advantage", "adaptive_min_ess"=>"Adaptive: min. ess", "regular_min_ess"=>"Regular: min. ess", "adaptive_gradient_eval_count"=>"Adaptive: #gradient evals", "regular_gradient_eval_count"=>"Regular: #gradient evals");
+interactive_table(df; highlighters=(hl_better,hl_worse))
 ```
+:::
+
+
+
+## Sampling efficiency comparison: non-linear transformations
+
+TBA

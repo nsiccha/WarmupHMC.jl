@@ -73,6 +73,7 @@ mutable struct LimitedRecorder2
     triggered::Bool
     written::Bool
 end
+LimitedRecorder2(target, thin) = LimitedRecorder2(target, thin, 1, 0, false, false)
 LimitedRecordingPosterior3{P,T} = RecordingPosterior2{P,T,LimitedRecorder2}
 record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin 
     r = p.recorder::LimitedRecorder2
@@ -100,7 +101,7 @@ record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin
 end
 reset!(x::ElasticArray) = resize!(x, Base.front(size(x))..., 0)
 reset!(p::RecordingPosterior2) = begin 
-    map(reset!, (p.halo_position, p.halo_gradient))
+    map(reset!, (p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient))
     reset!(p.recorder)
 end
 reset!(r::LimitedRecorder2) = begin 

@@ -1,13 +1,4 @@
 # WarmupHMC.jl
 
-Implements different warm-up procedures for HMC/NUTS.
-
-```julia
-using WarmupHMC
-
-# Include an example!
-```
-
-```
-# Include the output of example!
+Implements different warm-up procedures for HMC/NUTS. See [https://nsiccha.github.io/WarmupHMC.jl/](https://nsiccha.github.io/WarmupHMC.jl/) for details and benchmarks.
 ```

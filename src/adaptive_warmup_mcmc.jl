@@ -1,5 +1,6 @@
 """
 Adaptively learn 
+
 * a (currently only) linear transformation of the posterior that simplifies MCMC sampling,
 * a NUTS step size (using standard Dual Averaging)
 and return samples from the posterior. 

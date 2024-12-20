@@ -1,36 +1,38 @@
 """
-Adaptively learn 
+Adaptively 
 
-* a (currently only) linear transformation of the posterior that simplifies MCMC sampling,
-* a NUTS step size (using standard Dual Averaging)
-and return samples from the posterior. 
+* learn a (currently only) linear transformation of the posterior that simplifies MCMC sampling,
+* learn a NUTS step size (using standard Dual Averaging), and
+* return samples from the posterior. 
 
-The warm-up procedure is windowed and somehow insipred by [Stan](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)'s and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but differs in several important ways:
+The warm-up procedure is windowed and insipred by [Stan](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)'s and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but differs in several important ways:
 
 * We initialize using Pathfinder!
 * Our warm-up windows aim to reach a certain number of GRADIENT EVALUATIONS , instead of a certain number of MCMC transitions (Stan).
 We start with a (default) target of 1000 gradient evaluations, and double that target after each warm-up window.
 * Instead of only using the posterior positions (Stan), we use the posterior POSITIONS AND GRADIENTS (like e.g. nutpie).
-* Instead of only using the MCMC/POSTERIOR positions and gradients (Stan and nutpie), 
-we also store and use the INTERMEDIATE positions and gradients, i.e. the ones that MCMC visits before returning the "final" new position. 
+* Instead of only using the MCMC/posterior positions and gradients (Stan and nutpie), 
+we also store and use the INTERMEDIATE POSITIONS AND GRADIENTS, i.e. the ones that MCMC visits before returning the "final" new position. 
 We store up to (a default of) 1000 intermediate positions and gradients. 
 The stored intermediate positions get selected (pseudo-)randomly, and only get selected if the Hamiltonian error is small enough.
 * Instead of only learning a single (linear) transformation and upating that one repeatedly, we learn several transformations in parallel and
 at the end of each warm-up window select the one that minimizes a loss function. Currently, we learn three different linear transformations:
-    * Pathfinder's initial transformation, enriched by an updated additional diagonal scaling
+    * Pathfinder's initial transformation, enriched by an updated additional diagonal scaling,
     * A standard diagonal "mass matrix".
     * A novel, adaptive sequence of Householder transformations followed by diagonal scaling.
-The loss function that gets used to select the used linear transformation tries to reward transformations which turn the transformed posterior
+
+  The loss function that gets used to select the used linear transformation tries to reward transformations which turn the transformed posterior
 into something that's close to a Normal distribution without correlation. 
 For transformed positions p' and gradients g', the loss function is 
-    loss(p', g') = sum(log(std(p') * std(g'))^2), 
-which is zero for Normal distributions with zero correlations, independently of the samples positions and gradients. 
+    `loss(p', g') = sum(log(std(p') * std(g'))^2)`, 
+which is zero for Normal distributions with zero correlations, independently of the sampled positions and gradients. 
 * Instead of running the warm-up for a fixed number of windows, 
 we try to estimate when continuing warming up is harmful/useless and stop warming up then. To facilitate this, we
     * only ever adapt the stepsize until (a default of) 50 MCMC transitions have ocurred in the current warm-up window,
     * and try to predict cost (in terms of gradient evaluations) for finishing sampling with the current kernel vs. restarting warm-up with a new window.
     The way we do this prediction will probably be changed in the future.
-By only ever having 50 stepsize adaptation MCMC transitions, we can start collecting posterio samples early.
+
+  By only ever having 50 stepsize adaptation MCMC transitions, we can start collecting posterior samples early.
 """
 adaptive_warmup_mcmc(
     rng, lpdf; 
@@ -70,10 +72,7 @@ adaptive_warmup_mcmc(
     # The better initial position
     position = collect(pathfinder_result.draws[:, 1])::Vector{Float64}
     # Pathfinder's linear transformation
-    pathfinder_transformation = factorize(
-        pathfinder_result.fit_distribution.Σ).L::Transpose{Float64, Pathfinder.WoodburyPDRightFactor{Float64, Diagonal{Float64, Vector{Float64}},
-        LinearAlgebra.QRCompactWYQ{Float64, Matrix{Float64}, Matrix{Float64}}, UpperTriangular{Float64, Matrix{Float64}}}
-    }
+    pathfinder_transformation = factorize(pathfinder_result.fit_distribution.Σ).L
     # We currently learn three linear transformation options
     scale_options = (
         # Corresponds to a standard diagonal mass matrix

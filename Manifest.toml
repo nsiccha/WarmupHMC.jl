@@ -2,7 +2,7 @@
 
 julia_version = "1.10.7"
 manifest_format = "2.0"
-project_hash = "bb72258e9e694255f17d95180fae19b3e94fb755"
+project_hash = "8f84a56788d9e5256749e367d73a566a8eae4328"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "72af59f5b8f09faee36b4ec48e014a79210f2f4f"
@@ -404,12 +404,10 @@ deps = ["Accessors", "BangBang", "Baselet", "DefineSingletons", "Distributed", "
 git-tree-sha1 = "7eb4bc88d8295e387a667fd43d67c157ddee76cf"
 uuid = "41a02a25-b8f0-4f67-bc48-60067656b558"
 version = "0.2.10"
+weakdeps = ["OnlineStatsBase"]
 
     [deps.Folds.extensions]
     FoldsOnlineStatsBaseExt = "OnlineStatsBase"
-
-    [deps.Folds.weakdeps]
-    OnlineStatsBase = "925886fa-5bf2-5e8e-b522-a9147a512338"
 
 [[deps.ForwardDiff]]
 deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions"]
@@ -580,9 +578,9 @@ version = "1.13.0"
 
 [[deps.LogExpFunctions]]
 deps = ["DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
-git-tree-sha1 = "a2d09619db4e765091ee5c6ffe8872849de0feea"
+git-tree-sha1 = "13ca9e2586b89836fd20cccf56e57e2b9ae7f38f"
 uuid = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
-version = "0.3.28"
+version = "0.3.29"
 
     [deps.LogExpFunctions.extensions]
     LogExpFunctionsChainRulesCoreExt = "ChainRulesCore"
@@ -666,6 +664,12 @@ version = "1.0.2"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
+
+[[deps.OnlineStatsBase]]
+deps = ["AbstractTrees", "Dates", "LinearAlgebra", "OrderedCollections", "Statistics", "StatsBase"]
+git-tree-sha1 = "a5a5a68d079ce531b0220e99789e0c1c8c5ed215"
+uuid = "925886fa-5bf2-5e8e-b522-a9147a512338"
+version = "1.7.1"
 
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
@@ -1128,6 +1132,12 @@ version = "0.3.36"
 deps = ["Dates"]
 uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 version = "1.0.3"
+
+[[deps.TSVD]]
+deps = ["Adapt", "LinearAlgebra"]
+git-tree-sha1 = "c39caef6bae501e5607a6caf68dd9ac6e8addbcb"
+uuid = "9449cd9e-2762-5aa3-a617-5413e99d722e"
+version = "0.4.4"
 
 [[deps.TableTraits]]
 deps = ["IteratorInterfaceExtensions"]

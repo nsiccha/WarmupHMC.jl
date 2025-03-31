@@ -3,7 +3,7 @@ LogDensityProblems.capabilities(::Type{<:WrappedLogDensityProblem{P}}) where {P}
 LogDensityProblems.dimension(p::WrappedLogDensityProblem) = LogDensityProblems.dimension(parent(p))
 LogDensityProblems.logdensity(p::WrappedLogDensityProblem, x) = LogDensityProblems.logdensity(parent(p), x)
 LogDensityProblems.logdensity_and_gradient(p::WrappedLogDensityProblem, x) = LogDensityProblems.logdensity_and_gradient(parent(p), x)
-Base.show(io::IO, p::WrappedLogDensityProblem) = print(io, "WrappedLogDensityProblem(", parent(p), ")") 
+Base.show(io::IO, p::WrappedLogDensityProblem) = print(io, typeof(p).name.wrapper, "(", parent(p), ")") 
 
 
 struct NamedPosterior{P} <: WrappedLogDensityProblem{P}
@@ -65,6 +65,11 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
         (z, Δ, τ), v
     end
 end
+post_leapfrog_hook(p::RecordingPosterior2, state) = record!(
+    p, 
+    (;Q=(;q=state.current.position,∇ℓq=state.current.log_density_gradient)); 
+    is_initial=false, dH=state.trees[1].log_weight.fwd
+)
 mutable struct LimitedRecorder2
     target::Int64
     thin::Int64

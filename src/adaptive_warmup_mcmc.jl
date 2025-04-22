@@ -53,7 +53,7 @@ adaptive_warmup_mcmc(
     # The number of GRADIENT EVALUATIONS in the first window
     n_evaluations=1000, 
     # The upper limit of (intermediate) positions and gradients that will be recorded and then used for adaptation
-    recording_target=1000,
+    recording_target=max(1000, n_draws),
     # The maximum number of transitions (per window) for which the stepsize gets adapted 
     stepsize_adaptation_limit=50, 
     target_acceptance_rate=.8, 
@@ -79,7 +79,7 @@ adaptive_warmup_mcmc(
         # The initial "thinning" of intermediate positions and gradients 
         n_evaluations ÷ recording_target, 
     )
-    recording_lpdf = RecordingPosterior2(lpdf; recorder)
+    recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     # Use Stan's initialization procedure if no initial position is given
     ismissing(init) && (init = rand(rng, Uniform(-2,+2), dimension))
     # Run pathfinder once to get a linear transformation and a better initial position

@@ -24,15 +24,16 @@ LogDensityProblems.logdensity_and_gradient(p::CountingPosterior, x) = begin
     LogDensityProblems.logdensity_and_gradient(parent(p), x)
 end
 
-struct RecordingPosterior2{P,T,R} <: WrappedLogDensityProblem{P}
+struct RecordingPosterior2{P,T,R,G} <: WrappedLogDensityProblem{P}
     posterior::P
     halo_position::ElasticMatrix{T,Vector{T}}
     halo_gradient::ElasticMatrix{T,Vector{T}}
     posterior_position::ElasticMatrix{T,Vector{T}}
     posterior_gradient::ElasticMatrix{T,Vector{T}}
     recorder::R
+    rng::G
 end
-RecordingPosterior2(p; recorder=log(1e-2)) = begin
+RecordingPosterior2(p; rng, recorder=log(1e-2)) = begin
     n = LogDensityProblems.dimension(p) 
     RecordingPosterior2(
         p, 
@@ -40,7 +41,8 @@ RecordingPosterior2(p; recorder=log(1e-2)) = begin
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0), 
-        recorder
+        recorder,
+        rng
     )
 end
 Base.parent(p::RecordingPosterior2) = p.posterior
@@ -79,7 +81,7 @@ mutable struct LimitedRecorder2
     written::Bool
 end
 LimitedRecorder2(target, thin) = LimitedRecorder2(target, thin, 1, 0, false, false)
-LimitedRecordingPosterior3{P,T} = RecordingPosterior2{P,T,LimitedRecorder2}
+LimitedRecordingPosterior3{P,T,G} = RecordingPosterior2{P,T,LimitedRecorder2,G}
 record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin 
     r = p.recorder::LimitedRecorder2
     if !r.triggered
@@ -92,7 +94,7 @@ record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin
                 p.halo_position[:, r.outer_count] .= z.Q.q
                 p.halo_gradient[:, r.outer_count] .= z.Q.∇ℓq
             end 
-            r.triggered = rand() <= 1/(r.thin-r.inner_count)
+            r.triggered = rand(p.rng) <= 1/(r.thin-r.inner_count)
         end
     end
     r.inner_count += 1

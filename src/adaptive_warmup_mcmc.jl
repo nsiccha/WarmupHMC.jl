@@ -58,14 +58,15 @@ adaptive_warmup_mcmc(
     stepsize_adaptation_limit=50, 
     target_acceptance_rate=.8, 
     max_tree_depth=10,
-    stepsize_search=DynamicHMC.InitialStepsizeSearch(),
     init=missing, 
-    report=true, 
-    monitor_ess=report,
+    progress=nothing, 
+    monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
     variance_cond_target=2.,
     kwargs...
     ) = begin 
+    # Standard Stepsize Search
+    stepsize_search=DynamicHMC.InitialStepsizeSearch()
     # Standard Dual Averaging
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     # Standard NUTS
@@ -144,7 +145,8 @@ adaptive_warmup_mcmc(
     # For monitoring purposes: Keep track of the number of the total number of MCMC transitions
     total_transition_counter = 0
     # For monitoring purposes: Displays the progress and additional info
-    progress = report ? ProgressMeter.Progress(n_draws; dt=1e-3, desc="Sampling...") : nothing
+    progress = initialize_progress!(progress, n_draws)
+    # progress = report ? ProgressMeter.Progress(n_draws; dt=1e-3, desc="Sampling...") : nothing
     # For monitoring purposes: Keep track of the minimal effective sample size so far
     min_ess = missing
     # For monitoring purposes: Keep track of the current number of gradient evaluations per MCMC transition
@@ -230,7 +232,7 @@ adaptive_warmup_mcmc(
             # potential_steps_per_draw = potential_steps(depth_predictor)
             # finish_cost = (n_draws + stepsize_adaptation_limit - current_transition_counter) * steps_per_draw
             # restart_cost = (n_draws + stepsize_adaptation_limit) * potential_steps_per_draw
-            report && ProgressMeter.update!(progress, size(posterior_position, 2), showvalues=pairs(
+            progress = update_progress!(progress, size(posterior_position, 2), (
                 merge(
                     round2((;outer_counter, current_transition_counter, total_transition_counter, transformation_losses, active_option, total_evaluation_counter, steps_per_draw, stepsize, n_divergent, n_divergent_samples, variance_cond, finish, min_ess, recorder=(;recorder.target, recorder.thin, recorder.outer_count, recorder.inner_count, recorder.triggered, recorded=size(halo_position, 2)))),
                 )
@@ -248,7 +250,7 @@ adaptive_warmup_mcmc(
         transformation_losses = map(L->update_loss!(L, (halo_position), (halo_gradient); kwargs...), scale_options)
         transformation_losses = transformation_losses .- minimum(transformation_losses)
         # Update the new linear transformation to be the one with the minimal estimated transformation loss.
-        active_option = 3#argmin(transformation_losses)
+        active_option = argmin(transformation_losses)
         # nuts_state = merge(nuts_state, (;scale=scale_options[active_option], squared_scale=square(scale_options[active_option])))
         kinetic_energy = energy_options[active_option]
         (monitor_ess && size(posterior_position, 2) > 10) && (min_ess = minimum(
@@ -256,10 +258,21 @@ adaptive_warmup_mcmc(
         ))
     end
     reparametrize!(lpdf, posterior_position)#, posterior_gradient)
-    report && ProgressMeter.update!(progress, size(posterior_position, 2), showvalues=pairs(
+    progress = finalize_progress!(progress, size(posterior_position, 2), (
         merge(
             round2((;outer_counter, total_transition_counter, transformation_losses, active_option, total_evaluation_counter, steps_per_draw, stepsize, n_divergent_samples, min_ess)),
         )
     ))
     recording_lpdf
+end
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...) 
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; progress=nothing, n_draws=1_000, kwargs...) = begin 
+    n_chains = length(rngs)
+    progresses = initialize_progress!(progress; n_chains, n_draws)
+    rv = Vector{Any}(missing, n_chains)
+    Threads.@threads for i in 1:n_chains
+        rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress=progresses[i], n_draws, kwargs...)
+    end
+    finalize_progress!(progresses)
+    identity.(rv)
 end

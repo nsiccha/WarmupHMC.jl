@@ -84,14 +84,8 @@ LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVect
 end
 ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diagonal{T,V}}
 
-round2(x::Real) = round(x; sigdigits=2)
-round2(x::Integer) = round(x)
-round2(x::Union{Tuple,NamedTuple,AbstractArray}) = map(round2, x)
-round2(x::Missing) = x
-
-using TSVD
 grad_cov_ev(p, g) = try
-    tsvd(g)[1][:, 1]
+    tsvd(g; initvec=ones(size(g, 1)))[1][:, 1]
 catch e
     @error e g
     eigen(Symmetric(cov(g')), size(g,1):size(g,1)).vectors[:, 1]

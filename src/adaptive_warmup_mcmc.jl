@@ -1,15 +1,4 @@
-import OnlineStatsBase
-round2(x::OnlineStatsBase.Mean) = round2(mean(x))
-find_reparametrization!(lpdf, p, g, pg) = pg
-reparametrize!(lpdf, args...) = nothing
-PairTT{T} = Pair{T,T}
-    
-find_reparametrization!(lpdf::WrappedLogDensityProblem, args...) = find_reparametrization!(parent(lpdf), args...)
-reparametrize!(lpdf::WrappedLogDensityProblem, args...) = reparametrize!(parent(lpdf), args...)
-reparametrize!(st::Pair, p) = WarmupHMC.reparametrize!(st, p=>p) 
-reparametrize!(st::Pair, p::PairTT{<:AbstractMatrix}) = mapreduce(+, eachcol(p[1]), eachcol(p[2])) do source, target
-    reparametrize!(st, source=>target)
-end
+
 """
 Adaptively 
 
@@ -53,7 +42,7 @@ adaptive_warmup_mcmc(
     # The number of GRADIENT EVALUATIONS in the first window
     n_evaluations=1000, 
     # The upper limit of (intermediate) positions and gradients that will be recorded and then used for adaptation
-    recording_target=max(1000, n_draws),
+    recording_target=1000,
     # The maximum number of transitions (per window) for which the stepsize gets adapted 
     stepsize_adaptation_limit=50, 
     target_acceptance_rate=.8, 
@@ -64,9 +53,11 @@ adaptive_warmup_mcmc(
     nonlinear_adapt=true,
     variance_cond_target=2.,
     kwargs...
-    ) = begin 
+    # For monitoring purposes: Displays the progress and additional info
+) = with_progress(progress, n_draws) do progress
+    start_time = time_ns()
     # Standard Stepsize Search
-    stepsize_search=DynamicHMC.InitialStepsizeSearch()
+    stepsize_search = DynamicHMC.InitialStepsizeSearch()
     # Standard Dual Averaging
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     # Standard NUTS
@@ -83,21 +74,27 @@ adaptive_warmup_mcmc(
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     # Use Stan's initialization procedure if no initial position is given
     ismissing(init) && (init = rand(rng, Uniform(-2,+2), dimension))
-    # Run pathfinder once to get a linear transformation and a better initial position
-    pathfinder_result = pathfinder(lpdf; rng, ndraws=1, init)
-    # The better initial position
-    position = collect(pathfinder_result.draws[:, 1])::Vector{Float64}
-    # Pathfinder's linear transformation
-    pathfinder_transformation = factorize(pathfinder_result.fit_distribution.Σ).L
+    # Work around https://github.com/roualdes/bridgestan/issues/272
+    LogDensityProblems.logdensity_and_gradient(recording_lpdf, init)
+    
+    (;pathfinder_result, position, pathfinder_transformation) = with_progress(progress; description="Pathfinder", transient=true) do _
+        # Run pathfinder once to get a linear transformation and a better initial position
+        pathfinder_result = pathfinder(lpdf; rng, ndraws=1, init)
+        # The better initial position
+        position = collect(pathfinder_result.draws[:, 1])::Vector{Float64}
+        # Pathfinder's linear transformation
+        pathfinder_transformation = factorize(pathfinder_result.fit_distribution.Σ).L
+        (;pathfinder_result, position, pathfinder_transformation)
+    end
     # We currently learn three linear transformation options
-    scale_options = (
+    scale_options = (;
         # Corresponds to a standard diagonal mass matrix
-        Diagonal(sqrt.(diag(pathfinder_result.fit_distribution.Σ))::Vector{Float64}),
+        diagonal=Diagonal(sqrt.(diag(pathfinder_result.fit_distribution.Σ))::Vector{Float64}),
         # Corresponds to Pathfinder's linear transformation with an added diagonal scaling term that can be updated
-        MatrixFactorization(pathfinder_transformation, Diagonal(ones(dimension))),
+        pathfinder=MatrixFactorization(pathfinder_transformation, Diagonal(ones(dimension))),
         # Something new. Corresponds to a sequence of Householder reflections, followed by a diagonal scaling term. 
         # Both the reflections and the diagonal scaling term will be updated. 
-        MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
+        adaptive=MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
     )
     # This is needed to make DynamicHMC "accept" our linear transformations
     energy_options = map(scale_options) do L
@@ -105,25 +102,26 @@ adaptive_warmup_mcmc(
     end
     # At the beginning, we will use Pathfinder's transformation.
     # At later stages of warm-up, the estimated losses corresponding to each transformation will be written to `transformation_losses` 
-    transformation_losses = (0., 0., 0.)
-    active_option = 2 # Pathfinder
-    kinetic_energy = energy_options[active_option]
+    active_transformation = :pathfinder # Pathfinder
+    kinetic_energy = energy_options[active_transformation]
     # Online variance recorders
     variance_memory = zeros(dimension)
     variance_position = OnlineStatsBase.Group([OnlineStatsBase.Variance() for i in 1:dimension])
     variance_gradient = OnlineStatsBase.Group([OnlineStatsBase.Variance() for i in 1:dimension])
     variance_cond = Inf
+    scale_changes = Float64[]
 
     # The below tries to find a good initial stepsize. 
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
     position_gradient_and_momentum = DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy))
-    stepsize = DynamicHMC.find_initial_stepsize(
-        stepsize_search, 
-        DynamicHMC.local_log_acceptance_ratio(
-            DynamicHMC.Hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
+    stepsize = with_progress(progress; description="Initial stepsize", transient=true) do _
+        DynamicHMC.find_initial_stepsize(
+            stepsize_search, 
+            DynamicHMC.local_log_acceptance_ratio(
+                DynamicHMC.Hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
+            )
         )
-    )
-    #nuts_state = (;rng, posterior=recording_lpdf, stepsize, position=position_gradient_and_momentum.Q.q)
+    end
     # The below variables give us access to the matrices into which the intermediate positions and gradients and the MCMC positions an gradients will be written
     (;
         # Intermediate positions
@@ -143,27 +141,36 @@ adaptive_warmup_mcmc(
     # For monitoring purposes: Keep track of the number of warm-up windows so far
     outer_counter = 0
     # For monitoring purposes: Keep track of the number of the total number of MCMC transitions
+    current_transition_counter = 0
     total_transition_counter = 0
-    # For monitoring purposes: Displays the progress and additional info
-    progress = initialize_progress!(progress, n_draws)
     # progress = report ? ProgressMeter.Progress(n_draws; dt=1e-3, desc="Sampling...") : nothing
     # For monitoring purposes: Keep track of the minimal effective sample size so far
-    min_ess = missing
+    ess = zeros(dimension)
+    eff = zeros(dimension)
     # For monitoring purposes: Keep track of the current number of gradient evaluations per MCMC transition
     steps_per_draw = OnlineStatsBase.Mean()
     # For monitoring purposes: Keep track of the number of divergences in the current WARM-UP window
-    n_divergent = missing
+    n_divergent = 0
     # For monitoring purposes: Keep track of the number of divergences in the current SAMPLING window
-    n_divergent_samples = missing
+    n_divergent_samples = 0
     finish = false
     # We run the warm-up procedure until we have collected enough samples
+
+    n_samples = 0
+    update_progress!(progress, n_samples, merge((;
+        total_transition_counter,
+        total_evaluation_counter,
+        sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
+        divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
+        active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
+    ), monitor_ess ? (;ess="pending...", eff="pending...") : (;)))
     while size(posterior_position, 2) < n_draws
         # Some setup that has to happen at the beginning of every warm-up window
         outer_counter += 1
         hamiltonian = DynamicHMC.Hamiltonian(kinetic_energy, recording_lpdf)
         stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
         stepsize = DynamicHMC.current_ϵ(stepsize_state)
-        # nuts_state = merge(nuts_state, (;stepsize, scale=scale_options[active_option], squared_scale=square(scale_options[active_option])))
+        # nuts_state = merge(nuts_state, (;stepsize, scale=scale_options[active_transformation], squared_scale=square(scale_options[active_transformation])))
         # Reset the so far recorded intermediate and MCMC positions and gradients
         reset!(recording_lpdf)
         current_transition_counter = 0
@@ -209,7 +216,7 @@ adaptive_warmup_mcmc(
                 is_divergent && (n_divergent_samples += 1)
             end
             if current_evaluation_counter >= n_evaluations && !finish
-                scale = scale_options[active_option]
+                scale = scale_options[active_transformation]
                 for (pi, gi) in zip(eachcol(halo_position), eachcol(halo_gradient))
                     ldiv!(variance_memory, scale, pi)
                     OnlineStatsBase.fit!(variance_position, variance_memory)
@@ -221,25 +228,31 @@ adaptive_warmup_mcmc(
                 variance_gradient = OnlineStatsBase.Group([OnlineStatsBase.Variance() for i in 1:dimension])
                 lmin, lmax = extrema(variance_memory)
                 variance_cond = lmax / lmin
+                pushfirst!(scale_changes, sqrt(variance_cond))
                 finish = variance_cond < variance_cond_target
                 finish || (stepsize = DynamicHMC.final_ϵ(stepsize_state))
             end
-
-            # Update the current steps per draw and predicted steps per draw should we add a new warm-up window,
-            # as well as the estimated cost for finishing sampling with the current kernel or restarting warm-up. 
-            # I think this actually only has to happen once, will change at some point in the future.
-            # steps_per_draw = current_steps(depth_predictor)
-            # potential_steps_per_draw = potential_steps(depth_predictor)
-            # finish_cost = (n_draws + stepsize_adaptation_limit - current_transition_counter) * steps_per_draw
-            # restart_cost = (n_draws + stepsize_adaptation_limit) * potential_steps_per_draw
-            progress = update_progress!(progress, size(posterior_position, 2), (
-                merge(
-                    round2((;outer_counter, current_transition_counter, total_transition_counter, transformation_losses, active_option, total_evaluation_counter, steps_per_draw, stepsize, n_divergent, n_divergent_samples, variance_cond, finish, min_ess, recorder=(;recorder.target, recorder.thin, recorder.outer_count, recorder.inner_count, recorder.triggered, recorded=size(halo_position, 2)))),
-                )
+            n_samples = size(posterior_position, 2)
+            update_progress!(progress, n_samples, (;
+                total_transition_counter=Speed(total_transition_counter, time_ns()-start_time),
+                total_evaluation_counter=Speed(total_evaluation_counter, time_ns()-start_time),
+                sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
+                divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
             ))
         end
-        size(posterior_position, 2) < n_draws || continue
-        # advance!(depth_predictor)
+        if monitor_ess && n_samples > 10
+            ess .= sort!(
+                MCMCDiagnosticTools.ess(
+                    reshape(posterior_position', (:, 1, dimension))
+                )
+            )
+            eff .= 1e3 .* ess ./ total_evaluation_counter
+            update_progress!(progress, n_samples, (;
+                ess=short_string(ess),
+                eff=short_string(eff),
+            ))
+        end
+        n_samples < n_draws || continue
         # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
         n_evaluations *= 2
         # Recompute the thinning factor for the intermediate positions and gradients
@@ -247,32 +260,30 @@ adaptive_warmup_mcmc(
         # Update the linear transformation candidates and estimate the transformation loss,
         # using the INTERMEDIATE POSITIONS AND GRADIENTS.
         nonlinear_adapt && (position_and_gradient = find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient))
-        transformation_losses = map(L->update_loss!(L, (halo_position), (halo_gradient); kwargs...), scale_options)
-        transformation_losses = transformation_losses .- minimum(transformation_losses)
         # Update the new linear transformation to be the one with the minimal estimated transformation loss.
-        active_option = argmin(transformation_losses)
-        # nuts_state = merge(nuts_state, (;scale=scale_options[active_option], squared_scale=square(scale_options[active_option])))
-        kinetic_energy = energy_options[active_option]
-        (monitor_ess && size(posterior_position, 2) > 10) && (min_ess = minimum(
-            MCMCDiagnosticTools.ess(reshape(posterior_position', (:, 1, dimension)))
+        active_transformation = argmin(
+            map(L->update_loss!(L, (halo_position), (halo_gradient); kwargs...), scale_options)
+        )
+        kinetic_energy = energy_options[active_transformation]
+        update_progress!(progress, n_samples, (;
+            active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
         ))
     end
     reparametrize!(lpdf, posterior_position)#, posterior_gradient)
-    progress = finalize_progress!(progress, size(posterior_position, 2), (
-        merge(
-            round2((;outer_counter, total_transition_counter, transformation_losses, active_option, total_evaluation_counter, steps_per_draw, stepsize, n_divergent_samples, min_ess)),
-        )
-    ))
     recording_lpdf
 end
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...) 
-adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; progress=nothing, n_draws=1_000, kwargs...) = begin 
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing, n_draws=1_000, kwargs...) = with_progress(progress) do progress 
     n_chains = length(rngs)
-    progresses = initialize_progress!(progress; n_chains, n_draws)
     rv = Vector{Any}(missing, n_chains)
-    Threads.@threads for i in 1:n_chains
-        rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress=progresses[i], n_draws, kwargs...)
+    if parallel
+        Threads.@threads for i in 1:n_chains
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, n_draws, kwargs...)
+        end
+    else
+        for i in 1:n_chains
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, n_draws, kwargs...)
+        end
     end
-    finalize_progress!(progresses)
     identity.(rv)
 end

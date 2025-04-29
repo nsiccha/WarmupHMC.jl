@@ -36,7 +36,7 @@ max_level(x::WarmupHMC.Progress) = get(root(x).info, :max_level, +Inf)
 propagates(x::WarmupHMC.Progress) = get(x.info, :propagates, false)
 
 addchild!(x::Union{Term.Progress.ProgressBar,Term.Progress.ProgressJob}; owner=nothing, kwargs...) = addchild!(
-    owner, WarmupHMC.Progress(x, (;owner, owns=Set(), labels=Dict(), kwargs...))
+    owner, WarmupHMC.Progress(x, (;owner, owns=Set(), labels=Dict(), lock=ReentrantLock(), kwargs...))
 )
 addchild!(::Nothing, x::WarmupHMC.Progress) = x
 addchild!(owner::WarmupHMC.Progress, x::WarmupHMC.Progress) = (push!(owns(owner), x); x)
@@ -65,9 +65,11 @@ WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}; width=120, kwa
 end
 WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress, N; kwargs...) = WarmupHMC.initialize_progress!(owner; N, kwargs...)
 WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; key=nothing, value="", propagates=false, kwargs...) = if acceptschild(owner; key, value, kwargs...)
-    job = Term.Progress.addjob!(parent(root(owner)); id=Base.UUID(rand(UInt128)), kwargs...)
-    isnothing(get(kwargs, :N, nothing)) && splice!(job.columns, 2:length(job.columns), (StringColumn(job, value), ))
-    addchild!(job; owner, propagates)
+    lock(owner.info.lock) do
+        job = Term.Progress.addjob!(parent(root(owner)); id=Base.UUID(rand(UInt128)), kwargs...)
+        isnothing(get(kwargs, :N, nothing)) && splice!(job.columns, 2:length(job.columns), (StringColumn(job, value), ))
+        addchild!(job; owner, propagates)
+    end
 end
 
 WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i::Integer) = Term.Progress.update!(job; i=i-job.i)

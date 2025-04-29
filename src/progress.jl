@@ -32,7 +32,7 @@ struct UncertainFrequency
     obs::Int64
     n::Int64
 end
-Base.string(uf::UncertainFrequency) = "$(uf.obs) out of $(uf.n) ($(short_string(100*quantile(Beta(1+uf.obs, 1+uf.n), .05))) - $(short_string(100*quantile(Beta(1+uf.obs, 1+uf.n), .95)))%)" 
+Base.string(uf::UncertainFrequency) = "$(uf.obs) out of $(uf.n) ($(short_string(100*quantile(Beta(1+uf.obs, 1+uf.n-uf.obs), .05))) - $(short_string(100*quantile(Beta(1+uf.obs, 1+uf.n), .95)))%)" 
 struct SamplingPerformance
     stepsize::Float64
     steps_per_draw::Float64

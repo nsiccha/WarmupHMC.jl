@@ -146,7 +146,6 @@ adaptive_warmup_mcmc(
     # progress = report ? ProgressMeter.Progress(n_draws; dt=1e-3, desc="Sampling...") : nothing
     # For monitoring purposes: Keep track of the minimal effective sample size so far
     ess = zeros(dimension)
-    eff = zeros(dimension)
     # For monitoring purposes: Keep track of the current number of gradient evaluations per MCMC transition
     steps_per_draw = OnlineStatsBase.Mean()
     # For monitoring purposes: Keep track of the number of divergences in the current WARM-UP window
@@ -163,7 +162,7 @@ adaptive_warmup_mcmc(
         sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
         divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
         active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
-    ), monitor_ess ? (;ess="pending...", eff="pending...") : (;)))
+    ), monitor_ess ? (;ess="pending...") : (;)))
     while size(posterior_position, 2) < n_draws
         # Some setup that has to happen at the beginning of every warm-up window
         outer_counter += 1
@@ -246,10 +245,8 @@ adaptive_warmup_mcmc(
                     reshape(posterior_position', (:, 1, dimension))
                 )
             )
-            eff .= 1e3 .* ess ./ total_evaluation_counter
             update_progress!(progress, n_samples, (;
-                ess=short_string(ess),
-                eff=short_string(eff),
+                ess=short_string(ess) * " from $n_samples samples.",
             ))
         end
         n_samples < n_draws || continue

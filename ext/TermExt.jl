@@ -5,14 +5,18 @@ ProgressBar{I} = WarmupHMC.Progress{Term.Progress.ProgressBar, I}
 ProgressJob{I} = WarmupHMC.Progress{Term.Progress.ProgressJob, I}
 
 import Term.Progress: AbstractColumn, DescriptionColumn, CompletedColumn, SeparatorColumn, ProgressColumn
-struct MaybeProgressColumn <: AbstractColumn
-    parent::ProgressColumn
-    measure::Term.Progress.Measure
+struct StringColumn <: AbstractColumn
+    parent::Term.Progress.ProgressJob
     msg::Ref{String}
-    MaybeProgressColumn(job::Term.Progress.ProgressJob) = MaybeProgressColumn(ProgressColumn(job))
-    MaybeProgressColumn(parent::ProgressColumn) = new(parent, parent.measure, Ref(""))
+    StringColumn(job::Term.Progress.ProgressJob, msg::AbstractString="             ") = new(job, Ref(msg))
 end 
-Term.Progress.update!(col::MaybeProgressColumn, args...) = isnothing(col.parent.job.N) ? col.msg[] : Term.Progress.update!(col.parent, args...)
+Base.getproperty(x::StringColumn, k::Symbol) = if hasfield(typeof(x), k)
+    getfield(x, k)
+else
+    @assert k == :measure
+    Term.Progress.Measure(x.msg[])
+end
+Term.Progress.update!(col::StringColumn, color::String) = Term.Segment(col.msg[], color).text
 
 function renderloop(pbar)
     while pbar.running
@@ -20,62 +24,72 @@ function renderloop(pbar)
         sleep(pbar.Δt)
     end
 end
+owner(bar::ProgressBar) = bar
+owner(job::ProgressJob) = job.info.owner
+root(bar::ProgressBar) = bar
+root(job::ProgressJob) = root(owner(job))
+level(bar::ProgressBar) = 0
+level(job::ProgressJob) = 1+level(owner(job))
+owns(x::WarmupHMC.Progress) = x.info.owns
+labels(x::WarmupHMC.Progress) = x.info.labels
+max_level(x::WarmupHMC.Progress) = get(root(x).info, :max_level, +Inf) 
+propagates(x::WarmupHMC.Progress) = get(x.info, :propagates, false)
 
+addchild!(x::Union{Term.Progress.ProgressBar,Term.Progress.ProgressJob}; owner=nothing, kwargs...) = addchild!(
+    owner, WarmupHMC.Progress(x, (;owner, owns=Set(), labels=Dict(), kwargs...))
+)
+addchild!(::Nothing, x::WarmupHMC.Progress) = x
+addchild!(owner::WarmupHMC.Progress, x::WarmupHMC.Progress) = (push!(owns(owner), x); x)
+always_true(;kwargs...) = true
+childfilter(owner::WarmupHMC.Progress) = get(root(owner).info, :filter, always_true)
+acceptschild(owner::WarmupHMC.Progress; kwargs...) = level(owner) < max_level(owner) && childfilter(owner)(;kwargs...)
 
-WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}, N) = begin
-    WarmupHMC.initialize_progress!(WarmupHMC.initialize_progress!(Term.Progress.ProgressBar); N)
-end
-WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}; kwargs...) = begin 
-    bar = Term.Progress.ProgressBar(width=120 ; columns=[DescriptionColumn, CompletedColumn, SeparatorColumn, ProgressColumn])
+WarmupHMC.Progress(::Type{Term.Progress.ProgressBar}; kwargs...) = WarmupHMC.Progress(Val(Term.Progress.ProgressBar), kwargs)
+WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}) = WarmupHMC.initialize_progress!(
+    Term.Progress.ProgressBar;
+    p.info...
+)
+WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}, N;) = WarmupHMC.initialize_progress!(
+    Term.Progress.ProgressBar, N;
+    p.info...
+)
+WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}, N; description="Running...", kwargs...) = WarmupHMC.initialize_progress!(
+    WarmupHMC.initialize_progress!(Term.Progress.ProgressBar; kwargs...); 
+    N, description, propagates=true
+)
+WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}; width=120, kwargs...) = begin 
+    bar = Term.Progress.ProgressBar(;width, columns=[DescriptionColumn, CompletedColumn, SeparatorColumn, ProgressColumn])
     Term.Progress.start!(bar)
-    WarmupHMC.Progress(bar, Threads.@spawn renderloop(bar))
+    thread = Threads.@spawn renderloop(bar)
+    addchild!(bar; thread, kwargs...)
 end
-WarmupHMC.initialize_progress!(bar::ProgressBar, N) = WarmupHMC.initialize_progress!(bar; N)
-WarmupHMC.initialize_progress!(bar::ProgressBar; kwargs...) = begin
-    WarmupHMC.Progress(Term.Progress.addjob!(parent(bar); id=Base.UUID(rand(UInt128)), kwargs...), Dict{Symbol,Any}(:top=>bar))
+WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress, N; kwargs...) = WarmupHMC.initialize_progress!(owner; N, kwargs...)
+WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; key=nothing, value="", propagates=false, kwargs...) = if acceptschild(owner; key, value, kwargs...)
+    job = Term.Progress.addjob!(parent(root(owner)); id=Base.UUID(rand(UInt128)), kwargs...)
+    isnothing(get(kwargs, :N, nothing)) && splice!(job.columns, 2:length(job.columns), (StringColumn(job, value), ))
+    addchild!(job; owner, propagates)
 end
-WarmupHMC.initialize_progress!(job::ProgressJob; kwargs...) = begin
-    rv = WarmupHMC.initialize_progress!(job.info[:top]; kwargs...)
-    if isnothing(get(kwargs, :N, nothing))
-        splice!(parent(rv).columns, 2:length(parent(rv).columns), (MaybeProgressColumn(parent(rv)),))
-    end
-    rv
-end 
-WarmupHMC.update_progress!(job::ProgressJob, i, info=(;)) = begin 
+
+WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i::Integer) = Term.Progress.update!(job; i=i-job.i)
+WarmupHMC.update_progress!(::Term.Progress.ProgressJob, ::Nothing) = nothing
+WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = job.columns[end].msg[] = string(value)
+WarmupHMC.update_progress!(job::ProgressJob, i=parent(job).i+1; kwargs...) = begin 
     WarmupHMC.update_progress!(parent(job), i)
-    bar = job.info[:top]
-    if length(info) > 0
-        skeys = get!(job.info, :skeys) do 
-            max_length = maximum(length ∘ string, keys(info))
-            Dict([
-                key=>rpad(string(key), max_length) for key in keys(info)
-            ])
+    for (key, value) in pairs(kwargs)
+        sjob = get!(labels(job), key) do
+            skey = rpad(string(key), maximum(length ∘ string, keys(kwargs)))
+            WarmupHMC.initialize_progress!(job; key, description="$skey: ")
         end
-        for (key, value) in pairs(info)
-            skey = skeys[key]
-            sjob = get!(job.info, key) do
-                WarmupHMC.initialize_progress!(job; description="$skey: ")
-            end
-            parent(sjob).columns[end].msg[] = string(value)
-        end
+        WarmupHMC.update_progress!(sjob, value)
     end
-    WarmupHMC.update_progress!(bar)
-    job
+    WarmupHMC.update_progress!(owner(job), nothing)
 end
-WarmupHMC.update_progress!(job::ProgressJob) = begin 
-    WarmupHMC.update_progress!(parent(job))
-    WarmupHMC.update_progress!(job.info[:top])
-end
-WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i=job.i+1) = begin 
-    Term.Progress.update!(job; i=i-job.i)
-    job
-end
-WarmupHMC.update_progress!(::ProgressBar) = yield()
-WarmupHMC.finalize_progress!(job::ProgressJob, args...) = begin 
+WarmupHMC.update_progress!(bar::ProgressBar, ::Nothing) = yield()
+WarmupHMC.finalize_progress!(job::ProgressJob) = begin 
     Term.Progress.stop!(parent(job))
-    WarmupHMC.finalize_progress!(job.info[:top], args...)
+    pop!(owns(owner(job)), job)
+    propagates(job) && WarmupHMC.finalize_progress!(owner(job))
 end
-WarmupHMC.finalize_progress!(bar::ProgressBar, args...) = nothing
-WarmupHMC.finalize_progress!(bar::ProgressBar, ::Type, args...) = Term.Progress.stop!(parent(bar))
+WarmupHMC.finalize_progress!(bar::ProgressBar) = (Term.Progress.stop!(parent(bar)); yield())
 
 end

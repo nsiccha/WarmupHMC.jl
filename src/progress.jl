@@ -16,7 +16,7 @@ with_progress(f, args...; kwargs...) = begin
         fail_progress!(progress, e)
         rethrow()
     finally
-        finalize_progress!(progress, args...)
+        finalize_progress!(progress)
     end
 end
 

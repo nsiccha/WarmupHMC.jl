@@ -49,12 +49,13 @@ adaptive_warmup_mcmc(
     max_tree_depth=10,
     init=missing, 
     progress=nothing, 
+    description="MCMC",
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
     variance_cond_target=2.,
     kwargs...
     # For monitoring purposes: Displays the progress and additional info
-) = with_progress(progress, n_draws) do progress
+) = with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
     start_time = time_ns()
     # Standard Stepsize Search
     stepsize_search = DynamicHMC.InitialStepsizeSearch()
@@ -77,7 +78,7 @@ adaptive_warmup_mcmc(
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(recording_lpdf, init)
     
-    (;pathfinder_result, position, pathfinder_transformation) = with_progress(progress; description="Pathfinder", transient=true) do _
+    (;pathfinder_result, position, pathfinder_transformation) = with_progress(progress; key=:pathfinder, description="Pathfinder", transient=true) do _
         # Run pathfinder once to get a linear transformation and a better initial position
         pathfinder_result = pathfinder(lpdf; rng, ndraws=1, init)
         # The better initial position
@@ -114,14 +115,14 @@ adaptive_warmup_mcmc(
     # The below tries to find a good initial stepsize. 
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
     position_gradient_and_momentum = DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy))
-    stepsize = with_progress(progress; description="Initial stepsize", transient=true) do _
-        DynamicHMC.find_initial_stepsize(
-            stepsize_search, 
-            DynamicHMC.local_log_acceptance_ratio(
-                DynamicHMC.Hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
-            )
+    # stepsize = with_progress(progress; description="Initial stepsize", transient=true) do _
+    stepsize = DynamicHMC.find_initial_stepsize(
+        stepsize_search, 
+        DynamicHMC.local_log_acceptance_ratio(
+            DynamicHMC.Hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
         )
-    end
+    )
+    # end
     # The below variables give us access to the matrices into which the intermediate positions and gradients and the MCMC positions an gradients will be written
     (;
         # Intermediate positions
@@ -156,13 +157,14 @@ adaptive_warmup_mcmc(
     # We run the warm-up procedure until we have collected enough samples
 
     n_samples = 0
-    update_progress!(progress, n_samples, merge((;
+    update_progress!(progress, current_transition_counter;
         total_transition_counter,
         total_evaluation_counter,
         sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
         divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
         active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
-    ), monitor_ess ? (;ess="pending...") : (;)))
+        (monitor_ess ? (;ess="pending...") : (;))...
+    )
     while size(posterior_position, 2) < n_draws
         # Some setup that has to happen at the beginning of every warm-up window
         outer_counter += 1
@@ -232,12 +234,12 @@ adaptive_warmup_mcmc(
                 finish || (stepsize = DynamicHMC.final_ϵ(stepsize_state))
             end
             n_samples = size(posterior_position, 2)
-            update_progress!(progress, n_samples, (;
+            update_progress!(progress, current_transition_counter;
                 total_transition_counter=Speed(total_transition_counter, time_ns()-start_time),
                 total_evaluation_counter=Speed(total_evaluation_counter, time_ns()-start_time),
                 sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
                 divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
-            ))
+            )
         end
         if monitor_ess && n_samples > 10
             ess .= sort!(
@@ -245,9 +247,9 @@ adaptive_warmup_mcmc(
                     reshape(posterior_position', (:, 1, dimension))
                 )
             )
-            update_progress!(progress, n_samples, (;
+            update_progress!(progress, nothing;
                 ess=short_string(ess) * " from $n_samples samples.",
-            ))
+            )
         end
         n_samples < n_draws || continue
         # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
@@ -262,24 +264,24 @@ adaptive_warmup_mcmc(
             map(L->update_loss!(L, (halo_position), (halo_gradient); kwargs...), scale_options)
         )
         kinetic_energy = energy_options[active_transformation]
-        update_progress!(progress, n_samples, (;
+        update_progress!(progress, nothing;
             active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
-        ))
+        )
     end
     reparametrize!(lpdf, posterior_position)#, posterior_gradient)
     recording_lpdf
 end
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...) 
-adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing, n_draws=1_000, kwargs...) = with_progress(progress) do progress 
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing, description="MCMC", kwargs...) = with_progress(progress; description) do progress 
     n_chains = length(rngs)
     rv = Vector{Any}(missing, n_chains)
     if parallel
         Threads.@threads for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, n_draws, kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, description=description*".$i", kwargs...)
         end
     else
         for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, n_draws, kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, description=description*".$i", kwargs...)
         end
     end
     identity.(rv)

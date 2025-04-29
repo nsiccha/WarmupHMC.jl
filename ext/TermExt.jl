@@ -45,13 +45,13 @@ childfilter(owner::WarmupHMC.Progress) = get(root(owner).info, :filter, always_t
 acceptschild(owner::WarmupHMC.Progress; kwargs...) = level(owner) < max_level(owner) && childfilter(owner)(;kwargs...)
 
 WarmupHMC.Progress(::Type{Term.Progress.ProgressBar}; kwargs...) = WarmupHMC.Progress(Val(Term.Progress.ProgressBar), kwargs)
-WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}) = WarmupHMC.initialize_progress!(
+WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}; kwargs...) = WarmupHMC.initialize_progress!(
     Term.Progress.ProgressBar;
-    p.info...
+    p.info..., kwargs...
 )
-WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}, N;) = WarmupHMC.initialize_progress!(
+WarmupHMC.initialize_progress!(p::WarmupHMC.Progress{Val{Term.Progress.ProgressBar}}, N; kwargs...) = WarmupHMC.initialize_progress!(
     Term.Progress.ProgressBar, N;
-    p.info...
+    p.info..., kwargs...
 )
 WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}, N; description="Running...", kwargs...) = WarmupHMC.initialize_progress!(
     WarmupHMC.initialize_progress!(Term.Progress.ProgressBar; kwargs...); 

@@ -67,11 +67,6 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
         (z, Δ, τ), v
     end
 end
-post_leapfrog_hook(p::RecordingPosterior2, state) = record!(
-    p, 
-    (;Q=(;q=state.current.position,∇ℓq=state.current.log_density_gradient)); 
-    is_initial=false, dH=state.trees[1].log_weight.fwd
-)
 mutable struct LimitedRecorder2
     target::Int64
     thin::Int64
@@ -116,45 +111,4 @@ reset!(r::LimitedRecorder2) = begin
     r.inner_count = 0
     r.triggered = false
     r.written = false
-end
-begin
-struct DepthPredictor{T}
-    depth_count::ElasticMatrix{T,Vector{T}}
-end
-DepthPredictor(max_tree_depth::Int) = DepthPredictor(ElasticMatrix(ones((1+max_tree_depth, 2))))
-steps_at(p::DepthPredictor, j) = begin 
-    H = view(p.depth_count, :, j)
-    num, den, fac = 0, 0, 2
-    for i in eachindex(H)
-        n = H[i]
-        num += (fac - 1) * n
-        den += n
-        fac *= 2
-    end
-    num / den
-end
-current_steps(p::DepthPredictor) = steps_at(p, size(p.depth_count, 2))
-potential_steps(p::DepthPredictor) = @views begin 
-    H1, H2 = p.depth_count[:, end-1], p.depth_count[:, end]
-    n1, n2 = sum(H1), sum(H2)
-    p = @. min(1, H2/n2 / (H1/n1))
-    num, den, carry, fac = 0, 0, 0, 2
-    for i in eachindex(H1)
-        n = if i < length(H2)
-            p[i] * H2[i] + (1-p[i+1]) * H2[i+1]
-        else
-            p[i] * H2[i]
-        end
-        num += (fac - 1) * n
-        den += n
-        fac *= 2
-    end
-    num / den
-end
-record!(p::DepthPredictor, stats) = if !DynamicHMC.is_divergent(stats.termination)
-    p.depth_count[1+stats.depth, end] += 1
-end
-advance!(p::DepthPredictor) = @views begin 
-    append!(p.depth_count, p.depth_count[:, end] .* size(p.depth_count, 1) ./ sum(p.depth_count[:, end]))
-end
 end

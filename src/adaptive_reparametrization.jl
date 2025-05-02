@@ -24,7 +24,7 @@ CenterednessReparametrizer(method, m::Integer) = CenterednessReparametrizer(
 )
 CenterednessReparametrizer(working_memory; method=Argmin((0., 1.))) = CenterednessReparametrizer(method, working_memory)
 reparametrize!(x::CenterednessReparametrizer, xc::AbstractVector, c::Real) = begin 
-    (;loc, log_scale, xi, xc) = x.working_memory 
+    (;loc, log_scale, xi) = x.working_memory 
     xc .= loc .* c .+ xi .* exp.(log_scale .* c)
     -mean(Base.broadcasted(*, log_scale, c))
 end

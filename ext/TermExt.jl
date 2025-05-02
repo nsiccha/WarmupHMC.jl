@@ -72,15 +72,19 @@ WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; key=nothing, value="",
     end
 end
 
-WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i::Integer) = Term.Progress.update!(job; i=i-job.i)
+WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i::Integer) = if isnothing(job.N)
+    WarmupHMC.update_progress!(job, WarmupHMC.short_string(i))
+else
+    Term.Progress.update!(job; i=i-job.i)
+end
 WarmupHMC.update_progress!(::Term.Progress.ProgressJob, ::Nothing) = nothing
-WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = job.columns[end].msg[] = string(value)
+WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = job.columns[end].msg[] = WarmupHMC.short_string(value)
 WarmupHMC.update_progress!(job::ProgressJob, i=parent(job).i+1; kwargs...) = begin 
     WarmupHMC.update_progress!(parent(job), i)
     for (key, value) in pairs(kwargs)
         sjob = get!(labels(job), key) do
             skey = rpad(string(key), maximum(length ∘ string, keys(kwargs)))
-            WarmupHMC.initialize_progress!(job; key, description="$skey: ")
+            WarmupHMC.initialize_progress!(job; key, description="$skey:")
         end
         WarmupHMC.update_progress!(sjob, value)
     end

@@ -87,7 +87,7 @@ ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diago
 grad_cov_ev(p, g) = try
     tsvd(g; initvec=ones(size(g, 1)))[1][:, 1]
 catch e
-    @error e g
+    @error "tsvd(...) failed, falling back to eigen(cov(...))"
     eigen(Symmetric(cov(g')), size(g,1):size(g,1)).vectors[:, 1]
     # rethrow()
 end
@@ -173,7 +173,7 @@ update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)
     pi, gi = view(p, i, :), view(g, i, :)
     s1, s2 = std(pi), std(gi)
     if s2 == 0
-        @warn "Assuming Laplace" i s1 s2 mean(gi)
+        # @warn "Assuming Laplace" i s1 s2 mean(gi)
         t[i,i] = sqrt(2.) / abs(mean(gi))
         return Inf
     end

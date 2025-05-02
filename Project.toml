@@ -4,6 +4,7 @@ authors = ["Nikolas Siccha and contributors"]
 version = "0.2.0"
 
 [deps]
+BangBang = "198e06fe-97b7-11e9-32a5-e1d131e6ad66"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DynamicHMC = "bbc10e6e-7c05-544b-b16e-64fede858acb"
 ElasticArrays = "fdbdab4c-e67f-52f5-8c3f-e7b388dad3d4"
@@ -16,6 +17,7 @@ OnlineStatsBase = "925886fa-5bf2-5e8e-b522-a9147a512338"
 Pathfinder = "b1d3bc72-d0e7-4279-b92f-7fa5d6d2d454"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
 
 [weakdeps]

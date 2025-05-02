@@ -120,6 +120,10 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
     weights = final_weights()
     p = sortperm(weights, rev=true)
     map(sort(collect(values(chains)), rev=true, by=chain->chain.final_weight[])[1:n_chains]) do chain
-        (;position=rand(rng, chain.fit_distribution), squared_scale=chain.fit_distribution.Σ)
+            (;
+            position=rand(rng, chain.fit_distribution), 
+            location=chain.fit_distribution.μ, 
+            squared_scale=chain.fit_distribution.Σ
+        )
     end
 end

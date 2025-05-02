@@ -67,7 +67,6 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
                     sample(active_chains, sampling_weights()), false
                 end
                 if new
-                    push!(active_chains, i)
                     chains = BangBang.setindex!!(chains, (;
                         fit_distribution=missing,
                         log_weights=Float64[],
@@ -76,6 +75,7 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
                         final_weight=Ref(0.),
                         beta=Ref(Beta(1.,1.))
                     ), i)
+                    push!(active_chains, i)
                 end
                 i, new
             end
@@ -104,17 +104,17 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
                         update_chain!(chains[idx], rvi; median_changed)
                     end
                 end
+                weights = final_weights()
+                p = sortperm(weights, rev=true)
+                update_progress!(
+                    progress, total_n; 
+                    final_weights=weights[p], 
+                    sampling_weights=sampling_weights()[p], 
+                    betas=betas()[p],
+                    n_compute_chains,
+                    median_changes
+                )
             end
-            weights = final_weights()
-            p = sortperm(weights, rev=true)
-            update_progress!(
-                progress, total_n; 
-                final_weights=weights[p], 
-                sampling_weights=sampling_weights()[p], 
-                betas=betas()[p],
-                n_compute_chains,
-                median_changes
-            )
         end
     end
     weights = final_weights()

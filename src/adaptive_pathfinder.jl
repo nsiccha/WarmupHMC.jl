@@ -111,16 +111,19 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
                     final_weights=weights[p], 
                     sampling_weights=sampling_weights()[p], 
                     betas=betas()[p],
-                    n_compute_chains,
+                    n_compute_chains=UncertainFrequency(sum(chain->chain.final_weight[]>1e-2, values(chains)), n_compute_chains),
                     median_changes
                 )
             end
         end
     end
     weights = final_weights()
-    p = sortperm(weights, rev=true)
-    map(sort(collect(values(chains)), rev=true, by=chain->chain.final_weight[])[1:n_chains]) do chain
-            (;
+    chains = [chains[active_chains[pi]] for pi in sortperm(weights, rev=true)]
+    chains = filter(chain->chain.final_weight[]>1e-2, chains)
+    (warn && length(chains) < n_chains) && @warn "Only $(length(chains)) chains remaining out of $n_chains."
+    map(1:n_chains) do idx
+        chain = chains[(idx-1) % length(chains)+1]
+        (;
             position=rand(rng, chain.fit_distribution), 
             location=chain.fit_distribution.μ, 
             squared_scale=chain.fit_distribution.Σ

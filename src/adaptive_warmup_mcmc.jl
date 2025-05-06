@@ -1,12 +1,13 @@
 initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
 initialize_mcmc(lpdf, init::Distribution; rng, kwargs...) = initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
-initialize_mcmc(lpdf, init::AbstractVector; rng, kwargs...) = begin
+pathfinder_callback(progress) = nothing
+initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(lpdf, init)
     initialize_mcmc(
         lpdf, 
-        pathfinder(lpdf; rng, ndraws=1, init);
+        pathfinder(lpdf; rng, ndraws=1, init, callback=pathfinder_callback(pprogress));
         kwargs...
     )
 end
@@ -167,12 +168,12 @@ adaptive_warmup_mcmc(
 
     n_samples = 0
     update_progress!(progress, current_transition_counter;
+        divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
+        (monitor_ess ? (;ess="pending...") : (;))...,
         total_transition_counter,
         total_evaluation_counter,
         sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
-        divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
         active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
-        (monitor_ess ? (;ess="pending...") : (;))...
     )
     while size(posterior_position, 2) < n_draws
         # Some setup that has to happen at the beginning of every warm-up window
@@ -271,6 +272,7 @@ adaptive_warmup_mcmc(
             active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
         )
     end
+    update_progress!(progress, (monitor_ess ? "min. ESS: $(short_string(ess[1])), " : "") * "divergent: $(short_string(100*n_divergent_samples/n_samples))%")
     reparametrize!(lpdf, posterior_position)#, posterior_gradient)
     (;initial_position=position, halo_position, halo_gradient, posterior_position, posterior_gradient, ess, scale_options, active_transformation, stepsize, total_evaluation_counter, n_divergent_samples, position_and_gradient, scale_changes)
 end

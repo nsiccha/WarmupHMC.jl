@@ -80,7 +80,9 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
                 i, new
             end
             if new 
-                pr = pathfinder(lpdf; ndraws=1)
+                pr = with_progress(progress, 1_000; description="Pathfinder.$i", transient=true) do pprogress
+                    pathfinder(lpdf; ndraws=1, callback=pathfinder_callback(pprogress))
+                end
                 lock(l) do 
                     chains = BangBang.setindex!!(chains, BangBang.setproperty!!(chains[i], :fit_distribution, pr.fit_distribution), i)
                 end
@@ -117,8 +119,7 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), warn=true,
             end
         end
     end
-    weights = final_weights()
-    chains = [chains[active_chains[pi]] for pi in sortperm(weights, rev=true)]
+    chains = [chains[active_chains[pi]] for pi in sortperm(final_weights(), rev=true)]
     chains = filter(chain->chain.final_weight[]>1e-2, chains)
     (warn && length(chains) < n_chains) && @warn "Only $(length(chains)) chains remaining out of $n_chains."
     map(1:n_chains) do idx

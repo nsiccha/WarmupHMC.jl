@@ -118,6 +118,7 @@ WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; N=nothing, description
         pjob.columns = [DescriptionColumn(pjob), StringColumn(pjob, value)]
     else
         pjob.columns = [DescriptionColumn(pjob), CompletedColumn(pjob), SeparatorColumn(pjob), ProgressColumn(pjob), StringColumn(pjob, "")]
+        WarmupHMC.update_progress!(pjob, "")
     end
     # Apply color/style
     Term.Progress.render(pjob, pbar)
@@ -167,10 +168,16 @@ end
 WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, i::Integer) = if isnothing(job.N)
     WarmupHMC.update_progress!(job, WarmupHMC.short_string(i))
 else
-    job.i = i
+    job.i = min(job.N, max(0, i))
 end
 WarmupHMC.update_progress!(::Term.Progress.ProgressJob, ::Nothing) = nothing
-WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = job.columns[end].msg[] = WarmupHMC.short_string(value)
+WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = begin
+    # new_msg = WarmupHMC.short_string(value)
+    # dwidth = length(new_msg) - length(job.columns[end].msg[]) 
+    # Term.Progress.setwidth!(job.columns[end-1].measure.w - dwidth)
+    job.columns[end].msg[] = WarmupHMC.short_string(value)
+    Term.Progress.setwidth!(job.columns[end-1], job.width-length(job.columns) - sum(c -> isa(c, Term.Progress.ProgressColumn) ? 0 : c.measure.w, job.columns))
+end
 WarmupHMC.update_progress!(job::ProgressJob, i=parent(job).i+1; kwargs...) = begin 
     WarmupHMC.update_progress!(parent(job), i)
     for (key, value) in pairs(kwargs)

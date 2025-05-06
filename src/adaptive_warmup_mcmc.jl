@@ -2,12 +2,12 @@ initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs..
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
 initialize_mcmc(lpdf, init::Distribution; rng, kwargs...) = initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
 pathfinder_callback(progress) = nothing
-initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
+initialize_mcmc(lpdf, init::AbstractVector; rng, progress, ntries=10, ndraws_elbo=1, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(lpdf, init)
     initialize_mcmc(
         lpdf, 
-        pathfinder(lpdf; rng, ndraws=1, init, callback=pathfinder_callback(pprogress));
+        pathfinder(lpdf; rng, ndraws=1, ntries, ndraws_elbo, init, callback=pathfinder_callback(pprogress));
         kwargs...
     )
 end
@@ -96,7 +96,7 @@ adaptive_warmup_mcmc(
     # ismissing(init) && (init = rand(rng, Uniform(-2,+2), dimension))
     # Work around https://github.com/roualdes/bridgestan/issues/272
     # LogDensityProblems.logdensity_and_gradient(recording_lpdf, init)
-    (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress)
+    (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     # We currently learn three linear transformation options
     scale_options = (;
         # Corresponds to a standard diagonal mass matrix

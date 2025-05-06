@@ -127,7 +127,7 @@ exhaustive_ev(p, g) = begin
     display(reshape(round.(map(loss, vs); sigdigits=2), (:, length(eigens))))
     argmin(loss, vs)
 end
-update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2)) = begin 
+update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), kwargs...) = begin 
     (;idxs, reflections, s1, s2, transformation_losses) = t
     dimension = LinearAlgebra.checksquare(t)
     s1 .= std.(eachrow(p))

@@ -8,7 +8,7 @@ else
     f(Beta(n1, n2))
 end
 passchanged(old, new) = new, old != new
-adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), ntries=10, ndraws_elbo=1, warn=true, progress=nothing, threshold=1e-2) = with_progress(progress, n_eval; description="Adaptive pathfinder") do progress
+adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), ntries=10, ndraws_elbo=1, warn=true, progress=nothing, threshold=1e-2, kwargs...) = with_progress(progress, n_eval; description="Adaptive pathfinder") do progress
     warn && @warn """
         This method will try to find good initialization points by repeatedly discarding initalization points it deems bad - however, we may be throwing out import modes!
 
@@ -81,7 +81,7 @@ adaptive_pathfinder(lpdf; n_eval, n_chains, rng=Random.default_rng(), ntries=10,
             end
             if new 
                 pr = with_progress(progress, 1_000; description="Pathfinder.$i", transient=true) do pprogress
-                    pathfinder(lpdf; ndraws=1, ntries, ndraws_elbo, callback=pathfinder_callback(pprogress))
+                    pathfinder(lpdf; ndraws=1, ntries, ndraws_elbo, callback=pathfinder_callback(pprogress), kwargs...)
                 end
                 lock(l) do 
                     chains = BangBang.setindex!!(chains, BangBang.setproperty!!(chains[i], :fit_distribution, pr.fit_distribution), i)

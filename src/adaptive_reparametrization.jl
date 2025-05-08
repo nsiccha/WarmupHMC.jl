@@ -45,7 +45,7 @@ end
 maybeeachcol(n) = Base.Fix2(maybeeachcol, n)
 maybeeachcol(x::AbstractMatrix, n) = eachcol(x)
 maybeeachcol(x, n) = Fill(x, n)
-find_reparametrization!(x::AbstractReparametrizer, draws::AbstractMatrix, params::AbstractVector, args...; progress=nothing) = with_progress(progress, length(params)) do progress
+find_reparametrization!(x::AbstractReparametrizer, draws::AbstractMatrix, params::AbstractVector, args...; progress=nothing, description="Reparametrizing...") = with_progress(progress, length(params); description) do progress
     map!(params, eachcol(draws), params, map(maybeeachcol(length(params)), args)...) do subargs...
         WarmupHMC.update_progress!(progress)
         find_reparametrization!(x, subargs...)

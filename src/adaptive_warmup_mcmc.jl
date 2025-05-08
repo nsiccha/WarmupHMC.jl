@@ -282,18 +282,29 @@ ensurevector(x::AbstractVector, n) = begin
     x
 end
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...) 
-adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing, description="MCMC", init=missing, kwargs...) = with_progress(progress; description) do progress 
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing, 
+monitor_ess=!isnothing(progress), description="MCMC", init=missing, kwargs...) = with_progress(progress, length(rngs); description) do progress 
     n_chains = length(rngs)
     rv = Vector{Any}(missing, n_chains)
     init = ensurevector(init, n_chains)
     if parallel
         Threads.@threads for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, description=description*".$i", init=init[i], kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], kwargs...)
+            update_progress!(progress)
         end
     else
         for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, description=description*".$i", init=init[i], kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], kwargs...)
+            update_progress!(progress)
         end
+    end
+    if !isnothing(progress)
+        n_divergent_samples = sum(rvi->rvi.n_divergent_samples, rv)
+        n_samples = sum(rvi->size(rvi.posterior_position, 2), rv)
+        update_progress!(
+            progress,
+            (monitor_ess ? "min. ESS: $(short_string(minimum((MCMCDiagnosticTools.ess(permutedims(stack(getproperty.(rv, :posterior_position)), (2, 3, 1))))))), " : "") * "divergent: $(short_string(100*n_divergent_samples/n_samples))%"
+        )
     end
     identity.(rv)
 end

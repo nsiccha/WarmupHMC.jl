@@ -32,7 +32,8 @@ root(bar::ProgressBar) = bar
 root(job::ProgressJob) = root(owner(job))
 level(bar::ProgressBar) = 0
 level(job::ProgressJob) = job.info.level
-priority(job::ProgressJob) = job.info.priority
+priority(bar::ProgressBar) = bar.info.priority
+priority(job::ProgressJob) = job.info.priority[]
 pos(bar::ProgressBar) = tuple()
 pos(job::ProgressJob) = job.info.pos
 owns(x::WarmupHMC.Progress) = x.info.owns
@@ -105,7 +106,7 @@ WarmupHMC.initialize_progress!(::Type{Term.Progress.ProgressBar}; width=120, kwa
     ))
 end
 WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress, N; kwargs...) = WarmupHMC.initialize_progress!(owner; N, kwargs...)
-WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; N=nothing, description, key=nothing, value="", transient=false, kwargs...) = begin
+WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; N=nothing, description="Running...", key=nothing, value="", transient=false, kwargs...) = begin
     bar = root(owner)
     pbar = parent(bar)
     jid = lock(bar) do 
@@ -131,7 +132,7 @@ WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; N=nothing, description
             owns=[], 
             labels=Dict(),
             level=level(owner)+1,
-            priority=(level(owner)+1, owner.info.current_id[]),
+            priority=Ref((0, level(owner)+1, owner.info.current_id[])),
             pos=(pos(owner)..., owner.info.current_id[]), 
             running=Ref(true),
             kwargs...
@@ -140,17 +141,24 @@ WarmupHMC.initialize_progress!(owner::WarmupHMC.Progress; N=nothing, description
         job 
     end
     lock(bar) do 
-        insertsorted!(bar.info.priority, job; by=priority)
+        insertsorted!(priority(bar), job; by=priority)
         insertsorted!(bar.info.pos, job; by=pos)
         recomputejobs!(bar)
     end
     job
 end
 persists(job::ProgressJob) = job.info.running[] || !parent(job).transient
+newlyfinished(job::ProgressJob) = !job.info.running[] && priority(job)[1] == 0
 recomputejobs!(bar::ProgressBar) = lock(bar) do 
     pbar = parent(bar)
     filter!(persists, bar.info.pos)
-    filter!(persists, bar.info.priority)
+    filter!(persists, priority(bar))
+    tmp = filter(newlyfinished, priority(bar))
+    filter!(!newlyfinished, priority(bar))
+    for job in tmp
+        job.info.priority[] = (1, priority(job)[2:end]...)
+        insertsorted!(priority(bar), job; by=priority)
+    end
     append!(
         empty!(pbar.jobs), 
         parent.(
@@ -158,7 +166,7 @@ recomputejobs!(bar::ProgressBar) = lock(bar) do
                 Ref(bar.info.pos),
                 sort!(getindex.(
                     Ref(Dict(zip(id.(bar.info.pos), eachindex(bar.info.pos)))), 
-                    id.(bar.info.priority[1:min(length(bar.info.priority), max_rows(bar))])
+                    id.(priority(bar)[1:min(length(priority(bar)), max_rows(bar))])
                 ))
             )
         )
@@ -178,7 +186,10 @@ WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = begin
     job.columns[end].msg[] = WarmupHMC.short_string(value)
     Term.Progress.setwidth!(job.columns[end-1], job.width-length(job.columns) - sum(c -> isa(c, Term.Progress.ProgressColumn) ? 0 : c.measure.w, job.columns))
 end
-WarmupHMC.update_progress!(job::ProgressJob, i=parent(job).i+1; kwargs...) = begin 
+WarmupHMC.update_progress!(job::ProgressJob; kwargs...) = lock(job) do 
+    WarmupHMC.update_progress!(job::ProgressJob, parent(job).i+1; kwargs...)
+end
+WarmupHMC.update_progress!(job::ProgressJob, i; kwargs...) = begin 
     WarmupHMC.update_progress!(parent(job), i)
     for (key, value) in pairs(kwargs)
         sjob = get!(labels(job), key) do

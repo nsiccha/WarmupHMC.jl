@@ -2,12 +2,12 @@ initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs..
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
 initialize_mcmc(lpdf, init::Distribution; rng, kwargs...) = initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
 pathfinder_callback(progress) = nothing
-initialize_mcmc(lpdf, init::AbstractVector; rng, progress, ntries=10, ndraws_elbo=1, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
+initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(lpdf, init)
     initialize_mcmc(
         lpdf, 
-        pathfinder(lpdf; rng, ndraws=1, ntries, ndraws_elbo, init, callback=pathfinder_callback(pprogress));
+        mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), kwargs...);
         kwargs...
     )
 end
@@ -17,6 +17,21 @@ initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin
     initialize_mcmc(lpdf, (;position, squared_scale))
 end
 initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = init
+"Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"
+mypathfinder(args...; 
+    ndraws=1, ntries=10, ndraws_elbo=1, 
+    history_length=6,
+    optimizer=Pathfinder.Optim.LBFGS(; 
+        m=history_length, 
+        linesearch=Pathfinder.LineSearches.HagerZhang(), 
+        alphaguess=Pathfinder.LineSearches.InitialHagerZhang()
+    ),
+    kwargs...
+) = pathfinder(
+    args...; 
+    ndraws, ntries, ndraws_elbo, optimizer, kwargs...
+)
+
 
 """
 Adaptively 

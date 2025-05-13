@@ -1,6 +1,13 @@
 initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
-initialize_mcmc(lpdf, init::Distribution; rng, kwargs...) = initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
+initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 1:ntries
+    try 
+        return initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
+    catch
+        i == ntries && rethrow()
+        @warn "Initialization failed the $i-th time, trying again..."
+    end
+end
 pathfinder_callback(progress) = nothing
 initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
@@ -19,7 +26,7 @@ end
 initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = init
 "Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"
 mypathfinder(args...; 
-    ndraws=1, ntries=10, ndraws_elbo=1, 
+    ndraws=1, ndraws_elbo=1, ntries=1,
     history_length=6,
     optimizer=Pathfinder.Optim.LBFGS(; 
         m=history_length, 

@@ -19,6 +19,7 @@ initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_pro
     )
 end
 initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin 
+    @assert length(init.elbo_estimates) > 0
     position = collect(init.draws[:, 1])::Vector{Float64}
     squared_scale = init.fit_distribution.Σ
     initialize_mcmc(lpdf, (;position, squared_scale))
@@ -185,36 +186,29 @@ adaptive_warmup_mcmc(
     n_divergent = 0
     # For monitoring purposes: Keep track of the number of divergences in the current SAMPLING window
     n_divergent_samples = 0
-    finish = false
+    restart = true
     # We run the warm-up procedure until we have collected enough samples
 
     n_samples = 0
     update_progress!(progress, current_transition_counter;
         divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
         (monitor_ess ? (;ess="pending...") : (;))...,
+        active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
+        sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
         total_transition_counter,
         total_evaluation_counter,
-        sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
-        active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
     )
+    stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     while size(posterior_position, 2) < n_draws
         # Some setup that has to happen at the beginning of every warm-up window
         outer_counter += 1
         hamiltonian = DynamicHMC.Hamiltonian(kinetic_energy, recording_lpdf)
-        stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
-        stepsize = DynamicHMC.current_ϵ(stepsize_state)
-        # Reset the so far recorded intermediate and MCMC positions and gradients
-        reset!(recording_lpdf)
-        current_transition_counter = 0
-        steps_per_draw = OnlineStatsBase.Mean()
-        n_divergent = 0
-        n_divergent_samples = 0
         current_evaluation_counter = 0
         # We run the current warm-up/sampling window until 
         #   a) we have collected enough samples and can break out of the outer loop as well or
         #   b) we have reached the current targeted number of gradient evaluations AND we estimate that 
         #       restarting (adding a new warm-up window) is better than finishing sampling with the current adaptation
-        while size(posterior_position, 2) < n_draws && (current_evaluation_counter < n_evaluations || finish)
+        while size(posterior_position, 2) < n_draws && (current_evaluation_counter < n_evaluations)
             current_transition_counter += 1
             total_transition_counter += 1
             # One MCMC transition
@@ -244,7 +238,7 @@ adaptive_warmup_mcmc(
                 # append!(posterior_gradient, nuts_state.current.log_density_gradient)
                 is_divergent && (n_divergent_samples += 1)
             end
-            if current_evaluation_counter >= n_evaluations && !finish
+            if current_evaluation_counter >= n_evaluations
                 scale = scale_options[active_transformation]
                 for (pi, gi) in zip(eachcol(halo_position), eachcol(halo_gradient))
                     ldiv!(variance_memory, scale, pi)
@@ -260,15 +254,15 @@ adaptive_warmup_mcmc(
                 lmin, lmax = extrema(variance_memory)
                 variance_cond = lmax / lmin
                 pushfirst!(scale_changes, sqrt(variance_cond))
-                finish = variance_cond < variance_cond_target
-                finish || (stepsize = DynamicHMC.final_ϵ(stepsize_state))
+                restart = variance_cond >= variance_cond_target
             end
             n_samples = size(posterior_position, 2)
             update_progress!(progress, current_transition_counter;
+                divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
+                active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
+                sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
                 total_transition_counter=Speed(total_transition_counter, time_ns()-start_time),
                 total_evaluation_counter=Speed(total_evaluation_counter, time_ns()-start_time),
-                sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
-                divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
             )
         end
         if monitor_ess && n_samples > 10
@@ -282,6 +276,15 @@ adaptive_warmup_mcmc(
         n_evaluations *= 2
         # Recompute the thinning factor for the intermediate positions and gradients
         recorder.thin = n_evaluations ÷ recording_target
+        restart || continue
+        stepsize = DynamicHMC.final_ϵ(stepsize_state)
+        stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
+        stepsize = DynamicHMC.current_ϵ(stepsize_state)
+        # Reset the so far recorded intermediate and MCMC positions and gradients
+        current_transition_counter = 0
+        steps_per_draw = OnlineStatsBase.Mean()
+        n_divergent = 0
+        n_divergent_samples = 0
         # Update the linear transformation candidates and estimate the transformation loss,
         # using the INTERMEDIATE POSITIONS AND GRADIENTS.
         nonlinear_adapt && (position_and_gradient = find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient))
@@ -293,6 +296,7 @@ adaptive_warmup_mcmc(
         update_progress!(progress, nothing;
             active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
         )
+        reset!(recording_lpdf)
     end
     update_progress!(progress, (monitor_ess ? "min. ESS: $(short_string(ess[1])), " : "") * "divergent: $(short_string(100*n_divergent_samples/n_samples))%")
     reparametrize!(lpdf, posterior_position)#, posterior_gradient)

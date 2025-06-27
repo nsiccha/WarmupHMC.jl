@@ -1,6 +1,5 @@
 using WarmupHMC, PosteriorDB, StanLogDensityProblems, LogDensityProblems, Logging, Random, Term
 
-
 const pdb = PosteriorDB.database()
 
 pdb_problem(posterior_name) = begin
@@ -15,12 +14,6 @@ pdb_problem(posterior_name) = begin
     ), posterior_name);
 end
 
-begin
-problem = pdb_problem("eight_schools-eight_schools_noncentered")
-for progress in (Term.Progress.ProgressBar, )
-    @time WarmupHMC.adaptive_warmup_mcmc(Xoshiro.(1:4), problem; n_draws=10_000, progress)
-    @time WarmupHMC.adaptive_warmup_mcmc(Xoshiro.(1:8), problem; n_draws=10_000, progress)
-    @time WarmupHMC.adaptive_warmup_mcmc(Xoshiro.(1:16), problem; n_draws=10_000, progress)
-    @time WarmupHMC.adaptive_warmup_mcmc(Xoshiro.(1:32), problem; n_draws=10_000, progress)
-end
-end
+problem = pdb_problem("radon_all-radon_variable_intercept_slope_noncentered")
+WarmupHMC.adaptive_warmup_mcmc(Xoshiro.(1:4), problem; n_draws=100, progress=Term.Progress.ProgressBar)
+nothing

@@ -5,6 +5,7 @@ version = "0.2.0"
 
 [deps]
 BangBang = "198e06fe-97b7-11e9-32a5-e1d131e6ad66"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DynamicHMC = "bbc10e6e-7c05-544b-b16e-64fede858acb"
 ElasticArrays = "fdbdab4c-e67f-52f5-8c3f-e7b388dad3d4"
@@ -22,13 +23,13 @@ TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
 
 [weakdeps]
 ProgressBars = "49802e3a-d2f1-5c88-81d8-b72133a6f568"
-ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 StanLogDensityProblems = "a545de4d-8dba-46db-9d34-4e41d3f07807"
 Term = "22787eb5-b846-44ae-b979-8e399b8463ab"
 
 [extensions]
 ProgressBarsExt = "ProgressBars"
-ProgressMeterExt = "ProgressMeter"
+SerializationExt = "Serialization"
 StanLogDensityProblemsExt = "StanLogDensityProblems"
 TermExt = "Term"
 

@@ -9,12 +9,12 @@ initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 
     end
 end
 pathfinder_callback(progress) = nothing
-initialize_mcmc(lpdf, init::AbstractVector; rng, progress, kwargs...) = with_progress(progress, 1_000; description="Pathfinder", transient=true) do pprogress
+initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs...) = with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(lpdf, init)
     initialize_mcmc(
         lpdf, 
-        mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), kwargs...);
+        mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
         kwargs...
     )
 end
@@ -39,7 +39,6 @@ mypathfinder(args...;
     args...; 
     ndraws, ntries, ndraws_elbo, optimizer, kwargs...
 )
-
 
 """
 Adaptively 
@@ -334,3 +333,5 @@ monitor_ess=!isnothing(progress), description="MCMC", init=missing, kwargs...) =
     end
     identity.(rv)
 end
+
+include("resumable_parallel_warmup.jl")

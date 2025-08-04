@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.10.9"
+julia_version = "1.10.10"
 manifest_format = "2.0"
 project_hash = "25297f715a0bec5028396663120d6543a2db788d"
 
@@ -1269,7 +1269,7 @@ version = "0.3.23+4"
 [[deps.OpenLibm_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "05823500-19ac-5b8b-9628-191a04bc5112"
-version = "0.8.1+4"
+version = "0.8.5+0"
 
 [[deps.OpenSSL]]
 deps = ["BitFlags", "Dates", "MozillaCACerts_jll", "OpenSSL_jll", "Sockets"]
@@ -1887,7 +1887,7 @@ version = "1.0.3"
 deps = ["Distributions", "LinearAlgebra", "LogExpFunctions", "OrderedCollections", "Statistics"]
 path = "../../StanBlocks.jl"
 uuid = "2e771a56-c23a-4e0b-9282-20c2e37157e9"
-version = "0.1.2"
+version = "0.1.4"
 
     [deps.StanBlocks.extensions]
     DifferentiationInterfaceExt = "DifferentiationInterface"
@@ -2200,15 +2200,15 @@ uuid = "a44049a8-05dd-5a78-86c9-5fde0876e88c"
 version = "1.3.243+0"
 
 [[deps.WarmupHMC]]
-deps = ["BangBang", "Distributions", "DynamicHMC", "ElasticArrays", "FillArrays", "LinearAlgebra", "LogDensityProblems", "LogExpFunctions", "MCMCDiagnosticTools", "OnlineStatsBase", "Pathfinder", "Random", "Statistics", "StatsBase", "TSVD"]
+deps = ["BangBang", "DataFrames", "Distributions", "DynamicHMC", "ElasticArrays", "FillArrays", "LinearAlgebra", "LogDensityProblems", "LogExpFunctions", "MCMCDiagnosticTools", "OnlineStatsBase", "Pathfinder", "Random", "Statistics", "StatsBase", "TSVD"]
 path = ".."
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 version = "0.2.0"
-weakdeps = ["ProgressBars", "ProgressMeter", "StanLogDensityProblems", "Term"]
+weakdeps = ["ProgressBars", "Serialization", "StanLogDensityProblems", "Term"]
 
     [deps.WarmupHMC.extensions]
     ProgressBarsExt = "ProgressBars"
-    ProgressMeterExt = "ProgressMeter"
+    SerializationExt = "Serialization"
     StanLogDensityProblemsExt = "StanLogDensityProblems"
     TermExt = "Term"
 

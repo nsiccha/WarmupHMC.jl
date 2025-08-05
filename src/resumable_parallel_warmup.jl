@@ -261,6 +261,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
     stepsize_adaptation_limit=100, 
     target_acceptance_rate=.8, 
     base_recording_target=1_000,
+    max_recording_target=100_000,
     init=missing, 
     progress=nothing, 
     callback=donothing,
@@ -342,7 +343,9 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         n_evals = zeros(n_chains)
         n_clusters = maximum(x->x.cluster_idx, chainwise_state)
         cluster_n_rows = zeros(n_clusters)
-        recording_target = base_recording_target * 2^(outer_i-1)
+        nominal_recording_target = base_recording_target * 2^(outer_i-1)
+        recording_target = min(max_recording_target, nominal_recording_target)
+        recording_thin = ceil(Int, nominal_recording_target / recording_target)
         n_recorded = 0
         update_progress!(progress, outer_i-1;
             n_clusters,
@@ -354,7 +357,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         )
         reset!(grecorder)
         
-        with_progress(progress, recording_target; description="Global records", transient=true) do recorded_progress
+        with_progress(progress, recording_target; description="Recording target", transient=true) do recorded_progress
         @myprogress recorded_progress "Outer iteration $outer_i ($n_chains chains):" pmap(1:n_chains) do chain_idx
             rng = rngs[chain_idx]
             chain_state = chainwise_state[chain_idx]
@@ -400,8 +403,9 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                 )
                 finish_time = time_ns() - inner_start_time
                 chainwise_state[chain_idx] = merge(chainwise_state[chain_idx], (;position_and_gradient, stepsize))
-                valid_record = recording_lpdf.dH .> -100
-                n_records = sum(valid_record)
+                valid_records = eachindex(recording_lpdf.dH)[recording_lpdf.dH .> -100]
+                valid_records = valid_records[1:recording_thin:end]
+                n_records = length(valid_records)
                 jump = stepsize * abs_idx(recording_lpdf, position_and_gradient.q)
                 log_density = position_and_gradient.ℓq
                 turned = stats.termination != DynamicHMC.REACHED_MAX_DEPTH
@@ -410,8 +414,8 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                 n_transitions[chain_idx] += 1
                 lock(plock) do
                     cluster_n_rows[cluster_idx] += 1
-                    append!(grecorder.halo_position, recording_lpdf.position[:, valid_record])
-                    append!(grecorder.halo_gradient, recording_lpdf.gradient[:, valid_record])
+                    append!(grecorder.halo_position, recording_lpdf.position[:, valid_records])
+                    append!(grecorder.halo_gradient, recording_lpdf.gradient[:, valid_records])
                     append!(grecorder.halo_idx, fill(chain_idx, n_records))
                     reset!(recording_lpdf)
                     valid = turned && pre_n_rows > stepsize_adaptation_limit

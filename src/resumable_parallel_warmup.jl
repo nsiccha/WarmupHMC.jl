@@ -385,7 +385,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                                 logjitter(sqrt(stats.acceptance_rate > target_acceptance_rate ? 2 : .5) * stepsize; f=sqrt(2))
                             end
                         end
-                    else
+                    elseif maybeready(stepsize_regression)
                         prepare!(stepsize_regression)
                         beta = stepsize_regression.location
                         alpha, beta = beta[cluster_idx], beta[end]
@@ -427,7 +427,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     if cluster_n_rows[cluster_idx] <= stepsize_adaptation_limit
                         stepsize_regression_x[end] = log(stepsize) 
                         condition!(stepsize_regression, stepsize_regression_x', stats.acceptance_rate)
-                    else
+                    elseif maybeready(stepsize_regression)
                         prepare!(stepsize_regression)
                         beta = stepsize_regression.location
                         alpha, beta = beta[cluster_idx], beta[end]
@@ -470,15 +470,12 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         mad_ld = median(abs.(ld .- med_ld))
         low_ld, high_ld = med_ld .+ (-2,+2) .* mad_ld
         chain_row_idxs = groupedby_idxs(ndf.chain_idx; uy=1:n_chains) 
+        n_clusters = 1
         cluster_idxs = map(1:n_chains) do chain_idx
             ld = ndf.log_density[chain_row_idxs[chain_idx]]
             ld_regression = ConjugateLinearRegression(eachindex(ld), ld)
-            if !maybeready(ld_regression) || (
-                .5 * length(ld) < ipred(ld_regression, low_ld) < ipred(ld_regression, med_ld)  
-            ) || (
-                .5 * length(ld) > ipred(ld_regression, low_ld) > ipred(ld_regression, med_ld)  
-            )
-                chainwise_state[chain_idx].cluster_idx
+            if !maybeready(ld_regression) || !(low_ld < pred(ld_regression, .5 * length(ld)) < high_ld)
+                n_clusters += 1
             else
                 1
             end

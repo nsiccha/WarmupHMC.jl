@@ -272,6 +272,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
     init=missing, 
     progress=nothing, 
     callback=donothing, 
+    ar_eps=1e-3*(1 - target_acceptance_rate),
     kwargs...
 ) = with_progress(progress, n_outer; description="Parallel sampling... ($(Threads.nthreads()) threads, $n_outer outer iterations)") do progress
     state = initialize_state(state, state_path)
@@ -396,11 +397,6 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                         end |> (x->clamp(x, .5*stepsize, 2*stepsize))
                     end
                     max_depth = ceil(Int, log2(2 + (recording_target - n_recorded) / (2 * n_chains)))
-                    # if !isnothing(stats) 
-                    #     stats.divergent && stepsize > old_stepsize && @info "divergent but stepsize increases ($old_stepsize -> $stepsize)"
-                    #     stats.acceptance_rate > target_acceptance_rate && stepsize > old_stepsize && @info "target not met but stepsize increases ($old_stepsize -> $stepsize)"
-                    #     # (stats.acceptance_rate < target_acceptance_rate) && @assert stepsize < old_stepsize
-                    # end
                 end
                 max_depth > 0 || break
                 (position_and_gradient, stats) = DynamicHMC.sample_tree(
@@ -423,8 +419,6 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                 n_records = length(valid_records)
                 jump = stepsize * abs_idx(recording_lpdf, position_and_gradient.q)
                 log_density = position_and_gradient.ℓq
-                # turned = stats.termination != DynamicHMC.REACHED_MAX_DEPTH
-                # divergent = DynamicHMC.is_divergent(stats.termination)
                 n_evals[chain_idx] += stats.steps
                 n_transitions[chain_idx] += 1
                 lock(plock) do
@@ -441,12 +435,9 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                         n_divergent[chain_idx] += stats.divergent
                     end
                     stepsize_adaptation_done = stepsize_adaptation_done || (cluster_n_rows[cluster_idx] > stepsize_adaptation_limit && maybeready!(stepsize_regression) && stepsize_regression.location[2] < 0)
-                    stepsize_adaptation_done || condition!(stepsize_regression, [1 log(stepsize)], stats.acceptance_rate)
-                    # if cluster_n_rows[cluster_idx] <= stepsize_adaptation_limit
-                    #     condition!(stepsize_regression, [1 log(stepsize)], stats.acceptance_rate)
-                    # elseif maybeready!(stepsize_regression)
-                    #     stepsize = exp(ipred(stepsize_regression, target_acceptance_rate))
-                    # end
+                    if !stepsize_adaptation_done && ar_eps < stats.acceptance_rate < 1 - ar_eps
+                        condition!(stepsize_regression, [1 log(stepsize)], stats.acceptance_rate)
+                    end
                     row = (;
                         outer_i, 
                         chain_idx, 

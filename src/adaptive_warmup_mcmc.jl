@@ -21,8 +21,9 @@ end
 initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin 
     @assert length(init.elbo_estimates) > 0
     position = collect(init.draws[:, 1])::Vector{Float64}
+    position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
     squared_scale = init.fit_distribution.Σ
-    initialize_mcmc(lpdf, (;position, squared_scale))
+    initialize_mcmc(lpdf, (;position, position_and_gradient, squared_scale))
 end
 initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = init
 "Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"

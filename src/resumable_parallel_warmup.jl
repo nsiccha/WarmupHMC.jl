@@ -2,10 +2,13 @@
 # import Serialization: serialize, deserialize
 using Random, DataFrames
 
+function default_progress end
+function update_progress! end
+function with_progress end
 
 myprogress(x; kwargs...) = x
 myprogress(x::Symbol; parent) = x == :__progress__ ? parent : x
-myprogress(x::Expr; parent=:(default_progress()), description=nothing) = if x.head == :for
+myprogress(x::Expr; parent=:($default_progress()), description=nothing) = if x.head == :for
     h, b = x.args
     @assert Meta.isexpr(h, :(=))
     lhs, rhs = h.args
@@ -14,11 +17,11 @@ myprogress(x::Expr; parent=:(default_progress()), description=nothing) = if x.he
     it = gensym("it")
     description = something(description, "for $h")
     h = Expr(:(=),lhs, it)
-    b = Expr(:block, myprogress.(b.args; parent=p)..., :(update_progress!($p)))
+    b = Expr(:block, myprogress.(b.args; parent=p)..., :($update_progress!($p)))
     x = Expr(:for, h, b)
     quote 
         $it = $(rhs)
-        with_progress($parent, length($it); description=$description, transient=true) do $p
+        $with_progress($parent, length($it); description=$description, transient=true) do $p
             @sync $x
         end
     end
@@ -30,11 +33,11 @@ elseif x.head == :while
     p = gensym("progress")
     it = gensym("it")
     description = something(description, "while $h")
-    b = Expr(:block, myprogress.(b.args; parent=p)..., :(update_progress!($p, $lhs)))
+    b = Expr(:block, myprogress.(b.args; parent=p)..., :($update_progress!($p, $lhs)))
     x = Expr(:while, h, b)
     quote 
         $it = $(rhs)
-        with_progress($parent, $rhs; description=$description, transient=true) do $p
+        $with_progress($parent, $rhs; description=$description, transient=true) do $p
             @sync $x
         end
     end
@@ -54,7 +57,7 @@ elseif x.head == :call
         tmp = gensym("tmp")
         g = quote 
             $tmp = $(myprogress(g; parent=p))(args...)
-            update_progress!($p)
+            $update_progress!($p)
             $tmp
         end
         f == :pmap && (g = :(Threads.@spawn $g))
@@ -63,7 +66,7 @@ elseif x.head == :call
         description = something(description, "$f($(args[1]), ...) do ...")
         return quote 
             $it = $(args[1])
-            with_progress($parent, length($it); description=$description, transient=true) do $p
+            $with_progress($parent, length($it); description=$description, transient=true) do $p
                 map(fetch, $x)
             end
             
@@ -91,8 +94,7 @@ end
 
 
 full_initialize_mcmc(lpdf, init; rng, progress, kwargs...) = begin 
-    (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
-    position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
+    (;position_and_gradient, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     energy = scale_to_energy(factorize(squared_scale).L)
     stepsize = DynamicHMC.find_initial_stepsize(
         DynamicHMC.InitialStepsizeSearch(), 
@@ -146,26 +148,31 @@ updateloop(lhs, loop) = begin
     @assert isa(it, Symbol)
     qit = QuoteNode(it)
     slhs = string(lhs)
-    Expr(
-        :for, head, 
+    Expr(:block,
         Expr(
-            :block, 
-            quote
-                if hasproperty(state, $qit)
-                    if state.$it >= $it
-                        continue
+            :for, head, 
+            Expr(
+                :block, 
+                quote
+                    if hasproperty(state, $qit)
+                        if state.$it >= $it
+                            continue
+                        else
+                            # @info "Restoring " * $slhs * " at " * string($it)
+                            $lhs = state
+                        end
                     else
-                        # @info "Restoring " * $slhs * " at " * string($it)
-                        $lhs = state
+                        state = merge(state, $lhs, (;$it))
                     end
+                end,
+                body.args...,
+                quote 
+                    state = merge(state, $lhs, (;$it))
+                    save_state(state)
                 end
-            end,
-            body.args...,
-            quote 
-                state = merge(state, $lhs, (;$it))
-                save_state(state)
-            end
-        )
+            )
+        ),
+        :($lhs = state)
     )
 end
 
@@ -264,7 +271,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
     max_recording_target=100_000,
     init=missing, 
     progress=nothing, 
-    callback=donothing,
+    callback=donothing, 
     kwargs...
 ) = with_progress(progress, n_outer; description="Parallel sampling... ($(Threads.nthreads()) threads, $n_outer outer iterations)") do progress
     state = initialize_state(state, state_path)
@@ -318,27 +325,26 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         full_initialize_mcmc(clpdf, init; rng, progress=__progress__, kwargs...)
     end
     n_clusters = n_chains+1
-    chainwise_state = [merge(pathfinder_init[i], (;cluster_idx=1+i)) for i in 1:n_chains]
-    global_state = (;
-        # energy=scale_to_energy(scale_then_reflect(dimension)),
-        stepsize_regression=ConjugateLinearRegression(2+n_chains),
-        grecorder=(;
-            halo_position=ElasticMatrix(zeros((dimension, 0))),
-            halo_gradient=ElasticMatrix(zeros((dimension, 0))),
-            halo_idx=fill(0, 0),
-            position=ElasticMatrix(zeros((dimension, 0))),
-            position_idx=fill(0, 0),
-        ),
-        ess=zeros(dimension),
-        rhat=zeros(dimension)
+    chainwise_state = [
+        merge(pathfinder_init[i], (;cluster_idx=1+i, stepsize_regression=ConjugateLinearRegression(2))) 
+        for i in 1:n_chains
+        ]
+    bulk_stepsize_regression = ConjugateLinearRegression(2)
+    grecorder = (;
+        halo_position=ElasticMatrix(zeros((dimension, 0))),
+        halo_gradient=ElasticMatrix(zeros((dimension, 0))),
+        halo_idx=fill(0, 0),
+        position=ElasticMatrix(zeros((dimension, 0))),
+        position_idx=fill(0, 0),
     )
-    global_state.stepsize_regression.ab .= [3, 1, 0]
+    ess = zeros(dimension)
+    rhat = zeros(dimension)
 
-    @updateloop (;rngs, df, chainwise_state, global_state) for outer_i in 1:n_outer
+    @updateloop (;rngs, df, chainwise_state, bulk_stepsize_regression, grecorder, ess, rhat) for outer_i in 1:n_outer
         inner_start_time = time_ns()
-        (;stepsize_regression, grecorder, ess, rhat) = global_state
         n_rows = size(df, 1)
         n_draws = zeros(n_chains)
+        n_divergent = zeros(n_chains)
         n_transitions = zeros(n_chains)
         n_evals = zeros(n_chains)
         n_clusters = maximum(x->x.cluster_idx, chainwise_state)
@@ -352,46 +358,49 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
             rhat,
             ess=sort(ess),
             n_draws=Speeds(n_draws, inner_start_time),
+            n_divergent,
             n_transitions=Speeds(n_transitions, inner_start_time),
             n_evals=Speeds(n_evals, inner_start_time),
         )
+        callback(state) == true && break
         reset!(grecorder)
         
         with_progress(progress, recording_target; description="Recording target", transient=true) do recorded_progress
         @myprogress recorded_progress "Outer iteration $outer_i ($n_chains chains):" pmap(1:n_chains) do chain_idx
-            rng = rngs[chain_idx]
-            chain_state = chainwise_state[chain_idx]
-            (;position_and_gradient, stepsize, cluster_idx, energy) = chain_state
-            stepsize_regression_x = zeros(n_clusters+1)
-            stepsize_regression_x[cluster_idx] = 1
-            recording_lpdf = NUTSPosterior2(lpdf)
-            hamiltonian = DynamicHMC.Hamiltonian(energy, recording_lpdf)
-            stats = nothing
-            max_depth = 0
-            pre_n_rows = 0
+            local rng = rngs[chain_idx]
+            local (;position_and_gradient, stepsize, cluster_idx, energy, stepsize_regression) = chainwise_state[chain_idx]
+            # stepsize_regression_x = zeros(n_clusters+1)
+            # stepsize_regression_x[cluster_idx] = 1
+            local recording_lpdf = NUTSPosterior2(lpdf)
+            local hamiltonian = DynamicHMC.Hamiltonian(energy, recording_lpdf)
+            local stats = nothing
+            local max_depth = 0
+            # local pre_n_rows = 0
+            local stepsize_adaptation_done = false
             
             @noprogress while n_recorded < recording_target
                 lock(plock) do
-                    pre_n_rows = cluster_n_rows[cluster_idx] 
-                    if cluster_n_rows[cluster_idx] <= stepsize_adaptation_limit
-                        stepsize = if maybeready(stepsize_regression)
-                            (;beta) = rand(rng, stepsize_regression; q=.25)
-                            alpha, beta = beta[cluster_idx], beta[end]
-                            clamp(exp((target_acceptance_rate - alpha) / beta), .5*stepsize, 2*stepsize)
+                    stepsize_adaptation_done = stepsize_adaptation_done || (cluster_n_rows[cluster_idx] > stepsize_adaptation_limit && maybeready!(stepsize_regression) && stepsize_regression.location[2] < 0)
+                    cluster_n_rows[cluster_idx] > stepsize_adaptation_limit && !stepsize_adaptation_done && @info "Stepsize adapation limit surpassed, but adaptation is not done yet:" stepsize_regression
+                    # pre_n_rows = cluster_n_rows[cluster_idx] 
+                    # old_stepsize = stepsize 
+                    stepsize = if stepsize_adaptation_done
+                        exp(ipred(stepsize_regression, target_acceptance_rate))
+                    else
+                        if maybeready!(stepsize_regression) && stepsize_regression.location[2] < 0
+                            exp(irand(rng, stepsize_regression, target_acceptance_rate))
+                        elseif isnothing(stats)
+                            logjitter(rng, stepsize)
                         else
-                            if isnothing(stats)
-                                logjitter(stepsize)
-                            else
-                                logjitter(sqrt(stats.acceptance_rate > target_acceptance_rate ? 2 : .5) * stepsize; f=sqrt(2))
-                            end
-                        end
-                    elseif maybeready(stepsize_regression)
-                        prepare!(stepsize_regression)
-                        beta = stepsize_regression.location
-                        alpha, beta = beta[cluster_idx], beta[end]
-                        stepsize = exp((target_acceptance_rate - alpha) / beta)
+                            logjitter(rng, sqrt(!stats.divergent * stats.acceptance_rate > target_acceptance_rate ? 2 : .5) * stepsize; f=sqrt(2))
+                        end |> (x->clamp(x, .5*stepsize, 2*stepsize))
                     end
                     max_depth = ceil(Int, log2(2 + (recording_target - n_recorded) / (2 * n_chains)))
+                    # if !isnothing(stats) 
+                    #     stats.divergent && stepsize > old_stepsize && @info "divergent but stepsize increases ($old_stepsize -> $stepsize)"
+                    #     stats.acceptance_rate > target_acceptance_rate && stepsize > old_stepsize && @info "target not met but stepsize increases ($old_stepsize -> $stepsize)"
+                    #     # (stats.acceptance_rate < target_acceptance_rate) && @assert stepsize < old_stepsize
+                    # end
                 end
                 max_depth > 0 || break
                 (position_and_gradient, stats) = DynamicHMC.sample_tree(
@@ -401,6 +410,12 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     position_and_gradient, 
                     stepsize
                 )
+                stats = (;
+                    stats.steps, 
+                    divergent=DynamicHMC.is_divergent(stats.termination),
+                    turned=stats.termination != DynamicHMC.REACHED_MAX_DEPTH,
+                    stats.acceptance_rate,
+                )
                 finish_time = time_ns() - inner_start_time
                 chainwise_state[chain_idx] = merge(chainwise_state[chain_idx], (;position_and_gradient, stepsize))
                 valid_records = eachindex(recording_lpdf.dH)[recording_lpdf.dH .> -100]
@@ -408,8 +423,8 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                 n_records = length(valid_records)
                 jump = stepsize * abs_idx(recording_lpdf, position_and_gradient.q)
                 log_density = position_and_gradient.ℓq
-                turned = stats.termination != DynamicHMC.REACHED_MAX_DEPTH
-                divergent = DynamicHMC.is_divergent(stats.termination)
+                # turned = stats.termination != DynamicHMC.REACHED_MAX_DEPTH
+                # divergent = DynamicHMC.is_divergent(stats.termination)
                 n_evals[chain_idx] += stats.steps
                 n_transitions[chain_idx] += 1
                 lock(plock) do
@@ -418,29 +433,28 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     append!(grecorder.halo_gradient, recording_lpdf.gradient[:, valid_records])
                     append!(grecorder.halo_idx, fill(chain_idx, n_records))
                     reset!(recording_lpdf)
-                    valid = turned && pre_n_rows > stepsize_adaptation_limit
+                    valid = stats.turned && stepsize_adaptation_done
                     if valid
                         append!(grecorder.position, position_and_gradient.q)
                         append!(grecorder.position_idx, chain_idx)
                         n_draws[chain_idx] += 1
+                        n_divergent[chain_idx] += stats.divergent
                     end
-                    if cluster_n_rows[cluster_idx] <= stepsize_adaptation_limit
-                        stepsize_regression_x[end] = log(stepsize) 
-                        condition!(stepsize_regression, stepsize_regression_x', stats.acceptance_rate)
-                    elseif maybeready(stepsize_regression)
-                        prepare!(stepsize_regression)
-                        beta = stepsize_regression.location
-                        alpha, beta = beta[cluster_idx], beta[end]
-                        stepsize = exp((target_acceptance_rate - alpha) / beta)
-                    end
+                    stepsize_adaptation_done = stepsize_adaptation_done || (cluster_n_rows[cluster_idx] > stepsize_adaptation_limit && maybeready!(stepsize_regression) && stepsize_regression.location[2] < 0)
+                    stepsize_adaptation_done || condition!(stepsize_regression, [1 log(stepsize)], stats.acceptance_rate)
+                    # if cluster_n_rows[cluster_idx] <= stepsize_adaptation_limit
+                    #     condition!(stepsize_regression, [1 log(stepsize)], stats.acceptance_rate)
+                    # elseif maybeready!(stepsize_regression)
+                    #     stepsize = exp(ipred(stepsize_regression, target_acceptance_rate))
+                    # end
                     row = (;
                         outer_i, 
                         chain_idx, 
                         stepsize, 
                         stats.acceptance_rate, 
                         stats.steps, 
-                        divergent,
-                        turned,
+                        stats.divergent,
+                        stats.turned,
                         valid,
                         n_records, 
                         finish_time, 
@@ -455,6 +469,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     update_progress!(progress, outer_i-1;
                         # ess=s(ess, inner_start_time),
                         n_draws=Speeds(n_draws, inner_start_time),
+                        n_divergent,
                         n_transitions=Speeds(n_transitions, inner_start_time),
                         n_evals=Speeds(n_evals, inner_start_time),
                     )
@@ -465,16 +480,17 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         end
         (;halo_position, halo_gradient, halo_idx, position, position_idx) = grecorder
         ndf = df[1+n_rows:end, :]
+        ndf = ndf[.!ndf.divergent, :]
         ld = ndf.log_density
         med_ld = median(ld)
-        mad_ld = median(abs.(ld .- med_ld))
+        mad_ld = quantile(abs.(ld .- med_ld), .75)
         low_ld, high_ld = med_ld .+ (-2,+2) .* mad_ld
         chain_row_idxs = groupedby_idxs(ndf.chain_idx; uy=1:n_chains) 
         n_clusters = 1
         cluster_idxs = map(1:n_chains) do chain_idx
             ld = ndf.log_density[chain_row_idxs[chain_idx]]
             ld_regression = ConjugateLinearRegression(eachindex(ld), ld)
-            if !maybeready(ld_regression) || !(low_ld < pred(ld_regression, .5 * length(ld)) < high_ld)
+            if !maybeready!(ld_regression) || !(low_ld < pred(ld_regression, .5 * length(ld)) < high_ld)
                 n_clusters += 1
             else
                 1
@@ -492,16 +508,17 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
             update_loss!(energy, copy(p), copy(g); v_f=grad_cov_ev2)
             energy
         end
+        stepsize_regressions = map(cluster_idxss) do chain_idxs
+            if length(chain_idxs) > 1
+                reset!(bulk_stepsize_regression)
+            else
+                reset!(deepcopy(chainwise_state[chain_idxs[1]].stepsize_regression))
+            end
+        end
         chainwise_state = [
-            merge(chain_state, (;cluster_idx, energy=energies[cluster_idx])) 
+            merge(chain_state, (;cluster_idx, energy=energies[cluster_idx], stepsize_regression=stepsize_regressions[cluster_idx])) 
             for (chain_state, cluster_idx, ) in zip(chainwise_state, cluster_idxs)
         ]
-        new_stepsize_regression = ConjugateLinearRegression(n_clusters+1)
-        pot, prec = stepsize_regression.potential[end], stepsize_regression.precision[end, end]
-        new_stepsize_regression.potential[n_clusters+1] = pot / sqrt(prec)
-        new_stepsize_regression.precision[n_clusters+1, n_clusters+1] = sqrt(prec)
-        new_stepsize_regression.ab[1:2] .= stepsize_regression.ab[1:2]
-        stepsize_regression = new_stepsize_regression
         bulk_chain_idxs = cluster_idxss[1]
         draw_idxs = groupedby_idxs(position_idx; uy=1:n_chains)[bulk_chain_idxs]
         sp = sortperm(draw_idxs; by=length, rev=true)
@@ -523,13 +540,12 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
             rhat,
             ess=sort(ess),
             n_draws=Speeds(n_draws, inner_start_time),
+            n_divergent,
             n_transitions=Speeds(n_transitions, inner_start_time),
             n_evals=Speeds(n_evals, inner_start_time),
         )
-        global_state = (;stepsize_regression, grecorder, ess, rhat)
-        callback((;df, grecorder, outer_i))
     end
-    callback((;df, global_state.grecorder))
+    callback(state)
     state
 end
 unique_renumber(x) = begin 
@@ -553,7 +569,9 @@ grad_cov_ev2(p, g) = begin
     eigen(Symmetric(cov(p')), 1:1).vectors[:, 1]
 end
 
-logjitter(x; f=2.) = x * exp(rand(Uniform(-log(f), +log(f))))
+logjitter(rng, x; f=2.) = logjitter(rng, x, Uniform(-log(f), +log(f)))
+logjitter(rng, x, dist) = x * exp(rand(rng, dist))
+#x * exp(rand(Uniform(-log(f), +log(f))))
 
 using Distributions
 
@@ -565,16 +583,28 @@ struct ConjugateLinearRegression{T}
     location::Vector{T}
     L::LowerTriangular{T, Matrix{T}}
 end
-ConjugateLinearRegression(n; ) = ConjugateLinearRegression(zeros(n), zeros((n,n)), zeros(3), zeros(n), LowerTriangular(zeros((n,n))))
+ConjugateLinearRegression(n; a=3., b=1.) = ConjugateLinearRegression(zeros(n), zeros((n,n)), [a, b, 0.], zeros(n), LowerTriangular(zeros((n,n))))
 ConjugateLinearRegression(;potential, precision, a, b) = ConjugateLinearRegression(potential, precision, [a, b, 0.], 0*potential, LowerTriangular(0*precision))
 ConjugateLinearRegression(x::AbstractVector, y::AbstractVector) = ConjugateLinearRegression(hcat(ones(length(x)), x), y)
 ConjugateLinearRegression(X::AbstractMatrix, y::AbstractVector) = condition!(ConjugateLinearRegression(size(X, 2)), X, y)
-reset!(p::ConjugateLinearRegression) = begin 
-    p.location .= 0
+reset!(p::ConjugateLinearRegression; a=3., b=1.) = begin 
+    p.potential .= 0
     p.precision .= 0
-    p.ab .= 0
-    p.L .= 0
+    p.ab .= [a, b, 0]
     p
+end
+relax!(p::ConjugateLinearRegression) = if maybeready!(p)
+    prec = sqrt(p.precision[end, end])
+    p.precision .= 0
+    p.potential .= 0
+    p.precision[end, end] = prec
+    p.potential[end] = prec * p.location[end]
+    p.ab[1] *= .5
+    p.ab[2] = p.ab[3] + .5 * prec * abs2(p.location[end])
+    p.ab[3] = 0
+    p
+else
+    reset!(p) 
 end
 condition!(p::ConjugateLinearRegression, X, y) = begin
     (n, o) = size(X)
@@ -597,6 +627,12 @@ else
     p
 end
 maybeready(p::ConjugateLinearRegression) = p.ab[3] != 0 || isposdef(p.precision)
+maybeready!(p::ConjugateLinearRegression) = if maybeready(p)
+    prepare!(p)
+    true
+else
+    false
+end
 Base.rand(rng::AbstractRNG, p::ConjugateLinearRegression, args::Int...; q=0) = begin 
     prepare!(p)
     obs_var_dist = InverseGamma(p.ab[1], p.ab[3])
@@ -617,6 +653,10 @@ end
 ipred(p::ConjugateLinearRegression, y::Number) = begin 
     prepare!(p)
     alpha, beta = p.location
+    (y - alpha) / beta
+end
+irand(rng::AbstractRNG, p::ConjugateLinearRegression, y::Number; q=.25) = begin 
+    alpha, beta = rand(rng, p; q).beta
     (y - alpha) / beta
 end
 

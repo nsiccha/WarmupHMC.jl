@@ -273,6 +273,8 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
     progress=nothing, 
     callback=donothing, 
     ar_eps=1e-3*(1 - target_acceptance_rate),
+    n_min_scale_draws=1_000,
+    v_f=grad_cov_ev2,
     kwargs...
 ) = with_progress(progress, n_outer; description="Parallel sampling... ($(Threads.nthreads()) threads, $n_outer outer iterations)") do progress
     state = initialize_state(state, state_path)
@@ -493,10 +495,10 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         energies = map(cluster_idxss) do chain_idxs
             energy = scale_to_energy(scale_then_reflect(dimension))
             idxs = reduce(vcat, chain_halo_idxs[chain_idxs])
-            length(idxs) > 10 || return chainwise_state[chain_idxs[1]].energy
+            length(idxs) > n_min_scale_draws || return chainwise_state[chain_idxs[1]].energy
             p = halo_position[:, idxs]
             g = halo_gradient[:, idxs]
-            update_loss!(energy, copy(p), copy(g); v_f=grad_cov_ev2)
+            update_loss!(energy, copy(p), copy(g); v_f)
             energy
         end
         stepsize_regressions = map(cluster_idxss) do chain_idxs

@@ -43,7 +43,7 @@ struct ActiveTransformation{K}
     scale_changes::Vector{Float64}
 end
 struct Speed
-    n::Int64
+    n::Int
     dt::Float64
     Speed(n, dt::UInt64) = new(n, Float64(dt))
 end
@@ -53,8 +53,8 @@ short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose})
 short_string(x::Pathfinder.WoodburyPDRightFactor) = "Pathfinder($(size(x.V, 1)))"
 short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.SuccessiveReflections}) = "Adaptive($(length(x.m1.reflections)))"
 short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"
-short_string(x::AbstractVector) = "[" * if length(x) > 5
-    join(map(short_string, x[1:4]), ", ") * ",..."
+short_string(x::AbstractVector) = "[" * if length(x) > 7
+    join(map(short_string, x[1:3]), ", ") * ", ..., " * join(map(short_string, x[end-2:end]), ", ")
 else
     join(map(short_string, x), ", ")
 end * "]"
@@ -65,3 +65,24 @@ end
 short_string(x::Integer) = string(x)
 short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)" 
 short_string(x) = string(x)
+
+struct Speeds
+    n::Vector{Int}
+    dt::Float64
+    Speeds(n, dt::UInt64) = new(n, Float64(dt))
+end
+@views Base.string(x::Speeds) = begin
+    p = sortperm(x.n)
+    dt = (time_ns() - x.dt)/1e9
+    "$(short_string(x.n[p])) in $(short_string(dt)) seconds ($(short_string(x.n[p]./(dt))) / s)"
+end
+struct Speeds2{T}
+    n::T
+    dt::Float64
+    Speeds2(n, dt::UInt64) = new{typeof(n)}(n, Float64(dt))
+end
+@views Base.string(x::Speeds2) = begin
+    p = sortperm(x.n)
+    dt = (time_ns() - x.dt)/1e9
+    "$(short_string(x.n[p])) in $(short_string(dt)) seconds ($(short_string(x.n[p]./(dt))) / s)"
+end

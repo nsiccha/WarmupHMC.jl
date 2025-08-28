@@ -3,7 +3,7 @@ LogDensityProblems.capabilities(::Type{<:WrappedLogDensityProblem{P}}) where {P}
 LogDensityProblems.dimension(p::WrappedLogDensityProblem) = LogDensityProblems.dimension(parent(p))
 LogDensityProblems.logdensity(p::WrappedLogDensityProblem, x) = LogDensityProblems.logdensity(parent(p), x)
 LogDensityProblems.logdensity_and_gradient(p::WrappedLogDensityProblem, x) = LogDensityProblems.logdensity_and_gradient(parent(p), x)
-Base.show(io::IO, p::WrappedLogDensityProblem) = print(io, "WrappedLogDensityProblem(", parent(p), ")") 
+Base.show(io::IO, p::WrappedLogDensityProblem) = print(io, typeof(p).name.wrapper, "(", parent(p), ")") 
 
 
 struct NamedPosterior{P} <: WrappedLogDensityProblem{P}
@@ -24,15 +24,16 @@ LogDensityProblems.logdensity_and_gradient(p::CountingPosterior, x) = begin
     LogDensityProblems.logdensity_and_gradient(parent(p), x)
 end
 
-struct RecordingPosterior2{P,T,R} <: WrappedLogDensityProblem{P}
+struct RecordingPosterior2{P,T,R,G} <: WrappedLogDensityProblem{P}
     posterior::P
     halo_position::ElasticMatrix{T,Vector{T}}
     halo_gradient::ElasticMatrix{T,Vector{T}}
     posterior_position::ElasticMatrix{T,Vector{T}}
     posterior_gradient::ElasticMatrix{T,Vector{T}}
     recorder::R
+    rng::G
 end
-RecordingPosterior2(p; recorder=log(1e-2)) = begin
+RecordingPosterior2(p; rng, recorder=log(1e-2)) = begin
     n = LogDensityProblems.dimension(p) 
     RecordingPosterior2(
         p, 
@@ -40,7 +41,8 @@ RecordingPosterior2(p; recorder=log(1e-2)) = begin
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0), 
-        recorder
+        recorder,
+        rng
     )
 end
 Base.parent(p::RecordingPosterior2) = p.posterior
@@ -74,7 +76,7 @@ mutable struct LimitedRecorder2
     written::Bool
 end
 LimitedRecorder2(target, thin) = LimitedRecorder2(target, thin, 1, 0, false, false)
-LimitedRecordingPosterior3{P,T} = RecordingPosterior2{P,T,LimitedRecorder2}
+LimitedRecordingPosterior3{P,T,G} = RecordingPosterior2{P,T,LimitedRecorder2,G}
 record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin 
     r = p.recorder::LimitedRecorder2
     if !r.triggered
@@ -87,7 +89,7 @@ record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin
                 p.halo_position[:, r.outer_count] .= z.Q.q
                 p.halo_gradient[:, r.outer_count] .= z.Q.∇ℓq
             end 
-            r.triggered = rand() <= 1/(r.thin-r.inner_count)
+            r.triggered = rand(p.rng) <= 1/(r.thin-r.inner_count)
         end
     end
     r.inner_count += 1
@@ -109,45 +111,4 @@ reset!(r::LimitedRecorder2) = begin
     r.inner_count = 0
     r.triggered = false
     r.written = false
-end
-begin
-struct DepthPredictor{T}
-    depth_count::ElasticMatrix{T,Vector{T}}
-end
-DepthPredictor(max_tree_depth::Int) = DepthPredictor(ElasticMatrix(ones((1+max_tree_depth, 2))))
-steps_at(p::DepthPredictor, j) = begin 
-    H = view(p.depth_count, :, j)
-    num, den, fac = 0, 0, 2
-    for i in eachindex(H)
-        n = H[i]
-        num += (fac - 1) * n
-        den += n
-        fac *= 2
-    end
-    num / den
-end
-current_steps(p::DepthPredictor) = steps_at(p, size(p.depth_count, 2))
-potential_steps(p::DepthPredictor) = @views begin 
-    H1, H2 = p.depth_count[:, end-1], p.depth_count[:, end]
-    n1, n2 = sum(H1), sum(H2)
-    p = @. min(1, H2/n2 / (H1/n1))
-    num, den, carry, fac = 0, 0, 0, 2
-    for i in eachindex(H1)
-        n = if i < length(H2)
-            p[i] * H2[i] + (1-p[i+1]) * H2[i+1]
-        else
-            p[i] * H2[i]
-        end
-        num += (fac - 1) * n
-        den += n
-        fac *= 2
-    end
-    num / den
-end
-record!(p::DepthPredictor, stats) = if !DynamicHMC.is_divergent(stats.termination)
-    p.depth_count[1+stats.depth, end] += 1
-end
-advance!(p::DepthPredictor) = @views begin 
-    append!(p.depth_count, p.depth_count[:, end] .* size(p.depth_count, 1) ./ sum(p.depth_count[:, end]))
-end
 end

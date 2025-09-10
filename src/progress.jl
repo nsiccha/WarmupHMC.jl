@@ -60,8 +60,21 @@ else
 end * "]"
 short_string(x::Real) = begin
     rv = string(round2(x))
-    endswith(rv, ".0") ? rv[1:end-2] : rv
+    endswith(rv, ".0") && length(rv) > 3 ? rv[1:end-2] : rv
 end
-short_string(x::Integer) = string(x)
+short_string(x::Integer) = if x >= 1e9
+    short_string(x / 1e9) * "G"
+elseif x >= 1e6
+    short_string(x / 1e6) * "M"
+elseif x >= 1e3
+    short_string(x / 1e3) * "k"
+else
+    string(x)
+end
 short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)" 
 short_string(x) = string(x)
+short_string(x::Pair) = "$(short_string(first(x))) => $(short_string(last(x)))"
+short_string(x::NamedTuple) = "(;" * join([
+    short_string(key) * "=" * short_string(value)
+    for (key, value) in pairs(x)
+], ", ") * ")"

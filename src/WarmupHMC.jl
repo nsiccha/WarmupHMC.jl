@@ -4,6 +4,9 @@ import DynamicHMC, OnlineStatsBase, BangBang, Random, StatsBase
 
 include("MatrixExpressions.jl")    
 include("WrappedLogDensityProblems.jl")    
+include("tools.jl")
+include("NUTSPosterior.jl")
+include("stepsize_adaptation.jl")
 # include("nuts.jl")
 include("adaptive_warmup_mcmc.jl")
 include("adaptive_reparametrization.jl")

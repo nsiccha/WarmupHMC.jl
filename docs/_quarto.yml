@@ -8,6 +8,8 @@ website:
     left:
       - text: "Overview"
         href: index.qmd
+      - text: "Benchmark"
+        href: benchmark/index.qmd
       - icon: github
         href:  https://github.com/nsiccha/WarmupHMC.jl
 format: 

@@ -74,7 +74,15 @@ Meaning of columns:
 Posteriors where the regular warm-up takes too long have been skipped so far due to time-reasons. 
 The table is sorted first by `#runs` (descending) and then by `Adaptive advantage` (ascending).    
 
-```{julia}
+::: {.callout-important}
+For now, the benchmarking table has been removed. Things have changed, and the fits have to be rerun.
+
+**Please see [benchmark](benchmark) in the meantime.**
+:::
+
+
+
+```{.julia}
 cd(dirname(Base.active_project()))    
 using WarmupHMC, PosteriorDB, StanLogDensityProblems, LogDensityProblems, Random, Logging, Serialization, DynamicObjects, DataFrames, IJulia, PrettyTables, OrderedCollections, Statistics 
 interactive_table(df; kwargs...) = if IJulia.inited 
@@ -237,7 +245,7 @@ nothing
 ```
 
 :::{.column-page}
-```{julia}
+```{.julia}
 ensurepair(x::Pair) = x
 ensurepair(x::String) = x=>x
 restrictandrename(df, args...) = rename(df[!, collect(first.(ensurepair.(args)))], ensurepair.(args)...)

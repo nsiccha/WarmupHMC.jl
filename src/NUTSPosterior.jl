@@ -29,6 +29,7 @@ reset!(lpdf::NUTSPosterior) = begin
 end
 
 velocity!((;M⁻¹)::DynamicHMC.GaussianKineticEnergy, momentum; velocity) = mul!(velocity, M⁻¹, momentum)
+kick((;ℓ, κ)::DynamicHMC.Hamiltonian, (;p, Q)::DynamicHMC.PhasePoint, stepsize) = @.(p + .5 * stepsize * Q.∇ℓq)
 leapfrog!((;ℓ, κ)::DynamicHMC.Hamiltonian, (;p, Q)::DynamicHMC.PhasePoint, stepsize; velocity) = begin
     @assert isfinite(Q.ℓq)
     # @. p += .5 * stepsize * Q.∇ℓq
@@ -63,10 +64,10 @@ transformed_angle!(
     (;H, ϵ) = trajectory
     lpdf = H.ℓ
     if length(lpdf.dH) == 0
-        lpdf.momentum .= .5 .* z.p
+        lpdf.momentum .= 0.
     end
-    dx = lpdf.momentum[:, fwd ? 2 : 1] 
     z = leapfrog!(H, z, fwd ? ϵ : -ϵ; velocity=lpdf.c1)
+    dx = lpdf.momentum[:, fwd ? 2 : 1] 
     dx .+= z.p
     f! = fwd ? append! : prepend!
     f!(lpdf.position, z.Q.q)

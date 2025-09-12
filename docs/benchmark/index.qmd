@@ -1,0 +1,33 @@
+---
+title: "Linear warm-up: benchmarks"
+---
+
+The links in the table below take you to posterior-wise in-depth visualizations of some key quantities and relations.
+
+```{julia}
+include("common.jl") 
+ 
+e1 = Experiment(exp.(randn(Xoshiro(1), 6)); cache_type=:parallel)  
+e2 = Experiment(randn_spd(Xoshiro(1), 6); cache_type=:parallel)  
+e3 = Experiment(randn_spd(Xoshiro(1), 32); cache_type=:parallel)   
+e4 = Experiment(randn_spd(Xoshiro(1), 64); cache_type=:parallel)   
+
+pdb_es = sort(Experiment.(filter(
+    # contains(r"radon"), 
+    !contains(r"covid19|uk_drivers"), 
+    PosteriorDB.posterior_names(pdb)); cache_type=:parallel
+); by=e->e.dim)
+te = Experiment("lsat_data-lsat_model"; cache_type=:parallel)
+filter!(pdb_es) do e 
+    e.dim < te.dim
+end
+
+QuartoComponents.Tabset((;
+    overview=DataFrame([
+        e.df_row for e in vcat(e1, e2, e3, e4, pdb_es)
+    ])       
+)) 
+# asyncmap(pdb_es) do e
+#     e.stat_scan[1], e.ma[1, 1, 1000], e.oracle_gp[1, 3], e.da[1, .6, 1, 100]
+# end
+``` 

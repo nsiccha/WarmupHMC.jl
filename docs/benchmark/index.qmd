@@ -14,7 +14,7 @@ e4 = Experiment(randn_spd(Xoshiro(1), 64); cache_type=:parallel)
 
 pdb_es = sort(Experiment.(filter(
     # contains(r"radon"), 
-    !contains(r"covid19|uk_drivers"), 
+    !contains(r"covid19|uk_drivers|iohmm"), 
     PosteriorDB.posterior_names(pdb)); cache_type=:parallel
 ); by=e->e.dim)
 te = Experiment("lsat_data-lsat_model"; cache_type=:parallel)

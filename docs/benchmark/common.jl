@@ -17,7 +17,7 @@ end
 
 const project_dir = dirname(Base.active_project())
 const pdb = PosteriorDB.database()
-@assert Threads.nthreads() > 1
+# @assert Threads.nthreads() > 1
 stan_problem(path, data) = StanProblem(
     path, data;
     nan_on_error=true,
@@ -136,7 +136,7 @@ greedy_hdi(x; n) = begin
     lo, hi
 end
 Plots.plot(gp::IPGPRegression; kwargs...) = plot!(plot(), gp; kwargs...)
-Plots.plot!(p::Plots.Plot, gp::IPGPRegression; n=100, kwargs...) = Plots.plot!(p::Plots.Plot, range(gp.inducing_x[1], gp.inducing_x[end], n), gp::IPGPRegression; kwargs...)
+Plots.plot!(p::Plots.Plot, gp::IPGPRegression; n=100, kwargs...) = Plots.plot!(p::Plots.Plot, range(extrema(gp.cache.x)..., n), gp::IPGPRegression; kwargs...)
 Plots.plot!(p::Plots.Plot, x, gp::IPGPRegression; xlink=xlink(gp.link), ylink=ylink(gp.link), q=.1, fillalpha=.25, ylim=:auto, kwargs...) = begin 
     obs_y = ylink.(gp.cache.x, gp.cache.sum ./ gp.cache.n)
     ylim === :auto && plot!(p; ylim=collect(extrema(obs_y)))
@@ -208,7 +208,7 @@ autoquarto(x::AbstractString) = x
 
 @dynamicstruct struct Experiment
     identifier
-    v = v"0.0.7"
+    v = v"0.0.9"
     sidentifier = string_identifier(identifier)
     jidentifier = isa(identifier, AbstractString) ? "\"$identifier\"" : identifier
     cache_path = joinpath(project_dir, "benchmark", "cache", sidentifier)

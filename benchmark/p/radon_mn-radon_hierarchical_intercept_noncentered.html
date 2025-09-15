@@ -154,20 +154,20 @@ ul.task-list li input[type="checkbox"] {
 <p>The <code>metric</code> and <code>stepsize</code> tabs visualize key quantities and relations that we exploit in making warm-up more efficient.</p>
 <p>All plots use the warm-up (i.e.&nbsp;step size and scale) and draws of a single chain, warmed-up using WarmupHMC.jl. Further chains/seeds may follow, but are currently not a priority.</p>
 <div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-7-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-7-1" role="tab" aria-controls="tabset-7-1" aria-selected="true"><code>metric</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-7-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-7-2" role="tab" aria-controls="tabset-7-2" aria-selected="false"><code>step_size</code></a></li></ul>
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-8-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-8-1" role="tab" aria-controls="tabset-8-1" aria-selected="true"><code>metric</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-8-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-8-2" role="tab" aria-controls="tabset-8-2" aria-selected="false"><code>step_size</code></a></li></ul>
 <div class="tab-content">
-<div id="tabset-7-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-7-1-tab">
-<p>The <code>cold_running_condition</code> and <code>warm_running_condition</code> tabs visualize the running condition number of online estimates of the marginal scales of the posteriors,relative to</p>
+<div id="tabset-8-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-8-1-tab">
+<p>The <code>cold_running_condition</code>, the <code>pathfinder_running_condition</code>, and the <code>warm_running_condition</code> tabs visualize the running condition number of online estimates of the marginal scales of the posteriors, relative to</p>
 <ul>
 <li>different baselines and</li>
 <li>different ways of estimating the marginal scales in an online way.</li>
 </ul>
-<p>For both <code>cold_running_condition</code> and <code>warm_running_condition</code>, the initial position is the final draw of a previous MCMC run. The draws (and their gradients) from that previous MCMC run get used to compute the reference/baseline (diagonal) scales. For <code>cold_running_condition</code>, sampling continues with a unit diagonal scale/mass matrix/preconditioner, and the step size gets adapted using “standard” Dual Averaging. For <code>warm_running_condition</code>, sampling continues with same step size and scale/mass matrix/preconditioner which has been used in the previous MCMC run, which may be non-diagonal.</p>
-<p>Generally, the pair <code>stan</code>/<code>intermediate_stan</code> and the pair <code>nutpie</code>/<code>intermediate_nutpie</code> converge towards different target scales between pairs but the same target scales within pairs. Furthermore, <code>intermediate_*</code> style methods generally converge faster than their counterparts, and <code>nutpie_*</code> style methods converge faster than <code>stan_</code> style methods.</p>
+<p>For both <code>cold_running_condition</code> and <code>warm_running_condition</code>, the initial position is the final draw of a previous MCMC run. The draws (and their gradients) from that previous MCMC run get used to compute the reference/baseline (diagonal) scales. For <code>cold_running_condition</code>, sampling continues with a unit diagonal scale/mass matrix/preconditioner, and the step size gets adapted using “standard” Dual Averaging. For <code>warm_running_condition</code>, sampling continues with same step size and scale/mass matrix/preconditioner which has been used in the previous MCMC run, which may be non-diagonal. For <code>pathfinder_running_condition</code>, the initial position and the scale/mass matrix/preconditioner are the ones that Pathfinder proposed, and the step size gets adapted using “standard” Dual Averaging.</p>
+<p>Generally, the pair <code>stan</code>/<code>intermediate_stan</code> and the pair <code>nutpie</code>/<code>intermediate_nutpie</code> converge towards different target scales between pairs but the same target scales within pairs. Furthermore, <code>intermediate_*</code> style methods generally converge faster than their counterparts, and <code>nutpie_*</code> style methods converge faster than <code>stan_*</code> style methods.</p>
 <div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-3-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-3-1" role="tab" aria-controls="tabset-3-1" aria-selected="true"><code>cold_running_condition</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-3-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-3-2" role="tab" aria-controls="tabset-3-2" aria-selected="false"><code>warm_running_condition</code></a></li></ul>
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-4-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-1" role="tab" aria-controls="tabset-4-1" aria-selected="true"><code>cold_running_condition</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-4-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-2" role="tab" aria-controls="tabset-4-2" aria-selected="false"><code>pathfinder_running_condition</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-4-3-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-3" role="tab" aria-controls="tabset-4-3" aria-selected="false"><code>warm_running_condition</code></a></li></ul>
 <div class="tab-content">
-<div id="tabset-3-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-3-1-tab">
+<div id="tabset-4-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-4-1-tab">
 <p>The <code>nutpie</code> and <code>stan</code> sub-tabs respectively use Stan or Nutpie style estimates of the marginal scales of the posterior using 1000 post-warm-up draws as the baseline.</p>
 <p>The different piecewise linear lines represent different ways of estimating the marginal scales, with</p>
 <ul>
@@ -183,13 +183,13 @@ ul.task-list li input[type="checkbox"] {
 <ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-1-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-1" role="tab" aria-controls="tabset-1-1" aria-selected="true"><code>nutpie</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-1-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-2" role="tab" aria-controls="tabset-1-2" aria-selected="false"><code>stan</code></a></li></ul>
 <div class="tab-content">
 <div id="tabset-1-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-1-1-tab">
-<div id="a7811604-f8d4-4597-92aa-8660cdeb0392" style="width:600px;height:400px;">
+<div id="8129a160-b956-437b-96b4-a41d20cc4140" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('a7811604-f8d4-4597-92aa-8660cdeb0392', [
+Plotly.newPlot('8129a160-b956-437b-96b4-a41d20cc4140', [
 {
 "showlegend": false,
 "mode": "lines",
@@ -1286,13 +1286,13 @@ Plotly.newPlot('a7811604-f8d4-4597-92aa-8660cdeb0392', [
 </script>
 </div>
 <div id="tabset-1-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-1-2-tab">
-<div id="fbfff251-f924-4999-be07-09e6be1adbdc" style="width:600px;height:400px;">
+<div id="8f6a9935-c023-4405-8808-4684237fbee9" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('fbfff251-f924-4999-be07-09e6be1adbdc', [
+Plotly.newPlot('8f6a9935-c023-4405-8808-4684237fbee9', [
 {
 "showlegend": false,
 "mode": "lines",
@@ -2387,7 +2387,7 @@ Plotly.newPlot('fbfff251-f924-4999-be07-09e6be1adbdc', [
 </div>
 </div>
 </div>
-<div id="tabset-3-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-3-2-tab">
+<div id="tabset-4-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-4-2-tab">
 <p>The <code>nutpie</code> and <code>stan</code> sub-tabs respectively use Stan or Nutpie style estimates of the marginal scales of the posterior using 1000 post-warm-up draws as the baseline.</p>
 <p>The different piecewise linear lines represent different ways of estimating the marginal scales, with</p>
 <ul>
@@ -2403,13 +2403,1753 @@ Plotly.newPlot('fbfff251-f924-4999-be07-09e6be1adbdc', [
 <ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-2-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-2-1" role="tab" aria-controls="tabset-2-1" aria-selected="true"><code>nutpie</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-2-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-2-2" role="tab" aria-controls="tabset-2-2" aria-selected="false"><code>stan</code></a></li></ul>
 <div class="tab-content">
 <div id="tabset-2-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-2-1-tab">
-<div id="2929564d-52b1-4f5f-a303-63c2f77855d9" style="width:600px;height:400px;">
+<div id="c859696f-9ae7-4a95-b2c7-8febe0b4edd4" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('2929564d-52b1-4f5f-a303-63c2f77855d9', [
+Plotly.newPlot('c859696f-9ae7-4a95-b2c7-8febe0b4edd4', [
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+1.0,
+1.0
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+1.4142135623730951,
+1.4142135623730951
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+41.25586735638617,
+41.25586735638617
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "stan",
+"yaxis": "y1",
+"legendgroup": "stan",
+"line": {
+"color": "rgba(227, 111, 71, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+41.255867356386176,
+174.60555343362915,
+129.46082146030204,
+66.58144899820033,
+29.81857097803756,
+27.072929157709474,
+22.2166297435368,
+16.36353486098252,
+16.726263416268203,
+14.125357518839358,
+13.698412247092769,
+13.250933484635175,
+13.365208980276952,
+11.773542691299212,
+11.024743794532977,
+9.875048963547595,
+9.446876748053313,
+9.164043616759816,
+9.102164655323707,
+8.894549287237345,
+8.404609315756469,
+8.094993485816863,
+7.99545789750071,
+8.019358746486775,
+8.041145169953849,
+7.8571145517971415,
+7.625753055934331,
+7.263792806733977,
+7.275097659155781,
+7.268299499864466,
+7.2905228150178205,
+7.311029202033683,
+7.311333697214356,
+7.327705532387192,
+7.096844009711965,
+6.757835258459952,
+6.6641602869319465,
+6.634895285431279,
+5.906493536078675,
+5.887265277036844,
+5.837411529721002,
+5.8400145726361385,
+5.558696924899492,
+5.554133129871383,
+5.555670318513827,
+5.497860381686132,
+5.500090807044001,
+5.484570146479829,
+5.4614599299916105,
+5.426908109436206,
+5.322037601006595
+],
+"type": "scatter",
+"x": [
+3.0,
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "nutpie",
+"yaxis": "y1",
+"legendgroup": "nutpie",
+"line": {
+"color": "rgba(62, 164, 78, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+41.255867356386176,
+9.03096541266931,
+5.834741577092569,
+3.3339275302750653,
+3.2326423751811753,
+1.7925196819026639,
+1.5859651733910274,
+1.5559569175198793,
+1.5462307010421994,
+1.5148233227083556,
+1.5680725226928223,
+1.5303819668270586,
+1.506537339964668,
+1.5567037859649553,
+1.5080404419990912,
+1.4827161546802585,
+1.464913914317946,
+1.4536020972326558,
+1.4606704912099977,
+1.455139648639169,
+1.4486131502185344,
+1.4505960089645817,
+1.4510958380017036,
+1.4487403945923265,
+1.4482464957780092,
+1.438891974394257,
+1.4331723024634717,
+1.4242187536322535,
+1.4238765973712766,
+1.4182401547169883,
+1.419856982431157,
+1.4429774457036695,
+1.4225781192095597,
+1.4270564957415972,
+1.4279479859022126,
+1.4165596701280059,
+1.3581919627809043,
+1.3464164678041406,
+1.3470129368041768,
+1.335804505898693,
+1.3321241317254358,
+1.3313750494715992,
+1.3274196944663565,
+1.324120761390696,
+1.3195689230443766,
+1.324731658980321,
+1.324204262598707,
+1.3254367326773948,
+1.3252524887759645,
+1.323572019220778,
+1.3220754613266352
+],
+"type": "scatter",
+"x": [
+3.0,
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "intermediate_stan",
+"yaxis": "y1",
+"legendgroup": "intermediate_stan",
+"line": {
+"color": "rgba(195, 113, 210, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+162.92590398227577,
+18.08569693551397,
+13.983425871510597,
+13.898561822882606,
+8.223897302934501,
+7.8953696989473015,
+6.674605284732008,
+6.133821074200372,
+5.983652164302029,
+5.997429803134984,
+5.99723101423677,
+4.713073974757219,
+4.592391878151909,
+4.463535422497316,
+4.1776154437666175,
+4.1345269765454,
+3.6728274549914417,
+3.555661834084132,
+3.4720015807373676,
+3.4390235380932492,
+3.430353131064451,
+3.408312915413459,
+3.324793846093982,
+3.2173010261611568,
+3.1905757312723,
+3.187865573767571,
+2.963143168821689,
+2.966414223231832,
+2.974384027885907,
+2.9787570455511156,
+2.978987122376109,
+3.0291782880485782,
+3.043814563031274,
+2.9799723512155043,
+2.94097491165708,
+2.926060930936465,
+2.898951858395609,
+2.711119728852474,
+2.6277846528362194,
+2.6321536709583917,
+2.632237347111594,
+2.645139757573504,
+2.666976092379793,
+2.5937138606463384,
+2.594678712496412,
+2.595512127916303,
+2.601121787946186,
+2.5992755289277296,
+2.598939904298356,
+2.5777729712829753
+],
+"type": "scatter",
+"x": [
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "intermediate_nutpie",
+"yaxis": "y1",
+"legendgroup": "intermediate_nutpie",
+"line": {
+"color": "rgba(172, 142, 24, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+4.357970145085543,
+1.9053567640193838,
+1.8483745554344084,
+1.8468469400060554,
+1.7012442458458152,
+1.6237496454484983,
+1.4081249613929276,
+1.3185006402162693,
+1.2911214250982594,
+1.2858767699079425,
+1.2854751626599232,
+1.2080435858719252,
+1.1803311114446662,
+1.1785933218552107,
+1.1708550687808676,
+1.1710197082523242,
+1.1401345413431834,
+1.1383408765708516,
+1.1330599061257849,
+1.1318541980014634,
+1.131497004110905,
+1.1249593494384285,
+1.1248411069689161,
+1.1243819250279168,
+1.1201291321061284,
+1.1188355995045471,
+1.095847344211189,
+1.0975308775516808,
+1.0906236161612377,
+1.0840262233675555,
+1.0840057962080556,
+1.0688614641289291,
+1.0647968403819472,
+1.066564653166965,
+1.0679744748494386,
+1.070698698205066,
+1.086400661146529,
+1.0968985930666266,
+1.099094757972197,
+1.1001194014681115,
+1.1002568913569994,
+1.096346353474527,
+1.0953630446849625,
+1.0944272029582334,
+1.0965880764322296,
+1.0972236764395438,
+1.0979402219876084,
+1.1018901096109657,
+1.1049667237782639,
+1.1109648978085012
+],
+"type": "scatter",
+"x": [
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+}
+]
+, {
+"showlegend": true,
+"paper_bgcolor": "rgba(255, 255, 255, 1.000)",
+"xaxis1": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+2,
+12949,
+2332
+],
+"range": [
+0.3010299956639812,
+4.153628916027164
+],
+"domain": [
+0.1357283464566929,
+0.9934383202099737
+],
+"mirror": false,
+"tickangle": 0,
+"showline": true,
+"ticktext": [
+"2",
+"13k",
+"2.3k"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "y1",
+"visible": true,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "no. gradient evaluations (log scale)",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"legend": {
+"yanchor": "auto",
+"xanchor": "auto",
+"bordercolor": "rgba(0, 0, 0, 1.000)",
+"bgcolor": "rgba(255, 255, 255, 1.000)",
+"borderwidth": 1,
+"tracegroupgap": 0,
+"y": 1.0,
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"title": {
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"text": ""
+},
+"traceorder": "normal",
+"x": 1.0
+},
+"height": 400,
+"yaxis2": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+1.0,
+1.4142135623730951,
+41.255867356386176,
+16.36353486098252,
+1.5559569175198793,
+6.674605284732008,
+1.4081249613929276
+],
+"range": [
+0.0,
+1.6568784072392049
+],
+"domain": [
+0.9500000000000001,
+1.0
+],
+"mirror": false,
+"tickangle": 0,
+"showline": false,
+"ticktext": [
+1,
+"sqrt(2)",
+"41",
+"16",
+"1.6",
+"6.7",
+"1.4"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "x2",
+"visible": false,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "condition number relative to baseline",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"xaxis2": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+2,
+12949,
+2332
+],
+"range": [
+0.3010299956639812,
+4.153628916027164
+],
+"domain": [
+0.1357283464566929,
+0.9934383202099737
+],
+"mirror": false,
+"tickangle": 0,
+"showline": false,
+"ticktext": [
+"2",
+"13k",
+"2.3k"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "y2",
+"visible": false,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "no. gradient evaluations (log scale)",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"yaxis1": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+1.0,
+1.4142135623730951,
+41.255867356386176,
+16.36353486098252,
+1.5559569175198793,
+6.674605284732008,
+1.4081249613929276
+],
+"range": [
+0.0,
+1.6568784072392049
+],
+"domain": [
+0.07581474190726165,
+0.9401574803149607
+],
+"mirror": false,
+"tickangle": 0,
+"showline": true,
+"ticktext": [
+1,
+"sqrt(2)",
+"41",
+"16",
+"1.6",
+"6.7",
+"1.4"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "x1",
+"visible": true,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "condition number relative to baseline",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"annotations": [
+{
+"yanchor": "top",
+"xanchor": "center",
+"rotation": -0.0,
+"y": 1.0,
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 22
+},
+"yref": "paper",
+"showarrow": false,
+"text": "radon_mn-radon_hierarchical_intercept_noncentered (dim: 90)",
+"xref": "paper",
+"x": 0.5645833333333333
+}
+],
+"plot_bgcolor": "rgba(255, 255, 255, 1.000)",
+"margin": {
+"l": 0,
+"b": 20,
+"r": 0,
+"t": 20
+},
+"width": 600
+}
+);
+});
+</script>
+</div>
+<div id="tabset-2-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-2-2-tab">
+<div id="553e6b7c-f694-4811-9f0f-f5fedd010038" style="width:600px;height:400px;">
+
+</div>
+<script>
+requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
+require(['plotly'], function (Plotly) {
+Plotly.newPlot('553e6b7c-f694-4811-9f0f-f5fedd010038', [
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+1.0,
+1.0
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+1.4142135623730951,
+1.4142135623730951
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": false,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "",
+"yaxis": "y1",
+"legendgroup": "",
+"line": {
+"color": "rgba(0, 0, 0, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+44.32820485071109,
+44.32820485071109
+],
+"type": "scatter",
+"x": [
+0.0,
+null
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "stan",
+"yaxis": "y1",
+"legendgroup": "stan",
+"line": {
+"color": "rgba(227, 111, 71, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+44.328204850711096,
+103.68726361881704,
+75.2327366378411,
+39.605207956755685,
+18.10712778382717,
+16.68911458317949,
+13.259024828287046,
+9.936647096239255,
+10.156911585313477,
+8.577528875352602,
+8.318269214723314,
+8.113288476169974,
+8.183257136338261,
+7.208710869447326,
+6.750235889767842,
+6.232520810165501,
+5.906543276275494,
+5.783778162270639,
+5.744723984789029,
+5.61368999124784,
+5.304470150489756,
+5.050110303474603,
+4.945393668366665,
+4.9601769501698545,
+4.973652406116423,
+4.859824797305892,
+4.716721839174947,
+4.584457251383207,
+4.59159217580078,
+4.587301597656778,
+4.601327581191182,
+4.614269945759647,
+4.6144621243055095,
+4.624795015189591,
+4.479089485054888,
+4.265128105743676,
+4.206006251098187,
+4.187535990187509,
+3.653316184017781,
+3.6414230177053284,
+3.6105872094901192,
+3.6121972576094428,
+3.4684015895981064,
+3.456981677229747,
+3.4459504524148667,
+3.45155429350498,
+3.4593373276819412,
+3.4615218313274987,
+3.4469360904646495,
+3.4251291159943884,
+3.358941330133995
+],
+"type": "scatter",
+"x": [
+3.0,
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "nutpie",
+"yaxis": "y1",
+"legendgroup": "nutpie",
+"line": {
+"color": "rgba(62, 164, 78, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+44.328204850711096,
+9.053971280147362,
+5.983333242490319,
+3.5673412822958923,
+3.6239925516151525,
+2.1473361838265546,
+1.7920487247543593,
+1.6871037391338068,
+1.6541650011102564,
+1.6313959131812357,
+1.5267986575970227,
+1.521112254620615,
+1.5297330907245779,
+1.4712426627931787,
+1.4790972922665941,
+1.4943919118085496,
+1.5077867990309353,
+1.5025367196905435,
+1.4990808049974629,
+1.4818594483181904,
+1.4838240655659114,
+1.4826532348512647,
+1.4850329386721317,
+1.4547006999582703,
+1.4467697430461786,
+1.456718574640288,
+1.4639752887815682,
+1.4517882678045086,
+1.42496424046288,
+1.425256755327576,
+1.386272500498892,
+1.3687404531903897,
+1.3719798091035564,
+1.3695514296397362,
+1.3689355398349021,
+1.376363971978659,
+1.4306960215684157,
+1.4423290942605869,
+1.4408901711401496,
+1.4533074264860701,
+1.4576597695155706,
+1.45868060642219,
+1.4592941989735533,
+1.4580309444711614,
+1.4529182970354713,
+1.4517225598206347,
+1.4511183108481815,
+1.449310199653287,
+1.4506436895832246,
+1.4524835911128031,
+1.449245110979463
+],
+"type": "scatter",
+"x": [
+3.0,
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "intermediate_stan",
+"yaxis": "y1",
+"legendgroup": "intermediate_stan",
+"line": {
+"color": "rgba(195, 113, 210, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+98.93566545745912,
+14.081732284979031,
+12.063338113599562,
+12.199565423855917,
+6.16964842474855,
+6.537855599885093,
+5.675911539675823,
+5.086447822331186,
+4.872598582031119,
+4.866530068844475,
+4.865088070645754,
+3.764552298852577,
+3.6401957712289197,
+3.5319065286744027,
+3.294623425075592,
+3.2537145485580363,
+2.939108132773292,
+2.8284701853559464,
+2.780662228918298,
+2.759588630793445,
+2.7515753093696707,
+2.6989524451152227,
+2.6348699205287107,
+2.5459406451906834,
+2.5148536512750854,
+2.5114640699529556,
+2.464516783486253,
+2.55072580139698,
+2.580189098341789,
+2.5798552767469722,
+2.5800208098408546,
+2.6692035459114405,
+2.708580384239237,
+2.6665852679876316,
+2.633152533204937,
+2.620314990863543,
+2.6787919660240225,
+2.490989801649026,
+2.408072669960256,
+2.4076909454133664,
+2.4076630417971394,
+2.4202827343368014,
+2.4558963313474895,
+2.3992659277597155,
+2.4079090301076613,
+2.40908578789607,
+2.45718108828881,
+2.489399871824175,
+2.4957201153395174,
+2.525049148460504
+],
+"type": "scatter",
+"x": [
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+},
+{
+"showlegend": true,
+"mode": "lines",
+"xaxis": "x1",
+"colorbar": {
+"y": 0.5079861111111111,
+"title": "",
+"len": 0.864342738407699,
+"x": 0.9934383202099737
+},
+"name": "intermediate_nutpie",
+"yaxis": "y1",
+"legendgroup": "intermediate_nutpie",
+"line": {
+"color": "rgba(172, 142, 24, 1.000)",
+"shape": "linear",
+"dash": "solid",
+"width": 1
+},
+"y": [
+4.043952509744168,
+2.0607753684181422,
+2.0274860035834226,
+2.0127152617964805,
+2.0031924071219573,
+2.0068480521419976,
+1.8844341729180183,
+1.8599901184719907,
+1.796849622773138,
+1.7937189742469315,
+1.794507848685472,
+1.7950840533204335,
+1.7529308164300696,
+1.775044547190856,
+1.7961707308860726,
+1.8034381886110036,
+1.840497733322734,
+1.8525869072994878,
+1.856010921586429,
+1.8546873853003498,
+1.8544046279107773,
+1.8323344683498444,
+1.8322075992542335,
+1.8433249335196524,
+1.8511159847279075,
+1.854807793040718,
+1.8806118790038253,
+1.8852007712870495,
+1.8813790988323151,
+1.8784296290139733,
+1.8791736388674416,
+1.8551754513741392,
+1.8538811094807128,
+1.8610138071970344,
+1.8633084228598906,
+1.8691548842003107,
+1.8912011801113973,
+1.9091557830842523,
+1.9131956495315725,
+1.9171086572726561,
+1.9173526222089867,
+1.9072710671724087,
+1.8952070133333963,
+1.8936935839306712,
+1.897529751720845,
+1.8981195481761424,
+1.8984784922386317,
+1.8981342941941801,
+1.8988821057752905,
+1.898949945226233
+],
+"type": "scatter",
+"x": [
+34.0,
+161.0,
+416.0,
+543.0,
+1566.0,
+2077.0,
+2332.0,
+2587.0,
+2842.0,
+2969.0,
+3096.0,
+4119.0,
+4630.0,
+4885.0,
+5140.0,
+5267.0,
+6290.0,
+6801.0,
+7056.0,
+7183.0,
+7310.0,
+7821.0,
+8076.0,
+8203.0,
+8458.0,
+8585.0,
+9608.0,
+10119.0,
+10630.0,
+10885.0,
+10906.0,
+11929.0,
+12440.0,
+12695.0,
+12822.0,
+12949.0,
+13460.0,
+13715.0,
+13842.0,
+13969.0,
+14032.0,
+14543.0,
+15054.0,
+15309.0,
+15436.0,
+15471.0,
+15726.0,
+15853.0,
+15900.0,
+16155.0
+]
+}
+]
+, {
+"showlegend": true,
+"paper_bgcolor": "rgba(255, 255, 255, 1.000)",
+"xaxis1": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+2,
+10885
+],
+"range": [
+0.3010299956639812,
+4.078221118535338
+],
+"domain": [
+0.1357283464566929,
+0.9934383202099737
+],
+"mirror": false,
+"tickangle": 0,
+"showline": true,
+"ticktext": [
+"2",
+"11k"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "y1",
+"visible": true,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "no. gradient evaluations (log scale)",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"legend": {
+"yanchor": "auto",
+"xanchor": "auto",
+"bordercolor": "rgba(0, 0, 0, 1.000)",
+"bgcolor": "rgba(255, 255, 255, 1.000)",
+"borderwidth": 1,
+"tracegroupgap": 0,
+"y": 1.0,
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"title": {
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"text": ""
+},
+"traceorder": "normal",
+"x": 1.0
+},
+"height": 400,
+"yaxis2": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+1.0,
+1.4142135623730951,
+44.328204850711096,
+4.601327581191182,
+1.386272500498892,
+2.5798552767469722,
+1.8784296290139733
+],
+"range": [
+0.0,
+1.6880728292882325
+],
+"domain": [
+0.9500000000000001,
+1.0
+],
+"mirror": false,
+"tickangle": 0,
+"showline": false,
+"ticktext": [
+1,
+"sqrt(2)",
+"44",
+"4.6",
+"1.4",
+"2.6",
+"1.9"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "x2",
+"visible": false,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "condition number relative to baseline",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"xaxis2": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+2,
+10885
+],
+"range": [
+0.3010299956639812,
+4.078221118535338
+],
+"domain": [
+0.1357283464566929,
+0.9934383202099737
+],
+"mirror": false,
+"tickangle": 0,
+"showline": false,
+"ticktext": [
+"2",
+"11k"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "y2",
+"visible": false,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "no. gradient evaluations (log scale)",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"yaxis1": {
+"showticklabels": true,
+"gridwidth": 0.5,
+"tickvals": [
+1.0,
+1.4142135623730951,
+44.328204850711096,
+4.601327581191182,
+1.386272500498892,
+2.5798552767469722,
+1.8784296290139733
+],
+"range": [
+0.0,
+1.6880728292882325
+],
+"domain": [
+0.07581474190726165,
+0.9401574803149607
+],
+"mirror": false,
+"tickangle": 0,
+"showline": true,
+"ticktext": [
+1,
+"sqrt(2)",
+"44",
+"4.6",
+"1.4",
+"2.6",
+"1.9"
+],
+"zeroline": false,
+"tickfont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 11
+},
+"zerolinecolor": "rgba(0, 0, 0, 1.000)",
+"anchor": "x1",
+"visible": true,
+"ticks": "inside",
+"tickmode": "array",
+"linecolor": "rgba(0, 0, 0, 1.000)",
+"showgrid": true,
+"title": "condition number relative to baseline",
+"gridcolor": "rgba(0, 0, 0, 0.100)",
+"titlefont": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 15
+},
+"tickcolor": "rgb(0, 0, 0)",
+"type": "log"
+},
+"annotations": [
+{
+"yanchor": "top",
+"xanchor": "center",
+"rotation": -0.0,
+"y": 1.0,
+"font": {
+"color": "rgba(0, 0, 0, 1.000)",
+"family": "sans-serif",
+"size": 22
+},
+"yref": "paper",
+"showarrow": false,
+"text": "radon_mn-radon_hierarchical_intercept_noncentered (dim: 90)",
+"xref": "paper",
+"x": 0.5645833333333333
+}
+],
+"plot_bgcolor": "rgba(255, 255, 255, 1.000)",
+"margin": {
+"l": 0,
+"b": 20,
+"r": 0,
+"t": 20
+},
+"width": 600
+}
+);
+});
+</script>
+</div>
+</div>
+</div>
+</div>
+<div id="tabset-4-3" class="tab-pane" role="tabpanel" aria-labelledby="tabset-4-3-tab">
+<p>The <code>nutpie</code> and <code>stan</code> sub-tabs respectively use Stan or Nutpie style estimates of the marginal scales of the posterior using 1000 post-warm-up draws as the baseline.</p>
+<p>The different piecewise linear lines represent different ways of estimating the marginal scales, with</p>
+<ul>
+<li><code>stan</code> using the positions of the draws,</li>
+<li><code>nutpie</code> using the positions and gradients of the draws,</li>
+<li><code>intermediate_stan</code> using the positions of appropriately selected intermediate NUTS states, and</li>
+<li><code>intermediate_nutpie</code> using the positions and gradients of appropriately selected intermediate NUTS states.</li>
+</ul>
+<p>The x-ticks represent the number of the transition at which the respective methods cross the threshold of <code>sqrt(2)</code>, and the y-ticks represent the running condition number of all methods at the first time any of the methods crosses that threshold.</p>
+<p>The topmost y-tick and the corresponding horizontal line represent the condition number of the baseline, or equivalently the condition number of the initial estimate of the marginal scales of the posteriors</p>
+<p>All methods use the same sequence of draws/trajectories. The baselines get computed from 1_000 post warm-up draws.</p>
+<div class="tabset-margin-container"></div><div class="panel-tabset">
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-3-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-3-1" role="tab" aria-controls="tabset-3-1" aria-selected="true"><code>nutpie</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-3-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-3-2" role="tab" aria-controls="tabset-3-2" aria-selected="false"><code>stan</code></a></li></ul>
+<div class="tab-content">
+<div id="tabset-3-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-3-1-tab">
+<div id="50c19974-39b1-4a72-ab90-95b2620013fa" style="width:600px;height:400px;">
+
+</div>
+<script>
+requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
+require(['plotly'], function (Plotly) {
+Plotly.newPlot('50c19974-39b1-4a72-ab90-95b2620013fa', [
 {
 "showlegend": false,
 "mode": "lines",
@@ -10857,14 +12597,14 @@ Plotly.newPlot('2929564d-52b1-4f5f-a303-63c2f77855d9', [
 });
 </script>
 </div>
-<div id="tabset-2-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-2-2-tab">
-<div id="ff15b9d9-13ee-4865-93be-459e633fcd5f" style="width:600px;height:400px;">
+<div id="tabset-3-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-3-2-tab">
+<div id="8252f782-3330-4767-a51f-a3acc680dcb9" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('ff15b9d9-13ee-4865-93be-459e633fcd5f', [
+Plotly.newPlot('8252f782-3330-4767-a51f-a3acc680dcb9', [
 {
 "showlegend": false,
 "mode": "lines",
@@ -19326,7 +21066,7 @@ Plotly.newPlot('ff15b9d9-13ee-4865-93be-459e633fcd5f', [
 </div>
 </div>
 </div>
-<div id="tabset-7-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-7-2-tab">
+<div id="tabset-8-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-8-2-tab">
 <p>The <code>statistics</code> tab visualizes various step size dependent sampling statistics, including “sampling run” specific ones:</p>
 <ul>
 <li><code>min_eff</code>: minimum over parameters and functions (Statistics.mean, :bulk, :tail, Statistics.std, Statistics.median, StatsBase.mad) sampling efficiency,</li>
@@ -19341,13 +21081,13 @@ Plotly.newPlot('ff15b9d9-13ee-4865-93be-459e633fcd5f', [
 </ul>
 <p>All sampling run specific statistics get estimated per sampling run, while all trajectory specific ones are estimated via a single NUTS trajectory starting from one of the obtained posterior draws.</p>
 <div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-6-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-6-1" role="tab" aria-controls="tabset-6-1" aria-selected="true"><code>statistics</code></a></li></ul>
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-7-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-7-1" role="tab" aria-controls="tabset-7-1" aria-selected="true"><code>statistics</code></a></li></ul>
+<div class="tab-content">
+<div id="tabset-7-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-7-1-tab">
+<div class="tabset-margin-container"></div><div class="panel-tabset">
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-6-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-6-1" role="tab" aria-controls="tabset-6-1" aria-selected="true"><code>per_stepsize</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-6-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-6-2" role="tab" aria-controls="tabset-6-2" aria-selected="false"><code>per_efficiency</code></a></li></ul>
 <div class="tab-content">
 <div id="tabset-6-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-6-1-tab">
-<div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-5-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-5-1" role="tab" aria-controls="tabset-5-1" aria-selected="true"><code>per_stepsize</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-5-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-5-2" role="tab" aria-controls="tabset-5-2" aria-selected="false"><code>per_efficiency</code></a></li></ul>
-<div class="tab-content">
-<div id="tabset-5-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-5-1-tab">
 <p>All of the below plots visualize the (approximate) GP regression (in the “original” space), and the raw measurements that went into the GP regression.</p>
 <p>The measurements are visualized as dots, while the GPs are visualized as follows:</p>
 <ul>
@@ -19359,13 +21099,13 @@ Plotly.newPlot('ff15b9d9-13ee-4865-93be-459e633fcd5f', [
 <li>outer: 90% CrI of new predictions.</li>
 </ul></li>
 </ul>
-<div id="19c38499-927c-49ea-93cb-9034b38a3d17" style="width:800px;height:1200px;">
+<div id="8ab6dbb9-bb52-4cb9-b1db-581531e857de" style="width:800px;height:1200px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('19c38499-927c-49ea-93cb-9034b38a3d17', [
+Plotly.newPlot('8ab6dbb9-bb52-4cb9-b1db-581531e857de', [
 {
 "showlegend": false,
 "mode": "markers",
@@ -41884,7 +43624,7 @@ Plotly.newPlot('19c38499-927c-49ea-93cb-9034b38a3d17', [
 });
 </script>
 </div>
-<div id="tabset-5-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-5-2-tab">
+<div id="tabset-6-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-6-2-tab">
 <p>The three tabs visualize the (inferred via the GP regression) relationships between the different measures of sampling efficiency (<code>min_eff</code>, <code>mean_eff</code>, and <code>std_eff</code>) and the different proxies (<code>expected_angle_eff</code> and <code>expected_jump_eff</code>) of trajectory statistics (<code>acceptance_rate</code>), where the proxies/potential optimization targets are normalized to obtain a maximal value of one to make them more easily comparable.</p>
 <p>Interpretation of the below plots should be as follows:</p>
 <ul>
@@ -41897,16 +43637,16 @@ Plotly.newPlot('19c38499-927c-49ea-93cb-9034b38a3d17', [
 </ul>
 <p>It goes without saying that for Dual Averaging (<code>acceptance_rate</code>), the optimization target would not be to maximize the acceptance rate, but to reach a pre-specified target.</p>
 <div class="tabset-margin-container"></div><div class="panel-tabset">
-<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-4-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-1" role="tab" aria-controls="tabset-4-1" aria-selected="true"><code>min_eff</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-4-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-2" role="tab" aria-controls="tabset-4-2" aria-selected="false"><code>mean_eff</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-4-3-tab" data-bs-toggle="tab" data-bs-target="#tabset-4-3" role="tab" aria-controls="tabset-4-3" aria-selected="false"><code>std_eff</code></a></li></ul>
+<ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-5-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-5-1" role="tab" aria-controls="tabset-5-1" aria-selected="true"><code>min_eff</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-5-2-tab" data-bs-toggle="tab" data-bs-target="#tabset-5-2" role="tab" aria-controls="tabset-5-2" aria-selected="false"><code>mean_eff</code></a></li><li class="nav-item" role="presentation"><a class="nav-link" id="tabset-5-3-tab" data-bs-toggle="tab" data-bs-target="#tabset-5-3" role="tab" aria-controls="tabset-5-3" aria-selected="false"><code>std_eff</code></a></li></ul>
 <div class="tab-content">
-<div id="tabset-4-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-4-1-tab">
-<div id="8b0b9552-e629-448c-8183-4286b52e449e" style="width:600px;height:400px;">
+<div id="tabset-5-1" class="tab-pane active" role="tabpanel" aria-labelledby="tabset-5-1-tab">
+<div id="7e19f06a-0950-4dc0-ab2d-1966003ea66c" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('8b0b9552-e629-448c-8183-4286b52e449e', [
+Plotly.newPlot('7e19f06a-0950-4dc0-ab2d-1966003ea66c', [
 {
 "showlegend": true,
 "mode": "lines",
@@ -42850,14 +44590,14 @@ Plotly.newPlot('8b0b9552-e629-448c-8183-4286b52e449e', [
 });
 </script>
 </div>
-<div id="tabset-4-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-4-2-tab">
-<div id="008f10df-ca96-4109-9b91-60270808bfd7" style="width:600px;height:400px;">
+<div id="tabset-5-2" class="tab-pane" role="tabpanel" aria-labelledby="tabset-5-2-tab">
+<div id="8fa2fd4d-3943-444a-b276-f2d124a77c2d" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('008f10df-ca96-4109-9b91-60270808bfd7', [
+Plotly.newPlot('8fa2fd4d-3943-444a-b276-f2d124a77c2d', [
 {
 "showlegend": true,
 "mode": "lines",
@@ -43801,14 +45541,14 @@ Plotly.newPlot('008f10df-ca96-4109-9b91-60270808bfd7', [
 });
 </script>
 </div>
-<div id="tabset-4-3" class="tab-pane" role="tabpanel" aria-labelledby="tabset-4-3-tab">
-<div id="b54eb1c3-9641-417b-a0c4-1a1218af874a" style="width:600px;height:400px;">
+<div id="tabset-5-3" class="tab-pane" role="tabpanel" aria-labelledby="tabset-5-3-tab">
+<div id="72a1bec5-2487-40a5-8973-02589d75aef2" style="width:600px;height:400px;">
 
 </div>
 <script>
 requirejs.config({ paths: { plotly: 'https://cdn.plot.ly/plotly-2.6.3.min' } }); 
 require(['plotly'], function (Plotly) {
-Plotly.newPlot('b54eb1c3-9641-417b-a0c4-1a1218af874a', [
+Plotly.newPlot('72a1bec5-2487-40a5-8973-02589d75aef2', [
 {
 "showlegend": true,
 "mode": "lines",

@@ -10,7 +10,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_intercept_slope_centered.html</loc>
-    <lastmod>2025-09-13T13:48:19.759Z</lastmod>
+    <lastmod>2025-09-15T10:34:43.093Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/arK-arK.html</loc>
@@ -22,7 +22,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_pooled.html</loc>
-    <lastmod>2025-09-13T13:48:05.602Z</lastmod>
+    <lastmod>2025-09-15T10:34:33.408Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/one_comp_mm_elim_abs-one_comp_mm_elim_abs.html</loc>
@@ -30,7 +30,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/eight_schools-eight_schools_centered.html</loc>
-    <lastmod>2025-09-13T13:48:12.880Z</lastmod>
+    <lastmod>2025-09-15T10:34:35.106Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/M0_data-M0_model.html</loc>
@@ -50,7 +50,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_hierarchical_intercept_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:22.013Z</lastmod>
+    <lastmod>2025-09-15T10:34:47.040Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/gp_pois_regr-gp_pois_regr.html</loc>
@@ -66,7 +66,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_slope_centered.html</loc>
-    <lastmod>2025-09-13T13:48:21.528Z</lastmod>
+    <lastmod>2025-09-15T10:34:46.056Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/GLMM_data-GLMM1_model.html</loc>
@@ -74,7 +74,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/kilpisjarvi_mod-kilpisjarvi.html</loc>
-    <lastmod>2025-09-13T13:48:05.015Z</lastmod>
+    <lastmod>2025-09-15T10:34:30.940Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/wells_data-wells_daae_c_model.html</loc>
@@ -86,7 +86,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_intercept_slope_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:24.069Z</lastmod>
+    <lastmod>2025-09-15T10:34:48.175Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/science_irt-grsm_latent_reg_irt.html</loc>
@@ -122,11 +122,11 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/diamonds-diamonds.html</loc>
-    <lastmod>2025-09-13T13:48:15.763Z</lastmod>
+    <lastmod>2025-09-15T10:34:36.700Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_slope_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:21.681Z</lastmod>
+    <lastmod>2025-09-15T10:34:46.377Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/Mth_data-Mth_model.html</loc>
@@ -134,7 +134,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_county_intercept.html</loc>
-    <lastmod>2025-09-13T13:48:20.630Z</lastmod>
+    <lastmod>2025-09-15T10:34:43.699Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/nes_logit_data-nes_logit_model.html</loc>
@@ -178,7 +178,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_slope_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:18.663Z</lastmod>
+    <lastmod>2025-09-15T10:34:42.188Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/earnings-logearn_interaction.html</loc>
@@ -194,7 +194,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_intercept_centered.html</loc>
-    <lastmod>2025-09-13T13:48:21.224Z</lastmod>
+    <lastmod>2025-09-15T10:34:45.420Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/election88-election88_full.html</loc>
@@ -222,7 +222,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_county_intercept.html</loc>
-    <lastmod>2025-09-13T13:48:17.670Z</lastmod>
+    <lastmod>2025-09-15T10:34:37.002Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/dogs-dogs_nonhierarchical.html</loc>
@@ -261,48 +261,44 @@
     <lastmod>2025-09-13T13:48:23.316Z</lastmod>
   </url>
   <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/earnings-logearn_logheight_male.html</loc>
-    <lastmod>2025-09-13T13:48:06.982Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/full_normal(32, 290).html</loc>
-    <lastmod>2025-09-13T13:48:00.570Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_partially_pooled_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:17.992Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/three_men2-ldaK2.html</loc>
-    <lastmod>2025-09-13T13:48:22.996Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/index.html</loc>
-    <lastmod>2025-09-13T13:47:52.913Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/index.html</loc>
-    <lastmod>2025-09-13T09:54:28.182Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_intercept_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:18.334Z</lastmod>
-  </url>
-  <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/arma-arma11.html</loc>
-    <lastmod>2025-09-13T13:48:06.542Z</lastmod>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/rats_data-rats_model.html</loc>
+    <lastmod>2025-09-13T13:48:16.913Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/earnings-log10earn_height.html</loc>
     <lastmod>2025-09-13T13:48:04.202Z</lastmod>
   </url>
   <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/rats_data-rats_model.html</loc>
-    <lastmod>2025-09-13T13:48:16.913Z</lastmod>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/arma-arma11.html</loc>
+    <lastmod>2025-09-13T13:48:06.542Z</lastmod>
   </url>
   <url>
-    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/iohmm_reg_simulated-iohmm_reg.html</loc>
-    <lastmod>2025-09-12T16:35:38.289Z</lastmod>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_intercept_noncentered.html</loc>
+    <lastmod>2025-09-15T10:34:40.552Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/index.html</loc>
+    <lastmod>2025-09-13T09:54:28.182Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/index.html</loc>
+    <lastmod>2025-09-15T10:39:41.905Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/three_men2-ldaK2.html</loc>
+    <lastmod>2025-09-13T13:48:22.996Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_partially_pooled_noncentered.html</loc>
+    <lastmod>2025-09-15T10:34:39.726Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/full_normal(32, 290).html</loc>
+    <lastmod>2025-09-13T13:48:00.570Z</lastmod>
+  </url>
+  <url>
+    <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/earnings-logearn_logheight_male.html</loc>
+    <lastmod>2025-09-13T13:48:06.982Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/kidiq-kidscore_momhsiq.html</loc>
@@ -326,7 +322,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mod-radon_county.html</loc>
-    <lastmod>2025-09-13T13:48:21.074Z</lastmod>
+    <lastmod>2025-09-15T10:34:45.135Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/hudson_lynx_hare-lotka_volterra.html</loc>
@@ -366,7 +362,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_partially_pooled_centered.html</loc>
-    <lastmod>2025-09-13T13:48:20.774Z</lastmod>
+    <lastmod>2025-09-15T10:34:44.020Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/full_normal(6, 7.9).html</loc>
@@ -386,7 +382,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_hierarchical_intercept_centered.html</loc>
-    <lastmod>2025-09-13T13:48:21.844Z</lastmod>
+    <lastmod>2025-09-15T10:34:46.714Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/soil_carbon-soil_incubation.html</loc>
@@ -406,7 +402,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_intercept_centered.html</loc>
-    <lastmod>2025-09-13T13:48:18.137Z</lastmod>
+    <lastmod>2025-09-15T10:34:40.109Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/low_dim_gauss_mix-low_dim_gauss_mix.html</loc>
@@ -430,7 +426,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_intercept_slope_centered.html</loc>
-    <lastmod>2025-09-13T13:48:23.882Z</lastmod>
+    <lastmod>2025-09-15T10:34:47.751Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/earnings-logearn_height.html</loc>
@@ -442,11 +438,11 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_intercept_slope_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:19.927Z</lastmod>
+    <lastmod>2025-09-15T10:34:43.379Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_hierarchical_intercept_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:19.126Z</lastmod>
+    <lastmod>2025-09-15T10:34:42.785Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/Mtbh_data-Mtbh_model.html</loc>
@@ -466,7 +462,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_partially_pooled_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:20.915Z</lastmod>
+    <lastmod>2025-09-15T10:34:44.747Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/wells_data-wells_interaction_model.html</loc>
@@ -486,7 +482,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_variable_slope_centered.html</loc>
-    <lastmod>2025-09-13T13:48:18.483Z</lastmod>
+    <lastmod>2025-09-15T10:34:40.926Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/mesquite-logmesquite_logvolume.html</loc>
@@ -494,7 +490,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/eight_schools-eight_schools_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:13.034Z</lastmod>
+    <lastmod>2025-09-15T10:34:36.033Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/mesquite-logmesquite.html</loc>
@@ -502,7 +498,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_hierarchical_intercept_centered.html</loc>
-    <lastmod>2025-09-13T13:48:18.967Z</lastmod>
+    <lastmod>2025-09-15T10:34:42.505Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/low_dim_gauss_mix_collapse-low_dim_gauss_mix_collapse.html</loc>
@@ -522,7 +518,7 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_pooled.html</loc>
-    <lastmod>2025-09-13T13:48:05.758Z</lastmod>
+    <lastmod>2025-09-15T10:34:33.859Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/loss_curves-losscurve_sislob.html</loc>
@@ -554,10 +550,10 @@
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_all-radon_variable_intercept_noncentered.html</loc>
-    <lastmod>2025-09-13T13:48:21.369Z</lastmod>
+    <lastmod>2025-09-15T10:34:45.736Z</lastmod>
   </url>
   <url>
     <loc>https://nsiccha.github.io/WarmupHMC.jl/benchmark/p/radon_mn-radon_partially_pooled_centered.html</loc>
-    <lastmod>2025-09-13T13:48:17.836Z</lastmod>
+    <lastmod>2025-09-15T10:34:39.415Z</lastmod>
   </url>
 </urlset>

@@ -24,7 +24,7 @@ ul.task-list li input[type="checkbox"] {
 </style>
 
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script><script src="../site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="../site_libs/quarto-nav/quarto-nav.js"></script>
 <script src="../site_libs/quarto-nav/headroom.min.js"></script>
 <script src="../site_libs/clipboard/clipboard.min.js"></script>
 <script src="../site_libs/quarto-search/autocomplete.umd.js"></script>
@@ -67,17 +67,30 @@ ul.task-list li input[type="checkbox"] {
     "search-label": "Search"
   }
 }</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
+<link href="https://cdn.datatables.net/v/dt/jq-3.7.0/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min.css" rel="stylesheet" integrity="sha384-+oqJkcAFGwV2umNqC2yzaqwLPqq6m5sWGxoOuIDWpYuF2+g8M6nPbRWiU1d7TXU5" crossorigin="anonymous">
+<script src="https://cdn.datatables.net/v/dt/jq-3.7.0/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min.js" integrity="sha384-8z/4Py2DlQWTrYoiaMbt8SljKgZp5FS5Z9YNzSlFStk8zK8/gbuAO8oM17RmaUpg" crossorigin="anonymous"></script>
 
-<script type="application/javascript">define('jquery', [],function() {return window.jQuery;})</script>
-<link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.css">
-<script src="../datatables.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
 <script>
+  requirejs.config( {
+      paths: {
+          // 'datatables.net': 'https://cdn.datatables.net/v/dt/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min',
+          // 'jquery': 'https://code.jquery.com/jquery-3.7.1.min',
+          'plotly': 'https://cdn.plot.ly/plotly-2.35.2.min'
+      }
+  } );
+  // requirejs(
+  //   ['jquery', 'datatables.net', 'plotly'],
+  //   function ($) {
+  //       //$(document).ready( function () {
+  //       //    $('table.data-frame').DataTable({paging: false, order: []});
+  //       //});
+  //   }
+  // );
   $(document).ready( function () {
-      $('table.data-frame').DataTable({paging: false, order:[]});
+      $('table.data-frame').DataTable({paging: false, order: []});
   } );
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
 
 
 </head>
@@ -155,17 +168,6 @@ ul.task-list li input[type="checkbox"] {
 
 
 <p>The links in the table below take you to posterior-wise in-depth visualizations of some key quantities and relations.</p>
-<div id="214aeab8" class="cell" data-execution_count="1">
-<div class="cell-output cell-output-display">
-<div style="padding: 1em; background-color: #f8d6da; border: 1px solid #f5c6cb; font-weight: bold;">
-<p>The WebIO Jupyter extension was not detected. See the
-<a href="https://juliagizmos.github.io/WebIO.jl/latest/providers/ijulia/" target="_blank">
-    WebIO Jupyter integration documentation
-</a>
-for more information.
-</p></div>
-</div>
-<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="2">
 <div class="tabset-margin-container"></div><div class="panel-tabset">
 <ul class="nav nav-tabs" role="tablist"><li class="nav-item" role="presentation"><a class="nav-link active" id="tabset-1-1-tab" data-bs-toggle="tab" data-bs-target="#tabset-1-1" role="tab" aria-controls="tabset-1-1" aria-selected="true"><code>overview</code></a></li></ul>
 <div class="tab-content">
@@ -181,26 +183,111 @@ dim
 link
 </th>
 <th style="text-align: left;">
-render*version
+render_version
 </th>
 <th style="text-align: left;">
-diagonal*cond
+diagonal_cond
 </th>
 <th style="text-align: left;">
-n<em>ref</em>gradient*evals
+n_ref_gradient_evals
 </th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td style="text-align: right;">
+2
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/dogs-dogs_hierarchical.html"><code>dogs-dogs_hierarchical</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+1.4
+</td>
+<td style="text-align: left;">
+4.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+2
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/dogs-dogs_log.html"><code>dogs-dogs_log</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+1.5
+</td>
+<td style="text-align: left;">
+5.0k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+2
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes_logit_data-nes_logit_model.html"><code>nes_logit_data-nes_logit_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+3.4
+</td>
+<td style="text-align: left;">
+4.2k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+2
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dist.html"><code>wells_data-wells_dist</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+25
+</td>
+<td style="text-align: left;">
+3.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+2
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dist100_model.html"><code>wells_data-wells_dist100_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+1.6
+</td>
+<td style="text-align: left;">
+3.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 3
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/Mb*data-Mb*model.html"><code>Mb*data-Mb*model</code></a>
+<a href="../benchmark/p/Mb_data-Mb_model.html"><code>Mb_data-Mb_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 1.7
@@ -214,10 +301,61 @@ n<em>ref</em>gradient*evals
 3
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/kilpisjarvi_mod-kilpisjarvi.html"><code>kilpisjarvi*mod-kilpisjarvi</code></a>
+<a href="../benchmark/p/dogs-dogs.html"><code>dogs-dogs</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
+</td>
+<td style="text-align: left;">
+6.2
+</td>
+<td style="text-align: left;">
+5.0k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+3
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq-kidscore_momhs.html"><code>kidiq-kidscore_momhs</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+67
+</td>
+<td style="text-align: left;">
+4.8k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+3
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq-kidscore_momiq.html"><code>kidiq-kidscore_momiq</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+180
+</td>
+<td style="text-align: left;">
+5.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+3
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kilpisjarvi_mod-kilpisjarvi.html"><code>kilpisjarvi_mod-kilpisjarvi</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
 </td>
 <td style="text-align: left;">
 3800
@@ -231,10 +369,10 @@ n<em>ref</em>gradient*evals
 3
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/radon_all-radon_pooled.html"><code>radon*all-radon*pooled</code></a>
+<a href="../benchmark/p/radon_all-radon_pooled.html"><code>radon_all-radon_pooled</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 1.4
@@ -248,10 +386,10 @@ n<em>ref</em>gradient*evals
 3
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/radon_mn-radon_pooled.html"><code>radon*mn-radon*pooled</code></a>
+<a href="../benchmark/p/radon_mn-radon_pooled.html"><code>radon_mn-radon_pooled</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 2.9
@@ -262,13 +400,30 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
+3
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dist100ars_model.html"><code>wells_data-wells_dist100ars_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.6
+</td>
+<td style="text-align: left;">
+5.1k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 4
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/Mt_data-Mt_model.html"><code>Mt*data-Mt*model</code></a>
+<a href="../benchmark/p/Mt_data-Mt_model.html"><code>Mt_data-Mt_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 1.8
@@ -279,13 +434,251 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
+4
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq-kidscore_momhsiq.html"><code>kidiq-kidscore_momhsiq</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+180
+</td>
+<td style="text-align: left;">
+4.8k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+4
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/sir-sir.html"><code>sir-sir</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+1.7
+</td>
+<td style="text-align: left;">
+12k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+4
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dae_model.html"><code>wells_data-wells_dae_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.6
+</td>
+<td style="text-align: left;">
+5.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+4
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_interaction_c_model.html"><code>wells_data-wells_interaction_c_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.7
+</td>
+<td style="text-align: left;">
+5.9k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+4
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_interaction_model.html"><code>wells_data-wells_interaction_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.9
+</td>
+<td style="text-align: left;">
+5.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq-kidscore_interaction.html"><code>kidiq-kidscore_interaction</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+440
+</td>
+<td style="text-align: left;">
+6.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_c.html"><code>kidiq_with_mom_work-kidscore_interaction_c</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+73
+</td>
+<td style="text-align: left;">
+5.6k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_c2.html"><code>kidiq_with_mom_work-kidscore_interaction_c2</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+65
+</td>
+<td style="text-align: left;">
+5.5k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_z.html"><code>kidiq_with_mom_work-kidscore_interaction_z</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+120
+</td>
+<td style="text-align: left;">
+6.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/kidiq_with_mom_work-kidscore_mom_work.html"><code>kidiq_with_mom_work-kidscore_mom_work</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+99
+</td>
+<td style="text-align: left;">
+6.0k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+5
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dae_c_model.html"><code>wells_data-wells_dae_c_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.6
+</td>
+<td style="text-align: left;">
+6.4k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+6
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/soil_carbon-soil_incubation.html"><code>soil_carbon-soil_incubation</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+8.2
+</td>
+<td style="text-align: left;">
+150k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+6
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_daae_c_model.html"><code>wells_data-wells_daae_c_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.7
+</td>
+<td style="text-align: left;">
+5.8k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+7
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/wells_data-wells_dae_inter_model.html"><code>wells_data-wells_dae_inter_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+2.8
+</td>
+<td style="text-align: left;">
+7.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 10
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/eight*schools-eight*schools*centered.html"><code>eight*schools-eight*schools*centered</code></a>
+<a href="../benchmark/p/eight_schools-eight_schools_centered.html"><code>eight_schools-eight_schools_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 9.0
@@ -302,7 +695,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/eight_schools-eight_schools_noncentered.html"><code>eight_schools-eight_schools_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 3.8
@@ -313,13 +706,166 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1972-nes.html"><code>nes1972-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+23
+</td>
+<td style="text-align: left;">
+11k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1976-nes.html"><code>nes1976-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+20
+</td>
+<td style="text-align: left;">
+7.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1980-nes.html"><code>nes1980-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+20
+</td>
+<td style="text-align: left;">
+9.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1984-nes.html"><code>nes1984-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+18
+</td>
+<td style="text-align: left;">
+17k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1988-nes.html"><code>nes1988-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+20
+</td>
+<td style="text-align: left;">
+17k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1992-nes.html"><code>nes1992-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+19
+</td>
+<td style="text-align: left;">
+8.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes1996-nes.html"><code>nes1996-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+20
+</td>
+<td style="text-align: left;">
+8.3k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+10
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/nes2000-nes.html"><code>nes2000-nes</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+24
+</td>
+<td style="text-align: left;">
+11k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+18
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/pilots-pilots.html"><code>pilots-pilots</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+46
+</td>
+<td style="text-align: left;">
+130k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 26
 </td>
 <td style="text-align: left;">
 <a href="../benchmark/p/diamonds-diamonds.html"><code>diamonds-diamonds</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 120
@@ -330,13 +876,81 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
+62
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/rstan_downloads-prophet.html"><code>rstan_downloads-prophet</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+83
+</td>
+<td style="text-align: left;">
+59k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+65
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/dogs-dogs_nonhierarchical.html"><code>dogs-dogs_nonhierarchical</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+6.4
+</td>
+<td style="text-align: left;">
+19k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+65
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/rats_data-rats_model.html"><code>rats_data-rats_model</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+38
+</td>
+<td style="text-align: left;">
+30k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+66
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/mcycle_gp-accel_gp.html"><code>mcycle_gp-accel_gp</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+67
+</td>
+<td style="text-align: left;">
+880k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 87
 </td>
 <td style="text-align: left;">
 <a href="../benchmark/p/radon_mn-radon_county_intercept.html"><code>radon_mn-radon_county_intercept</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 31
@@ -353,7 +967,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_partially_pooled_centered.html"><code>radon_mn-radon_partially_pooled_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 14
@@ -370,7 +984,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_partially_pooled_noncentered.html"><code>radon_mn-radon_partially_pooled_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 40
@@ -387,7 +1001,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_intercept_centered.html"><code>radon_mn-radon_variable_intercept_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 12
@@ -404,7 +1018,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_intercept_noncentered.html"><code>radon_mn-radon_variable_intercept_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 36
@@ -421,7 +1035,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_slope_centered.html"><code>radon_mn-radon_variable_slope_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 15
@@ -438,7 +1052,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_slope_noncentered.html"><code>radon_mn-radon_variable_slope_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 45
@@ -452,10 +1066,27 @@ n<em>ref</em>gradient*evals
 90
 </td>
 <td style="text-align: left;">
+<a href="../benchmark/p/election88-election88_full.html"><code>election88-election88_full</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+27
+</td>
+<td style="text-align: left;">
+110k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+90
+</td>
+<td style="text-align: left;">
 <a href="../benchmark/p/radon_mn-radon_hierarchical_intercept_centered.html"><code>radon_mn-radon_hierarchical_intercept_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 12
@@ -472,7 +1103,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_hierarchical_intercept_noncentered.html"><code>radon_mn-radon_hierarchical_intercept_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 44
@@ -489,7 +1120,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/Mtbh_data-Mtbh_model.html"><code>Mtbh_data-Mtbh_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 3.5
@@ -506,7 +1137,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_intercept_slope_centered.html"><code>radon_mn-radon_variable_intercept_slope_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 16
@@ -523,7 +1154,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mn-radon_variable_intercept_slope_noncentered.html"><code>radon_mn-radon_variable_intercept_slope_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 45
@@ -540,7 +1171,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/GLMM_data-GLMM1_model.html"><code>GLMM_data-GLMM1_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 13
@@ -557,7 +1188,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/Mh_data-Mh_model.html"><code>Mh_data-Mh_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 2.5
@@ -574,7 +1205,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_county_intercept.html"><code>radon_all-radon_county_intercept</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 150
@@ -591,7 +1222,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_partially_pooled_centered.html"><code>radon_all-radon_partially_pooled_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 76
@@ -608,7 +1239,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_partially_pooled_noncentered.html"><code>radon_all-radon_partially_pooled_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 140
@@ -625,7 +1256,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_mod-radon_county.html"><code>radon_mod-radon_county</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 73
@@ -642,7 +1273,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_variable_intercept_centered.html"><code>radon_all-radon_variable_intercept_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 76
@@ -659,7 +1290,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_variable_intercept_noncentered.html"><code>radon_all-radon_variable_intercept_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 140
@@ -676,7 +1307,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_variable_slope_centered.html"><code>radon_all-radon_variable_slope_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 61
@@ -693,7 +1324,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_variable_slope_noncentered.html"><code>radon_all-radon_variable_slope_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 160
@@ -710,7 +1341,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_hierarchical_intercept_centered.html"><code>radon_all-radon_hierarchical_intercept_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 77
@@ -727,7 +1358,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_hierarchical_intercept_noncentered.html"><code>radon_all-radon_hierarchical_intercept_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 140
@@ -744,7 +1375,7 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/Mth_data-Mth_model.html"><code>Mth_data-Mth_model</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 6.6
@@ -755,13 +1386,81 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
+408
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/science_irt-grsm_latent_reg_irt.html"><code>science_irt-grsm_latent_reg_irt</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+12
+</td>
+<td style="text-align: left;">
+19k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+438
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/synthetic_grid_RBF_kernels-kronecker_gp.html"><code>synthetic_grid_RBF_kernels-kronecker_gp</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+9.4
+</td>
+<td style="text-align: left;">
+270k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+530
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/timssAusTwn_irt-gpcm_latent_reg_irt.html"><code>timssAusTwn_irt-gpcm_latent_reg_irt</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+13
+</td>
+<td style="text-align: left;">
+28k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+531
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/fims_Aus_Jpn_irt-2pl_latent_reg_irt.html"><code>fims_Aus_Jpn_irt-2pl_latent_reg_irt</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+11
+</td>
+<td style="text-align: left;">
+19k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
 777
 </td>
 <td style="text-align: left;">
 <a href="../benchmark/p/radon_all-radon_variable_intercept_slope_centered.html"><code>radon_all-radon_variable_intercept_slope_centered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 73
@@ -778,13 +1477,30 @@ n<em>ref</em>gradient*evals
 <a href="../benchmark/p/radon_all-radon_variable_intercept_slope_noncentered.html"><code>radon_all-radon_variable_intercept_slope_noncentered</code></a>
 </td>
 <td style="text-align: left;">
-0.0.16
+0.0.17
 </td>
 <td style="text-align: left;">
 160
 </td>
 <td style="text-align: left;">
 35k
+</td>
+</tr>
+<tr>
+<td style="text-align: right;">
+933
+</td>
+<td style="text-align: left;">
+<a href="../benchmark/p/state_wide_presidential_votes-hierarchical_gp.html"><code>state_wide_presidential_votes-hierarchical_gp</code></a>
+</td>
+<td style="text-align: left;">
+0.0.17
+</td>
+<td style="text-align: left;">
+42
+</td>
+<td style="text-align: left;">
+110k
 </td>
 </tr>
 <tr>
@@ -908,91 +1624,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-2
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/dogs-dogs_hierarchical.html"><code>dogs-dogs_hierarchical</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-1.4
-</td>
-<td style="text-align: left;">
-4.6k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-2
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/dogs-dogs_log.html"><code>dogs-dogs_log</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-1.5
-</td>
-<td style="text-align: left;">
-5.0k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-2
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes_logit_data-nes_logit_model.html"><code>nes_logit_data-nes_logit_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-3.4
-</td>
-<td style="text-align: left;">
-4.2k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-2
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dist.html"><code>wells_data-wells_dist</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-25
-</td>
-<td style="text-align: left;">
-3.6k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-2
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dist100_model.html"><code>wells_data-wells_dist100_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-1.6
-</td>
-<td style="text-align: left;">
-3.6k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 3
 </td>
 <td style="text-align: left;">
@@ -1003,23 +1634,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 2.2
-</td>
-<td style="text-align: left;">
-5.0k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-3
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/dogs-dogs.html"><code>dogs-dogs</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-6.2
 </td>
 <td style="text-align: left;">
 5.0k
@@ -1098,40 +1712,6 @@ n<em>ref</em>gradient*evals
 3
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/kidiq-kidscore_momhs.html"><code>kidiq-kidscore_momhs</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-67
-</td>
-<td style="text-align: left;">
-4.8k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-3
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq-kidscore_momiq.html"><code>kidiq-kidscore_momiq</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-180
-</td>
-<td style="text-align: left;">
-5.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-3
-</td>
-<td style="text-align: left;">
 <a href="../benchmark/p/mesquite-logmesquite_logvolume.html"><code>mesquite-logmesquite_logvolume</code></a>
 </td>
 <td style="text-align: left;">
@@ -1176,23 +1756,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 5.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-3
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dist100ars_model.html"><code>wells_data-wells_dist100ars_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.6
-</td>
-<td style="text-align: left;">
-5.1k
 </td>
 </tr>
 <tr>
@@ -1319,23 +1882,6 @@ n<em>ref</em>gradient*evals
 4
 </td>
 <td style="text-align: left;">
-<a href="../benchmark/p/kidiq-kidscore_momhsiq.html"><code>kidiq-kidscore_momhsiq</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-180
-</td>
-<td style="text-align: left;">
-4.8k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-4
-</td>
-<td style="text-align: left;">
 <a href="../benchmark/p/one_comp_mm_elim_abs-one_comp_mm_elim_abs.html"><code>one_comp_mm_elim_abs-one_comp_mm_elim_abs</code></a>
 </td>
 <td style="text-align: left;">
@@ -1346,74 +1892,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 7.4k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-4
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/sir-sir.html"><code>sir-sir</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-1.7
-</td>
-<td style="text-align: left;">
-12k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-4
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dae_model.html"><code>wells_data-wells_dae_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.6
-</td>
-<td style="text-align: left;">
-5.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-4
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_interaction_c_model.html"><code>wells_data-wells_interaction_c_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.7
-</td>
-<td style="text-align: left;">
-5.9k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-4
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_interaction_model.html"><code>wells_data-wells_interaction_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.9
-</td>
-<td style="text-align: left;">
-5.6k
 </td>
 </tr>
 <tr>
@@ -1448,91 +1926,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 11k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq-kidscore_interaction.html"><code>kidiq-kidscore_interaction</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-440
-</td>
-<td style="text-align: left;">
-6.6k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_c.html"><code>kidiq_with_mom_work-kidscore_interaction_c</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-73
-</td>
-<td style="text-align: left;">
-5.6k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_c2.html"><code>kidiq_with_mom_work-kidscore_interaction_c2</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-65
-</td>
-<td style="text-align: left;">
-5.5k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq_with_mom_work-kidscore_interaction_z.html"><code>kidiq_with_mom_work-kidscore_interaction_z</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-120
-</td>
-<td style="text-align: left;">
-6.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/kidiq_with_mom_work-kidscore_mom_work.html"><code>kidiq_with_mom_work-kidscore_mom_work</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-99
-</td>
-<td style="text-align: left;">
-6.0k
 </td>
 </tr>
 <tr>
@@ -1584,23 +1977,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 6.0k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-5
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dae_c_model.html"><code>wells_data-wells_dae_c_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.6
-</td>
-<td style="text-align: left;">
-6.4k
 </td>
 </tr>
 <tr>
@@ -1707,40 +2083,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-6
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/soil_carbon-soil_incubation.html"><code>soil_carbon-soil_incubation</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-8.2
-</td>
-<td style="text-align: left;">
-150k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-6
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_daae_c_model.html"><code>wells_data-wells_daae_c_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.7
-</td>
-<td style="text-align: left;">
-5.8k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 7
 </td>
 <td style="text-align: left;">
@@ -1788,23 +2130,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 8.4k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-7
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/wells_data-wells_dae_inter_model.html"><code>wells_data-wells_dae_inter_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-2.8
-</td>
-<td style="text-align: left;">
-7.3k
 </td>
 </tr>
 <tr>
@@ -1873,142 +2198,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 7.7k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1972-nes.html"><code>nes1972-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-23
-</td>
-<td style="text-align: left;">
-11k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1976-nes.html"><code>nes1976-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-20
-</td>
-<td style="text-align: left;">
-7.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1980-nes.html"><code>nes1980-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-20
-</td>
-<td style="text-align: left;">
-9.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1984-nes.html"><code>nes1984-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-18
-</td>
-<td style="text-align: left;">
-17k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1988-nes.html"><code>nes1988-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-20
-</td>
-<td style="text-align: left;">
-17k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1992-nes.html"><code>nes1992-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-19
-</td>
-<td style="text-align: left;">
-8.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes1996-nes.html"><code>nes1996-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-20
-</td>
-<td style="text-align: left;">
-8.3k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-10
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/nes2000-nes.html"><code>nes2000-nes</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-24
-</td>
-<td style="text-align: left;">
-11k
 </td>
 </tr>
 <tr>
@@ -2115,23 +2304,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-18
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/pilots-pilots.html"><code>pilots-pilots</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-46
-</td>
-<td style="text-align: left;">
-130k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 26
 </td>
 <td style="text-align: left;">
@@ -2217,23 +2389,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-62
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/rstan_downloads-prophet.html"><code>rstan_downloads-prophet</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-83
-</td>
-<td style="text-align: left;">
-59k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 64
 </td>
 <td style="text-align: left;">
@@ -2251,57 +2406,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-65
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/dogs-dogs_nonhierarchical.html"><code>dogs-dogs_nonhierarchical</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-6.4
-</td>
-<td style="text-align: left;">
-19k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-65
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/rats_data-rats_model.html"><code>rats_data-rats_model</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-38
-</td>
-<td style="text-align: left;">
-30k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-66
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/mcycle_gp-accel_gp.html"><code>mcycle_gp-accel_gp</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-67
-</td>
-<td style="text-align: left;">
-880k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 82
 </td>
 <td style="text-align: left;">
@@ -2315,23 +2419,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 1.1M
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-90
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/election88-election88_full.html"><code>election88-election88_full</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-27
-</td>
-<td style="text-align: left;">
-110k
 </td>
 </tr>
 <tr>
@@ -2366,40 +2453,6 @@ n<em>ref</em>gradient*evals
 </td>
 <td style="text-align: left;">
 24k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-408
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/science_irt-grsm_latent_reg_irt.html"><code>science_irt-grsm_latent_reg_irt</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-12
-</td>
-<td style="text-align: left;">
-19k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-438
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/synthetic_grid_RBF_kernels-kronecker_gp.html"><code>synthetic_grid_RBF_kernels-kronecker_gp</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-9.4
-</td>
-<td style="text-align: left;">
-270k
 </td>
 </tr>
 <tr>
@@ -2455,40 +2508,6 @@ n<em>ref</em>gradient*evals
 </tr>
 <tr>
 <td style="text-align: right;">
-530
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/timssAusTwn_irt-gpcm_latent_reg_irt.html"><code>timssAusTwn_irt-gpcm_latent_reg_irt</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-13
-</td>
-<td style="text-align: left;">
-28k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
-531
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/fims_Aus_Jpn_irt-2pl_latent_reg_irt.html"><code>fims_Aus_Jpn_irt-2pl_latent_reg_irt</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-11
-</td>
-<td style="text-align: left;">
-19k
-</td>
-</tr>
-<tr>
-<td style="text-align: right;">
 669
 </td>
 <td style="text-align: left;">
@@ -2504,27 +2523,8 @@ n<em>ref</em>gradient*evals
 19k
 </td>
 </tr>
-<tr>
-<td style="text-align: right;">
-933
-</td>
-<td style="text-align: left;">
-<a href="../benchmark/p/state_wide_presidential_votes-hierarchical_gp.html"><code>state_wide_presidential_votes-hierarchical_gp</code></a>
-</td>
-<td style="text-align: left;">
-0.0.13
-</td>
-<td style="text-align: left;">
-42
-</td>
-<td style="text-align: left;">
-110k
-</td>
-</tr>
 </tbody>
 </table>
-</div>
-</div>
 </div>
 </div>
 </div>
@@ -2623,7 +2623,7 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
   }
     var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
     var mailtoRegex = new RegExp(/^mailto:/);
-      var filterRegex = new RegExp("https:\/\/nsiccha\.github\.io\/WarmupHMC\.jl\/");
+      var filterRegex = new RegExp('/' + window.location.host + '/');
     var isInternal = (href) => {
         return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
     }

@@ -67,14 +67,30 @@ ul.task-list li input[type="checkbox"] {
     "search-label": "Search"
   }
 }</script>
-<link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.css">
-<script src="../../datatables.min.js"></script>
+<link href="https://cdn.datatables.net/v/dt/jq-3.7.0/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min.css" rel="stylesheet" integrity="sha384-+oqJkcAFGwV2umNqC2yzaqwLPqq6m5sWGxoOuIDWpYuF2+g8M6nPbRWiU1d7TXU5" crossorigin="anonymous">
+<script src="https://cdn.datatables.net/v/dt/jq-3.7.0/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min.js" integrity="sha384-8z/4Py2DlQWTrYoiaMbt8SljKgZp5FS5Z9YNzSlFStk8zK8/gbuAO8oM17RmaUpg" crossorigin="anonymous"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
 <script>
+  requirejs.config( {
+      paths: {
+          // 'datatables.net': 'https://cdn.datatables.net/v/dt/dt-2.3.4/cr-2.1.1/fc-5.0.5/fh-4.0.3/datatables.min',
+          // 'jquery': 'https://code.jquery.com/jquery-3.7.1.min',
+          'plotly': 'https://cdn.plot.ly/plotly-2.35.2.min'
+      }
+  } );
+  // requirejs(
+  //   ['jquery', 'datatables.net', 'plotly'],
+  //   function ($) {
+  //       //$(document).ready( function () {
+  //       //    $('table.data-frame').DataTable({paging: false, order: []});
+  //       //});
+  //   }
+  // );
   $(document).ready( function () {
-      $('table.data-frame').DataTable({paging: false, order:[]});
+      $('table.data-frame').DataTable({paging: false, order: []});
   } );
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
 
 
 </head>
@@ -41910,7 +41926,7 @@ window.document.addEventListener("DOMContentLoaded", function (event) {
   }
     var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
     var mailtoRegex = new RegExp(/^mailto:/);
-      var filterRegex = new RegExp("https:\/\/nsiccha\.github\.io\/WarmupHMC\.jl\/");
+      var filterRegex = new RegExp('/' + window.location.host + '/');
     var isInternal = (href) => {
         return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
     }

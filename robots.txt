@@ -1,1 +1,0 @@
-Sitemap: https://nsiccha.github.io/WarmupHMC.jl/sitemap.xml

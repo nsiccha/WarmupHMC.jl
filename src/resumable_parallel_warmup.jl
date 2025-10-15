@@ -537,7 +537,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
             rhat,
             ess=sort(ess),
             n_draws=Speeds(n_draws, inner_start_time),
-            n_divergent,
+            n_divergent=sort(n_divergent),
             n_transitions=Speeds(n_transitions, inner_start_time),
             n_evals=Speeds(n_evals, inner_start_time),
         )

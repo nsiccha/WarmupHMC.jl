@@ -351,6 +351,8 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
         n_transitions = zeros(n_chains)
         n_evals = zeros(n_chains)
         n_clusters = maximum(x->x.cluster_idx, chainwise_state)
+        stepsize_minima = fill(+Inf, n_clusters)
+        stepsize_maxima = fill(-Inf, n_clusters)
         cluster_n_rows = zeros(n_clusters)
         nominal_recording_target = base_recording_target * 2^(outer_i-1)
         recording_target = min(max_recording_target, nominal_recording_target)
@@ -390,15 +392,17 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     stepsize = if stepsize_adaptation_done
                         exp(ipred(stepsize_regression, target_acceptance_rate))
                     else
+                        stepsize_minima[cluster_idx] = min(stepsize_minima[cluster_idx], stepsize)
+                        stepsize_maxima[cluster_idx] = max(stepsize_maxima[cluster_idx], stepsize)
                         if maybeready!(stepsize_regression) && stepsize_regression.location[2] < 0
                             exp(irand(rng, stepsize_regression, target_acceptance_rate))
                         elseif isnothing(stats)
                             logjitter(rng, stepsize)
                         else
                             logjitter(rng, sqrt(!stats.divergent * stats.acceptance_rate > target_acceptance_rate ? 2 : .5) * stepsize; f=sqrt(2))
-                        end |> (x->clamp(x, .5*stepsize, 2*stepsize))
-                    end
-                    max_depth = ceil(Int, log2(2 + (recording_target - n_recorded) / (2 * n_chains)))
+                        end
+                    end |> (x->clamp(x, .5*stepsize_minima[cluster_idx], 2*stepsize_maxima[cluster_idx]))
+                    max_depth = ceil(Int, log2(2 + max(0, recording_target - n_recorded) / (2 * n_chains)))
                 end
                 max_depth > 0 || break
                 (position_and_gradient, stats) = DynamicHMC.sample_tree(
@@ -462,7 +466,7 @@ update_loss!(energy::DynamicHMC.GaussianKineticEnergy, args...; kwargs...) = upd
                     update_progress!(progress, outer_i-1;
                         # ess=s(ess, inner_start_time),
                         n_draws=Speeds(n_draws, inner_start_time),
-                        n_divergent,
+                        n_divergent=sort(n_divergent),
                         n_transitions=Speeds(n_transitions, inner_start_time),
                         n_evals=Speeds(n_evals, inner_start_time),
                     )

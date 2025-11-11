@@ -112,6 +112,7 @@ cov_kernel(k::TransformedGPKernel) = cov_kernel(k.kernel)
 (k::TransformedGPKernel)(x::Real, y::Real) = k.func(y, y_kernel(k.kernel)(x, y))
 
 
+
 """
 Inducing point GP regression
 """
@@ -124,8 +125,16 @@ struct IPGPRegression{L,F<:Tuple,K<:AbstractGPKernel,T<:Real,C}
     clr::ConjugateLinearRegression{T}
     cache::C
 end
-identity2(x, y) = y
+OnlineStatsBase.nobs(a::IPGPRegression) = sum(a.cache.n)
+
+ylink(gp::IPGPRegression) = ylink(gp.link)
+ylink(gp::IPGPRegression, x; f=location!, kwargs...) = ylink(gp, x, f(gp, x; kwargs...))
+ylink(gp::IPGPRegression, x, y) = ylink(gp)(x, y)
 link(gp::IPGPRegression, x) = Base.Fix1(gp.link, x)
+
+identity2(x, y) = y
+ylink(::typeof(identity2)) = identity2
+
 inducing_x(lo, hi, x_scale; n_pad=1) = range(
     ((lo, hi) .+ (-x_scale, +x_scale) .* n_pad)..., n_pad[1] + n_pad[end] + 1 + ceil(Int, (hi-lo)/x_scale)
 )
@@ -140,7 +149,7 @@ IPGPRegression(link, functions, kernel, inducing_x; nugget=1e-8, T=eltype(induci
     link, functions, kernel, collect(inducing_x),
     cholesky(cov_kernel(kernel).(inducing_x, inducing_x') + y_scale(kernel)^2 * nugget * I).L,
     ConjugateLinearRegression(;precision=Matrix(Diagonal(ones(length(functions)+length(inducing_x))))),
-    (;n=Int[], x=T[], sum=T[], sum_abs2=T[], scale=T[], X=zeros(length(functions)+length(inducing_x)))
+    (;n=T[], x=T[], sum=T[], sum_abs2=T[], scale=T[], X=zeros(length(functions)+length(inducing_x)))
 )
 Base.merge(a::IPGPRegression, rgs::IPGPRegression...) = begin
     gp = IPGPRegression(a.link, a.functions, a.kernel, Float64[])
@@ -172,6 +181,21 @@ condition!(gp::IPGPRegression, x::Real; n, sum, sum_abs2, new=true) = begin
         (;x, n, sum, sum_abs2, scale=norm(cache.X[1+length(functions):end]) / y_scale(kernel))
     )
     gp
+end
+struct SuffStat{T} <: Number
+    n::Int
+    sum::T
+    sum_abs2::T
+end
+SuffStat(w, y; n=1) = SuffStat(n, @bsum(w * y), @bsum(w * abs2(y)))
+Base.:/(x::SuffStat, y::Real) = SuffStat(x.n, x.sum / y, x.sum_abs2 / abs2(y))
+Base.isfinite(x::SuffStat) = isfinite(x.sum) && isfinite(x.sum_abs2)
+condition!(gp::IPGPRegression, x::Real, y::SuffStat; kwargs...) = begin
+    ly = link(gp, x)(y)
+    condition!(
+        gp, x; 
+        ly.n, ly.sum, ly.sum_abs2, kwargs...
+    )
 end
 condition!(gp::IPGPRegression, x::AbstractArray, y::AbstractArray) = for (xi, yi) in zip(x, y)
     condition!(gp, xi, yi)
@@ -209,16 +233,44 @@ prepare!!(
         # link, functions, kernel, 
     )
     # @info "Refitting GP ($(length(inducing_x))=>$(length(gp.inducing_x)))..."
+    # refit!(gp)
     for (i, (x, n, sum, sum_abs2)) in enumerate(
         zip(cache.x, cache.n, cache.sum, cache.sum_abs2)
     )
         condition!(gp, x; n, sum, sum_abs2)
-        cache.scale[i] = norm(cache.X[1+length(functions):end]) / y_scale(kernel)
+        # cache.scale[i] = norm(cache.X[1+length(functions):end]) / y_scale(kernel)
     end
     gp
 else
     gp
 end
+refit!(gp::IPGPRegression) = begin 
+    (;clr,cache,functions,kernel) = gp
+    Id = Diagonal(ones(length(clr.potential)))
+    clr.potential .= 0.
+    @. clr.precision = Id
+    clr.ab[1] = 1e-3
+    clr.ab[2] = 1e-3
+    clr.ab[3] = 0.
+    for (i, (x, n, sum, sum_abs2)) in enumerate(zip(cache.x, cache.n, cache.sum, cache.sum_abs2))
+        condition!(gp, x; n, sum, sum_abs2, new=false)
+        cache.scale[i] = norm(cache.X[1+length(functions):end]) / y_scale(kernel)
+    end
+    gp
+end
+forget!(gp::IPGPRegression; factor=.9) = begin 
+    map((;gp.cache.n, gp.cache.sum, gp.cache.sum_abs2)) do x
+        x .*= factor
+    end
+    gp.clr.potential .*= factor
+    Id = Diagonal(ones(length(gp.clr.potential)))
+    @. gp.clr.precision = Id + factor * (gp.clr.precision - Id)
+    gp.clr.ab[1] = 1e-3 + factor * (gp.clr.ab[1] - 1e-3)
+    gp.clr.ab[2] = 1e-3 + factor * (gp.clr.ab[2] - 1e-3)
+    gp.clr.ab[3] = 0.
+    gp
+end
+
 rescale!!(kernel::SquaredExponentialKernel, new_y_scale::Real) = SquaredExponentialKernel(x_scale(kernel), new_y_scale)
 rescale!!(kernel::IntegratedSquaredExponentialKernel{N}, new_y_scale::Real) where {N} = IntegratedSquaredExponentialKernel(N, x_scale(kernel), new_y_scale)
 rescale!!(kernel::TransformedGPKernel, new_y_scale::Real) = TransformedGPKernel(kernel.func, rescale!!(kernel.kernel, new_y_scale))
@@ -292,55 +344,18 @@ end
 
 
 
-
-
-broadcastable(x) = false # avoid dotting spliced objects (e.g. view calls inserted by @view)
-# don't add dots to dot operators
-broadcastable(x::Symbol) = (!Base.isoperator(x) || first(string(x)) != '.' || x === :..) && x !== :(:)
-broadcastable(x::Expr) = x.head !== :$
-unbroadcast(x) = x
-function unbroadcast(x::Expr)
-    if x.head === :.=
-        Expr(:(=), x.args...)
-    elseif x.head === :block # occurs in for x=..., y=...
-        Expr(:block, Base.mapany(unbroadcast, x.args)...)
-    else
-        x
-    end
+reset!(x::Vector{<:Number}) = empty!(x)
+reset!(x::Vector{<:AbstractArray}) = map(reset!, x)
+reset!(x::NamedTuple) = map(reset!, x)
+precondition!(scale, p::AbstractMatrix, g::AbstractMatrix; cache) = for (pi, gi) in zip(eachcol(p), eachcol(g))
+    precondition!(scale, pi, gi; cache)
 end
-__broadcasted__(x) = x
-function __broadcasted__(x::Expr)
-    broadcasted = :(Base.broadcasted)
-    broadcastargs = Base.mapany(__broadcasted__, x.args)
-    return if x.head === :call && broadcastable(x.args[1])
-        Expr(:call, broadcasted, broadcastargs...)
-    elseif x.head === :comparison
-        error()
-        Expr(:comparison, (iseven(i) && broadcastable(arg) && arg isa Symbol && Base.isoperator(arg) ?
-                               Symbol('.', arg) : arg for (i, arg) in pairs(broadcastargs))...)
-    elseif x.head === :$
-        x.args[1]
-    elseif x.head === :let # don't add dots to `let x=...` assignments
-        Expr(:let, unbroadcast(broadcastargs[1]), broadcastargs[2])
-    elseif x.head === :for # don't add dots to for x=... assignments
-        Expr(:for, unbroadcast(broadcastargs[1]), broadcastargs[2])
-    elseif (x.head === :(=) || x.head === :function || x.head === :macro) &&
-           Meta.isexpr(x.args[1], :call) # function or macro definition
-        Expr(x.head, x.args[1], broadcastargs[2])
-    elseif x.head === :(<:) || x.head === :(>:)
-        Expr(:call, broadcasted, x.head, broadcastargs...)
-    else
-        head = String(x.head)::String
-        if last(head) == '=' && first(head) != '.' || head == "&&" || head == "||"
-            Expr(:call, broadcasted, x.head, broadcastargs...)
-        else
-            Expr(x.head, broadcastargs...)
-        end
-    end
+precondition!(scale, p::AbstractVector, g::AbstractVector; cache) = begin 
+    ldiv!(cache, scale, p)
+    p .= cache
+    mul!(cache, scale', g)
+    g .= cache
 end
-macro broadcasted(x)
-    esc(__broadcasted__(x))
-end
-macro bsum(x)
-    :(sum($(esc(__broadcasted__(x)))))
-end
+finiteor(x, y) = isfinite(x) ? x : y
+finiteorzero(x) = isfinite(x) ? x : zero(x)
+const ldpdim = LogDensityProblems.dimension

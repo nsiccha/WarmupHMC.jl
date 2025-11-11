@@ -78,3 +78,10 @@ short_string(x::NamedTuple) = "(;" * join([
     short_string(key) * "=" * short_string(value)
     for (key, value) in pairs(x)
 ], ", ") * ")"
+
+struct Fraction{T}
+    value::T
+end
+short_string(x::Fraction) = short_string(x.value * 100) * "%"
+Base.isless(x::Fraction, y::Fraction) = isless(x.value, y.value)
+Base.isequal(x::Fraction, y::Fraction) = isequal(x.value, y.value)

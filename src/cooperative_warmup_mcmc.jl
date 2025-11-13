@@ -211,6 +211,8 @@ end
 sample_resumably(callback, sampler::AbstractIterativeSampler, n_iterations; path, progress=sampler.config.progress) = with_progress(progress, n_iterations) do progress
     state = restore(sampler, path)
     (;iteration) = something(state, (;iteration=0))
+    update_progress!(progress, iteration)
+    !isnothing(state) && something(callback(state), false) && return state
     for i in 1+iteration:n_iterations
         _, state = iterate(sampler, state; progress)
         update_progress!(progress, i)

@@ -225,7 +225,7 @@ nuts_tree!!(state, depth) = @__!!__ if depth == 1
     state.divergent = !state.may_continue
     state.sum_metro_prob = state.sum_metro_prob + min1exp(dhamiltonian)
     state.trees[1].log_weight.fwd = dhamiltonian
-    post_leapfrog_hook(state.posterior, state)
+    # post_leapfrog_hook(state.posterior, state)
     copy!!(state.proposals[1], state.current)
     state
 else

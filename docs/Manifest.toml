@@ -2318,11 +2318,11 @@ deps = ["BangBang", "DataFrames", "Distributions", "DynamicHMC", "ElasticArrays"
 path = ".."
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 version = "0.2.0"
-weakdeps = ["ProgressBars", "ProgressMeter", "StanLogDensityProblems", "Term"]
+weakdeps = ["ProgressBars", "Serialization", "StanLogDensityProblems", "Term"]
 
     [deps.WarmupHMC.extensions]
     ProgressBarsExt = "ProgressBars"
-    ProgressMeterExt = "ProgressMeter"
+    SerializationExt = "Serialization"
     StanLogDensityProblemsExt = "StanLogDensityProblems"
     TermExt = "Term"
 

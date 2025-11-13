@@ -336,5 +336,3 @@ monitor_ess=!isnothing(progress), description="MCMC", init=missing, kwargs...) =
     end
     identity.(rv)
 end
-
-include("resumable_parallel_warmup.jl")

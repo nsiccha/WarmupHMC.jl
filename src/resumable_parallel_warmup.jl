@@ -210,9 +210,9 @@ NUTSPosterior2(lpdf) = begin
     n = LogDensityProblems.dimension(lpdf)
     NUTSPosterior2(lpdf, ElasticMatrix(zeros((n, 0))), ElasticMatrix(zeros((n, 0))), zeros(0), fill(0, 2))
 end
-reset!(x::Vector{<:Number}) = empty!(x)
-reset!(x::Vector{<:AbstractArray}) = map(reset!, x)
-reset!(x::NamedTuple) = map(reset!, x)
+# reset!(x::Vector{<:Number}) = empty!(x)
+# reset!(x::Vector{<:AbstractArray}) = map(reset!, x)
+# reset!(x::NamedTuple) = map(reset!, x)
 reset!(lpdf::NUTSPosterior2) = begin
     map(reset!, (lpdf.position, lpdf.gradient, lpdf.dH))
     lpdf.idxs .= 0

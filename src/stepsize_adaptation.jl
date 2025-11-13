@@ -1,5 +1,5 @@
 abstract type AbstractStepsizeAdaptation end
-OnlineStatsBase.value(a::AbstractStepsizeAdaptation) = select!(a)
+OnlineStatsBase.value(a::AbstractStepsizeAdaptation) = finalize!(a)
 
 struct NoStepsizeAdaptation{T} <: AbstractStepsizeAdaptation
     stepsize::T
@@ -28,7 +28,7 @@ OnlineStatsBase.fit!(a::DualAveragingStepsizeAdaptation, ::NUTSPosterior, stats)
     a, stats.acceptance_rate
 )
 propose!(a::DualAveragingStepsizeAdaptation) = DynamicHMC.current_ϵ(a.state[])
-select!(a::DualAveragingStepsizeAdaptation) = DynamicHMC.final_ϵ(a.state[])
+finalize!(a::DualAveragingStepsizeAdaptation) = DynamicHMC.final_ϵ(a.state[])
 
 
 abstract type AbstractStepsizeRegression end
@@ -124,7 +124,7 @@ propose!(a::SquaredJumpStepsizeAdaptation; q=.99, ar_penalty=.5, max_factor=64) 
     end
     rv
 end
-select!(a::SquaredJumpStepsizeAdaptation; q=.5, kwargs...) = propose!(a::SquaredJumpStepsizeAdaptation; q, kwargs...)
+finalize!(a::SquaredJumpStepsizeAdaptation; q=.5, kwargs...) = propose!(a::SquaredJumpStepsizeAdaptation; q, kwargs...)
 OnlineStatsBase.fit!(a::SquaredJumpStepsizeAdaptation, lpdf::AbstractNUTSPosterior; stepsize) = begin 
     a.cache.max_sj[] = max(a.cache.max_sj[], expected_squared_jump(lpdf) / n_steps(lpdf))
     a.cache.max_lar[] = max(a.cache.max_lar[], log_acceptance_rate(lpdf))
@@ -134,7 +134,7 @@ end
 stepsize_compatibility!(a::SquaredJumpStepsizeAdaptation, stepsize) = if stepsize == 0
     Inf
 else
-    loss!(a, select!(a)) / loss!(a, stepsize)
+    loss!(a, finalize!(a)) / loss!(a, stepsize)
 end
 
 OnlineStatsBase.nobs(a::SquaredJumpStepsizeAdaptation) = nobs(a.sj)

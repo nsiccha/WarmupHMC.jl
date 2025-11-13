@@ -210,9 +210,9 @@ NUTSPosterior2(lpdf) = begin
     n = LogDensityProblems.dimension(lpdf)
     NUTSPosterior2(lpdf, ElasticMatrix(zeros((n, 0))), ElasticMatrix(zeros((n, 0))), zeros(0), fill(0, 2))
 end
-reset!(x::Vector{<:Number}) = empty!(x)
-reset!(x::Vector{<:AbstractArray}) = map(reset!, x)
-reset!(x::NamedTuple) = map(reset!, x)
+# reset!(x::Vector{<:Number}) = empty!(x)
+# reset!(x::Vector{<:AbstractArray}) = map(reset!, x)
+# reset!(x::NamedTuple) = map(reset!, x)
 reset!(lpdf::NUTSPosterior2) = begin
     map(reset!, (lpdf.position, lpdf.gradient, lpdf.dH))
     lpdf.idxs .= 0
@@ -573,146 +573,146 @@ logjitter(rng, x, dist) = x * exp(rand(rng, dist))
 using Distributions
 
 
-struct ConjugateLinearRegression{T}
-    potential::Vector{T}
-    precision::Matrix{T}
-    ab::Vector{T}
-    location::Vector{T}
-    L::LowerTriangular{T, Matrix{T}}
-end
-ConjugateLinearRegression(n; a=3., b=1.) = ConjugateLinearRegression(zeros(n), zeros((n,n)), [a, b, 0.], zeros(n), LowerTriangular(zeros((n,n))))
-ConjugateLinearRegression(;potential, precision, a, b) = ConjugateLinearRegression(potential, precision, [a, b, 0.], 0*potential, LowerTriangular(0*precision))
-ConjugateLinearRegression(x::AbstractVector, y::AbstractVector) = ConjugateLinearRegression(hcat(ones(length(x)), x), y)
-ConjugateLinearRegression(X::AbstractMatrix, y::AbstractVector) = condition!(ConjugateLinearRegression(size(X, 2)), X, y)
-reset!(p::ConjugateLinearRegression; a=3., b=1.) = begin 
-    p.potential .= 0
-    p.precision .= 0
-    p.ab .= [a, b, 0]
-    p
-end
-relax!(p::ConjugateLinearRegression) = if maybeready!(p)
-    prec = sqrt(p.precision[end, end])
-    p.precision .= 0
-    p.potential .= 0
-    p.precision[end, end] = prec
-    p.potential[end] = prec * p.location[end]
-    p.ab[1] *= .5
-    p.ab[2] = p.ab[3] + .5 * prec * abs2(p.location[end])
-    p.ab[3] = 0
-    p
-else
-    reset!(p) 
-end
-condition!(p::ConjugateLinearRegression, X, y) = begin
-    (n, o) = size(X)
-    @assert n == length(y)
-    @assert o == length(p.location)
-    p.potential .+= X' * y
-    p.precision .+= X' * X
-    p.ab[1] += n/2
-    p.ab[2] += .5 * sum(abs2, y)
-    p.ab[3] = 0.
-    p
-end
-prepare!(p::ConjugateLinearRegression) = if p.ab[3] == 0
-    parent(p.L) .= cholesky(p.precision).L
-    ldiv!(p.location, p.L, p.potential)
-    p.ab[3] = p.ab[2] - .5 * sum(abs2, p.location)
-    ldiv!(p.L', p.location)
-    p
-else
-    p
-end
-maybeready(p::ConjugateLinearRegression) = p.ab[3] != 0 || isposdef(p.precision)
-maybeready!(p::ConjugateLinearRegression) = if maybeready(p)
-    prepare!(p)
-    true
-else
-    false
-end
-Base.rand(rng::AbstractRNG, p::ConjugateLinearRegression, args::Int...; q=0) = begin 
-    prepare!(p)
-    obs_var_dist = InverseGamma(p.ab[1], p.ab[3])
-    obs_var = quantile.(Ref(obs_var_dist), rand(rng, Uniform(q, 1-q), args...))
-    # obs_var .= rand(rng, InverseGamma(p.ab[1], p.ab[3]), args...)
-    # beta = rand(rng, Uniform(q, 1-q), length(p.potential), args...)
-    # beta .= quantile.(Ref(Normal()), beta)
-    beta = sqrt.(obs_var') .* quantile.(Ref(Normal()), rand(rng, Uniform(q, 1-q), length(p.potential), args...))
-    ldiv!(p.L', beta)
-    beta .+= p.location
-    (;obs_var, beta)
-end 
-pred(p::ConjugateLinearRegression, x::Number) = pred(p, [1., x])
-pred(p::ConjugateLinearRegression, x::AbstractVector) = begin
-    prepare!(p)
-    dot(p.location, x)
-end
-ipred(p::ConjugateLinearRegression, y::Number) = begin 
-    prepare!(p)
-    alpha, beta = p.location
-    (y - alpha) / beta
-end
-irand(rng::AbstractRNG, p::ConjugateLinearRegression, y::Number; q=.25) = begin 
-    alpha, beta = rand(rng, p; q).beta
-    (y - alpha) / beta
-end
+# struct ConjugateLinearRegression{T}
+#     potential::Vector{T}
+#     precision::Matrix{T}
+#     ab::Vector{T}
+#     location::Vector{T}
+#     L::LowerTriangular{T, Matrix{T}}
+# end
+# ConjugateLinearRegression(n; a=3., b=1.) = ConjugateLinearRegression(zeros(n), zeros((n,n)), [a, b, 0.], zeros(n), LowerTriangular(zeros((n,n))))
+# ConjugateLinearRegression(;potential, precision, a, b) = ConjugateLinearRegression(potential, precision, [a, b, 0.], 0*potential, LowerTriangular(0*precision))
+# ConjugateLinearRegression(x::AbstractVector, y::AbstractVector) = ConjugateLinearRegression(hcat(ones(length(x)), x), y)
+# ConjugateLinearRegression(X::AbstractMatrix, y::AbstractVector) = condition!(ConjugateLinearRegression(size(X, 2)), X, y)
+# reset!(p::ConjugateLinearRegression; a=3., b=1.) = begin 
+#     p.potential .= 0
+#     p.precision .= 0
+#     p.ab .= [a, b, 0]
+#     p
+# end
+# relax!(p::ConjugateLinearRegression) = if maybeready!(p)
+#     prec = sqrt(p.precision[end, end])
+#     p.precision .= 0
+#     p.potential .= 0
+#     p.precision[end, end] = prec
+#     p.potential[end] = prec * p.location[end]
+#     p.ab[1] *= .5
+#     p.ab[2] = p.ab[3] + .5 * prec * abs2(p.location[end])
+#     p.ab[3] = 0
+#     p
+# else
+#     reset!(p) 
+# end
+# condition!(p::ConjugateLinearRegression, X, y) = begin
+#     (n, o) = size(X)
+#     @assert n == length(y)
+#     @assert o == length(p.location)
+#     p.potential .+= X' * y
+#     p.precision .+= X' * X
+#     p.ab[1] += n/2
+#     p.ab[2] += .5 * sum(abs2, y)
+#     p.ab[3] = 0.
+#     p
+# end
+# prepare!(p::ConjugateLinearRegression) = if p.ab[3] == 0
+#     parent(p.L) .= cholesky(p.precision).L
+#     ldiv!(p.location, p.L, p.potential)
+#     p.ab[3] = p.ab[2] - .5 * sum(abs2, p.location)
+#     ldiv!(p.L', p.location)
+#     p
+# else
+#     p
+# end
+# maybeready(p::ConjugateLinearRegression) = p.ab[3] != 0 || isposdef(p.precision)
+# maybeready!(p::ConjugateLinearRegression) = if maybeready(p)
+#     prepare!(p)
+#     true
+# else
+#     false
+# end
+# Base.rand(rng::AbstractRNG, p::ConjugateLinearRegression, args::Int...; q=0) = begin 
+#     prepare!(p)
+#     obs_var_dist = InverseGamma(p.ab[1], p.ab[3])
+#     obs_var = quantile.(Ref(obs_var_dist), rand(rng, Uniform(q, 1-q), args...))
+#     # obs_var .= rand(rng, InverseGamma(p.ab[1], p.ab[3]), args...)
+#     # beta = rand(rng, Uniform(q, 1-q), length(p.potential), args...)
+#     # beta .= quantile.(Ref(Normal()), beta)
+#     beta = sqrt.(obs_var') .* quantile.(Ref(Normal()), rand(rng, Uniform(q, 1-q), length(p.potential), args...))
+#     ldiv!(p.L', beta)
+#     beta .+= p.location
+#     (;obs_var, beta)
+# end 
+# pred(p::ConjugateLinearRegression, x::Number) = pred(p, [1., x])
+# pred(p::ConjugateLinearRegression, x::AbstractVector) = begin
+#     prepare!(p)
+#     dot(p.location, x)
+# end
+# ipred(p::ConjugateLinearRegression, y::Number) = begin 
+#     prepare!(p)
+#     alpha, beta = p.location
+#     (y - alpha) / beta
+# end
+# irand(rng::AbstractRNG, p::ConjugateLinearRegression, y::Number; q=.25) = begin 
+#     alpha, beta = rand(rng, p; q).beta
+#     (y - alpha) / beta
+# end
 
 # import WarmupHMC: OnlineStatsBase
 
-running_variance(x::AbstractVector) = begin 
-    acc = OnlineStatsBase.Variance()
-    [
-        (OnlineStatsBase.fit!(acc, xi); var(acc)) for xi in x
-    ]
-end
+# running_variance(x::AbstractVector) = begin 
+#     acc = OnlineStatsBase.Variance()
+#     [
+#         (OnlineStatsBase.fit!(acc, xi); var(acc)) for xi in x
+#     ]
+# end
 
-running_mean(x::AbstractVector; rate=.01) = begin 
-    acc = OnlineStatsBase.Mean(weight=OnlineStatsBase.ExponentialWeight(rate))
-    [
-        (isfinite(xi) && OnlineStatsBase.fit!(acc, xi); mean(acc)) for xi in x
-    ]
-end
+# running_mean(x::AbstractVector; rate=.01) = begin 
+#     acc = OnlineStatsBase.Mean(weight=OnlineStatsBase.ExponentialWeight(rate))
+#     [
+#         (isfinite(xi) && OnlineStatsBase.fit!(acc, xi); mean(acc)) for xi in x
+#     ]
+# end
 
-acceptance_rate_plot(args...; kwargs...) = acceptance_rate_plot!(plot(), args...; kwargs...)
-acceptance_rate_plot!(p, stepsize::AbstractVector{<:AbstractVector}, ar::AbstractVector{<:AbstractVector}; kwargs...) = begin 
-    for i in eachindex(stepsize)
-        acceptance_rate_plot!(p, stepsize[i], ar[i]; color=i, kwargs...)
-    end
-    p
-end
-@views acceptance_rate_plot!(p, stepsize, ar; bins=range(0, 1, 11)[2:end-1], kwargs...) = begin 
-    n = length(stepsize)
-    n_bins = length(bins)
-    qs = zeros((n, n_bins))
-    ss = sortperm(stepsize; rev=true)
-    sar = sortperm(ar)
-    weights = 1. .* (stepsize[sar] .== stepsize[ss[1]])
-    cweights = zeros(n)
-    for i in 2:n
-        weights .= exp(-16*abs(stepsize[ss[i]] - stepsize[ss[i-1]])) .* weights .+ (stepsize[ss[i]] .== stepsize[sar])
-        cumsum!(cweights, weights)
-        cweights ./= cweights[end] 
-        for j in eachindex(bins)
-            qs[i, j] = ar[sar[searchsortedfirst(cweights, bins[j])]]
-        end
-    end
-    for i in 1:n_bins÷2
-        plot!(p, stepsize[ss], qs[:, i], fillrange=qs[:, end-i+1]; alpha=0, fillalpha=2/n_bins, kwargs...)
-    end 
-    plot!(p, stepsize[ss], qs; kwargs...)
-end
-@views parallel_ess_rhat(position, idx) = begin
-    dimension = size(position, 1) 
-    cidxs = groupedby_idxs(idx)
-    n_chains = length(cidxs)
-    sp = sortperm(cidxs; by=length, rev=true)
-    # display(sp')
-    map(1:n_chains) do n_used
-        n_draws = length(cidxs[sp[n_used]])
-        draws = zeros((n_draws, n_used, dimension))
-        for i in 1:n_used
-            draws[:, i, :] .= position[:, cidxs[sp[i]][end-n_draws+1:end]]'
-        end
-        MCMCDiagnosticTools.ess_rhat(draws)
-    end
-end
+# acceptance_rate_plot(args...; kwargs...) = acceptance_rate_plot!(plot(), args...; kwargs...)
+# acceptance_rate_plot!(p, stepsize::AbstractVector{<:AbstractVector}, ar::AbstractVector{<:AbstractVector}; kwargs...) = begin 
+#     for i in eachindex(stepsize)
+#         acceptance_rate_plot!(p, stepsize[i], ar[i]; color=i, kwargs...)
+#     end
+#     p
+# end
+# @views acceptance_rate_plot!(p, stepsize, ar; bins=range(0, 1, 11)[2:end-1], kwargs...) = begin 
+#     n = length(stepsize)
+#     n_bins = length(bins)
+#     qs = zeros((n, n_bins))
+#     ss = sortperm(stepsize; rev=true)
+#     sar = sortperm(ar)
+#     weights = 1. .* (stepsize[sar] .== stepsize[ss[1]])
+#     cweights = zeros(n)
+#     for i in 2:n
+#         weights .= exp(-16*abs(stepsize[ss[i]] - stepsize[ss[i-1]])) .* weights .+ (stepsize[ss[i]] .== stepsize[sar])
+#         cumsum!(cweights, weights)
+#         cweights ./= cweights[end] 
+#         for j in eachindex(bins)
+#             qs[i, j] = ar[sar[searchsortedfirst(cweights, bins[j])]]
+#         end
+#     end
+#     for i in 1:n_bins÷2
+#         plot!(p, stepsize[ss], qs[:, i], fillrange=qs[:, end-i+1]; alpha=0, fillalpha=2/n_bins, kwargs...)
+#     end 
+#     plot!(p, stepsize[ss], qs; kwargs...)
+# end
+# @views parallel_ess_rhat(position, idx) = begin
+#     dimension = size(position, 1) 
+#     cidxs = groupedby_idxs(idx)
+#     n_chains = length(cidxs)
+#     sp = sortperm(cidxs; by=length, rev=true)
+#     # display(sp')
+#     map(1:n_chains) do n_used
+#         n_draws = length(cidxs[sp[n_used]])
+#         draws = zeros((n_draws, n_used, dimension))
+#         for i in 1:n_used
+#             draws[:, i, :] .= position[:, cidxs[sp[i]][end-n_draws+1:end]]'
+#         end
+#         MCMCDiagnosticTools.ess_rhat(draws)
+#     end
+# end

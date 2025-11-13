@@ -139,7 +139,7 @@ Base.iterate(s::CooperativeIterativeSampler, state::NamedTuple) = begin
                 fit!(scale_adaptation, problems[chain_idx], position_and_gradients[chain_idx])
                 fit!(stepsize_adaptation, problems[chain_idx]; stepsize)
                 if nobs(stepsize_adaptation) == n_stepsize_adaptations && final_stepsize[] == 0.
-                    final_stepsize[] = select!(stepsize_adaptation)
+                    final_stepsize[] = finalize!(stepsize_adaptation)
                 end
             end
         end
@@ -151,7 +151,7 @@ Base.iterate(s::CooperativeIterativeSampler, state::NamedTuple) = begin
             @info "Restarting sampling @ $iteration $((;cc, sc))"
             min_prev = minimum(parent(scale))
             parent(scale) .= marginal_scales!(scale_adaptation)
-            initial_stepsize = select!(stepsize_adaptation) * sqrt(min_prev / minimum(parent(scale)))
+            initial_stepsize = finalize!(stepsize_adaptation) * sqrt(min_prev / minimum(parent(scale)))
             final_stepsize[] = 0.
             max_depth = trunc(Int, log2(n_evaluations_per_chain))
         else

@@ -43,8 +43,8 @@ CooperativeIterativeSampler(
     lpdf, rngs, regularizing_n, n_stepsize_adaptations, max_refinements, jitter, compatibility_threshold, n_evaluations_per_chain, progress
 ))
 
-Base.iterate(s::AbstractIterativeSampler; kwargs...) = Base.iterate(s, initial_state(s; kwargs...); kwargs...)
-Base.iterate(s::AbstractIterativeSampler, ::Nothing; kwargs...) = Base.iterate(s, initial_state(s; kwargs...); kwargs...)
+# Base.iterate(s::AbstractIterativeSampler; kwargs...) = Base.iterate(s, initial_state(s; kwargs...); kwargs...)
+Base.iterate(s::AbstractIterativeSampler, ::Nothing=nothing; kwargs...) = Base.iterate(s, initial_state(s; kwargs...); kwargs...)
 
 progressasyncmap(f, it; progress, kwargs...) =  with_progress(progress, length(it); kwargs...) do progress
     asyncmap(it) do i
@@ -53,72 +53,99 @@ progressasyncmap(f, it; progress, kwargs...) =  with_progress(progress, length(i
         rv
     end
 end
+progressmap(f, it; progress, kwargs...) =  with_progress(progress, length(it); kwargs...) do progress
+    map(it) do i
+        rv = f(i, progress)
+        update_progress!(progress)
+        rv
+    end
+end
+# progressasyncmap!(f, results, it=results; progress, kwargs...) =  with_progress(progress, length(it); kwargs...) do progress
+#     asyncmap!(results, it) do i
+#         rv = f(i, progress)
+#         update_progress!(progress)
+#         rv
+#     end
+# end
 
 initial_state(s::CooperativeIterativeSampler; progress=s.config.progress, kwargs...) = begin 
     (;lpdf, rngs, regularizing_n, n_evaluations_per_chain) = s.config
     n_chains = length(rngs)
     dim = LogDensityProblems.dimension(lpdf)
-    scale = Diagonal(ones(dim))
-    problems = [
-        AdaptiveNUTSPosterior(
+    chains = progressasyncmap(1:n_chains; progress, description="Initialize chains") do idx, progress
+        rng = rngs[idx]
+        scale = Diagonal(ones(dim))
+        problem = AdaptiveNUTSPosterior(
             NUTSPosterior(
                 PreconditionedNUTSPosterior(deepcopy(lpdf), scale); 
                 R=composite_recorder(:everything)
             )
         )
-         for _ in 1:n_chains
-    ]
-    position_and_gradients = progressasyncmap(1:n_chains; progress, description="Find initial position") do idx, progress
-        (;position) = initialize_mcmc(problems[idx], missing; rng=rngs[idx], progress)
-        DynamicHMC.evaluate_ℓ(problems[idx], position; strict=true)
+        (;position) = initialize_mcmc(problem, missing; rng, progress)
+        position_and_gradient = DynamicHMC.evaluate_ℓ(problem, position; strict=true)
+        initial_stepsize = find_initial_stepsize(problem, position_and_gradient; rng)
+        stepsize_adaptation = SquaredJumpStepsizeAdaptation(initial_stepsize)
+        scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
+        draws = ElasticMatrix(zeros((dim, 0)))
+        is_busy = false
+        n_evaluations = 0
+        n_transitions = 0
+        final_stepsize = 0
+        lock = ReentrantLock()
+        cluster = 0
+        (;
+            scale, problem, position, position_and_gradient, 
+            initial_stepsize, stepsize_adaptation, scale_adaptation, draws, is_busy,
+            n_evaluations, n_transitions, final_stepsize, lock, cluster,
+        )
     end
-    initial_stepsize = median(progressasyncmap(1:n_chains; progress, description="Find initial stepsize") do idx, progress
-        find_initial_stepsize(problems[idx], position_and_gradients[idx]; rng=rngs[idx])
-    end)
-    stepsize_adaptation = SquaredJumpStepsizeAdaptation(initial_stepsize)
-    scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
+    clusters = progressasyncmap(1:0; progress, description="Initialize clusters") do idx, progress
+        chains = Int64[]
+        lock = ReentrantLock()
+        stepsize_adaptation = SquaredJumpStepsizeAdaptation(0.)
+        scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
+        (;stepsize_adaptation, scale_adaptation, lock, chains)
+    end
     max_depth = trunc(Int, log2(n_evaluations_per_chain))
     iteration = 0
-    draws = [ElasticMatrix(zeros((dim, 0))) for _ in 1:n_chains]
-    is_busy = fill(false, n_chains)
-    n_evaluations = fill(0, n_chains)
-    final_stepsize = Ref(0.)
     (;
-        scale, problems, rngs, n_chains, dim, position_and_gradients, initial_stepsize, stepsize_adaptation, scale_adaptation,
-        n_evaluations_per_chain, max_depth, iteration,
-        draws, is_busy, n_evaluations, final_stepsize
+        n_chains, dim, n_evaluations_per_chain, max_depth, iteration, 
+        chains, clusters, 
     )
 end
 Base.iterate(s::CooperativeIterativeSampler, state::NamedTuple; progress=s.config.progress, transient=true) = begin
     (;n_stepsize_adaptations, max_refinements, regularizing_n, jitter, compatibility_threshold) = s.config
-    tasks = Dict{Int,Task}()
     (;
-        scale, problems, rngs, n_chains, dim, position_and_gradients, initial_stepsize, stepsize_adaptation, scale_adaptation,
-        n_evaluations_per_chain, max_depth, iteration,
-        draws, is_busy, n_evaluations, final_stepsize
+        n_chains, dim, n_evaluations_per_chain, max_depth, iteration, 
+        chains, clusters, 
     ) = state
+    tasks = Dict{Int,Task}()
     target_evaluations = n_chains * n_evaluations_per_chain
-    n_evaluations .= 0
-    n_transitions = 0 * n_evaluations
-    chain_lock = ReentrantLock()
-    if final_stepsize[] == 0
-        stepsize_adaptation = SquaredJumpStepsizeAdaptation(initial_stepsize)
-        scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
-        for draws_ in draws
-            resize!(draws_, (dim, 0))
-        end
+    iteration_lock = ReentrantLock()
+    n_evaluations = Ref(0)
+    progressasyncmap(eachindex(clusters)) do idx, progress
+        error(clusters[idx].chains)
     end
+    # if final_stepsize[] == 0
+    #     stepsize_adaptation = SquaredJumpStepsizeAdaptation(initial_stepsize)
+    #     scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
+    #     for draws_ in draws
+    #         resize!(draws_, (dim, 0))
+    #     end
+    # end
     iteration += 1
     with_progress(progress, target_evaluations; description="CooperativeIterativeSampler($n_chains@$iteration)", transient) do progress
         start_time = time_ns()
         while true 
             chain_idx = 0
-            @lock chain_lock begin 
-                sum(n_evaluations) >= target_evaluations && break
+            @lock iteration_lock begin 
+                n_evaluations[] >= target_evaluations && break
                 for idx in 1:n_chains
-                    is_busy[idx] && continue
-                    if chain_idx == 0 || n_evaluations[chain_idx] > n_evaluations[idx]
-                        chain_idx = idx
+                    @lock chains[idx].lock begin
+                        is_busy[idx] && continue
+                        if chain_idx == 0 || n_evaluations[chain_idx] > n_evaluations[idx]
+                            chain_idx = idx
+                        end
                     end
                 end
                 if chain_idx != 0
@@ -169,14 +196,11 @@ Base.iterate(s::CooperativeIterativeSampler, state::NamedTuple; progress=s.confi
         cc = cond_compatibility(scale_adaptation, scale)
         sc = stepsize_compatibility!(stepsize_adaptation, final_stepsize[])
         if cc * sc > compatibility_threshold
-            # @info "Restarting sampling @ $iteration $((;cc, sc))"
             min_prev = minimum(parent(scale))
             parent(scale) .= marginal_scales!(scale_adaptation)
             initial_stepsize = finalize!(stepsize_adaptation) * sqrt(min_prev / minimum(parent(scale)))
             final_stepsize[] = 0.
             max_depth = trunc(Int, log2(n_evaluations_per_chain))
-        else
-            # @info "Continuing sampling @ $iteration $((;cc, sc))"
         end
         update_progress!(progress;
             relative_condition_number=cc,
@@ -221,3 +245,178 @@ sample_resumably(callback, sampler::AbstractIterativeSampler, n_iterations; path
     end
     state
 end
+
+
+# Base.iterate(s::IterativeSampler, state::NamedTuple) = begin 
+#     stepsize = propose!(stepsize_adaptation)
+#     position_and_gradient = sample!(
+#         problem, position_and_gradient; rng, stepsize, max_depth, max_refinements
+#     )
+#     n_evaluations += n_steps(problem)
+#     n_transitions += 1
+#     fit!(scale_adaptation, problem, position_and_gradient)
+#     fit!(stepsize_adaptation, problem; stepsize)
+#     if nobs(stepsize_adaptation) == n_stepsize_adaptations && final_stepsize == 0.
+#         final_stepsize[] = finalize!(stepsize_adaptation)
+#     end
+#     # update_progress!(progress)
+# end
+whilefirst(f, state) = while true#!isnothing(state)
+    cond, state = f(state)
+    cond || return state
+end
+maybereset!!(chain) = chain
+step!!(state::NamedTuple; kwargs...) = step!!(state.sampler, state; kwargs...)
+step!!(sampler::AbstractIterativeSampler; kwargs...) = step!!(sampler, initial_state(sampler); kwargs...)
+
+struct ParallelStepsizeAdaptation2{P<:AbstractStepsizeAdaptation,L<:Base.AbstractLock} <: AbstractStepsizeAdaptation
+    parent::P
+    lock::L
+end
+Base.parent(a::ParallelStepsizeAdaptation2) = a.parent
+Base.lock(a::ParallelStepsizeAdaptation2) = lock(a.lock)
+Base.unlock(a::ParallelStepsizeAdaptation2) = unlock(a.lock)
+propose!(a::ParallelStepsizeAdaptation2, args...; kwargs...) = @lock a propose!(parent(a), args...; kwargs...)
+OnlineStatsBase.fit!(a::ParallelStepsizeAdaptation2, args...; kwargs...) = @lock a OnlineStatsBase.fit!(parent(a), args...; kwargs...)
+finalize!(a::ParallelStepsizeAdaptation2, args...; kwargs...) = @lock a finalize!(parent(a), args...; kwargs...)
+
+struct ClusteredIterativeSampler{C<:NamedTuple} <: AbstractIterativeSampler
+    config::C
+    ClusteredIterativeSampler(config::NamedTuple) = new{typeof(config)}(config)
+end
+initial_state(s::ClusteredIterativeSampler) = begin 
+    chains = map(s.config.samplers) do sampler
+        tmp = initial_state(sampler)
+        merge(tmp, (;
+            stepsize_adaptation=ParallelStepsizeAdaptation2(tmp.stepsize_adaptation, ReentrantLock()),
+            cluster_idx=0
+        ))
+    end
+    (;chains, target_evaluations=sum(chain->chain.target_evaluations, chains))
+end
+struct IterativeSampler{C<:NamedTuple} <: AbstractIterativeSampler
+    config::C
+    IterativeSampler(config::NamedTuple) = new{typeof(config)}(config)
+end
+IterativeSampler(
+    lpdf;
+    rng, regularizing_n=0, n_stepsize_adaptations=100, max_refinements=0, jitter=nothing, compatibility_threshold=sqrt(2),
+    target_evaluations=1000, progress=nothing
+) = IterativeSampler((;
+    lpdf, rng, regularizing_n, n_stepsize_adaptations, max_refinements, jitter, compatibility_threshold, target_evaluations, progress
+))
+
+initial_state(s::IterativeSampler) = begin 
+    (;lpdf, rng, regularizing_n, target_evaluations) = s.config
+    dim = LogDensityProblems.dimension(lpdf)
+    scale = Diagonal(ones(dim))
+    problem = AdaptiveNUTSPosterior(
+        NUTSPosterior(
+            PreconditionedNUTSPosterior(deepcopy(lpdf), scale); 
+            R=composite_recorder(:everything)
+        )
+    )
+    position_and_gradient = DynamicHMC.EvaluatedLogDensity(zeros(dim), -Inf, zeros(dim))
+    initial_stepsize = 1.#find_initial_stepsize(problem, position_and_gradient; rng)
+    stepsize_adaptation = SquaredJumpStepsizeAdaptation(initial_stepsize)
+    scale_adaptation = IntermediateScaleAdaptation(dim; regularizing_n)
+    draws = ElasticMatrix(zeros((dim, 0)))
+    n_evaluations = 0
+    n_transitions = 0
+    final_stepsize = 0
+    iteration = 0
+    (;
+        sampler=s, rng, target_evaluations,
+        scale, problem, position_and_gradient, 
+        initial_stepsize, stepsize_adaptation, scale_adaptation, draws, 
+        n_evaluations, n_transitions, final_stepsize, iteration, 
+        max_depth=10, max_refinements=0, stable_for=0
+    )
+end
+step!!(s::IterativeSampler, state::NamedTuple; progress=s.config.progress) = begin
+    (;
+        scale_adaptation, stepsize_adaptation, position_and_gradient, problem, rng, max_depth, max_refinements,
+        n_evaluations, n_transitions, draws
+    ) = state
+    if !isfinite(position_and_gradient.ℓq)
+        (;position) = initialize_mcmc(problem; rng, progress)
+        position_and_gradient = DynamicHMC.evaluate_ℓ(problem, position; strict=true)
+    end
+    frozen, stepsize = propose!(stepsize_adaptation)
+    position_and_gradient = sample!(problem, position_and_gradient; rng, stepsize, max_depth, max_refinements)
+    n_evaluations += n_steps(problem)
+    n_transitions += 1
+    fit!(scale_adaptation, problem, position_and_gradient)
+    fit!(stepsize_adaptation, problem; stepsize)
+    frozen && append!(draws, position_and_gradient.q)
+    update_progress!(progress, n_evaluations; stepsize, n_evaluations, n_draws=size(draws, 2), n_transitions)
+    merge(state, (;stepsize, position_and_gradient, n_evaluations, n_transitions))
+end
+step!!(s::ClusteredIterativeSampler, state::NamedTuple; progress=s.config.progress, transient=false) = with_progress(progress, state.target_evaluations) do iprogress
+    (;chains, target_evaluations) = state
+    n_evaluations = Threads.Atomic{Int}(0)
+    n_chains = length(chains)
+    chains = progressasyncmap(chains; progress=iprogress, transient, description="chains") do chain, cprogress
+        with_progress(cprogress, target_evaluations ÷ n_chains; transient, description="$((;chain.cluster_idx, chain.stable_for))") do eprogress
+            whilefirst(maybereset!!(chain)) do chain 
+                pre_n_evaluations = chain.n_evaluations
+                chain = step!!(chain; progress=eprogress)
+                Threads.atomic_add!(n_evaluations, chain.n_evaluations - pre_n_evaluations)
+                update_progress!(iprogress, n_evaluations[])
+                n_evaluations[] < target_evaluations => chain
+            end
+        end
+    end
+    cluster!(chains)
+    (;chains, target_evaluations=2*target_evaluations)
+end
+findminval(f, domain) = mapfoldl(v->(f(v), v), _rf_findminval, domain)
+_rf_findminval((fm, im), (fx, ix)) = Base.isgreater(fm, fx) ? (fx, ix) : (fm, im)
+cluster!(chains) = begin
+    clusters = []
+    remaining = Set(eachindex(chains)) 
+    while length(remaining) > 0
+        candidates = copy(remaining)
+        scale_adaptation = merge(map(idx->chains[idx].scale_adaptation, collect(candidates))...)
+        stepsize_adaptation = ParallelStepsizeAdaptation2(SquaredJumpStepsizeAdaptation(1.), ReentrantLock())
+        while true
+            val, idx = findminval(candidates) do idx 
+                WarmupHMC.compatibility2(chains[idx].scale_adaptation.adaptations[2], scale_adaptation) 
+            end
+            if val > 0 || length(candidates) == 1
+                push!(clusters, (;candidates, scale_adaptation, stepsize_adaptation))
+                setdiff!(remaining, candidates)
+                break
+            else
+                WarmupHMC.unmerge!(scale_adaptation, chains[idx].scale_adaptation.adaptations[2])
+                pop!(candidates, idx)
+            end
+        end
+    end
+    sort!(clusters; by=c->length(c.candidates), rev=true)
+    for (cluster_idx, cluster) in enumerate(clusters)
+        (;candidates, scale_adaptation) = cluster
+        for idx in candidates
+            (;scale, stepsize_adaptation) = chain = chains[idx]
+            cc = cond_compatibility(scale_adaptation, scale)
+            restart = cc > sqrt(2)
+            if restart
+                min_prev = minimum(parent(scale))
+                parent(scale) .= marginal_scales(scale_adaptation) 
+                initial_stepsize = finalize!(stepsize_adaptation)[2] * sqrt(min_prev / minimum(parent(scale)))
+                reset!(chain.scale_adaptation)
+                reset!(chain.draws)
+                chains[idx] = merge(
+                    chain, 
+                    (;cluster_idx, stable_for=0, initial_stepsize, cluster.stepsize_adaptation)
+                )
+            else
+                chains[idx] = merge(
+                    chain, 
+                    (;cluster_idx, stable_for=chain.stable_for+1)
+                )
+            end
+        end
+    end
+end
+

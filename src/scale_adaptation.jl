@@ -177,6 +177,7 @@ checkunique(f, args) = checkunique(map(f, args))
 Base.length(a::Variances) = length(a.location)
 Base.eachindex(a::Variances) = eachindex(a.location)
 
+Base.merge(a::IntermediateScaleAdaptation, rgs::IntermediateScaleAdaptation...) = merge(last.(getproperty.((a, rgs...), :adaptations))...)
 Base.merge(a::NutpieScaleAdaptation, rgs::NutpieScaleAdaptation...) = merge!(
     NutpieScaleAdaptation(
         checkunique(length, (a, rgs...));
@@ -246,7 +247,6 @@ Base.copy!(dest::StanScaleAdaptation, src::StanScaleAdaptation) = begin
     map(copy!, (;dest.variances), (;src.variances)) 
     dest
 end
-
 Base.copy!(dest::NutpieScaleAdaptation, src::NutpieScaleAdaptation) = begin
     map(copy!, (;dest.position_variances, dest.gradient_variances), (;src.position_variances, src.gradient_variances)) 
     dest
@@ -259,6 +259,24 @@ Base.copy!(dest::Variances, src::Variances) = begin
     map(copy!, (;dest.location, dest.squared_scale), (;src.location, src.squared_scale))
     dest.n[] = src.n[] 
     dest
+end
+reset!(a::IntermediateScaleAdaptation) = begin
+    foreach(reset!, a.adaptations) 
+    a
+end
+reset!(a::NutpieScaleAdaptation) = begin
+    map(reset!, (;a.position_variances, a.gradient_variances)) 
+    a
+end
+reset!(a::RegularizedVariances) = begin
+    map(reset!, (;a.variances)) 
+    a
+end
+reset!(a::Variances) = begin
+    a.location .= 0
+    a.squared_scale .= 0
+    a.n[] = 0
+    a
 end
 OnlineStatsBase.nobs(a::RegularizedVariances) = nobs(a.variances)
 OnlineStatsBase.nobs(a::StanScaleAdaptation) = nobs(a.variances)

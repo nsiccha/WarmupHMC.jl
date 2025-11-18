@@ -78,15 +78,15 @@ struct SquaredJumpStepsizeAdaptation{S<:SquaredJumpStepsizeRegression,L<:LogAcce
     lar::L
     cache::C
 end
-SquaredJumpStepsizeAdaptation(stepsize) = SquaredJumpStepsizeAdaptation(
+SquaredJumpStepsizeAdaptation(stepsize; freezeat=100) = SquaredJumpStepsizeAdaptation(
     SquaredJumpStepsizeRegression(stepsize),
     LogAcceptanceRateStepsizeRegression(stepsize),
     (;
         queue=Set(stepsize), visited=Set{typeof(stepsize)}(), 
-        max_sj=Ref(-Inf), max_lar=Ref(-Inf)
+        max_sj=Ref(-Inf), max_lar=Ref(-Inf), freezeat, frozen=Ref(0.)
     )
 )
-loss!(a::SquaredJumpStepsizeAdaptation, stepsize; q=.5, ar_penalty=.5) = begin 
+loss!(a::SquaredJumpStepsizeAdaptation, stepsize; q=.5, ar_penalty=.5) = begin
     log_stepsize = log(stepsize)
     min(
         ylink(
@@ -100,7 +100,12 @@ loss!(a::SquaredJumpStepsizeAdaptation, stepsize; q=.5, ar_penalty=.5) = begin
         ar_penalty
     )
 end
-propose!(a::SquaredJumpStepsizeAdaptation; q=.99, ar_penalty=.5, max_factor=64) = begin 
+propose!(a::SquaredJumpStepsizeAdaptation; q=.99, ar_penalty=.5, max_factor=64) = if a.cache.freezeat < nobs(a)
+    true, a.cache.frozen[]
+elseif a.cache.freezeat == nobs(a)
+    a.cache.frozen[] = argmax(Base.Fix1(loss!, a), a.cache.visited) 
+    true, a.cache.frozen[]
+else  
     rv = if a.cache.max_sj[] == -Inf
         maximum(a.cache.queue)
     elseif a.cache.max_lar[] < log(ar_penalty)
@@ -122,12 +127,13 @@ propose!(a::SquaredJumpStepsizeAdaptation; q=.99, ar_penalty=.5, max_factor=64) 
     else
         push!(a.cache.queue, sqrt(rv * minimum(filter(>(rv), a.cache.visited))))
     end
-    rv
+    false, rv
 end
 finalize!(a::SquaredJumpStepsizeAdaptation; q=.5, kwargs...) = propose!(a::SquaredJumpStepsizeAdaptation; q, kwargs...)
 OnlineStatsBase.fit!(a::SquaredJumpStepsizeAdaptation, lpdf::AbstractNUTSPosterior; stepsize) = begin 
     a.cache.max_sj[] = max(a.cache.max_sj[], expected_squared_jump(lpdf) / n_steps(lpdf))
     a.cache.max_lar[] = max(a.cache.max_lar[], log_acceptance_rate(lpdf))
+    push!(a.cache.visited, stepsize)
     fit!(a.sj, lpdf; stepsize)
     fit!(a.lar, lpdf; stepsize)
 end

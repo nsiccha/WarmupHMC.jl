@@ -1,4 +1,4 @@
-initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
+initialize_mcmc(lpdf, ::Missing=missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
 initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 1:ntries
     try 

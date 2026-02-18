@@ -42,35 +42,6 @@ max_level(x::WarmupHMC.Progress) = get(root(x).info, :max_level, +Inf)
 max_rows(x::WarmupHMC.Progress) = get(root(x).info, :max_rows, 32)
 id(x::ProgressJob) = parent(x).id
 propagates(x::WarmupHMC.Progress) = get(x.info, :propagates, false)
-# isactive(x::WarmupHMC.Progress) = x.info.isactive[]
-# queue(x::ProgressBar) = x.info.queue
-
-# addchild!(x::Term.Progress.ProgressBar; owner=nothing, lock=ReentrantLock(), kwargs...) = addchild!(
-#     owner, WarmupHMC.Progress(x, (;lock, next_id=Ref(1), priority=[], pos=[], kwargs...))
-# )
-
-# addchild!(x::Term.Progress.ProgressJob; owner=nothing, lock=ReentrantLock(), kwargs...) = addchild!(
-#     owner, WarmupHMC.Progress(x, (;owner, owns=Vector(), labels=Dict(), lock, isactive=Ref(true), kwargs...))
-# )
-# addchild!(::Nothing, x::WarmupHMC.Progress) = x
-# # find_last_active(owner::WarmupHMC.Progress) = if !isactive(owner)
-# #     nothing
-# # else
-# #     for x in Iterators.reverse(owns(owner))
-# #         rv = find_last_active(x)
-# #         isnothing(rv) || return rv
-# #     end
-# #     return owner
-# # end
-# addchild!(owner::ProgressBar, x::ProgressJob) = lock(owner) do 
-#     pbar = parent(owner)
-#     job = parent(x)
-#     push!(pbar.jobs, job)
-# end
-# addchild!(owner::ProgressJob, x::ProgressJob) = lock(owner) do 
-#     push!(owns(owner), x)
-#     x
-# end
 always_true(x) = true
 childfilter(owner::WarmupHMC.Progress) = get(root(owner).info, :filter, always_true)
 acceptschild(owner::WarmupHMC.Progress, x::WarmupHMC.Progress) = level(owner) < max_level(owner) && length(parent(root(owner)).jobs) < max_rows(owner) && childfilter(owner)(x)

@@ -1,3 +1,17 @@
 # WarmupHMC.jl
 
-Implements different warm-up procedures for HMC/NUTS. See [https://nsiccha.github.io/WarmupHMC.jl/](https://nsiccha.github.io/WarmupHMC.jl/) for details and benchmarks.
+Exports a single method, taking a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments: 
+```julia
+adaptive_warmup_mcmc(
+    rng[s], problem; 
+    n_draws=1000, 
+    target_acceptance_rate=.8, 
+    max_tree_depth=10, 
+    progress=nothing, options...
+)
+````
+
+With `progress=Term.ProgressBar`, prints a progress bar which is prettier than most. 
+The result is a NamedTuple, with its `posterior_position` field containing the posterior draws. 
+
+Results should come in faster than with "standard" methods, and should often be better.

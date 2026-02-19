@@ -151,9 +151,6 @@ else
 end
 WarmupHMC.update_progress!(::Term.Progress.ProgressJob, ::Nothing) = nothing
 WarmupHMC.update_progress!(job::Term.Progress.ProgressJob, value) = begin
-    # new_msg = WarmupHMC.short_string(value)
-    # dwidth = length(new_msg) - length(job.columns[end].msg[]) 
-    # Term.Progress.setwidth!(job.columns[end-1].measure.w - dwidth)
     job.columns[end].msg[] = WarmupHMC.short_string(value)
     Term.Progress.setwidth!(job.columns[end-1], job.width-length(job.columns) - sum(c -> isa(c, Term.Progress.ProgressColumn) ? 0 : c.measure.w, job.columns))
 end
@@ -191,6 +188,6 @@ WarmupHMC.finalize_progress!(bar::ProgressBar) = lock(bar) do
     yield()
 end
 
-WarmupHMC.pathfinder_callback(job::ProgressJob) = (state, args...) -> (WarmupHMC.update_progress!(job, state.iter); false)
+# WarmupHMC.pathfinder_callback(job::ProgressJob) = (state, args...) -> (WarmupHMC.update_progress!(job, state.iter); false)
 
 end

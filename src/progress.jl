@@ -4,6 +4,8 @@ struct Progress{P,I}
 end
 Base.parent(x::Progress) = x.parent
 info(x::Progress) = x.info
+initialize_progress!(x::Union{Symbol,Module}, args...; kwargs...) = initialize_progress!(Val(x), args...; kwargs...)
+initialize_progress!(x::Tuple, args...; kwargs...) = initialize_progress!(x..., args...; kwargs...)
 initialize_progress!(::Nothing, args...; kwargs...) = nothing
 update_progress!(::Nothing, args...; kwargs...) = nothing
 fail_progress!(args...; kwargs...) = nothing

@@ -20,11 +20,9 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
 
 [weakdeps]
-Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Term = "22787eb5-b846-44ae-b979-8e399b8463ab"
 
 [extensions]
-SerializationExt = "Serialization"
 TermExt = "Term"
 
 [compat]

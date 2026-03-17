@@ -2,18 +2,12 @@
 
 Adaptive NUTS warm-up for linear transformations and step size.
 
-## Motivation
-
-A previous approach to do automatic non-linear reparametrizations using MCMC draws has been found lacking, mainly for two reasons:
-
-* **High start-up cost**: Especially in the early stages of warm-up, a lot of effort is spent to get just a handful of MCMC draws. These are usually strongly correlated, and are thus usually less than helpful in learning the linear transformation, and even less so for the non-linear transformation.
-* **Limited convergence due to statistical "fluctuations"**: Even in the later stages of warm-up, the number of MCMC draws will inherently be limited. If there are many linear and non-linear parameters that have to be learned, the inherent fluctuations in estimating the "ideal" parameters may be so large that the linear and/or non-linear transformation are not helpful.
-
 ## Method
 
 WarmupHMC adaptively:
 
-* Learns a linear transformation of the posterior that simplifies MCMC sampling,
+* Learns a **linear transformation** of the posterior that simplifies MCMC sampling,
+* Optionally learns **nonlinear reparametrizations** (adaptive partial centering for hierarchical models),
 * Learns a NUTS step size (using standard Dual Averaging), and
 * Returns samples from the posterior.
 
@@ -28,6 +22,37 @@ The warm-up procedure is windowed and inspired by [Stan](https://mc-stan.org/doc
     * A standard diagonal "mass matrix",
     * A novel, adaptive sequence of Householder transformations followed by diagonal scaling.
 * Instead of running the warm-up for a fixed number of windows, we try to **estimate when continuing warming up is harmful/useless** and stop warming up then.
+
+## Nonlinear Reparametrizations
+
+WarmupHMC supports adaptive **partial centering** for hierarchical models. For parameters
+with a location-scale hierarchy (e.g. `x ~ Normal(mu, sigma)`), the centering parameter
+`c ∈ [0, 1]` interpolates between the centered (`c = 1`) and non-centered (`c = 0`)
+parametrizations.
+
+During warmup, the system tries multiple candidate centering values and selects the one
+minimizing a correlation-based loss. This happens at the end of each warmup window using
+the accumulated intermediate positions and gradients.
+
+To use reparametrizations, wrap your log density problem in a
+[`ReparametrizedProblem`](@ref) with an [`IndexedReparametrization`](@ref):
+
+```julia
+using WarmupHMC, DifferentiationInterface, Mooncake
+
+# Eight schools example: dims 1:8 are group effects, dim 9 = location, dim 10 = log-scale
+ir = IndexedReparametrization(
+    1:8 .=> Ref(Reparametrization(
+        PartiallyCentered(1.0), PartiallyCentered(1.0),
+        x -> x[9], x -> x[10]
+    ))
+)
+rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
+result = adaptive_warmup_mcmc(rng, rp)
+```
+
+Reparametrization is controlled by the `nonlinear_adapt` keyword (default `true`).
+Posterior samples are automatically transformed back to the original parametrization.
 
 ## See Also
 

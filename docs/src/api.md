@@ -5,3 +5,12 @@
 ```@docs
 WarmupHMC.adaptive_warmup_mcmc
 ```
+
+## Reparametrizations
+
+```@docs
+WarmupHMC.ReparametrizedProblem
+WarmupHMC.IndexedReparametrization
+WarmupHMC.PartiallyCentered
+WarmupHMC.Reparametrization
+```

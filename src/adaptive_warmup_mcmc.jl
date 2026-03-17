@@ -289,7 +289,7 @@ adaptive_warmup_mcmc(
         n_divergent_samples = 0
         # Update the linear transformation candidates and estimate the transformation loss,
         # using the INTERMEDIATE POSITIONS AND GRADIENTS.
-        # nonlinear_adapt && (position_and_gradient = find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient))
+        nonlinear_adapt && (position_and_gradient = find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient))
         # Update the new linear transformation to be the one with the minimal estimated transformation loss.
         active_transformation = argmin(
             map(L->update_loss!(L, (halo_position), (halo_gradient); kwargs...), scale_options)
@@ -301,7 +301,7 @@ adaptive_warmup_mcmc(
         reset!(recording_lpdf)
     end
     update_progress!(progress, (monitor_ess ? "min. ESS: $(short_string(ess[1])), " : "") * "divergent: $(short_string(100*n_divergent_samples/n_samples))%")
-    # reparametrize!(lpdf, posterior_position)#, posterior_gradient)
+    nonlinear_adapt && reparametrize!(lpdf, posterior_position)
     (;initial_position=position, halo_position, halo_gradient, posterior_position, posterior_gradient, ess, scale_options, active_transformation, stepsize, total_evaluation_counter, n_divergent_samples, position_and_gradient, scale_changes)
 end
 ensurevector(x, n) = Fill(x, n)

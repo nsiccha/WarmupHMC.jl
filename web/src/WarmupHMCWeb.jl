@@ -579,45 +579,6 @@ end
 end
 _examples = ExampleComputations(; cache_type=:parallel)
 
-function _render_progress_node(state; depth=0)
-    children = get(state, "children", [])
-    N = get(state, "N", nothing)
-    i = get(state, "i", 0)
-    desc = get(state, "description", "")
-    msg = get(state, "message", "")
-
-    parts = []
-    # Node header: description + counter or message
-    if !isempty(desc)
-        indent = "margin-left:$(depth)rem"
-        size = depth > 0 ? "font-size:$(max(0.75, 1.0 - depth * 0.1))em" : ""
-        style = join(filter(!isempty, [indent, size, "margin-bottom:4px"]), ";")
-        push!(parts, h.div(; style)(
-            h.strong("$(desc): "),
-            isnothing(N) ? h.span(msg) : h.span("$(i) / $(N)"),
-            (isnothing(N) || depth > 1) ? "" : h.progress(; value=string(i), max=string(N), style="margin-top:2px"),
-        ))
-    end
-    # Recurse into children
-    for child in children
-        push!(parts, _render_progress_node(child; depth=depth+1))
-    end
-    h.div(parts...)
-end
-
-function example_progress_html(state)
-    isnothing(state) && return h.p("Starting..."; style="color:var(--pico-muted-color)", aria_busy="true")
-    children = get(state, "children", [])
-    root_msg = get(state, "message", "")
-    if isempty(children) && !isempty(root_msg)
-        return h.div(
-            h.span(root_msg; style="color:var(--pico-muted-color)"),
-            h.span(" "; aria_busy="true"),
-        )
-    end
-    isempty(children) && return h.p("Starting..."; style="color:var(--pico-muted-color)", aria_busy="true")
-    h.div([_render_progress_node(cs) for cs in children]...)
-end
 
 function _posterior_select(names, id)
     h.select(; id, name="pn")(
@@ -1176,7 +1137,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             h.div(; hx_get=query_url("/async_reactive/$pn/$w"), hx_trigger="every 200ms", hx_swap="outerHTML")(
                 h.article(
                     h.header("Sampling $pn ($(warmup_label(w)))..."),
-                    example_progress_html(state),
+                    htmx_render_children(state),
                 )
             )
         else
@@ -1528,7 +1489,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             if rv isa Task
                 state = progress_state(status)
                 h.div(; hx_get=query_url("/example_pathfinder"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
-                    h.article(h.header("Pathfinder ($pn) — running..."), example_progress_html(state))
+                    h.article(h.header("Pathfinder ($pn) — running..."), htmx_render_children(state))
                 )
             else
                 h.article(
@@ -1547,7 +1508,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             if rv isa Task
                 state = progress_state(status)
                 h.div(; hx_get=query_url("/example_sampling"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
-                    h.article(h.header("Sampling ($pn) — running..."), example_progress_html(state))
+                    h.article(h.header("Sampling ($pn) — running..."), htmx_render_children(state))
                 )
             else
                 h.article(
@@ -1566,7 +1527,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             if rv isa Task
                 state = progress_state(status)
                 h.div(; hx_get=query_url("/example_cmdstan"; pn), hx_trigger="every 500ms", hx_swap="outerHTML")(
-                    h.article(h.header("CmdStan ($pn) — running..."), example_progress_html(state))
+                    h.article(h.header("CmdStan ($pn) — running..."), htmx_render_children(state))
                 )
             else
                 h.article(

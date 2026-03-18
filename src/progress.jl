@@ -1,9 +1,7 @@
 # Progress functions come from Treebars (using Treebars in WarmupHMC.jl).
 # This file only defines domain-specific display types and short_string/round2 extensions.
 
-import Treebars: short_string, round2
-
-round2(x::OnlineStatsBase.Mean) = round2(mean(x))
+Treebars.round2(x::OnlineStatsBase.Mean) = Treebars.round2(mean(x))
 
 struct UncertainFrequency
     obs::Int64
@@ -30,11 +28,11 @@ end
 Base.string(x::Speed) = "$(x.n) in $(short_string(x.dt/1e9)) seconds ($(short_string(x.n/(x.dt/1e9))) / s)"
 Base.string(x::ActiveTransformation) = "$(short_string(x.kinetic_energy.M⁻¹.m1)) (marginal scale changes = $(short_string(x.scale_changes)))"
 
-short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose}) = short_string(parent(x.m1))
-short_string(x::Pathfinder.WoodburyPDRightFactor) = "Pathfinder($(size(x.V, 1)))"
-short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.SuccessiveReflections}) = "Adaptive($(length(x.m1.reflections)))"
-short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"
-short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)"
+Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose}) = short_string(parent(x.m1))
+Treebars.short_string(x::Pathfinder.WoodburyPDRightFactor) = "Pathfinder($(size(x.V, 1)))"
+Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.SuccessiveReflections}) = "Adaptive($(length(x.m1.reflections)))"
+Treebars.short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"
+Treebars.short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)"
 
 struct Speeds
     n::Vector{Int}

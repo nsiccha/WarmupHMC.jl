@@ -626,30 +626,15 @@ function _posterior_select(names, id)
 end
 
 
-# --- Async reactive sampling state (module-level, not in DynamicObjects cache) ---
-_async_tasks = Dict{Tuple{String,String}, Task}()
-_async_progress = Dict{Tuple{String,String}, Any}()
-_async_results = Dict{Tuple{String,String}, Any}()
+# --- Async reactive sampling (fetchindex + __substatus__ pattern) ---
+@dynamicstruct struct AsyncReactiveComputations
+    __status__ = initialize_progress!(:state; description="Reactive")
+    __substatus__(name, args...; kwargs...) =
+        initialize_progress!(__status__; description="$name[$(join(args, ","))]")
 
-function _clear_async_reactive(pn, w)
-    key = (pn, w)
-    delete!(_async_results, key)
-    delete!(_async_progress, key)
-    delete!(_async_tasks, key)
+    results(pn, w) = try_sample_reactive(pn; warmup=w, progress=__status__)
 end
-
-function _start_async_reactive(pn, w; n_draws=100, n_adapts=50)
-    key = (pn, w)
-    haskey(_async_results, key) && return
-    haskey(_async_tasks, key) && !istaskdone(_async_tasks[key]) && return
-    p = initialize_progress!(:state; description="Sampling $pn ($w)")
-    _async_progress[key] = p
-    _async_tasks[key] = Threads.@spawn begin
-        result = try_sample_reactive(pn; warmup=w, progress=p, n_draws, n_adapts)
-        _async_results[key] = result
-        result
-    end
-end
+_async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
 @htmx struct AppContext
     req = nothing
@@ -1181,69 +1166,22 @@ end
         """<script>setup_viz($data_json, $traces_json, $options_json).play()</script>"""
     end
 
-    # --- Async reactive sampling with progress polling ---
-    # Uses module-level dicts (not DynamicObjects cache) because AppContext
-    # is serial (@cached properties need serial cache). ThreadsafeDict would
-    # be needed for the fetch= pattern, but that conflicts with @cached.
+    # --- Async reactive sampling with progress polling (fetchindex pattern) ---
 
-    async_reactive_fragment(pn, w) = begin
-        key = (pn, w)
-        _start_async_reactive(pn, w)
-        task = _async_tasks[key]
-        if !istaskdone(task)
-            state = progress_state(_async_progress[key])
-            children = get(state, "children", [])
-            parts = []
-            # Show root message (e.g. "Compiling..." phase) when no children yet
-            root_msg = get(state, "message", "")
-            if isempty(children) && !isempty(root_msg)
-                push!(parts, h.div(; style="margin-bottom:8px")(
-                    h.span(root_msg; style="color:var(--pico-muted-color)"),
-                    h.span(" "; aria_busy="true"),
-                ))
-            end
-            for cs in children
-                N = cs["N"]
-                i = cs["i"]
-                desc = cs["description"]
-                push!(parts, h.div(; style="margin-bottom:8px")(
-                    h.strong("$(desc): "),
-                    isnothing(N) ? h.span(cs["message"]) : h.span("$(i) / $(N)"),
-                    isnothing(N) ? "" : h.progress(; value=string(i), max=string(N), style="margin-top:4px"),
-                ))
-                for sc in get(cs, "children", [])
-                    push!(parts, h.div(; style="margin-left:1rem;font-size:0.9em;color:var(--pico-muted-color)")(
-                        h.span("$(sc["description"]) "), h.span(sc["message"]),
-                    ))
-                end
-            end
-            if isempty(parts)
-                push!(parts, h.p("Starting..."; style="color:var(--pico-muted-color)", aria_busy="true"))
-            end
-            h.div(; hx_get="/async_reactive/$pn/$w", hx_trigger="every 200ms", hx_swap="outerHTML")(
+    @get async_reactive(pn, w; rerun="") = fetchindex(_async_reactive.results, pn, w; force=!isempty(rerun)) do rv, status
+        if rv isa Task && istaskfailed(rv)
+            h.article(h.header("Failed"), h.pre(sprint(showerror, rv.result)))
+        elseif rv isa Task
+            state = progress_state(status)
+            h.div(; hx_get=query_url("/async_reactive/$pn/$w"), hx_trigger="every 200ms", hx_swap="outerHTML")(
                 h.article(
                     h.header("Sampling $pn ($(warmup_label(w)))..."),
-                    h.div(parts...),
+                    example_progress_html(state),
                 )
             )
-        elseif istaskfailed(task)
-            h.article(h.header("Failed"), h.pre(sprint(showerror, task.result)))
         else
-            result_section[warmup_label(w), _async_results[key]]
+            result_section[warmup_label(w), rv]
         end
-    end
-
-    @get async_reactive(pn, w; n_draws::Int=100, n_adapts::Int=50, rerun="") = begin
-        !isempty(rerun) && _clear_async_reactive(pn, w)
-        _start_async_reactive(pn, w; n_draws, n_adapts)
-        fragment = async_reactive_fragment[pn, w]
-        is_htmx(req) ? fragment : h.div(; id="content")(
-            breadcrumb([
-                ("Table", "/fragment_table", "/"),
-                (pn, nothing, nothing),
-            ]),
-            fragment,
-        )
     end
 
     @get viz(pn) = viz_content[pn]

@@ -9,7 +9,8 @@ using LogDensityProblems,
     FillArrays,
     Statistics,
     LogExpFunctions,
-    InverseFunctions
+    InverseFunctions,
+    Treebars
 import DynamicHMC,
     OnlineStatsBase,
     Random,

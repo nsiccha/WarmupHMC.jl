@@ -8,7 +8,7 @@ initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 
         @warn "Initialization failed the $i-th time, trying again..."
     end
 end
-pathfinder_callback(progress) = (state, args...) -> (WarmupHMC.update_progress!(progress, state.iter); false)
+pathfinder_callback(progress) = (state, args...) -> (update_progress!(progress, state.iter); false)
 initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs...) = with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
     # Work around https://github.com/roualdes/bridgestan/issues/272
     LogDensityProblems.logdensity_and_gradient(lpdf, init)

@@ -2,7 +2,7 @@
 
 [![Dev Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://nsiccha.github.io/WarmupHMC.jl/dev/)
 
-Exports a single method, taking a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments: 
+Exports `adaptive_warmup_mcmc` plus 4 reparametrization types (`ReparametrizedProblem`, `IndexedReparametrization`, `PartiallyCentered`, `Reparametrization`). The main method takes a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments: 
 ```julia
 adaptive_warmup_mcmc(
     rng[s], problem; 
@@ -13,7 +13,7 @@ adaptive_warmup_mcmc(
 )
 ````
 
-With `progress=Term.ProgressBar`, prints a progress bar which is prettier than most. 
+With [Treebars.jl](https://github.com/nsiccha/Treebars.jl) progress tracking, prints a progress bar which is prettier than most. 
 The result is a NamedTuple, with its `posterior_position` field containing the posterior draws. 
 
 Results should come in faster than with "standard" methods, and should often be better.

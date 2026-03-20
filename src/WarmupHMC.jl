@@ -13,8 +13,7 @@ using LogDensityProblems,
     Treebars
 import DynamicHMC,
     OnlineStatsBase,
-    Random,
-    StatsBase
+    Random
 
 export adaptive_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization

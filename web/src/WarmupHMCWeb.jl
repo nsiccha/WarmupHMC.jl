@@ -594,7 +594,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
 @htmx struct AppContext
     req = nothing
-    md = wants_markdown(req)
     cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
 
     @cached posterior_names = sort([
@@ -1319,7 +1318,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     @get debug_reparam(pn) = begin
         reparam = posterior_reparametrization(pn)
-        isnothing(reparam) && return markdown_response("No reparametrization for $pn")
+        isnothing(reparam) && return "No reparametrization for $pn"
         problem = stan_problem(pn)
         dim = LogDensityProblems.dimension(problem)
         x = randn(Xoshiro(42), dim)
@@ -1341,32 +1340,24 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         catch e
             push!(lines, "ERROR: $(sprint(showerror, e, catch_backtrace()))")
         end
-        markdown_response(join(lines, "\n"))
+        join(lines, "\n")
     end
 
     @get pkg_resolve = begin
         Pkg.resolve()
         Pkg.instantiate()
-        markdown_response("Pkg.resolve() and Pkg.instantiate() completed")
+        "Pkg.resolve() and Pkg.instantiate() completed"
     end
 
-    @get index = if md
-        markdown_response(plain_overview)
-    else
-        overview
-    end
+    @get index = overview
 
-    @get model(pn) = if md
-        markdown_response(plain_model[pn])
-    else
-        h.div(; id="content")(
-            breadcrumb([
-                ("Table", "/fragment_table", "/"),
-                (pn, nothing, nothing),
-            ]),
-            model_detail_content[pn],
-        )
-    end
+    @get model(pn) = h.div(; id="content")(
+        breadcrumb([
+            ("Table", "/fragment_table", "/"),
+            (pn, nothing, nothing),
+        ]),
+        model_detail_content[pn],
+    )
 
     @get check_compile(pn) = begin
         force_check["compile", pn]
@@ -1405,10 +1396,10 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         elseif check == "reparam"
             @clear_cache! reparam_result[pn]
         end
-        markdown_response("Cleared $check cache for $pn")
+        "Cleared $check cache for $pn"
     end
 
-    @get filter(check, status="all") = markdown_response(join(filtered_names[check, status], "\n"))
+    @get filter(check, status="all") = join(filtered_names[check, status], "\n")
 
     @get recheck(check, status="fail") = begin
         targets = filtered_names[check, status]
@@ -1417,7 +1408,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             r = force_check[check, pn]
             push!(results, "$(r.ok ? "PASS" : "FAIL") $pn$(r.ok ? "" : " -- $(r.error)")")
         end
-        markdown_response(join(results, "\n"))
+        join(results, "\n")
     end
 
     # --- Examples with progress ---

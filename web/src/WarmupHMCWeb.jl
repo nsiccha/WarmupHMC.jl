@@ -430,11 +430,6 @@ function status_str(cached, ok)
     !cached ? "-" : ok ? "PASS" : "FAIL"
 end
 
-function status_badge(ok)
-    ok ? h.span("PASS"; style="color:green;font-weight:bold") :
-         h.span("FAIL"; style="color:red;font-weight:bold")
-end
-
 function status_cell(cached, ok)
     !cached && return h.td("-"; style="color:gray")
     ok ? h.td("PASS"; style="color:green;font-weight:bold") :
@@ -708,7 +703,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     result_section(label, result) = begin
         isnothing(result) && return ""
         h.div(; style="margin-bottom:0.5rem")(
-            h.p(h.strong(label, ": "), status_badge(result.ok)),
+            h.p(h.strong(label, ": "), status_badge(result.ok ? :done : :failed; label=result.ok ? "PASS" : "FAIL")),
             isnothing(result.error) ? "" : h.p(h.strong("Error: "), h.code(result.error)),
             isnothing(result.stacktrace) ? "" : h.details(
                 h.summary("Full stacktrace"),
@@ -932,44 +927,19 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     # Force (re)compute a single check, clearing failed cache first
     force_check(check, pn) = if check == "compile"
-        if @is_cached compile_result[pn]
-            if !compile_result[pn].ok
-                path = @cache_path compile_result[pn]
-                isfile(path) && rm(path)
-            end
-        end
+        @is_cached(compile_result[pn]) && !compile_result[pn].ok && @clear_cache! compile_result[pn]
         compile_result[pn]
     elseif check == "sample"
-        if @is_cached sample_result[pn]
-            if !sample_result[pn].ok
-                path = @cache_path sample_result[pn]
-                isfile(path) && rm(path)
-            end
-        end
+        @is_cached(sample_result[pn]) && !sample_result[pn].ok && @clear_cache! sample_result[pn]
         sample_result[pn]
     elseif check == "dynamichmc"
-        if @is_cached dynamichmc_result[pn]
-            if !dynamichmc_result[pn].ok
-                path = @cache_path dynamichmc_result[pn]
-                isfile(path) && rm(path)
-            end
-        end
+        @is_cached(dynamichmc_result[pn]) && !dynamichmc_result[pn].ok && @clear_cache! dynamichmc_result[pn]
         dynamichmc_result[pn]
     elseif check == "advancedhmc"
-        if @is_cached advancedhmc_result[pn]
-            if !advancedhmc_result[pn].ok
-                path = @cache_path advancedhmc_result[pn]
-                isfile(path) && rm(path)
-            end
-        end
+        @is_cached(advancedhmc_result[pn]) && !advancedhmc_result[pn].ok && @clear_cache! advancedhmc_result[pn]
         advancedhmc_result[pn]
     elseif check == "reparam"
-        if @is_cached reparam_result[pn]
-            if !reparam_result[pn].ok
-                path = @cache_path reparam_result[pn]
-                isfile(path) && rm(path)
-            end
-        end
+        @is_cached(reparam_result[pn]) && !reparam_result[pn].ok && @clear_cache! reparam_result[pn]
         reparam_result[pn]
     end
 
@@ -1150,14 +1120,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     @get check_reactive(pn) = begin
         # Run all warmup strategies, clearing failed caches first
         for w in warmup_strategies()
-            if @is_cached reactive_result[pn, w]
-                if !reactive_result[pn, w].ok
-                    path = @cache_path reactive_result[pn, w]
-                    isfile(path) && rm(path)
-                    # Clear in-memory cache too
-                    delete!(reactive_result.cache, ((pn, w), ()))
-                end
-            end
+            @is_cached(reactive_result[pn, w]) && !reactive_result[pn, w].ok && @clear_cache! reactive_result[pn, w]
             reactive_result[pn, w]
         end
         viz_content[pn]
@@ -1433,20 +1396,15 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     @get clear(check, pn) = begin
         if check == "compile"
-            path = @cache_path compile_result[pn]
-            isfile(path) && rm(path)
+            @clear_cache! compile_result[pn]
         elseif check == "sample"
-            path = @cache_path sample_result[pn]
-            isfile(path) && rm(path)
+            @clear_cache! sample_result[pn]
         elseif check == "dynamichmc"
-            path = @cache_path dynamichmc_result[pn]
-            isfile(path) && rm(path)
+            @clear_cache! dynamichmc_result[pn]
         elseif check == "advancedhmc"
-            path = @cache_path advancedhmc_result[pn]
-            isfile(path) && rm(path)
+            @clear_cache! advancedhmc_result[pn]
         elseif check == "reparam"
-            path = @cache_path reparam_result[pn]
-            isfile(path) && rm(path)
+            @clear_cache! reparam_result[pn]
         end
         markdown_response("Cleared $check cache for $pn")
     end

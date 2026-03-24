@@ -18,9 +18,7 @@ using ReactiveObjects, ReactiveHMC, ElasticArrays
 import KernelDensity
 using TestModules
 
-TestModules.defer!()
 include("test/runtests.jl")
-TestModules.undefer!()
 
 pdb = PosteriorDB.database()
 

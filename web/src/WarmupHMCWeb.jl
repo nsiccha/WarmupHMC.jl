@@ -1103,11 +1103,10 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         if rv isa Task && istaskfailed(rv)
             h.article(h.header("Failed"), h.pre(sprint(showerror, rv.result)))
         elseif rv isa Task
-            state = progress_state(status)
             h.div(; hx_get=query_url("/async_reactive/$pn/$w"), hx_trigger="every 200ms", hx_swap="outerHTML")(
                 h.article(
                     h.header("Sampling $pn ($(warmup_label(w)))..."),
-                    htmx_render_children(state),
+                    htmx_render_children(status),
                 )
             )
         else
@@ -1445,9 +1444,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.pathfinder, pn; force=!isempty(rerun)) do rv, status
             if rv isa Task
-                state = progress_state(status)
                 h.div(; hx_get=query_url("/example_pathfinder"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
-                    h.article(h.header("Pathfinder ($pn) — running..."), htmx_render_children(state))
+                    h.article(h.header("Pathfinder ($pn) — running..."), htmx_render_children(status))
                 )
             else
                 h.article(
@@ -1464,9 +1462,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.sampling, pn; force=!isempty(rerun)) do rv, status
             if rv isa Task
-                state = progress_state(status)
                 h.div(; hx_get=query_url("/example_sampling"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
-                    h.article(h.header("Sampling ($pn) — running..."), htmx_render_children(state))
+                    h.article(h.header("Sampling ($pn) — running..."), htmx_render_children(status))
                 )
             else
                 h.article(
@@ -1483,9 +1480,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.cmdstan, pn; force=!isempty(rerun)) do rv, status
             if rv isa Task
-                state = progress_state(status)
                 h.div(; hx_get=query_url("/example_cmdstan"; pn), hx_trigger="every 500ms", hx_swap="outerHTML")(
-                    h.article(h.header("CmdStan ($pn) — running..."), htmx_render_children(state))
+                    h.article(h.header("CmdStan ($pn) — running..."), htmx_render_children(status))
                 )
             else
                 h.article(

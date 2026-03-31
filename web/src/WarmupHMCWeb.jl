@@ -450,7 +450,7 @@ function status_cell_clickable(cached, ok, check_url, detail_id)
     end
 end
 
-# --- Example computations with progress (fetchindex + __substatus__ pattern) ---
+# --- Example computations with progress ---
 
 function run_parallel_pathfinder(posterior_name; n_chains=4, seed=42, progress=nothing)
     problem = stan_problem(posterior_name)
@@ -563,8 +563,6 @@ end
 
 @dynamicstruct struct ExampleComputations
     __status__ = initialize_progress!(:state; description="Examples")
-    __substatus__(name, args...; kwargs...) =
-        initialize_progress!(__status__; description="$name[$(join(args, ","))]")
 
     pathfinder[pn] = run_parallel_pathfinder(pn; progress=__status__)
     sampling[pn] = run_parallel_sampling(pn; progress=__status__)
@@ -580,11 +578,9 @@ function _posterior_select(names, id)
 end
 
 
-# --- Async reactive sampling (fetchindex + __substatus__ pattern) ---
+# --- Async reactive sampling ---
 @dynamicstruct struct AsyncReactiveComputations
     __status__ = initialize_progress!(:state; description="Reactive")
-    __substatus__(name, args...; kwargs...) =
-        initialize_progress!(__status__; description="$name[$(join(args, ","))]")
 
     results(pn, w) = try_sample_reactive(pn; warmup=w, progress=__status__)
 end
@@ -1412,7 +1408,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     # --- Examples with progress ---
     examples_content = h.div(
         h.h2("Examples: WarmupHMC + Treebars Progress"),
-        h.p("Demonstrates parallel computation with live progress reporting using the fetchindex + __substatus__ pattern."),
+        h.p("Demonstrates parallel computation with live progress reporting."),
         h.div(
             _posterior_select(posterior_names, "examples-select"),
             h.fieldset(; role="group")(

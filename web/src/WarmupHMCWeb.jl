@@ -1096,7 +1096,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     # --- Async reactive sampling with progress polling (fetchindex pattern) ---
 
-    @get async_reactive(pn, w; rerun="") = fetchindex(_async_reactive.results, pn, w; force=!isempty(rerun)) do rv, status
+    @get async_reactive(pn, w; force::Bool=false) = fetchindex(_async_reactive.results, pn, w; force) do rv, status
         if rv isa Task && istaskfailed(rv)
             h.article(h.header("Failed"), h.pre(sprint(showerror, rv.result)))
         elseif rv isa Task
@@ -1429,9 +1429,9 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         examples_content,
     )
 
-    @get example_pathfinder(; pn="", rerun="") = begin
+    @get example_pathfinder(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
-        fetchindex(_examples.pathfinder, pn; force=!isempty(rerun)) do rv, status
+        fetchindex(_examples.pathfinder, pn; force) do rv, status
             if rv isa Task
                 h.div(; hx_get=query_url("/example_pathfinder"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
                     h.article(h.header("Pathfinder ($pn) — running..."), htmx_render_children(status))
@@ -1441,15 +1441,15 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                     h.header("Pathfinder ($pn) — done"),
                     h.p("$(rv.n_chains) chains, dimension $(rv.dimension)"),
                     h.p("All chains initialized successfully."),
-                    h.button("Rerun"; hx_get=query_url("/example_pathfinder"; pn, rerun="1"), hx_target="closest article", hx_swap="outerHTML"),
+                    h.button("Rerun"; hx_get=query_url("/example_pathfinder"; pn, force=true), hx_target="closest article", hx_swap="outerHTML"),
                 )
             end
         end
     end
 
-    @get example_sampling(; pn="", rerun="") = begin
+    @get example_sampling(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
-        fetchindex(_examples.sampling, pn; force=!isempty(rerun)) do rv, status
+        fetchindex(_examples.sampling, pn; force) do rv, status
             if rv isa Task
                 h.div(; hx_get=query_url("/example_sampling"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
                     h.article(h.header("Sampling ($pn) — running..."), htmx_render_children(status))
@@ -1459,15 +1459,15 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                     h.header("Sampling ($pn) — done"),
                     h.p("$(rv.n_chains) chains, dimension $(rv.dimension), $(rv.n_draws) total draws"),
                     h.p("Divergent: $(rv.n_divergent)"),
-                    h.button("Rerun"; hx_get=query_url("/example_sampling"; pn, rerun="1"), hx_target="closest article", hx_swap="outerHTML"),
+                    h.button("Rerun"; hx_get=query_url("/example_sampling"; pn, force=true), hx_target="closest article", hx_swap="outerHTML"),
                 )
             end
         end
     end
 
-    @get example_cmdstan(; pn="", rerun="") = begin
+    @get example_cmdstan(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
-        fetchindex(_examples.cmdstan, pn; force=!isempty(rerun)) do rv, status
+        fetchindex(_examples.cmdstan, pn; force) do rv, status
             if rv isa Task
                 h.div(; hx_get=query_url("/example_cmdstan"; pn), hx_trigger="every 500ms", hx_swap="outerHTML")(
                     h.article(h.header("CmdStan ($pn) — running..."), htmx_render_children(status))
@@ -1476,7 +1476,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.article(
                     h.header("CmdStan ($pn) — done"),
                     h.p("$(rv.n_chains) chains, $(rv.n_draws) total draws ($(rv.iter_warmup) warmup + $(rv.iter_sampling) sampling per chain)"),
-                    h.button("Rerun"; hx_get=query_url("/example_cmdstan"; pn, rerun="1"), hx_target="closest article", hx_swap="outerHTML"),
+                    h.button("Rerun"; hx_get=query_url("/example_cmdstan"; pn, force=true), hx_target="closest article", hx_swap="outerHTML"),
                 )
             end
         end

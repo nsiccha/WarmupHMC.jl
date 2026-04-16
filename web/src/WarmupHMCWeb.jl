@@ -587,7 +587,7 @@ end
 _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
 @htmx struct AppContext
-    req = nothing
+    
     cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
 
     @cached posterior_names = sort([
@@ -1478,7 +1478,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         end
     end
 
-    @include tests = TestRoutes(; req, test_module=@__MODULE__)
+    @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
 end
 
 function __init__()

@@ -663,7 +663,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             id="search",
             placeholder="Filter posteriors...",
             _="on input set query to my value.toLowerCase() for row in <tr/> in #posterior-tbody if row.textContent.toLowerCase() contains query remove .hidden from row else add .hidden to row end end on keydown[key is 'Enter'] halt the event for row in <tr[id^='row-']/> in #posterior-tbody if row matches ':not(.hidden)' set target to null for cell in <td.check-cell/> in row if target is null and cell.textContent.trim() is not 'PASS' set target to cell end end if target is not null add .batch to target send click to target end end end",
-            class="whmc-search",
+            class="u-w-full u-mb-4",
         ),
         h.table(class="striped"; role="grid")(
             h.thead(
@@ -699,7 +699,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             isnothing(result.error) ? "" : h.p(h.strong("Error: "), h.code(result.error)),
             isnothing(result.stacktrace) ? "" : h.details(
                 h.summary("Full stacktrace"),
-                h.pre(result.stacktrace; class="whmc-stack-pre")
+                h.pre(result.stacktrace; class="u-pre-wrap u-scroll-y u-text-xs")
             ),
             hasproperty(result, :dimension) && !isnothing(result.dimension) ? h.p(
                 h.strong("Dimension: "), string(result.dimension)
@@ -753,7 +753,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         all_results = [c_result, s_result, d_result, a_result]
         all_ok = all(r -> isnothing(r) || r.ok, all_results)
         any_fail = any(r -> !isnothing(r) && !r.ok, all_results)
-        status_class = any_fail ? "whmc-detail-card whmc-status-fail" : all_ok ? "whmc-detail-card whmc-status-pass" : "whmc-detail-card"
+        status_class = any_fail ? "u-status-callout u-status-error" : all_ok ? "u-status-callout u-status-success" : "u-status-callout"
         h.td(; colspan="11", class="whmc-detail-cell")(
             h.div(; class=status_class)(
                 h.h4(pn, " ", h.a("▶ Viz";
@@ -902,9 +902,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             /* WHMC table & detail card */
             .whmc-th-merge { text-align: center; border-bottom: none; }
             .whmc-detail-cell { padding: 0; border: none; }
-            .whmc-detail-card { padding: 1rem 1.5rem; background: var(--pico-card-background-color); border-left: 4px solid var(--pico-muted-border-color); margin: 0.25rem 0; }
-            .whmc-detail-card.whmc-status-pass { border-left-color: var(--pico-ins-color); }
-            .whmc-detail-card.whmc-status-fail { border-left-color: var(--pico-del-color); }
 
             /* WHMC viz layout */
             .whmc-viz-row { max-width: 900px; }
@@ -919,11 +916,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             .whmc-selector-table { font-size: 0.85em; margin-bottom: 8px; }
             .whmc-row-default { font-weight: bold; }
             .whmc-row-failed { opacity: 0.7; }
-            .whmc-show-btn { padding: 2px 8px; font-size: 0.8em; }
-            .whmc-error-code { font-size: 0.8em; }
-            .whmc-error-details { margin-bottom: 4px; font-size: 0.8em; }
-            .whmc-error-pre { white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.85em; }
-            .whmc-stack-pre { white-space: pre-wrap; max-height: 300px; overflow: auto; font-size: 0.8em; }
 
             /* WHMC viz picker */
             .whmc-picker-link { display: block; padding: 6px 8px; text-decoration: none; border-radius: 4px; margin-bottom: 2px; cursor: pointer; }
@@ -931,8 +923,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             .whmc-picker-badge-active { color: green; margin-right: 4px; }
             .whmc-picker-help { font-size: 0.85em; color: #888; margin-bottom: 8px; }
 
-            /* WHMC overview filter */
-            .whmc-search { margin-bottom: 1rem; width: 100%; }
         """),
         h.script(raw"""
             function updateNav() {
@@ -1233,7 +1223,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.td(string(min_ess)),
                 h.td(string(r.n_divergent)),
                 h.td(string(round(r.time; digits=2), "s")),
-                h.td(h.button("Show"; class="whmc-show-btn",
+                h.td(h.button("Show"; class="u-btn-sm u-text-xs",
                     hx_get="/fragment_viz_single/$pn/$w",
                     hx_target="#viz-panel",
                     hx_swap="innerHTML",
@@ -1247,7 +1237,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             h.tr(
                 h.td(warmup_label(w)),
                 h.td(h.span("FAIL"; class="u-text-error u-text-bold")),
-                h.td(; colspan="4")(h.code(something(r.error, "unknown error"); class="whmc-error-code")),
+                h.td(; colspan="4")(h.code(something(r.error, "unknown error"); class="u-text-xs")),
                 h.td("");
                 class="whmc-row-failed",
             )
@@ -1256,9 +1246,9 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         # Error details (collapsible stacktraces)
         error_details = map(failed) do (w, r)
             isnothing(r.stacktrace) && return ""
-            h.details(; class="whmc-error-details")(
+            h.details(; class="u-mb-1 u-text-xs")(
                 h.summary("$(warmup_label(w)) stacktrace"),
-                h.pre(r.stacktrace; class="whmc-error-pre"),
+                h.pre(r.stacktrace; class="u-pre-wrap u-scroll-y u-text-sm"),
             )
         end
 

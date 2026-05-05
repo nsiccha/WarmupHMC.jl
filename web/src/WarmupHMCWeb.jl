@@ -201,7 +201,7 @@ function try_sample_advancedhmc(posterior_name; n_draws=100, n_adapts=100, seed=
         t0 = time()
         θs, stats = AdvancedHMC.sample(rng, hamiltonian, kernel, theta_init, n_draws + n_adapts, adaptor, n_adapts; drop_warmup=true, verbose=false, progress=false)
         elapsed = time() - t0
-        draws = hcat(θs...)  # dim × n_draws
+        draws = reduce(hcat, θs)  # dim × n_draws
         n = size(draws, 2)
         ess_vals = MCMCDiagnosticTools.ess(reshape(draws', (:, 1, dim)))
         min_ess = minimum(ess_vals)
@@ -687,7 +687,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                     h.th("Time"; _="on click call sortTable(10, me)", style="cursor:pointer"),
                 ),
             ),
-            h.tbody(vcat([overview_row[pn] for pn in sort(posterior_names; by=pn -> !(@is_cached(compile_result[pn]) || @is_cached(sample_result[pn]) || @is_cached(dynamichmc_result[pn]) || @is_cached(advancedhmc_result[pn])))]...)...; id="posterior-tbody")
+            h.tbody(reduce(vcat, [overview_row[pn] for pn in sort(posterior_names; by=pn -> !(@is_cached(compile_result[pn]) || @is_cached(sample_result[pn]) || @is_cached(dynamichmc_result[pn]) || @is_cached(advancedhmc_result[pn])))]; init=[])...; id="posterior-tbody")
         ),
         sortable_table_js(),
         h.style(".hidden { display: none; } tr[id^=row-]:hover { background: var(--pico-table-row-stripped-background-color); } details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.5rem; }"),

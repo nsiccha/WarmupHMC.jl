@@ -429,23 +429,22 @@ function status_str(cached, ok)
 end
 
 function status_cell(cached, ok)
-    !cached && return h.td("-"; style="color:gray")
-    ok ? h.td("PASS"; style="color:green;font-weight:bold") :
-         h.td("FAIL"; style="color:red;font-weight:bold")
+    !cached && return h.td("-"; class="u-text-muted")
+    ok ? h.td("PASS"; class="u-text-success u-text-bold") :
+         h.td("FAIL"; class="u-text-error u-text-bold")
 end
 
 function status_cell_clickable(cached, ok, check_url, detail_id)
-    base_style = "cursor:pointer;"
     if !cached
-        return h.td("-"; class="check-cell", style=base_style * "color:gray",
+        return h.td("-"; class="check-cell u-pointer u-text-muted",
             hx_get=check_url, hx_target="#$detail_id", hx_swap="innerHTML",
             _="on htmx:afterOnLoad if not me.classList.contains('batch') then remove .hidden from #$detail_id end remove .batch from me")
     elseif !ok
-        return h.td("FAIL"; class="check-cell", style=base_style * "color:red;font-weight:bold",
+        return h.td("FAIL"; class="check-cell u-pointer u-text-error u-text-bold",
             hx_get=check_url, hx_target="#$detail_id", hx_swap="innerHTML",
             _="on htmx:afterOnLoad if not me.classList.contains('batch') then remove .hidden from #$detail_id end remove .batch from me")
     else
-        return h.td("PASS"; class="check-cell", style=base_style * "color:green;font-weight:bold",
+        return h.td("PASS"; class="check-cell u-pointer u-text-success u-text-bold",
             _="on click toggle .hidden on #$detail_id")
     end
 end
@@ -633,17 +632,17 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         a_time = a_cached && a_ok ? string(round(advancedhmc_result[pn].time; digits=2), "s") : "-"
 
         [h.tr(
-            h.td(pn; style="cursor:pointer", _=toggle),
+            h.td(pn; class="u-pointer", _=toggle),
             status_cell_clickable(c_cached, c_ok, "/check_compile/$pn", detail_id),
             status_cell_clickable(s_cached, s_ok, "/check_sample/$pn", detail_id),
-            h.td(w_ess; style="cursor:pointer", _=toggle),
-            h.td(w_time; style="cursor:pointer", _=toggle),
+            h.td(w_ess; class="u-pointer", _=toggle),
+            h.td(w_time; class="u-pointer", _=toggle),
             status_cell_clickable(d_cached, d_ok, "/check_dynamichmc/$pn", detail_id),
-            h.td(d_ess; style="cursor:pointer", _=toggle),
-            h.td(d_time; style="cursor:pointer", _=toggle),
+            h.td(d_ess; class="u-pointer", _=toggle),
+            h.td(d_time; class="u-pointer", _=toggle),
             status_cell_clickable(a_cached, a_ok, "/check_advancedhmc/$pn", detail_id),
-            h.td(a_ess; style="cursor:pointer", _=toggle),
-            h.td(a_time; style="cursor:pointer", _=toggle),
+            h.td(a_ess; class="u-pointer", _=toggle),
+            h.td(a_time; class="u-pointer", _=toggle),
            ;
             id="row-$pn",
         ),
@@ -664,27 +663,27 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             id="search",
             placeholder="Filter posteriors...",
             _="on input set query to my value.toLowerCase() for row in <tr/> in #posterior-tbody if row.textContent.toLowerCase() contains query remove .hidden from row else add .hidden to row end end on keydown[key is 'Enter'] halt the event for row in <tr[id^='row-']/> in #posterior-tbody if row matches ':not(.hidden)' set target to null for cell in <td.check-cell/> in row if target is null and cell.textContent.trim() is not 'PASS' set target to cell end end if target is not null add .batch to target send click to target end end end",
-            style="margin-bottom:1rem;width:100%;",
+            class="whmc-search",
         ),
         h.table(class="striped"; role="grid")(
             h.thead(
                 h.tr(
-                    h.th("Posterior"; _="on click call sortTable(0, me)", style="cursor:pointer", rowspan="2"),
-                    h.th("Compiles"; _="on click call sortTable(1, me)", style="cursor:pointer", rowspan="2"),
-                    h.th("WarmupHMC"; colspan="3", style="text-align:center;border-bottom:none"),
-                    h.th("DynamicHMC"; colspan="3", style="text-align:center;border-bottom:none"),
-                    h.th("AdvancedHMC"; colspan="3", style="text-align:center;border-bottom:none"),
+                    h.th("Posterior"; _="on click call sortTable(0, me)", class="u-pointer", rowspan="2"),
+                    h.th("Compiles"; _="on click call sortTable(1, me)", class="u-pointer", rowspan="2"),
+                    h.th("WarmupHMC"; colspan="3", class="whmc-th-merge"),
+                    h.th("DynamicHMC"; colspan="3", class="whmc-th-merge"),
+                    h.th("AdvancedHMC"; colspan="3", class="whmc-th-merge"),
                 ),
                 h.tr(
-                    h.th("Status"; _="on click call sortTable(2, me)", style="cursor:pointer"),
-                    h.th("ESS"; _="on click call sortTable(3, me)", style="cursor:pointer"),
-                    h.th("Time"; _="on click call sortTable(4, me)", style="cursor:pointer"),
-                    h.th("Status"; _="on click call sortTable(5, me)", style="cursor:pointer"),
-                    h.th("ESS"; _="on click call sortTable(6, me)", style="cursor:pointer"),
-                    h.th("Time"; _="on click call sortTable(7, me)", style="cursor:pointer"),
-                    h.th("Status"; _="on click call sortTable(8, me)", style="cursor:pointer"),
-                    h.th("ESS"; _="on click call sortTable(9, me)", style="cursor:pointer"),
-                    h.th("Time"; _="on click call sortTable(10, me)", style="cursor:pointer"),
+                    h.th("Status"; _="on click call sortTable(2, me)", class="u-pointer"),
+                    h.th("ESS"; _="on click call sortTable(3, me)", class="u-pointer"),
+                    h.th("Time"; _="on click call sortTable(4, me)", class="u-pointer"),
+                    h.th("Status"; _="on click call sortTable(5, me)", class="u-pointer"),
+                    h.th("ESS"; _="on click call sortTable(6, me)", class="u-pointer"),
+                    h.th("Time"; _="on click call sortTable(7, me)", class="u-pointer"),
+                    h.th("Status"; _="on click call sortTable(8, me)", class="u-pointer"),
+                    h.th("ESS"; _="on click call sortTable(9, me)", class="u-pointer"),
+                    h.th("Time"; _="on click call sortTable(10, me)", class="u-pointer"),
                 ),
             ),
             h.tbody(reduce(vcat, [overview_row[pn] for pn in sort(posterior_names; by=pn -> !(@is_cached(compile_result[pn]) || @is_cached(sample_result[pn]) || @is_cached(dynamichmc_result[pn]) || @is_cached(advancedhmc_result[pn])))]; init=[])...; id="posterior-tbody")
@@ -695,12 +694,12 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     result_section(label, result) = begin
         isnothing(result) && return ""
-        h.div(; style="margin-bottom:0.5rem")(
+        h.div(; class="u-mb-2")(
             h.p(h.strong(label, ": "), status_badge(result.ok ? :done : :failed; label=result.ok ? "PASS" : "FAIL")),
             isnothing(result.error) ? "" : h.p(h.strong("Error: "), h.code(result.error)),
             isnothing(result.stacktrace) ? "" : h.details(
                 h.summary("Full stacktrace"),
-                h.pre(result.stacktrace; style="white-space:pre-wrap;max-height:300px;overflow:auto;font-size:0.8em")
+                h.pre(result.stacktrace; class="whmc-stack-pre")
             ),
             hasproperty(result, :dimension) && !isnothing(result.dimension) ? h.p(
                 h.strong("Dimension: "), string(result.dimension)
@@ -722,10 +721,10 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         if !has_reparam
             ""
         elseif isnothing(r_result)
-            h.div(; style="margin-bottom:0.5rem")(
+            h.div(; class="u-mb-2")(
                 h.p(h.strong("Reparam: "),
                     h.a("Run"; hx_get="/check_reparam/$pn", hx_target="closest div", hx_swap="outerHTML",
-                        style="cursor:pointer"))
+                        class="u-pointer"))
             )
         else
             centering_info = if r_result.ok && !isnothing(r_result.centering)
@@ -735,7 +734,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             else
                 ""
             end
-            h.div(; style="margin-bottom:0.5rem")(
+            h.div(; class="u-mb-2")(
                 result_section["Reparam", r_result],
                 centering_info,
             )
@@ -754,13 +753,13 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         all_results = [c_result, s_result, d_result, a_result]
         all_ok = all(r -> isnothing(r) || r.ok, all_results)
         any_fail = any(r -> !isnothing(r) && !r.ok, all_results)
-        border_color = any_fail ? "var(--pico-del-color)" : all_ok ? "var(--pico-ins-color)" : "var(--pico-muted-border-color)"
-        h.td(; colspan="11", style="padding:0;border:none")(
-            h.div(; style="padding:1rem 1.5rem;background:var(--pico-card-background-color);border-left:4px solid $border_color;margin:0.25rem 0")(
+        status_class = any_fail ? "whmc-detail-card whmc-status-fail" : all_ok ? "whmc-detail-card whmc-status-pass" : "whmc-detail-card"
+        h.td(; colspan="11", class="whmc-detail-cell")(
+            h.div(; class=status_class)(
                 h.h4(pn, " ", h.a("▶ Viz";
                     hx_get="/fragment_viz/$pn", hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="/viz/$pn",
-                    style="font-size:0.8em;font-weight:normal;cursor:pointer")),
+                    class="u-text-xs u-text-normal u-pointer")),
                 result_section["Compiles", c_result],
                 result_section["WarmupHMC", s_result],
                 reparam_section[pn],
@@ -790,17 +789,17 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         a_time = a_cached && a_ok ? string(round(advancedhmc_result[pn].time; digits=2), "s") : "-"
 
         h.tr(
-            h.td(pn; style="cursor:pointer", _=toggle),
+            h.td(pn; class="u-pointer", _=toggle),
             status_cell_clickable(c_cached, c_ok, "/check_compile/$pn", detail_id),
             status_cell_clickable(s_cached, s_ok, "/check_sample/$pn", detail_id),
-            h.td(w_ess; style="cursor:pointer", _=toggle),
-            h.td(w_time; style="cursor:pointer", _=toggle),
+            h.td(w_ess; class="u-pointer", _=toggle),
+            h.td(w_time; class="u-pointer", _=toggle),
             status_cell_clickable(d_cached, d_ok, "/check_dynamichmc/$pn", detail_id),
-            h.td(d_ess; style="cursor:pointer", _=toggle),
-            h.td(d_time; style="cursor:pointer", _=toggle),
+            h.td(d_ess; class="u-pointer", _=toggle),
+            h.td(d_time; class="u-pointer", _=toggle),
             status_cell_clickable(a_cached, a_ok, "/check_advancedhmc/$pn", detail_id),
-            h.td(a_ess; style="cursor:pointer", _=toggle),
-            h.td(a_time; style="cursor:pointer", _=toggle),
+            h.td(a_ess; class="u-pointer", _=toggle),
+            h.td(a_time; class="u-pointer", _=toggle),
            ;
             id="row-$pn",
             hx_swap_oob="outerHTML:#row-$pn",
@@ -899,6 +898,41 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 cursor: pointer;
             }
             .bc-link:hover { text-decoration: underline !important; }
+
+            /* WHMC table & detail card */
+            .whmc-th-merge { text-align: center; border-bottom: none; }
+            .whmc-detail-cell { padding: 0; border: none; }
+            .whmc-detail-card { padding: 1rem 1.5rem; background: var(--pico-card-background-color); border-left: 4px solid var(--pico-muted-border-color); margin: 0.25rem 0; }
+            .whmc-detail-card.whmc-status-pass { border-left-color: var(--pico-ins-color); }
+            .whmc-detail-card.whmc-status-fail { border-left-color: var(--pico-del-color); }
+
+            /* WHMC viz layout */
+            .whmc-viz-row { max-width: 900px; }
+            .whmc-shared-traces { max-width: 900px; display: flex; gap: 6px; }
+            .whmc-viz-controls { max-width: 900px; margin: 8px 0; display: flex; align-items: center; gap: 10px; }
+            .whmc-viz-controls-group { display: flex; align-items: center; gap: 6px; }
+            .whmc-viz-btn { min-width: 36px; padding: 6px 10px; }
+            .whmc-progress-bar { flex: 1; height: 20px; }
+            .whmc-viz-title { margin-bottom: 4px; }
+
+            /* WHMC viz selector */
+            .whmc-selector-table { font-size: 0.85em; margin-bottom: 8px; }
+            .whmc-row-default { font-weight: bold; }
+            .whmc-row-failed { opacity: 0.7; }
+            .whmc-show-btn { padding: 2px 8px; font-size: 0.8em; }
+            .whmc-error-code { font-size: 0.8em; }
+            .whmc-error-details { margin-bottom: 4px; font-size: 0.8em; }
+            .whmc-error-pre { white-space: pre-wrap; max-height: 200px; overflow: auto; font-size: 0.85em; }
+            .whmc-stack-pre { white-space: pre-wrap; max-height: 300px; overflow: auto; font-size: 0.8em; }
+
+            /* WHMC viz picker */
+            .whmc-picker-link { display: block; padding: 6px 8px; text-decoration: none; border-radius: 4px; margin-bottom: 2px; cursor: pointer; }
+            .whmc-picker-badge { color: #888; margin-right: 4px; }
+            .whmc-picker-badge-active { color: green; margin-right: 4px; }
+            .whmc-picker-help { font-size: 0.85em; color: #888; margin-bottom: 8px; }
+
+            /* WHMC overview filter */
+            .whmc-search { margin-bottom: 1rem; width: 100%; }
         """),
         h.script(raw"""
             function updateNav() {
@@ -1128,12 +1162,12 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             has_reactive || has_compile || continue
             n_strats = sum(w -> @is_cached(reactive_result[name, w]) && reactive_result[name, w].ok, warmup_strategies())
             badge = has_reactive ? "●" : "○"
-            badge_color = has_reactive ? "green" : "#888"
+            badge_class = has_reactive ? "whmc-picker-badge-active" : "whmc-picker-badge"
             label = has_reactive ? "$name ($n_strats/$(length(warmup_strategies())))" : name
             push!(items, h.a(
-                h.span(badge; style="color:$badge_color;margin-right:4px"),
+                h.span(badge; class=badge_class),
                 label;
-                style="display:block;padding:6px 8px;text-decoration:none;border-radius:4px;margin-bottom:2px;cursor:pointer",
+                class="whmc-picker-link",
                 hx_get="/fragment_viz/$name",
                 hx_target="#content",
                 hx_swap="innerHTML",
@@ -1152,7 +1186,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         h.div(
             bc,
             h.h3("Trajectory Visualization"),
-            h.p("Select a posterior (● = has viz data, shows strategies cached):"; style="font-size:0.85em;color:#888;margin-bottom:8px"),
+            h.p("Select a posterior (● = has viz data, shows strategies cached):"; class="whmc-picker-help"),
             items...,
         )
     end
@@ -1194,17 +1228,17 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             is_default = w == default_w
             h.tr(
                 h.td(warmup_label(w)),
-                h.td(h.span("PASS"; style="color:green;font-weight:bold")),
+                h.td(h.span("PASS"; class="u-text-success u-text-bold")),
                 h.td(string(med_ess)),
                 h.td(string(min_ess)),
                 h.td(string(r.n_divergent)),
                 h.td(string(round(r.time; digits=2), "s")),
-                h.td(h.button("Show"; style="padding:2px 8px;font-size:0.8em",
+                h.td(h.button("Show"; class="whmc-show-btn",
                     hx_get="/fragment_viz_single/$pn/$w",
                     hx_target="#viz-panel",
                     hx_swap="innerHTML",
                 ));
-                style=is_default ? "font-weight:bold" : "",
+                class=is_default ? "whmc-row-default" : "",
             )
         end
 
@@ -1212,23 +1246,23 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         fail_rows = map(failed) do (w, r)
             h.tr(
                 h.td(warmup_label(w)),
-                h.td(h.span("FAIL"; style="color:red;font-weight:bold")),
-                h.td(; colspan="4")(h.code(something(r.error, "unknown error"); style="font-size:0.8em")),
+                h.td(h.span("FAIL"; class="u-text-error u-text-bold")),
+                h.td(; colspan="4")(h.code(something(r.error, "unknown error"); class="whmc-error-code")),
                 h.td("");
-                style="opacity:0.7",
+                class="whmc-row-failed",
             )
         end
 
         # Error details (collapsible stacktraces)
         error_details = map(failed) do (w, r)
             isnothing(r.stacktrace) && return ""
-            h.details(; style="margin-bottom:4px;font-size:0.8em")(
+            h.details(; class="whmc-error-details")(
                 h.summary("$(warmup_label(w)) stacktrace"),
-                h.pre(r.stacktrace; style="white-space:pre-wrap;max-height:200px;overflow:auto;font-size:0.85em"),
+                h.pre(r.stacktrace; class="whmc-error-pre"),
             )
         end
 
-        selector = h.table(; role="grid", style="font-size:0.85em;margin-bottom:8px")(
+        selector = h.table(; role="grid", class="whmc-selector-table")(
             h.thead(h.tr(
                 h.th("Strategy"), h.th("Status"), h.th("Med ESS"), h.th("Min ESS"),
                 h.th("Div"), h.th("Time"), h.th(""),
@@ -1242,8 +1276,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             h.div(; id="viz-panel")(h.p("All strategies failed. See errors above."))
         else
             h.div(; id="viz-panel")(
-                h.div(; id="shared-traces", style="max-width:900px;display:flex;gap:6px"),
-                h.div(; style="max-width:900px")(
+                h.div(; id="shared-traces", class="whmc-shared-traces"),
+                h.div(; class="whmc-viz-row")(
                     h.div(warmup_label(default_w); class="panel-label", id="panel-label"),
                     h.div(class="mcmc-grid")(
                         h.div(; class="panel viz", id="viz-1"),
@@ -1253,13 +1287,13 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                         h.div(; class="panel trace-x", id="trace-x-1"),
                     ),
                 ),
-                h.div(; style="max-width:900px;margin:8px 0;display:flex;align-items:center;gap:10px")(
-                    h.button("▶"; id="btn-play", style="min-width:36px;padding:6px 10px"),
-                    h.canvas(; id="progress-bar", style="flex:1;height:20px"),
-                    h.div(; style="display:flex;align-items:center;gap:6px")(
-                        h.button("÷2"; id="btn-slow", style="min-width:36px;padding:6px 10px"),
+                h.div(; class="whmc-viz-controls")(
+                    h.button("▶"; id="btn-play", class="whmc-viz-btn"),
+                    h.canvas(; id="progress-bar", class="whmc-progress-bar"),
+                    h.div(; class="whmc-viz-controls-group")(
+                        h.button("÷2"; id="btn-slow", class="whmc-viz-btn"),
                         h.span(; id="speed-display", class="speed-display"),
-                        h.button("×2"; id="btn-fast", style="min-width:36px;padding:6px 10px"),
+                        h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
                     ),
                 ),
                 h.script(; src="/serve_static/mcmc-viz.js"),
@@ -1270,8 +1304,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         [
             h.style(viz_css()),
             bc,
-            h.div(; style="max-width:900px")(
-                h.h3("$pn"; id="viz-title", style="margin-bottom:4px"),
+            h.div(; class="whmc-viz-row")(
+                h.h3("$pn"; id="viz-title", class="whmc-viz-title"),
                 selector,
                 error_details...,
             ),
@@ -1285,8 +1319,8 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         r = reactive_result[pn, w]
         init = viz_init_script[pn, w]
         [
-            h.div(; id="shared-traces", style="max-width:900px;display:flex;gap:6px"),
-            h.div(; style="max-width:900px")(
+            h.div(; id="shared-traces", class="whmc-shared-traces"),
+            h.div(; class="whmc-viz-row")(
                 h.div(warmup_label(w); class="panel-label", id="panel-label"),
                 h.div(class="mcmc-grid")(
                     h.div(; class="panel viz", id="viz-1"),
@@ -1296,13 +1330,13 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                     h.div(; class="panel trace-x", id="trace-x-1"),
                 ),
             ),
-            h.div(; style="max-width:900px;margin:8px 0;display:flex;align-items:center;gap:10px")(
-                h.button("▶"; id="btn-play", style="min-width:36px;padding:6px 10px"),
-                h.canvas(; id="progress-bar", style="flex:1;height:20px"),
-                h.div(; style="display:flex;align-items:center;gap:6px")(
-                    h.button("÷2"; id="btn-slow", style="min-width:36px;padding:6px 10px"),
+            h.div(; class="whmc-viz-controls")(
+                h.button("▶"; id="btn-play", class="whmc-viz-btn"),
+                h.canvas(; id="progress-bar", class="whmc-progress-bar"),
+                h.div(; class="whmc-viz-controls-group")(
+                    h.button("÷2"; id="btn-slow", class="whmc-viz-btn"),
                     h.span(; id="speed-display", class="speed-display"),
-                    h.button("×2"; id="btn-fast", style="min-width:36px;padding:6px 10px"),
+                    h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
                 ),
             ),
             h.script(; src="/serve_static/mcmc-viz.js"),

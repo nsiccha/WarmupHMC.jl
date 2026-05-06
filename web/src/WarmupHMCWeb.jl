@@ -348,10 +348,6 @@ function breadcrumb(items)
 end
 
 
-function status_str(status::Symbol)
-    status == :ready ? "PASS" : status == :started ? "FAIL" : "-"
-end
-
 function status_cell(status::Symbol)
     status == :ready ? h.td("PASS"; class="u-text-success u-text-bold") :
     status == :started ? h.td("FAIL"; class="u-text-error u-text-bold") :
@@ -907,52 +903,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             show && push!(names, pn)
         end
         names
-    end
-
-    plain_overview = begin
-        header = rpad("Posterior", 45) * rpad("Compile", 9) * "| " * rpad("WarmupHMC", 10) * rpad("ESS", 10) * rpad("Time", 10) * "| " * rpad("DynHMC", 10) * rpad("ESS", 10) * rpad("Time", 10) * "| " * rpad("AdvHMC", 10) * rpad("ESS", 10) * "Time"
-        lines = [header, "-"^length(header)]
-        for pn in sort(posterior_names; by=pn -> !(@is_cached(compile_result[pn]) || @is_cached(sample_result[pn]) || @is_cached(dynamichmc_result[pn]) || @is_cached(advancedhmc_result[pn])))
-            c_status = compile_status[pn]
-            s_status = sample_status[pn]
-            d_status = dynamichmc_status[pn]
-            a_status = advancedhmc_status[pn]
-            w_ess = s_status == :ready ? string(round(sample_result[pn].median_ess; digits=1)) : "-"
-            w_time = s_status == :ready ? string(round(sample_result[pn].time; digits=2)) : "-"
-            d_ess = d_status == :ready ? string(round(dynamichmc_result[pn].median_ess; digits=1)) : "-"
-            d_time = d_status == :ready ? string(round(dynamichmc_result[pn].time; digits=2)) : "-"
-            a_ess = a_status == :ready ? string(round(advancedhmc_result[pn].median_ess; digits=1)) : "-"
-            a_time = a_status == :ready ? string(round(advancedhmc_result[pn].time; digits=2)) : "-"
-            push!(lines, rpad(pn, 45) * rpad(status_str(c_status), 9) * "| " * rpad(status_str(s_status), 10) * rpad(w_ess, 10) * rpad(w_time, 10) * "| " * rpad(status_str(d_status), 10) * rpad(d_ess, 10) * rpad(d_time, 10) * "| " * rpad(status_str(a_status), 10) * rpad(a_ess, 10) * a_time)
-        end
-        join(lines, "\n")
-    end
-
-    plain_result_section(label, status, result) = begin
-        status == :unstarted && return "$label: -"
-        status == :started && return "$label: FAIL (re-run via /check_$(lowercase(label))/<pn>?plain to view the error)"
-        parts = ["$label: PASS"]
-        hasproperty(result, :dimension) && !isnothing(result.dimension) && push!(parts, "  Dimension: $(result.dimension)")
-        hasproperty(result, :n_draws) && !isnothing(result.n_draws) && push!(parts, "  Draws: $(result.n_draws), Min ESS: $(result.min_ess), Median ESS: $(result.median_ess), Time: $(result.time)s, Divergent: $(result.n_divergent)")
-        join(parts, "\n")
-    end
-
-    plain_model(pn) = begin
-        c_status = compile_status[pn]
-        s_status = sample_status[pn]
-        d_status = dynamichmc_status[pn]
-        a_status = advancedhmc_status[pn]
-        c_result = c_status == :ready ? compile_result[pn] : nothing
-        s_result = s_status == :ready ? sample_result[pn] : nothing
-        d_result = d_status == :ready ? dynamichmc_result[pn] : nothing
-        a_result = a_status == :ready ? advancedhmc_result[pn] : nothing
-        parts = ["# $pn", "",
-            plain_result_section["Compiles", c_status, c_result], "",
-            plain_result_section["WarmupHMC", s_status, s_result], "",
-            plain_result_section["DynamicHMC", d_status, d_result], "",
-            plain_result_section["AdvancedHMC", a_status, a_result],
-        ]
-        join(parts, "\n")
     end
 
     @get serve_static(filename) = begin

@@ -13,7 +13,6 @@ using BridgeStan, StanLogDensityProblems, JSON
 using DifferentiationInterface
 using Random
 using LinearAlgebra
-import Pkg
 using TestModules
 
 include("test/runtests.jl")
@@ -22,133 +21,6 @@ include("test/runtests.jl")
 pdb = PosteriorDB.database()
 
 static_dir() = joinpath(dirname(@__DIR__), "static")
-
-function stan_problem(posterior_name)
-    posterior = PosteriorDB.posterior(pdb, posterior_name)
-    StanLogDensityProblems.StanProblem(
-        PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(posterior), "stan")),
-        PosteriorDB.load(PosteriorDB.dataset(posterior), String);
-        nan_on_error=true, make_args=["STAN_THREADS=TRUE"], warn=false
-    )
-end
-
-function posterior_reparametrization(posterior_name)
-    posterior = PosteriorDB.posterior(pdb, posterior_name)
-    jdata = PosteriorDB.load(PosteriorDB.dataset(posterior))
-    if startswith(posterior_name, "funnel")
-        dim = LogDensityProblems.dimension(stan_problem(posterior_name))
-        IndexedReparametrization(2:dim .=> Ref(Reparametrization(
-            PartiallyCentered(1.), PartiallyCentered(1.), 0., x->x[1]
-        )))
-    elseif !isnothing(match(r"-eight_schools_(non|)centered", posterior_name))
-        c = endswith(posterior_name, "noncentered") ? 0. : 1.
-        IndexedReparametrization(1:8 .=> Ref(Reparametrization(
-            PartiallyCentered(c), PartiallyCentered(c), x->x[9], x->x[10]
-        )))
-    elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", posterior_name))
-        J = jdata["J"]
-        c = endswith(posterior_name, "noncentered") ? 0. : 1.
-        IndexedReparametrization(map(1:J) do i
-            i => Reparametrization(PartiallyCentered(c), PartiallyCentered(c), x->x[J+1], x->x[J+2])
-        end)
-    else
-        nothing
-    end
-end
-
-function compile_check(posterior_name)
-    problem = stan_problem(posterior_name)
-    dim = LogDensityProblems.dimension(problem)
-    (dimension=dim,)
-end
-
-function run_sample(posterior_name; n_draws=100, seed=42)
-    problem = stan_problem(posterior_name)
-    dim = LogDensityProblems.dimension(problem)
-    rng = Xoshiro(seed)
-    t0 = time()
-    result = adaptive_warmup_mcmc(rng, problem; n_draws)
-    elapsed = time() - t0
-    draws = result.posterior_position
-    n = size(draws, 2)
-    dim = size(draws, 1)
-    ess_vals = MCMCDiagnosticTools.ess(reshape(draws', (:, 1, dim)))
-    min_ess = minimum(ess_vals)
-    median_ess = median(ess_vals)
-    draws_2d = dim >= 2 ? [[draws[1,i], draws[2,i]] for i in 1:n] : [[draws[1,i], 0.0] for i in 1:n]
-    (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
-     n_divergent=result.n_divergent_samples, draws_2d=draws_2d)
-end
-
-function run_sample_reparam(posterior_name; n_draws=100, seed=42)
-    reparam = posterior_reparametrization(posterior_name)
-    isnothing(reparam) && error("No reparametrization defined for $posterior_name")
-    problem = stan_problem(posterior_name)
-    rp = ReparametrizedProblem(reparam, problem, AutoForwardDiff())
-    dim = LogDensityProblems.dimension(rp)
-    rng = Xoshiro(seed)
-    # Initialize Pathfinder on the unwrapped problem (Pathfinder uses ForwardDiff
-    # which doesn't work through the reparametrization transform),
-    # then pass the init to the reparametrized sampler
-    init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
-    t0 = time()
-    result = adaptive_warmup_mcmc(rng, rp; n_draws, init)
-    elapsed = time() - t0
-    draws = result.posterior_position
-    n = size(draws, 2)
-    ess_vals = MCMCDiagnosticTools.ess(reshape(draws', (:, 1, dim)))
-    min_ess = minimum(ess_vals)
-    median_ess = median(ess_vals)
-    draws_2d = dim >= 2 ? [[draws[1,i], draws[2,i]] for i in 1:n] : [[draws[1,i], 0.0] for i in 1:n]
-    centering = [(idx, v.source.c) for (idx, v) in reparam.pairs]
-    (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
-     n_divergent=result.n_divergent_samples, draws_2d=draws_2d, centering=centering)
-end
-
-function run_sample_dynamichmc(posterior_name; n_draws=100, seed=42)
-    problem = stan_problem(posterior_name)
-    dim = LogDensityProblems.dimension(problem)
-    rng = Xoshiro(seed)
-    t0 = time()
-    result = WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, problem, n_draws; reporter=WarmupHMC.DynamicHMC.NoProgressReport())
-    elapsed = time() - t0
-    draws = result.posterior_matrix
-    n = size(draws, 2)
-    ess_vals = MCMCDiagnosticTools.ess(reshape(draws', (:, 1, dim)))
-    min_ess = minimum(ess_vals)
-    median_ess = median(ess_vals)
-    n_divergent = count(s -> WarmupHMC.DynamicHMC.is_divergent(s.termination), result.tree_statistics)
-    draws_2d = dim >= 2 ? [[draws[1,i], draws[2,i]] for i in 1:n] : [[draws[1,i], 0.0] for i in 1:n]
-    (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
-     n_divergent=n_divergent, draws_2d=draws_2d)
-end
-
-function run_sample_advancedhmc(posterior_name; n_draws=100, n_adapts=100, seed=42)
-    problem = stan_problem(posterior_name)
-    dim = LogDensityProblems.dimension(problem)
-    rng = Xoshiro(seed)
-    metric = AdvancedHMC.DiagEuclideanMetric(Float64, dim)
-    hamiltonian = AdvancedHMC.Hamiltonian(metric, problem)
-    integrator = AdvancedHMC.Leapfrog(0.1)
-    kernel = AdvancedHMC.HMCKernel(AdvancedHMC.Trajectory{AdvancedHMC.MultinomialTS}(integrator, AdvancedHMC.GeneralisedNoUTurn(10, 1000.0)))
-    adaptor = AdvancedHMC.StanHMCAdaptor(
-        AdvancedHMC.MassMatrixAdaptor(metric),
-        AdvancedHMC.StepSizeAdaptor(0.8, integrator)
-    )
-    theta_init = randn(rng, dim)
-    t0 = time()
-    θs, stats = AdvancedHMC.sample(rng, hamiltonian, kernel, theta_init, n_draws + n_adapts, adaptor, n_adapts; drop_warmup=true, verbose=false, progress=false)
-    elapsed = time() - t0
-    draws = reduce(hcat, θs)
-    n = size(draws, 2)
-    ess_vals = MCMCDiagnosticTools.ess(reshape(draws', (:, 1, dim)))
-    min_ess = minimum(ess_vals)
-    median_ess = median(ess_vals)
-    n_divergent = sum(s.numerical_error for s in stats)
-    draws_2d = dim >= 2 ? [[draws[1,i], draws[2,i]] for i in 1:n] : [[draws[1,i], 0.0] for i in 1:n]
-    (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
-     n_divergent=n_divergent, draws_2d=draws_2d)
-end
 
 # --- Web app ---
 
@@ -189,7 +61,10 @@ function status_cell_clickable(status::Symbol, check_url, detail_id)
     end
 end
 
-# --- Example computations with progress ---
+#= --- Example computations with progress ---
+DISABLED during AppContext refactor: depends on the now-inlined module-level
+`stan_problem` helper. Restore by reintroducing `stan_problem(pn)` (or by
+having these helpers reach into AppContext for a per-posterior problem).
 
 function run_parallel_pathfinder(posterior_name; n_chains=4, seed=42, progress=nothing)
     problem = stan_problem(posterior_name)
@@ -315,10 +190,15 @@ function _posterior_select(names, id)
         [h.option(pn; value=pn) for pn in names]...
     )
 end
+=#
 
 
 @htmx struct AppContext
-    
+
+    # ============================================================
+    # === Data ===
+    # ============================================================
+
     cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
 
     @cached posterior_names = sort([
@@ -326,64 +206,255 @@ end
         if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, pn)), "stan"))
     ])
 
-    @cached compile_result(pn) = compile_check(pn)
+    @struct posterior(pn) = begin
+        seed     = 42
+        n_draws  = 100
 
-    @cached sample_result(pn) = run_sample(pn)
+        problem = StanLogDensityProblems.StanProblem(
+            PosteriorDB.path(PosteriorDB.implementation(
+                PosteriorDB.model(PosteriorDB.posterior(pdb, pn)), "stan")),
+            PosteriorDB.load(PosteriorDB.dataset(PosteriorDB.posterior(pdb, pn)), String);
+            nan_on_error=true, make_args=["STAN_THREADS=TRUE"], warn=false)
+        dimension = LogDensityProblems.dimension(problem)
 
-    @cached dynamichmc_result(pn) = run_sample_dynamichmc(pn)
+        # Reparametrization spec dispatch (inlined from the old free
+        # `posterior_reparametrization`). The richer mapping in
+        # web/src/posteriordb_reparametrizations.jl can replace this later.
+        reparam_spec = if startswith(pn, "funnel")
+            IndexedReparametrization(2:dimension .=> Ref(Reparametrization(
+                PartiallyCentered(1.), PartiallyCentered(1.), 0., x->x[1])))
+        elseif !isnothing(match(r"-eight_schools_(non|)centered", pn))
+            c = endswith(pn, "noncentered") ? 0. : 1.
+            IndexedReparametrization(1:8 .=> Ref(Reparametrization(
+                PartiallyCentered(c), PartiallyCentered(c), x->x[9], x->x[10])))
+        elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", pn))
+            J = PosteriorDB.load(PosteriorDB.dataset(PosteriorDB.posterior(pdb, pn)))["J"]
+            c = endswith(pn, "noncentered") ? 0. : 1.
+            IndexedReparametrization(map(1:J) do i
+                i => Reparametrization(PartiallyCentered(c), PartiallyCentered(c),
+                                        x->x[J+1], x->x[J+2])
+            end)
+        else
+            nothing
+        end
 
-    @cached advancedhmc_result(pn) = run_sample_advancedhmc(pn)
+        # === Per-method DOs ===
 
-    @cached reparam_result(pn) = run_sample_reparam(pn)
+        @struct compile = begin
+            label = "Compiles"
+            @cached value = begin
+                t0 = time()
+                LogDensityProblems.dimension(problem)
+                (elapsed = time() - t0,)
+            end
+            (; elapsed) = value
+        end
 
-    # Three-state status from disk cache:
-    # :ready     — succeeded, value cached
-    # :started   — attempted but failed (or in flight); accessing re-runs
-    # :unstarted — never attempted
-    compile_status(pn) = @cache_status compile_result[pn]
-    sample_status(pn) = @cache_status sample_result[pn]
-    dynamichmc_status(pn) = @cache_status dynamichmc_result[pn]
-    advancedhmc_status(pn) = @cache_status advancedhmc_result[pn]
-    reparam_status(pn) = @cache_status reparam_result[pn]
+        @struct sample = begin
+            label = "WarmupHMC"
+            rng   = Xoshiro(seed)
+            @cached value = begin
+                t0  = time()
+                raw = adaptive_warmup_mcmc(rng, problem; n_draws)
+                (elapsed     = time() - t0,
+                 draws       = raw.posterior_position,
+                 n_divergent = raw.n_divergent_samples)
+            end
+            (; elapsed, draws, n_divergent) = value
+        end
 
-    overview_row(pn) = begin
-        c_status = compile_status[pn]
-        s_status = sample_status[pn]
-        d_status = dynamichmc_status[pn]
-        a_status = advancedhmc_status[pn]
-        detail_id = "detail-$pn"
-        toggle = "on click toggle .hidden on #$detail_id"
+        @struct dynamichmc = begin
+            label = "DynamicHMC"
+            rng   = Xoshiro(seed)
+            @cached value = begin
+                t0  = time()
+                raw = WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, problem, n_draws;
+                          reporter = WarmupHMC.DynamicHMC.NoProgressReport())
+                (elapsed     = time() - t0,
+                 draws       = raw.posterior_matrix,
+                 n_divergent = count(s -> WarmupHMC.DynamicHMC.is_divergent(s.termination),
+                                     raw.tree_statistics))
+            end
+            (; elapsed, draws, n_divergent) = value
+        end
 
-        w_ess = s_status == :ready ? string(round(sample_result[pn].median_ess; digits=1)) : "-"
-        w_time = s_status == :ready ? string(round(sample_result[pn].time; digits=2), "s") : "-"
-        d_ess = d_status == :ready ? string(round(dynamichmc_result[pn].median_ess; digits=1)) : "-"
-        d_time = d_status == :ready ? string(round(dynamichmc_result[pn].time; digits=2), "s") : "-"
-        a_ess = a_status == :ready ? string(round(advancedhmc_result[pn].median_ess; digits=1)) : "-"
-        a_time = a_status == :ready ? string(round(advancedhmc_result[pn].time; digits=2), "s") : "-"
+        @struct advancedhmc = begin
+            label    = "AdvancedHMC"
+            rng      = Xoshiro(seed)
+            n_adapts = 100
+            @cached value = begin
+                metric      = AdvancedHMC.DiagEuclideanMetric(Float64, dimension)
+                hamiltonian = AdvancedHMC.Hamiltonian(metric, problem)
+                integrator  = AdvancedHMC.Leapfrog(0.1)
+                kernel      = AdvancedHMC.HMCKernel(AdvancedHMC.Trajectory{AdvancedHMC.MultinomialTS}(
+                                  integrator, AdvancedHMC.GeneralisedNoUTurn(10, 1000.0)))
+                adaptor     = AdvancedHMC.StanHMCAdaptor(
+                                  AdvancedHMC.MassMatrixAdaptor(metric),
+                                  AdvancedHMC.StepSizeAdaptor(0.8, integrator))
+                theta_init  = randn(rng, dimension)
+                t0          = time()
+                θs, stats   = AdvancedHMC.sample(rng, hamiltonian, kernel, theta_init,
+                                  n_draws + n_adapts, adaptor, n_adapts;
+                                  drop_warmup=true, verbose=false, progress=false)
+                (elapsed     = time() - t0,
+                 draws       = reduce(hcat, θs),
+                 n_divergent = sum(s.numerical_error for s in stats))
+            end
+            (; elapsed, draws, n_divergent) = value
+        end
 
-        [h.tr(
-            h.td(pn; class="u-pointer", _=toggle),
-            status_cell_clickable(c_status, "/check_compile/$pn", detail_id),
-            status_cell_clickable(s_status, "/check_sample/$pn", detail_id),
-            h.td(w_ess; class="u-pointer", _=toggle),
-            h.td(w_time; class="u-pointer", _=toggle),
-            status_cell_clickable(d_status, "/check_dynamichmc/$pn", detail_id),
-            h.td(d_ess; class="u-pointer", _=toggle),
-            h.td(d_time; class="u-pointer", _=toggle),
-            status_cell_clickable(a_status, "/check_advancedhmc/$pn", detail_id),
-            h.td(a_ess; class="u-pointer", _=toggle),
-            h.td(a_time; class="u-pointer", _=toggle),
-           ;
-            id="row-$pn",
-        ),
-        h.tr(; id=detail_id, class="hidden")]
+        @struct reparam = begin
+            label = "Reparam"
+            rng   = Xoshiro(seed)
+            @cached value = begin
+                isnothing(reparam_spec) && error("No reparametrization defined for $pn")
+                rp   = ReparametrizedProblem(reparam_spec, problem, AutoForwardDiff())
+                init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
+                t0   = time()
+                raw  = adaptive_warmup_mcmc(rng, rp; n_draws, init)
+                (elapsed     = time() - t0,
+                 draws       = raw.posterior_position,
+                 n_divergent = raw.n_divergent_samples,
+                 centering   = [(idx, v.source.c) for (idx, v) in reparam_spec.pairs])
+            end
+            (; elapsed, draws, n_divergent, centering) = value
+        end
+
+        # === Rendering ===
+
+        @struct result(method::Symbol) = begin
+            m      = getproperty(__parent__, method)
+            status = @cache_status m.value
+            label  = m.label
+
+            ess_vals    = MCMCDiagnosticTools.ess(reshape(m.draws', (:, 1, dimension)))
+            median_ess  = median(ess_vals)
+            min_ess     = minimum(ess_vals)
+            elapsed     = m.elapsed
+            n_divergent = m.n_divergent
+
+            formatted(name::Symbol; digits=1, suffix="") =
+                status == :ready ? "$(round(getproperty(__self__, name); digits))$suffix" : "-"
+
+            html = if status == :unstarted
+                ""
+            elseif status == :started
+                h.div(; class="u-mb-2")(
+                    h.p(h.strong(label, ": "), status_badge(:failed; label="FAIL")),
+                    h.p(h.em("Click the row's FAIL cell or re-run via the check route to view the error.")),
+                )
+            elseif method == :compile
+                h.div(; class="u-mb-2")(
+                    h.p(h.strong(label, ": "), status_badge(:done; label="PASS")),
+                    h.p(h.strong("Dimension: "), dimension),
+                )
+            else
+                h.div(; class="u-mb-2")(
+                    h.p(h.strong(label, ": "), status_badge(:done; label="PASS")),
+                    h.p(h.strong("Dimension: "), dimension),
+                    h.p(h.strong("Draws: "), size(m.draws, 2),
+                        " | ", h.strong("Min ESS: "),    formatted(:min_ess),
+                        " | ", h.strong("Median ESS: "), formatted(:median_ess),
+                        " | ", h.strong("Time: "),       formatted(:elapsed; digits=2, suffix="s"),
+                        " | ", h.strong("Divergent: "),  n_divergent),
+                )
+            end
+        end
+
+        # Reparam card composes result html + centering line + special "Run" button when unstarted
+        reparam_section = if isnothing(reparam_spec)
+            ""
+        elseif (@cache_status reparam.value) == :unstarted
+            h.div(; class="u-mb-2")(
+                h.p(h.strong("Reparam: "),
+                    h.a("Run"; hx_get=__appdata__/"check/reparam/$pn",
+                        hx_target="closest div", hx_swap="outerHTML",
+                        class="u-pointer")))
+        else
+            centering = reparam.value.centering
+            centering_info = !isempty(centering) ?
+                h.p(h.strong("Final centering: "),
+                    join(["[$idx] = $(round(c; digits=3))" for (idx, c) in centering[1:min(8,end)]], ", "),
+                    length(centering) > 8 ? ", ..." : "") : ""
+            h.div(; class="u-mb-2")(result(:reparam).html, centering_info)
+        end
+
+        # Per-row cells, computed once and reused by `summary_row` and `summary_row_swapped`.
+        row_cells = begin
+            detail_id = "detail-$pn"
+            toggle = "on click toggle .hidden on #$detail_id"
+            r_compile, r_sample, r_dynamichmc, r_advancedhmc =
+                result(:compile), result(:sample), result(:dynamichmc), result(:advancedhmc)
+            [
+                h.td(pn; class="u-pointer", _=toggle),
+                status_cell_clickable(r_compile.status,     "/check/compile/$pn",     detail_id),
+                status_cell_clickable(r_sample.status,      "/check/sample/$pn",      detail_id),
+                h.td(r_sample.formatted(:median_ess);                       class="u-pointer", _=toggle),
+                h.td(r_sample.formatted(:elapsed; digits=2, suffix="s");    class="u-pointer", _=toggle),
+                status_cell_clickable(r_dynamichmc.status,  "/check/dynamichmc/$pn",  detail_id),
+                h.td(r_dynamichmc.formatted(:median_ess);                   class="u-pointer", _=toggle),
+                h.td(r_dynamichmc.formatted(:elapsed; digits=2, suffix="s");class="u-pointer", _=toggle),
+                status_cell_clickable(r_advancedhmc.status, "/check/advancedhmc/$pn", detail_id),
+                h.td(r_advancedhmc.formatted(:median_ess);                  class="u-pointer", _=toggle),
+                h.td(r_advancedhmc.formatted(:elapsed; digits=2, suffix="s");class="u-pointer", _=toggle),
+            ]
+        end
+
+        summary_row = [h.tr(row_cells...; id="row-$pn"),
+                       h.tr(; id="detail-$pn", class="hidden")]
+
+        summary_row_swapped = h.tr(row_cells...; id="row-$pn", hx_swap_oob="outerHTML:#row-$pn")
+
+        detail_content = begin
+            r_compile     = result(:compile)
+            r_sample      = result(:sample)
+            r_dynamichmc  = result(:dynamichmc)
+            r_advancedhmc = result(:advancedhmc)
+            statuses = (r_compile.status, r_sample.status, r_dynamichmc.status, r_advancedhmc.status)
+            any_fail = any(==(:started), statuses)
+            all_pass_or_unstarted = all(s -> s in (:ready, :unstarted), statuses)
+            status_class = any_fail ? "u-status-callout u-status-error" :
+                           all_pass_or_unstarted ? "u-status-callout u-status-success" :
+                           "u-status-callout"
+            h.td(; colspan="11", class="whmc-detail-cell")(
+                h.div(; class=status_class)(
+                    h.h4(pn),
+                    r_compile.html,
+                    r_sample.html,
+                    reparam_section,
+                    r_dynamichmc.html,
+                    r_advancedhmc.html,
+                )
+            )
+        end
+
+        # === Mutating actions ===
+
+        # Force (re)compute a single check, clearing prior-failure cache first.
+        # On failure compute_property re-throws → route safety wrapper renders the error.
+        force(method::Symbol) = begin
+            m = getproperty(__self__, method)
+            (@cache_status m.value) == :started && @clear_cache! m.value
+            m.value
+        end
+
+        clear(method::Symbol) = begin
+            m = getproperty(__self__, method)
+            @clear_cache! m.value
+            "Cleared $method cache for $pn"
+        end
     end
+
+    # ============================================================
+    # === Page (overview, sidebar, page chrome) ===
+    # ============================================================
 
     overview = h.div(
         h.h2("WarmupHMC PosteriorDB Dashboard ($(length(posterior_names)) posteriors)"),
         h.p(
-            hx_link("/examples")("Examples (progress demo)"),
-            " | ",
+            # Examples link disabled — example routes commented out during refactor.
+            # hx_link("/examples")("Examples (progress demo)"),
+            # " | ",
             h.a(href=__self__/"tests")("Tests"),
         ),
         h.input(;
@@ -414,124 +485,21 @@ end
                     h.th("Time"; _="on click call sortTable(10, me)", class="u-pointer"),
                 ),
             ),
-            h.tbody(reduce(vcat, [overview_row[pn] for pn in sort(posterior_names; by=pn -> !(@is_cached(compile_result[pn]) || @is_cached(sample_result[pn]) || @is_cached(dynamichmc_result[pn]) || @is_cached(advancedhmc_result[pn])))]; init=[])...; id="posterior-tbody")
+            h.tbody(reduce(vcat, [(@memo posterior(pn)).summary_row for pn in sort(posterior_names; by=pn -> begin
+                p = @memo posterior(pn)
+                !(@is_cached(p.compile.value) || @is_cached(p.sample.value) || @is_cached(p.dynamichmc.value) || @is_cached(p.advancedhmc.value))
+            end)]; init=[])...; id="posterior-tbody")
         ),
         sortable_table_js(),
         h.style(".hidden { display: none; } tr[id^=row-]:hover { background: var(--pico-table-row-stripped-background-color); } details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.5rem; }"),
     )
-
-    result_section(label, status, result) = begin
-        status == :unstarted && return ""
-        if status == :started
-            return h.div(; class="u-mb-2")(
-                h.p(h.strong(label, ": "), status_badge(:failed; label="FAIL")),
-                h.p(h.em("Click the row's FAIL cell or re-run via the check route to view the error.")),
-            )
-        end
-        h.div(; class="u-mb-2")(
-            h.p(h.strong(label, ": "), status_badge(:done; label="PASS")),
-            hasproperty(result, :dimension) && !isnothing(result.dimension) ? h.p(
-                h.strong("Dimension: "), string(result.dimension)
-            ) : "",
-            hasproperty(result, :n_draws) && !isnothing(result.n_draws) ? h.p(
-                h.strong("Draws: "), string(result.n_draws),
-                " | ", h.strong("Min ESS: "), string(round(result.min_ess; digits=1)),
-                " | ", h.strong("Median ESS: "), string(round(result.median_ess; digits=1)),
-                " | ", h.strong("Time: "), string(round(result.time; digits=2)), "s",
-                " | ", h.strong("Divergent: "), string(result.n_divergent)
-            ) : "",
-        )
-    end
-
-    reparam_section(pn) = begin
-        has_reparam = !isnothing(posterior_reparametrization(pn))
-        has_reparam || return ""
-        r_status = reparam_status[pn]
-        if r_status == :unstarted
-            return h.div(; class="u-mb-2")(
-                h.p(h.strong("Reparam: "),
-                    h.a("Run"; hx_get=__self__/"check_reparam/$pn", hx_target="closest div", hx_swap="outerHTML",
-                        class="u-pointer"))
-            )
-        end
-        r_result = r_status == :ready ? reparam_result[pn] : nothing
-        centering_info = if !isnothing(r_result) && !isnothing(r_result.centering)
-            h.p(h.strong("Final centering: "),
-                join(["[$idx] = $(round(c; digits=3))" for (idx, c) in r_result.centering[1:min(8,end)]], ", "),
-                length(r_result.centering) > 8 ? ", ..." : "")
-        else
-            ""
-        end
-        h.div(; class="u-mb-2")(
-            result_section["Reparam", r_status, r_result],
-            centering_info,
-        )
-    end
-
-    model_detail_content(pn) = begin
-        c_status = compile_status[pn]
-        s_status = sample_status[pn]
-        d_status = dynamichmc_status[pn]
-        a_status = advancedhmc_status[pn]
-        c_result = c_status == :ready ? compile_result[pn] : nothing
-        s_result = s_status == :ready ? sample_result[pn] : nothing
-        d_result = d_status == :ready ? dynamichmc_result[pn] : nothing
-        a_result = a_status == :ready ? advancedhmc_result[pn] : nothing
-        statuses = (c_status, s_status, d_status, a_status)
-        any_fail = any(==(:started), statuses)
-        all_pass_or_unstarted = all(s -> s in (:ready, :unstarted), statuses)
-        status_class = any_fail ? "u-status-callout u-status-error" : all_pass_or_unstarted ? "u-status-callout u-status-success" : "u-status-callout"
-        h.td(; colspan="11", class="whmc-detail-cell")(
-            h.div(; class=status_class)(
-                h.h4(pn),
-                result_section["Compiles", c_status, c_result],
-                result_section["WarmupHMC", s_status, s_result],
-                reparam_section[pn],
-                result_section["DynamicHMC", d_status, d_result],
-                result_section["AdvancedHMC", a_status, a_result],
-            )
-        )
-    end
-
-    updated_summary_row(pn) = begin
-        c_status = compile_status[pn]
-        s_status = sample_status[pn]
-        d_status = dynamichmc_status[pn]
-        a_status = advancedhmc_status[pn]
-        detail_id = "detail-$pn"
-        toggle = "on click toggle .hidden on #$detail_id"
-
-        w_ess = s_status == :ready ? string(round(sample_result[pn].median_ess; digits=1)) : "-"
-        w_time = s_status == :ready ? string(round(sample_result[pn].time; digits=2), "s") : "-"
-        d_ess = d_status == :ready ? string(round(dynamichmc_result[pn].median_ess; digits=1)) : "-"
-        d_time = d_status == :ready ? string(round(dynamichmc_result[pn].time; digits=2), "s") : "-"
-        a_ess = a_status == :ready ? string(round(advancedhmc_result[pn].median_ess; digits=1)) : "-"
-        a_time = a_status == :ready ? string(round(advancedhmc_result[pn].time; digits=2), "s") : "-"
-
-        h.tr(
-            h.td(pn; class="u-pointer", _=toggle),
-            status_cell_clickable(c_status, "/check_compile/$pn", detail_id),
-            status_cell_clickable(s_status, "/check_sample/$pn", detail_id),
-            h.td(w_ess; class="u-pointer", _=toggle),
-            h.td(w_time; class="u-pointer", _=toggle),
-            status_cell_clickable(d_status, "/check_dynamichmc/$pn", detail_id),
-            h.td(d_ess; class="u-pointer", _=toggle),
-            h.td(d_time; class="u-pointer", _=toggle),
-            status_cell_clickable(a_status, "/check_advancedhmc/$pn", detail_id),
-            h.td(a_ess; class="u-pointer", _=toggle),
-            h.td(a_time; class="u-pointer", _=toggle),
-           ;
-            id="row-$pn",
-            hx_swap_oob="outerHTML:#row-$pn",
-        )
-    end
 
     sidebar_html = h.aside(; id="sidebar")(
         h.nav(
             h.div(h.strong("WarmupHMC"); class="sidebar-title"),
             h.ul(
                 h.li(h.a("Table"; class="nav-item", data_nav="table",
-                    hx_get=__self__/"fragment_table", hx_target="#content", hx_swap="innerHTML",
+                    hx_get=__self__, hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="/",
                     _="on click remove .nav-active from .nav-item then add .nav-active to me")),
             ),
@@ -635,41 +603,11 @@ end
 
     # Force (re)compute a single check, clearing prior-failure cache first.
     # On failure compute_property re-throws → route safety wrapper renders the error.
-    force_check(check, pn) = if check == "compile"
-        compile_status[pn] == :started && @clear_cache! compile_result[pn]
-        compile_result[pn]
-    elseif check == "sample"
-        sample_status[pn] == :started && @clear_cache! sample_result[pn]
-        sample_result[pn]
-    elseif check == "dynamichmc"
-        dynamichmc_status[pn] == :started && @clear_cache! dynamichmc_result[pn]
-        dynamichmc_result[pn]
-    elseif check == "advancedhmc"
-        advancedhmc_status[pn] == :started && @clear_cache! advancedhmc_result[pn]
-        advancedhmc_result[pn]
-    elseif check == "reparam"
-        reparam_status[pn] == :started && @clear_cache! reparam_result[pn]
-        reparam_result[pn]
-    end
-
-    check_status(check, pn) = if check == "compile"
-        compile_status[pn]
-    elseif check == "sample"
-        sample_status[pn]
-    elseif check == "dynamichmc"
-        dynamichmc_status[pn]
-    elseif check == "advancedhmc"
-        advancedhmc_status[pn]
-    elseif check == "reparam"
-        reparam_status[pn]
-    else
-        :unstarted
-    end
-
     filtered_names(check, status_filter) = begin
         names = String[]
         for pn in posterior_names
-            s = check_status[check, pn]
+            p = @memo posterior(pn)
+            s = (@memo p.result(Symbol(check))).status
             show = if status_filter == "pass"; s == :ready
             elseif status_filter == "fail"; s == :started
             elseif status_filter == "unchecked"; s == :unstarted
@@ -680,6 +618,10 @@ end
         names
     end
 
+    # ============================================================
+    # === Routes ===
+    # ============================================================
+
     @get serve_static(filename) = begin
         filepath = joinpath(static_dir(), filename)
         isfile(filepath) || return HTTP.Response(404, body="Not found")
@@ -688,84 +630,28 @@ end
         HTTP.Response(200, ["Content-Type" => ct], body=read(filepath))
     end
 
-    @get debug_reparam(pn) = begin
-        reparam = posterior_reparametrization(pn)
-        isnothing(reparam) && return "No reparametrization for $pn"
-        problem = stan_problem(pn)
-        dim = LogDensityProblems.dimension(problem)
-        x = randn(Xoshiro(42), dim)
-        lines = String[]
-        push!(lines, "posterior: $pn (dim=$dim)")
-        push!(lines, "x = $x")
-        ljac, y = reparam(x)
-        push!(lines, "ljac = $ljac")
-        push!(lines, "y = $y")
-        ld = LogDensityProblems.logdensity(problem, y)
-        push!(lines, "logdensity(problem, y) = $ld")
-        rp = ReparametrizedProblem(reparam, problem, AutoForwardDiff())
-        ld_rp = LogDensityProblems.logdensity(rp, x)
-        push!(lines, "logdensity(rp, x) = $ld_rp")
-        push!(lines, "capabilities(rp) = $(LogDensityProblems.capabilities(typeof(rp)))")
-        ld_rp2, g = LogDensityProblems.logdensity_and_gradient(rp, x)
-        push!(lines, "logdensity_and_gradient(rp, x) = ($ld_rp2, $(g[1:min(3,end)])...)")
-        join(lines, "\n")
-    end
-
-    @get pkg_resolve = begin
-        Pkg.resolve()
-        Pkg.instantiate()
-        "Pkg.resolve() and Pkg.instantiate() completed"
-    end
-
     @get index = overview
 
     @get model(pn) = h.div(; id="content")(
         breadcrumb([
-            ("Table", "/fragment_table", "/"),
+            ("Table", "/", "/"),
             (pn, nothing, nothing),
         ]),
-        model_detail_content[pn],
+        (@memo posterior(pn)).detail_content,
     )
 
-    @get check_compile(pn) = begin
-        force_check["compile", pn]
-        [model_detail_content[pn], h.template(updated_summary_row[pn])]
+    # Collapsed check routes — one parameterized handler instead of five.
+    # `:reparam` returns its own section; the four samplers return the
+    # shared (detail_content, swapped-row template) tuple.
+    @get check(method, pn) = begin
+        p = @memo posterior(pn)
+        m = Symbol(method)
+        p.force(m)
+        m == :reparam ? p.reparam_section :
+            [p.detail_content, h.template(p.summary_row_swapped)]
     end
 
-    @get check_sample(pn) = begin
-        force_check["sample", pn]
-        [model_detail_content[pn], h.template(updated_summary_row[pn])]
-    end
-
-    @get check_dynamichmc(pn) = begin
-        force_check["dynamichmc", pn]
-        [model_detail_content[pn], h.template(updated_summary_row[pn])]
-    end
-
-    @get check_advancedhmc(pn) = begin
-        force_check["advancedhmc", pn]
-        [model_detail_content[pn], h.template(updated_summary_row[pn])]
-    end
-
-    @get check_reparam(pn) = begin
-        reparam_result[pn]
-        reparam_section[pn]
-    end
-
-    @get clear(check, pn) = begin
-        if check == "compile"
-            @clear_cache! compile_result[pn]
-        elseif check == "sample"
-            @clear_cache! sample_result[pn]
-        elseif check == "dynamichmc"
-            @clear_cache! dynamichmc_result[pn]
-        elseif check == "advancedhmc"
-            @clear_cache! advancedhmc_result[pn]
-        elseif check == "reparam"
-            @clear_cache! reparam_result[pn]
-        end
-        "Cleared $check cache for $pn"
-    end
+    @get clear(check, pn) = (@memo posterior(pn)).clear(Symbol(check))
 
     @get filter(check, status="all") = join(filtered_names[check, status], "\n")
 
@@ -773,13 +659,17 @@ end
         targets = filtered_names[check, status]
         results = String[]
         for pn in targets
-            force_check[check, pn]
+            (@memo posterior(pn)).force(Symbol(check))
             push!(results, "PASS $pn")
         end
         join(results, "\n")
     end
 
-    # --- Examples with progress ---
+    #= --- Examples (DISABLED during AppContext refactor) ---
+    # The example_* routes depend on the now-disabled run_parallel_pathfinder /
+    # run_parallel_sampling / run_cmdstan_sampling / ExampleComputations / _examples
+    # at module scope. Restore those (or rebuild them on top of `posterior(pn).problem`)
+    # to re-enable.
     examples_content = h.div(
         h.h2("Examples: WarmupHMC + Treebars Progress"),
         h.p("Demonstrates parallel computation with live progress reporting."),
@@ -851,6 +741,7 @@ end
             end
         end
     end
+    =# # --- end Examples (DISABLED) ---
 
     @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
 end

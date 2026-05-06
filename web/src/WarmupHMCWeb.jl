@@ -470,6 +470,19 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
 
 
     @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
+
+    # GET `/record_gallery` — drives `RECORDING_STATE.record` to dump
+    # `/` (overview) + `/model/$pn` for every posterior into
+    # `docs/src/public/live-whmc/` as static HTML (full + HX shapes). The
+    # docs build picks them up from there. Override `record_base` via
+    # `RECORD_BASE_PREFIX` env var, or `record_dir` via `?record_dir=…`.
+    @include record_gallery = RecordingRoutes(;
+        app_type    = AppContext,
+        paths       = vcat(["/"], ["/model/$pn" for pn in __appdata__.posterior_names]),
+        record_dir  = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc"),
+        record_base = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc"),
+        label       = "Recording WHMC dashboard",
+    )
 end
 
 function __init__()

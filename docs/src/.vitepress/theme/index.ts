@@ -16,6 +16,11 @@ import Banner from '@/Banner.vue'
 
 import { enhanceAppWithTabs } from 'vitepress-plugin-tabs/client'
 
+// Synced from HTMXObjects/assets/vitepress/htmxo-embed.ts by
+// `HTMXObjects.vitepress_theme_install` in make.jl. Don't edit in place
+// — edit upstream and re-run make.jl.
+import { setupHtmxoEmbed } from './htmxo-embed'
+
 import '@nolebase/vitepress-plugin-enhanced-readabilities/client/style.css'
 import './style.css' // You could setup your own, or else a default will be copied.
 import './docstrings.css' // You could setup your own, or else a default will be copied.
@@ -37,6 +42,11 @@ export const Theme: ThemeConfig = {
     app.component('VersionPicker', VersionPicker);
     app.component('AuthorBadge', AuthorBadge)
     app.component('Authors', Authors)
+    // HTMXObjects embed wiring: data-hx-base resolution + SPA route
+    // re-process + .htmxo-embed link rewriting. WHMC defaults the proxy
+    // prefix to `/live-whmc` (matches the Vite proxy in config.mts and
+    // the committed recordings under public/live-whmc/).
+    setupHtmxoEmbed(router, { proxyPrefix: '/live-whmc' });
   }
 }
 export default Theme

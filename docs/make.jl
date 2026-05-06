@@ -1,4 +1,11 @@
 using Documenter, DocumenterVitepress, WarmupHMC
+import HTMXObjects
+
+# Sync HTMXObjects' canonical `htmxo-embed.ts` (+ companion CSS) into our
+# theme dir before DocumenterVitepress runs. The theme's `index.ts`
+# imports `setupHtmxoEmbed` from it; calling this in make.jl keeps the
+# wiring auto-updated when HTMXObjects ships a new embed runtime.
+HTMXObjects.vitepress_theme_install(joinpath(@__DIR__, "src", ".vitepress", "theme"))
 
 makedocs(
     sitename = "WarmupHMC.jl",
@@ -10,6 +17,7 @@ makedocs(
     ),
     pages = [
         "Home"      => "index.md",
+        "Gallery"   => "gallery.md",
         "API"       => "api.md",
     ],
     checkdocs = :none,

@@ -1,7 +1,12 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 DocumenterVitepress = "4710194d-e776-4893-9690-8d956a29c365"
+HTMXObjects = "b12ef442-5798-4353-80f3-9562b03a0cb6"
 WarmupHMC = "60658175-6863-4866-a322-ab51a11c0cfe"
+
+[sources.HTMXObjects]
+rev = "dev"
+url = "https://github.com/nsiccha/HTMXObjects.jl.git"
 
 [sources.WarmupHMC]
 path = ".."

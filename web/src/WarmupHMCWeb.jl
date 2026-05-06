@@ -487,9 +487,9 @@ end
 @dynamicstruct struct ExampleComputations
     __status__ = initialize_progress!(:state; description="Examples")
 
-    pathfinder[pn] = run_parallel_pathfinder(pn; progress=__status__)
-    sampling[pn] = run_parallel_sampling(pn; progress=__status__)
-    cmdstan[pn] = run_cmdstan_sampling(pn; progress=__status__)
+    pathfinder(pn) = run_parallel_pathfinder(pn; progress=__status__)
+    sampling(pn) = run_parallel_sampling(pn; progress=__status__)
+    cmdstan(pn) = run_cmdstan_sampling(pn; progress=__status__)
 end
 _examples = ExampleComputations(; cache_type=:parallel)
 
@@ -579,7 +579,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         h.p(
             hx_link("/examples")("Examples (progress demo)"),
             " | ",
-            h.a(href="/tests")("Tests"),
+            h.a(href=__self__/"tests")("Tests"),
             " | ",
             hx_link("/viz_picker")("Viz"),
         ),
@@ -647,7 +647,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         if r_status == :unstarted
             return h.div(; class="u-mb-2")(
                 h.p(h.strong("Reparam: "),
-                    h.a("Run"; hx_get="/check_reparam/$pn", hx_target="closest div", hx_swap="outerHTML",
+                    h.a("Run"; hx_get=__self__/"check_reparam/$pn", hx_target="closest div", hx_swap="outerHTML",
                         class="u-pointer"))
             )
         end
@@ -681,7 +681,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         h.td(; colspan="11", class="whmc-detail-cell")(
             h.div(; class=status_class)(
                 h.h4(pn, " ", h.a("▶ Viz";
-                    hx_get="/fragment_viz/$pn", hx_target="#content", hx_swap="innerHTML",
+                    hx_get=__self__/"fragment_viz/$pn", hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="/viz/$pn",
                     class="u-text-xs u-text-normal u-pointer")),
                 result_section["Compiles", c_status, c_result],
@@ -731,18 +731,18 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             h.div(h.strong("WarmupHMC"); class="sidebar-title"),
             h.ul(
                 h.li(h.a("Table"; class="nav-item", data_nav="table",
-                    hx_get="/fragment_table", hx_target="#content", hx_swap="innerHTML",
+                    hx_get=__self__/"fragment_table", hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="/",
                     _="on click remove .nav-active from .nav-item then add .nav-active to me")),
                 h.li(h.a("Viz"; class="nav-item", data_nav="viz",
-                    hx_get="/fragment_viz_picker", hx_target="#content", hx_swap="innerHTML",
+                    hx_get=__self__/"fragment_viz_picker", hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="false",
                     _="on click remove .nav-active from .nav-item then add .nav-active to me")),
             ),
         ),
     )
 
-    page(content) = htmx(
+    __page__(content) = htmx(
         h.div(; class="app-layout")(
             sidebar_html,
             h.div(; class="app-main")(h.div(content; id="content"))
@@ -1073,7 +1073,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.span(badge; class=badge_class),
                 label;
                 class="whmc-picker-link",
-                hx_get="/fragment_viz/$name",
+                hx_get=__self__/"fragment_viz/$name",
                 hx_target="#content",
                 hx_swap="innerHTML",
                 hx_push_url="/viz/$name",
@@ -1120,7 +1120,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             return h.div(
                 bc,
                 h.p("No reactive NUTS data for $pn yet."),
-                h.a("Run reactive NUTS sampling"; href="/check_reactive/$pn"),
+                h.a("Run reactive NUTS sampling"; href=__self__/"check_reactive/$pn"),
             )
         end
 
@@ -1138,7 +1138,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.td(string(r.n_divergent)),
                 h.td(string(round(r.time; digits=2), "s")),
                 h.td(h.button("Show"; class="u-btn-sm u-text-xs",
-                    hx_get="/fragment_viz_single/$pn/$w",
+                    hx_get=__self__/"fragment_viz_single/$pn/$w",
                     hx_target="#viz-panel",
                     hx_swap="innerHTML",
                 ));
@@ -1154,7 +1154,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.td(h.span("FAIL"; class="u-text-error u-text-bold")),
                 h.td(; colspan="4")(
                     h.a("Re-run to view error";
-                        hx_get="/async_reactive/$pn/$w?force=true",
+                        hx_get=__self__/"async_reactive/$pn/$w?force=true",
                         hx_target="#viz-panel", hx_swap="innerHTML"),
                 ),
                 h.td("");
@@ -1196,7 +1196,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                         h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
                     ),
                 ),
-                h.script(; src="/serve_static/mcmc-viz.js"),
+                h.script(; src=__self__/"serve_static/mcmc-viz.js"),
                 h.div(init; id="viz-init"),
             )
         end
@@ -1238,7 +1238,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                     h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
                 ),
             ),
-            h.script(; src="/serve_static/mcmc-viz.js"),
+            h.script(; src=__self__/"serve_static/mcmc-viz.js"),
             h.div(init; id="viz-init"),
         ]
     end
@@ -1341,9 +1341,9 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         h.div(
             _posterior_select(posterior_names, "examples-select"),
             h.fieldset(; role="group")(
-                h.button("Pathfinder"; hx_get="/example_pathfinder", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
-                h.button("WarmupHMC"; hx_get="/example_sampling", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
-                h.button("CmdStan"; hx_get="/example_cmdstan", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
+                h.button("Pathfinder"; hx_get=__self__/"example_pathfinder", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
+                h.button("WarmupHMC"; hx_get=__self__/"example_sampling", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
+                h.button("CmdStan"; hx_get=__self__/"example_cmdstan", hx_include="#examples-select", hx_target="#examples-result", hx_swap="innerHTML"),
             ),
         ),
         h.div(; id="examples-result"),

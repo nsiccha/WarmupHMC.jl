@@ -20,8 +20,6 @@ using TestModules
 
 include("test/runtests.jl")
 
-_is_task(::Task) = true
-_is_task(_) = false
 
 pdb = PosteriorDB.database()
 
@@ -1030,13 +1028,13 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     # --- Async reactive sampling with progress polling (fetchindex pattern) ---
 
     @get async_reactive(pn, w; force::Bool=false) = fetchindex(_async_reactive.results, pn, w; force) do rv, status
-        if _is_task(rv) && istaskfailed(rv)
+        if rv isa Task && istaskfailed(rv)
             # Route the Task's exception through HTMXObjects' route safety wrapper
             # so the user sees the standard "Error ID: <uid>" article — no inline stacktrace.
             safely(; obj=__self__) do
                 fetch(rv)
             end
-        elseif _is_task(rv)
+        elseif rv isa Task
             h.div(; hx_get=query_url("/async_reactive/$pn/$w"), hx_trigger="every 200ms", hx_swap="outerHTML")(
                 h.article(
                     h.header("Sampling $pn ($(warmup_label(w)))..."),
@@ -1359,7 +1357,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     @get example_pathfinder(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.pathfinder, pn; force) do rv, status
-            if _is_task(rv)
+            if rv isa Task
                 h.div(; hx_get=query_url("/example_pathfinder"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
                     h.article(h.header("Pathfinder ($pn) — running..."), htmx_render_children(status))
                 )
@@ -1377,7 +1375,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     @get example_sampling(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.sampling, pn; force) do rv, status
-            if _is_task(rv)
+            if rv isa Task
                 h.div(; hx_get=query_url("/example_sampling"; pn), hx_trigger="every 200ms", hx_swap="outerHTML")(
                     h.article(h.header("Sampling ($pn) — running..."), htmx_render_children(status))
                 )
@@ -1395,7 +1393,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     @get example_cmdstan(; pn="", force::Bool=false) = begin
         isempty(pn) && return h.p("Select a posterior above.")
         fetchindex(_examples.cmdstan, pn; force) do rv, status
-            if _is_task(rv)
+            if rv isa Task
                 h.div(; hx_get=query_url("/example_cmdstan"; pn), hx_trigger="every 500ms", hx_swap="outerHTML")(
                     h.article(h.header("CmdStan ($pn) — running..."), htmx_render_children(status))
                 )

@@ -240,6 +240,18 @@ end
                         " | ", h.strong("Divergent: "),  n_divergent),
                 )
             end
+
+            # Mutating actions on this method's cache. Callers use the fresh
+            # form (no `@memo`) so each invocation actually runs the body.
+            force!() = begin
+                status == :started && @clear_cache! m.value
+                m.value
+            end
+
+            clear!() = begin
+                @clear_cache! m.value
+                "Cleared $method cache for $pn"
+            end
         end
 
         # Per-row cells, computed once and reused by `summary_row` and `summary_row_swapped`.
@@ -296,22 +308,6 @@ end
         any_cached = @is_cached(compile.value) || @is_cached(sample.value) ||
                      @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
-        # === Mutating actions ===
-
-        # Force (re)compute a single check, clearing prior-failure cache first.
-        # On failure compute_property re-throws → route safety wrapper renders the error.
-        # `!` suffix per Julia convention — these mutate the on-disk cache.
-        force!(method::Symbol) = begin
-            m = getproperty(__self__, method)
-            (@cache_status m.value) == :started && @clear_cache! m.value
-            m.value
-        end
-
-        clear!(method::Symbol) = begin
-            m = getproperty(__self__, method)
-            @clear_cache! m.value
-            "Cleared $method cache for $pn"
-        end
     end
 
     # ============================================================
@@ -429,12 +425,12 @@ end
     @get check(method, pn) = begin
         p = @memo posterior(pn)
         m = Symbol(method)
-        p.force!(m)
+        p.result(m).force!()
         m == :reparam ? p.reparam.section :
             [p.detail_content, h.template(p.summary_row_swapped)]
     end
 
-    @get clear(check, pn) = (@memo posterior(pn)).clear!(Symbol(check))
+    @get clear(check, pn) = (@memo posterior(pn)).result(Symbol(check)).clear!()
 
     @get filter(check, status="all") = join(filtered_names[check, status], "\n")
 
@@ -442,7 +438,7 @@ end
         targets = filtered_names[check, status]
         results = String[]
         for pn in targets
-            (@memo posterior(pn)).force!(Symbol(check))
+            (@memo posterior(pn)).result(Symbol(check)).force!()
             push!(results, "PASS $pn")
         end
         join(results, "\n")

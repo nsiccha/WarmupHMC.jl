@@ -254,7 +254,8 @@ end
             end
         end
 
-        # Per-row cells, computed once and reused by `summary_row` and `summary_row_swapped`.
+        # Per-row cells used by `summary_row` (and re-rendered into the
+        # OOB-swap response shape `summary_row => "row-$pn"` by routes).
         row_cells = begin
             detail_id = "detail-$pn"
             toggle = "on click toggle .hidden on #$detail_id"
@@ -275,10 +276,11 @@ end
             ]
         end
 
-        summary_row = [h.tr(row_cells...; id="row-$pn"),
-                       h.tr(; id="detail-$pn", class="hidden")]
-
-        summary_row_swapped = h.tr(row_cells...; id="row-$pn", hx_swap_oob="outerHTML:#row-$pn")
+        # The bare row; the table wraps it together with a hidden sibling
+        # for the expanded detail card. Routes that need to OOB-swap this
+        # row return `summary_row => "row-$pn"` (HTMX.jl's Pair handling
+        # auto-adds hx_swap_oob and templates around table elements).
+        summary_row = h.tr(row_cells...; id="row-$pn")
 
         detail_content = begin
             r_compile     = result(:compile)
@@ -350,7 +352,10 @@ end
                     h.th("Time"; _="on click call sortTable(10, me)", class="u-pointer"),
                 ),
             ),
-            h.tbody(reduce(vcat, [(@memo posterior(pn)).summary_row
+            h.tbody(reduce(vcat, [begin
+                                      p = @memo posterior(pn)
+                                      [p.summary_row, h.tr(; id="detail-$pn", class="hidden")]
+                                  end
                                   for pn in sort(posterior_names;
                                                   by=pn -> !(@memo posterior(pn)).any_cached)];
                             init=[])...; id="posterior-tbody")
@@ -427,7 +432,7 @@ end
         m = Symbol(method)
         p.result(m).force!()
         m == :reparam ? p.reparam.section :
-            [p.detail_content, h.template(p.summary_row_swapped)]
+            [p.detail_content, p.summary_row => "row-$pn"]
     end
 
     @get clear(check, pn) = (@memo posterior(pn)).result(Symbol(check)).clear!()

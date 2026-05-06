@@ -314,6 +314,27 @@ end
         any_cached = @is_cached(compile.value) || @is_cached(sample.value) ||
                      @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
+        # Compact card for the `/gallery` view: title + per-method status
+        # pills + deep link to `/model/$pn`. Cheap to render — only reads
+        # `@cache_status m.value` per method, never triggers compute.
+        gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
+            h.article(; class="htmxo-gallery-card")(
+                h.h4(; class="htmxo-gallery-card-title")(
+                    h.a(pn; href="/model/$pn"),
+                ),
+                h.div(; class="u-mb-2")(
+                    [let r = result(method); s = r.status
+                        h.div(; class="u-mb-1")(
+                            h.span(r.label, ": "),
+                            status_badge(s == :ready  ? :done   :
+                                         s == :started ? :failed : :info;
+                                label = s == :ready  ? "PASS" :
+                                        s == :started ? "FAIL" : "-"))
+                     end for method in methods]...,
+                ),
+                h.p(h.a("View detail →"; href="/model/$pn")),
+            )
+        end
     end
 end
 
@@ -385,7 +406,7 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
 
     __page__(content) = htmx(
         h.div(; class="grid")(
-            nav_sidebar(["Table" => "/"]; prefix=string(__self__)),
+            nav_sidebar(["Table" => "/", "Gallery" => "/gallery"]; prefix=string(__self__)),
             h.div(content; id="content"),
         ),
         h.style("""
@@ -435,6 +456,16 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
 
     @get index = overview
 
+    # Card-grid view. Same posteriors as `/`, just laid out as compact
+    # cards with status pills + deep-links instead of a sortable table.
+    @get gallery = h.div(
+        h.h2("WarmupHMC Posterior Gallery ($(length(__appdata__.posterior_names)) posteriors)"),
+        h.div(; class="htmxo-gallery")(
+            [(@memo __appdata__.posterior(pn)).gallery_card
+             for pn in __appdata__.posterior_names]...,
+        ),
+    )
+
     @get model(pn) = h.div(; id="content")(
         breadcrumb([
             ("Table", "/", "/"),
@@ -478,7 +509,8 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # `RECORD_BASE_PREFIX` env var, or `record_dir` via `?record_dir=…`.
     @include record_gallery = RecordingRoutes(;
         app_type    = AppContext,
-        paths       = vcat(["/"], ["/model/$pn" for pn in __appdata__.posterior_names]),
+        paths       = vcat(["/", "/gallery"],
+                           ["/model/$pn" for pn in __appdata__.posterior_names]),
         record_dir  = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc"),
         record_base = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc"),
         label       = "Recording WHMC dashboard",

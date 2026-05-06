@@ -14,8 +14,6 @@ using DifferentiationInterface
 using Random
 using LinearAlgebra
 import Pkg
-using ReactiveObjects, ReactiveHMC, ElasticArrays
-import KernelDensity
 using TestModules
 
 include("test/runtests.jl")
@@ -24,24 +22,6 @@ include("test/runtests.jl")
 pdb = PosteriorDB.database()
 
 static_dir() = joinpath(dirname(@__DIR__), "static")
-
-viz_css() = """
-.mcmc-grid {
-  display: grid; gap: 6px;
-  grid-template-columns: 2fr 1fr;
-  grid-template-rows: repeat(4, 110px);
-  grid-template-areas: "viz hist-y" "viz trace-y" "viz hist-x" "viz trace-x";
-}
-.panel { background: #fff; border: 1px solid #ddd; border-radius: 2px; overflow: hidden; }
-.viz { grid-area: viz; } .hist-y { grid-area: hist-y; } .hist-x { grid-area: hist-x; }
-.trace-x { grid-area: trace-x; } .trace-y { grid-area: trace-y; }
-.panel-label { font-size: 0.7rem; color: #888; padding: 4px 0; }
-.shared-trace { flex: 1; height: 80px; background: #fff; border: 1px solid #ddd; border-radius: 2px; overflow: hidden; }
-.speed-display { font-size: 0.6rem; color: #888; font-family: monospace; min-width: 52px; text-align: center; }
-#progress-bar { cursor: pointer; display: block; }
-.sampler-btn { cursor: pointer; margin-right: 8px; }
-.sampler-btn.active { font-weight: bold; opacity: 1 !important; }
-"""
 
 function stan_problem(posterior_name)
     posterior = PosteriorDB.posterior(pdb, posterior_name)
@@ -168,166 +148,6 @@ function run_sample_advancedhmc(posterior_name; n_draws=100, n_adapts=100, seed=
     draws_2d = dim >= 2 ? [[draws[1,i], draws[2,i]] for i in 1:n] : [[draws[1,i], 0.0] for i in 1:n]
     (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
      n_divergent=n_divergent, draws_2d=draws_2d)
-end
-
-# --- ReactiveHMC trajectory recording ---
-
-# Potential energy functions (negated log density) for ReactiveHMC
-pot(problem, x) = -LogDensityProblems.logdensity(problem, x)
-pot_and_grad(problem, x) = .-LogDensityProblems.logdensity_and_gradient(problem, x)
-
-# Partial function application (matches LocalScalesHMC's partial)
-struct StepFn{F} <: Function
-    f::F
-    stepsize::Float64
-end
-(s::StepFn)(args...) = s.f(args...; stepsize=s.stepsize)
-
-# trajectory_stats and sampling_stats are now provided by ReactiveHMC
-
-invperm0(x) = invperm(x .+ 1) .- 1
-
-warmup_strategies() = ["none", "stan", "stan_win", "nutpie", "nutpie_win"]
-warmup_label(w) = Dict(
-    "none" => "DA only",
-    "stan" => "DA + position metric",
-    "stan_win" => "stan windowed",
-    "nutpie" => "DA + pos/grad metric",
-    "nutpie_win" => "nutpie windowed",
-)[w]
-
-# Compute metric diagonal from welford accumulators
-function metric_diag_stan(wvp)
-    max.(1e-6, wvp.var)
-end
-function metric_diag_nutpie(wvp, wvg)
-    # sqrt(var_pos / var_grad) — equivalent to (var_pos/var_grad)^0.5
-    max.(1e-6, sqrt.(max.(1e-12, wvp.var) ./ max.(1e-12, wvg.var)))
-end
-
-function run_sample_reactive(posterior_name; warmup="none", n_draws=100, n_adapts=50, seed=42, progress=nothing)
-    update_progress!(progress, "Compiling Stan model...")
-    problem = stan_problem(posterior_name)
-    dim = LogDensityProblems.dimension(problem)
-    update_progress!(progress, "Compiled (dim=$dim). Starting sampler...")
-    rng = Xoshiro(seed)
-
-    pot_f = Base.Fix1(pot, problem)
-    grad_f = Base.Fix1(pot_and_grad, problem)
-
-    init_pos = randn(rng, dim)
-    init_mom = zeros(dim)
-    metric = Diagonal(ones(dim))
-    phasepoint = euclidean_phasepoint(pot_f, grad_f, metric, init_pos, init_mom)
-    tstats = trajectory_stats(dim)
-
-    da_state = dual_averaging_state(1.0; target=0.8)
-    state = nuts_state(phasepoint; rng, step_f=StepFn(leapfrog!, 1.0), stats_f=tstats)
-
-    use_metric = warmup in ("stan", "stan_win", "nutpie", "nutpie_win")
-    use_grads = warmup in ("nutpie", "nutpie_win")
-    use_windowed = warmup in ("stan_win", "nutpie_win")
-
-    wvp_fg = use_metric ? welford_var(dim) : nothing
-    wvg_fg = use_grads ? welford_var(dim) : nothing
-    wvp_bg = use_windowed ? welford_var(dim) : nothing
-    wvg_bg = use_windowed ? welford_var(dim) : nothing
-    bg_count = 0
-
-    early_end = floor(Int, 0.3 * n_adapts)
-    final_ss_start = n_adapts - floor(Int, 0.15 * n_adapts)
-    early_switch_freq = 10
-    mid_switch_freq = 80
-
-    dstats = sampling_stats(tstats)
-
-    t0 = time()
-    total_draws = n_draws + n_adapts
-    pnode = initialize_progress!(progress, total_draws; description="MCMC ($warmup)")
-    for i in 1:total_draws
-        reset!(tstats, state.init)
-        @invalidatedependants! state.init.mom = sqrt(state.init.metric) * randn!(rng, state.init.mom)
-        step!(state)
-
-        dstats(state, da_state)
-        update_progress!(pnode, i;
-            phase=i < n_adapts ? "warmup" : "sampling",
-            stepsize=short_string(state.step_f.stepsize),
-            acc_rate=short_string(Fraction(dstats.acc_rate[end])),
-        )
-
-        if i < n_adapts
-            fit!(da_state, dstats.acc_rate[end])
-            state.step_f = StepFn(leapfrog!, da_state.current)
-
-            if use_metric && !use_windowed
-                step!(wvp_fg, state.init.pos)
-                use_grads && step!(wvg_fg, state.init.dpot_dpos)
-                if wvp_fg.n > 2
-                    new_diag = use_grads && wvg_fg.n > 2 ?
-                        metric_diag_nutpie(wvp_fg, wvg_fg) :
-                        metric_diag_stan(wvp_fg)
-                    @invalidatedependants! state.init.metric = Diagonal(new_diag)
-                    da_state = dual_averaging_state(state.step_f.stepsize; target=0.8)
-                end
-
-            elseif use_windowed && i <= final_ss_start
-                pos = copy(state.init.pos)
-                step!(wvp_fg, pos)
-                step!(wvp_bg, pos)
-                if use_grads
-                    grad = copy(state.init.dpot_dpos)
-                    step!(wvg_fg, grad)
-                    step!(wvg_bg, grad)
-                end
-                bg_count += 1
-
-                switch_freq = i <= early_end ? early_switch_freq : mid_switch_freq
-                if bg_count >= switch_freq
-                    wvp_fg = wvp_bg
-                    wvp_bg = welford_var(dim)
-                    if use_grads
-                        wvg_fg = wvg_bg
-                        wvg_bg = welford_var(dim)
-                    end
-                    bg_count = 0
-                end
-
-                if wvp_fg.n > 2
-                    new_diag = use_grads && wvg_fg.n > 2 ?
-                        metric_diag_nutpie(wvp_fg, wvg_fg) :
-                        metric_diag_stan(wvp_fg)
-                    @invalidatedependants! state.init.metric = Diagonal(new_diag)
-                    da_state = dual_averaging_state(state.step_f.stepsize; target=0.8)
-                end
-            end
-
-        elseif i == n_adapts
-            state.step_f = StepFn(leapfrog!, da_state.final)
-        end
-    end
-    finalize_progress!(pnode)
-    elapsed = time() - t0
-
-    post_draws = dstats.draws[:, (n_adapts+1):end]
-    n = size(post_draws, 2)
-    ess_vals = MCMCDiagnosticTools.ess(reshape(post_draws', (:, 1, dim)))
-    min_ess = minimum(ess_vals)
-    median_ess = median(ess_vals)
-    n_divergent = sum(dstats.diverged[(n_adapts+1):end])
-
-    (n_draws=n, dimension=dim, min_ess=min_ess, median_ess=median_ess, time=elapsed,
-     n_divergent=n_divergent,
-     draws_2d=nothing,
-     full_history=dstats.full_history,
-     full_idxs=dstats.full_idxs,
-     all_draws=Matrix(dstats.draws),
-     n_adapts=n_adapts,
-     ess_vals=vec(ess_vals),
-     stepsizes=dstats.stepsizes,
-     acc_rate=dstats.acc_rate,
-     all_n_steps=dstats.n_steps,
-     all_diverged=dstats.diverged)
 end
 
 # --- Web app ---
@@ -497,14 +317,6 @@ function _posterior_select(names, id)
 end
 
 
-# --- Async reactive sampling ---
-@dynamicstruct struct AsyncReactiveComputations
-    __status__ = initialize_progress!(:state; description="Reactive")
-
-    results(pn, w) = run_sample_reactive(pn; warmup=w, progress=__status__)
-end
-_async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
-
 @htmx struct AppContext
     
     cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
@@ -524,8 +336,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
 
     @cached reparam_result(pn) = run_sample_reparam(pn)
 
-    @cached reactive_result(pn, warmup) = run_sample_reactive(pn; warmup)
-
     # Three-state status from disk cache:
     # :ready     — succeeded, value cached
     # :started   — attempted but failed (or in flight); accessing re-runs
@@ -535,7 +345,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
     dynamichmc_status(pn) = @cache_status dynamichmc_result[pn]
     advancedhmc_status(pn) = @cache_status advancedhmc_result[pn]
     reparam_status(pn) = @cache_status reparam_result[pn]
-    reactive_status(pn, w) = @cache_status reactive_result[pn, w]
 
     overview_row(pn) = begin
         c_status = compile_status[pn]
@@ -576,8 +385,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             hx_link("/examples")("Examples (progress demo)"),
             " | ",
             h.a(href=__self__/"tests")("Tests"),
-            " | ",
-            hx_link("/viz_picker")("Viz"),
         ),
         h.input(;
             type="search",
@@ -676,10 +483,7 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         status_class = any_fail ? "u-status-callout u-status-error" : all_pass_or_unstarted ? "u-status-callout u-status-success" : "u-status-callout"
         h.td(; colspan="11", class="whmc-detail-cell")(
             h.div(; class=status_class)(
-                h.h4(pn, " ", h.a("▶ Viz";
-                    hx_get=__self__/"fragment_viz/$pn", hx_target="#content", hx_swap="innerHTML",
-                    hx_push_url="/viz/$pn",
-                    class="u-text-xs u-text-normal u-pointer")),
+                h.h4(pn),
                 result_section["Compiles", c_status, c_result],
                 result_section["WarmupHMC", s_status, s_result],
                 reparam_section[pn],
@@ -729,10 +533,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
                 h.li(h.a("Table"; class="nav-item", data_nav="table",
                     hx_get=__self__/"fragment_table", hx_target="#content", hx_swap="innerHTML",
                     hx_push_url="/",
-                    _="on click remove .nav-active from .nav-item then add .nav-active to me")),
-                h.li(h.a("Viz"; class="nav-item", data_nav="viz",
-                    hx_get=__self__/"fragment_viz_picker", hx_target="#content", hx_swap="innerHTML",
-                    hx_push_url="false",
                     _="on click remove .nav-active from .nav-item then add .nav-active to me")),
             ),
         ),
@@ -819,38 +619,13 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
             .whmc-th-merge { text-align: center; border-bottom: none; }
             .whmc-detail-cell { padding: 0; border: none; }
 
-            /* WHMC viz layout */
-            .whmc-viz-row { max-width: 900px; }
-            .whmc-shared-traces { max-width: 900px; display: flex; gap: 6px; }
-            .whmc-viz-controls { max-width: 900px; margin: 8px 0; display: flex; align-items: center; gap: 10px; }
-            .whmc-viz-controls-group { display: flex; align-items: center; gap: 6px; }
-            .whmc-viz-btn { min-width: 36px; padding: 6px 10px; }
-            .whmc-progress-bar { flex: 1; height: 20px; }
-            .whmc-viz-title { margin-bottom: 4px; }
-
-            /* WHMC viz selector */
-            .whmc-selector-table { font-size: 0.85em; margin-bottom: 8px; }
-            .whmc-row-default { font-weight: bold; }
-            .whmc-row-failed { opacity: 0.7; }
-
-            /* WHMC viz picker */
-            .whmc-picker-link { display: block; padding: 6px 8px; text-decoration: none; border-radius: 4px; margin-bottom: 2px; cursor: pointer; }
-            .whmc-picker-badge { color: #888; margin-right: 4px; }
-            .whmc-picker-badge-active { color: green; margin-right: 4px; }
-            .whmc-picker-help { font-size: 0.85em; color: #888; margin-bottom: 8px; }
-
         """),
         h.script(raw"""
             function updateNav() {
                 var path = window.location.pathname;
                 document.querySelectorAll('.nav-item').forEach(function(el) { el.classList.remove('nav-active'); });
-                if (path.startsWith('/viz') || path.startsWith('/check_reactive')) {
-                    var el = document.querySelector('[data-nav="viz"]');
-                    if (el) el.classList.add('nav-active');
-                } else {
-                    var el = document.querySelector('[data-nav="table"]');
-                    if (el) el.classList.add('nav-active');
-                }
+                var el = document.querySelector('[data-nav="table"]');
+                if (el) el.classList.add('nav-active');
             }
             document.addEventListener('DOMContentLoaded', updateNav);
             document.body.addEventListener('htmx:pushedIntoHistory', updateNav);
@@ -911,286 +686,6 @@ _async_reactive = AsyncReactiveComputations(; cache_type=:parallel)
         ext = lowercase(splitext(filename)[2])
         ct = ext == ".js" ? "application/javascript" : ext == ".css" ? "text/css" : "text/plain"
         HTTP.Response(200, ["Content-Type" => ct], body=read(filepath))
-    end
-
-    viz_dataset(r, dims) = begin
-        i, j = dims
-        draws = r.all_draws
-        full_history = r.full_history
-        full_idxs = r.full_idxs
-        n_adapts = r.n_adapts
-
-        trajectories = [collect.(eachcol(t[[i,j], :])) for t in full_history]
-        post_draws = draws[:, (n_adapts+1):end]
-        kde_draws = post_draws[[i,j], :]
-
-        xGrid = collect(range(extrema(kde_draws[1, :])..., 200))
-        yGrid = collect(range(extrema(kde_draws[2, :])..., 200))
-        kde2d = KernelDensity.kde(kde_draws')
-        pdfs = max.(0, KernelDensity.pdf(KernelDensity.InterpKDE(kde2d), xGrid, yGrid))
-        xPdf = collect(KernelDensity.pdf(KernelDensity.InterpKDE(KernelDensity.kde(kde_draws[1, :])), xGrid))
-        yPdf = collect(KernelDensity.pdf(KernelDensity.InterpKDE(KernelDensity.kde(kde_draws[2, :])), yGrid))
-
-        Dict(
-            "xGrid" => xGrid, "yGrid" => yGrid,
-            "pdfs" => collect.(eachrow(pdfs)),
-            "trajectories" => trajectories,
-            "xPdf" => xPdf, "yPdf" => yPdf,
-        ), invperm0.(full_idxs)
-    end
-
-    viz_init_script(pn, w) = begin
-        reactive_status[pn, w] == :ready || return ""
-        r = reactive_result[pn, w]
-
-        dim = r.dimension
-        ess = r.ess_vals
-        j, i = length(ess) >= 2 ? sortperm(ess) : (1, min(2, length(ess)))
-        if i == j; i = min(2, dim); end
-
-        data, order = viz_dataset[r, (i, j)]
-
-        shared_specs = [
-            Dict("label" => "step size", "logScale" => true, "traces" => [
-                Dict("values" => r.stepsizes, "label" => "current"),
-            ]),
-            Dict("label" => "acceptance rate", "traces" => [
-                Dict("values" => r.acc_rate, "label" => "current"),
-                Dict("values" => cumsum(r.acc_rate) ./ eachindex(r.acc_rate), "label" => "cumulative"),
-            ]),
-            Dict("label" => "cumulative steps", "traces" => [
-                Dict("values" => cumsum(r.all_n_steps), "label" => "total"),
-            ]),
-        ]
-
-        options = Dict(
-            "trajectories_order" => order,
-            "zoomToFit" => [true],
-        )
-
-        data_json = JSON.json([data]; allownan=true)
-        traces_json = JSON.json(shared_specs; allownan=true)
-        options_json = JSON.json(options)
-
-        """<script>setup_viz($data_json, $traces_json, $options_json).play()</script>"""
-    end
-
-    # --- Async reactive sampling with progress polling (fetchindex pattern) ---
-
-    @get async_reactive(pn, w; force::Bool=false) = fetchindex(_async_reactive.results, pn, w; force) do rv, status
-        if rv isa Task && istaskfailed(rv)
-            # Route the Task's exception through HTMXObjects' route safety wrapper
-            # so the user sees the standard "Error ID: <uid>" article — no inline stacktrace.
-            safely(; obj=__self__) do
-                fetch(rv)
-            end
-        elseif rv isa Task
-            h.div(; hx_get=query_url("/async_reactive/$pn/$w"), hx_trigger="every 200ms", hx_swap="outerHTML")(
-                h.article(
-                    h.header("Sampling $pn ($(warmup_label(w)))..."),
-                    htmx_render_children(status),
-                )
-            )
-        else
-            result_section[warmup_label(w), :ready, rv]
-        end
-    end
-
-    @get viz(pn) = viz_content[pn]
-
-    @get check_reactive(pn) = begin
-        # Run all warmup strategies, clearing prior-failure caches first
-        for w in warmup_strategies()
-            reactive_status[pn, w] == :started && @clear_cache! reactive_result[pn, w]
-            reactive_result[pn, w]
-        end
-        viz_content[pn]
-    end
-
-    @get fragment_table = overview
-
-    viz_picker_content = begin
-        items = []
-        for name in posterior_names
-            has_reactive = any(w -> reactive_status[name, w] in (:ready, :started), warmup_strategies())
-            has_compile = compile_status[name] in (:ready, :started)
-            has_reactive || has_compile || continue
-            n_strats = sum(w -> reactive_status[name, w] == :ready, warmup_strategies())
-            badge = has_reactive ? "●" : "○"
-            badge_class = has_reactive ? "whmc-picker-badge-active" : "whmc-picker-badge"
-            label = has_reactive ? "$name ($n_strats/$(length(warmup_strategies())))" : name
-            push!(items, h.a(
-                h.span(badge; class=badge_class),
-                label;
-                class="whmc-picker-link",
-                hx_get=__self__/"fragment_viz/$name",
-                hx_target="#content",
-                hx_swap="innerHTML",
-                hx_push_url="/viz/$name",
-            ))
-        end
-        bc = breadcrumb([
-            ("Table", "/fragment_table", "/"),
-            ("Viz", nothing, nothing),
-        ])
-        isempty(items) && return h.div(
-            bc,
-            h.h3("Trajectory Visualization"),
-            h.p("No posteriors have been sampled yet. Run sampling from the Table view first."),
-        )
-        h.div(
-            bc,
-            h.h3("Trajectory Visualization"),
-            h.p("Select a posterior (● = has viz data, shows strategies cached):"; class="whmc-picker-help"),
-            items...,
-        )
-    end
-
-    @get fragment_viz_picker = viz_picker_content
-
-    viz_content(pn) = begin
-        available = Pair{String,Any}[]
-        failed_w = String[]
-        for w in warmup_strategies()
-            s = reactive_status[pn, w]
-            if s == :ready
-                push!(available, w => reactive_result[pn, w])
-            elseif s == :started
-                push!(failed_w, w)
-            end
-        end
-
-        bc = breadcrumb([
-            ("Table", "/fragment_table", "/"),
-            ("Viz", "/fragment_viz_picker", "false"),
-            (pn, nothing, nothing),
-        ])
-
-        if isempty(available) && isempty(failed_w)
-            return h.div(
-                bc,
-                h.p("No reactive NUTS data for $pn yet."),
-                h.a("Run reactive NUTS sampling"; href=__self__/"check_reactive/$pn"),
-            )
-        end
-
-        default_w = isempty(available) ? nothing : first(available).first
-
-        rows = map(available) do (w, r)
-            min_ess = round(r.min_ess; digits=1)
-            med_ess = round(r.median_ess; digits=1)
-            is_default = w == default_w
-            h.tr(
-                h.td(warmup_label(w)),
-                h.td(h.span("PASS"; class="u-text-success u-text-bold")),
-                h.td(string(med_ess)),
-                h.td(string(min_ess)),
-                h.td(string(r.n_divergent)),
-                h.td(string(round(r.time; digits=2), "s")),
-                h.td(h.button("Show"; class="u-btn-sm u-text-xs",
-                    hx_get=__self__/"fragment_viz_single/$pn/$w",
-                    hx_target="#viz-panel",
-                    hx_swap="innerHTML",
-                ));
-                class=is_default ? "whmc-row-default" : "",
-            )
-        end
-
-        # Failed rows: re-run via /async_reactive to surface the error through
-        # HTMXObjects' route safety wrapper (the disk cache only holds successes).
-        fail_rows = map(failed_w) do w
-            h.tr(
-                h.td(warmup_label(w)),
-                h.td(h.span("FAIL"; class="u-text-error u-text-bold")),
-                h.td(; colspan="4")(
-                    h.a("Re-run to view error";
-                        hx_get=__self__/"async_reactive/$pn/$w?force=true",
-                        hx_target="#viz-panel", hx_swap="innerHTML"),
-                ),
-                h.td("");
-                class="whmc-row-failed",
-            )
-        end
-
-        selector = h.table(; role="grid", class="whmc-selector-table")(
-            h.thead(h.tr(
-                h.th("Strategy"), h.th("Status"), h.th("Med ESS"), h.th("Min ESS"),
-                h.th("Div"), h.th("Time"), h.th(""),
-            )),
-            h.tbody(rows..., fail_rows...),
-        )
-
-        init = isnothing(default_w) ? "" : viz_init_script[pn, default_w]
-
-        viz_panel = if isnothing(default_w)
-            h.div(; id="viz-panel")(h.p("All cached strategies failed. Click a row to re-run and view the error."))
-        else
-            h.div(; id="viz-panel")(
-                h.div(; id="shared-traces", class="whmc-shared-traces"),
-                h.div(; class="whmc-viz-row")(
-                    h.div(warmup_label(default_w); class="panel-label", id="panel-label"),
-                    h.div(class="mcmc-grid")(
-                        h.div(; class="panel viz", id="viz-1"),
-                        h.div(; class="panel hist-y", id="hist-y-1"),
-                        h.div(; class="panel trace-y", id="trace-y-1"),
-                        h.div(; class="panel hist-x", id="hist-x-1"),
-                        h.div(; class="panel trace-x", id="trace-x-1"),
-                    ),
-                ),
-                h.div(; class="whmc-viz-controls")(
-                    h.button("▶"; id="btn-play", class="whmc-viz-btn"),
-                    h.canvas(; id="progress-bar", class="whmc-progress-bar"),
-                    h.div(; class="whmc-viz-controls-group")(
-                        h.button("÷2"; id="btn-slow", class="whmc-viz-btn"),
-                        h.span(; id="speed-display", class="speed-display"),
-                        h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
-                    ),
-                ),
-                h.script(; src=__self__/"serve_static/mcmc-viz.js"),
-                h.div(init; id="viz-init"),
-            )
-        end
-
-        [
-            h.style(viz_css()),
-            bc,
-            h.div(; class="whmc-viz-row")(
-                h.h3("$pn"; id="viz-title", class="whmc-viz-title"),
-                selector,
-            ),
-            viz_panel,
-        ]
-    end
-
-    @get fragment_viz(pn) = viz_content[pn]
-
-    @get fragment_viz_single(pn, w) = begin
-        r = reactive_result[pn, w]
-        init = viz_init_script[pn, w]
-        [
-            h.div(; id="shared-traces", class="whmc-shared-traces"),
-            h.div(; class="whmc-viz-row")(
-                h.div(warmup_label(w); class="panel-label", id="panel-label"),
-                h.div(class="mcmc-grid")(
-                    h.div(; class="panel viz", id="viz-1"),
-                    h.div(; class="panel hist-y", id="hist-y-1"),
-                    h.div(; class="panel trace-y", id="trace-y-1"),
-                    h.div(; class="panel hist-x", id="hist-x-1"),
-                    h.div(; class="panel trace-x", id="trace-x-1"),
-                ),
-            ),
-            h.div(; class="whmc-viz-controls")(
-                h.button("▶"; id="btn-play", class="whmc-viz-btn"),
-                h.canvas(; id="progress-bar", class="whmc-progress-bar"),
-                h.div(; class="whmc-viz-controls-group")(
-                    h.button("÷2"; id="btn-slow", class="whmc-viz-btn"),
-                    h.span(; id="speed-display", class="speed-display"),
-                    h.button("×2"; id="btn-fast", class="whmc-viz-btn"),
-                ),
-            ),
-            h.script(; src=__self__/"serve_static/mcmc-viz.js"),
-            h.div(init; id="viz-init"),
-        ]
     end
 
     @get debug_reparam(pn) = begin

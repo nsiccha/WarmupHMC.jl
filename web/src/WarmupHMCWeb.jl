@@ -18,8 +18,6 @@ using TestModules
 include("test/runtests.jl")
 
 
-pdb = PosteriorDB.database()
-
 # --- Web app ---
 
 function breadcrumb(items)
@@ -53,13 +51,19 @@ function status_cell_clickable(status::Symbol, check_url, detail_id)
     end
 end
 
-@htmx struct AppContext
+# ============================================================
+# AppData — the global singleton holding all data + per-(model, method)
+# computations. Long-running ops (Stan compile, MCMC sampling) live here
+# so their per-key disk-cached results survive across per-request
+# AppContext instances. `cache_type=:parallel` so the in-memory IP cache
+# also dedupes concurrent requests for the same key.
+# ============================================================
 
-    # ============================================================
-    # === Data ===
-    # ============================================================
+@dynamicstruct struct WhmcAppData
 
     cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
+
+    pdb = PosteriorDB.database()
 
     @cached posterior_names = sort([
         pn for pn in PosteriorDB.posterior_names(pdb)
@@ -189,7 +193,7 @@ end
             elseif (@cache_status value) == :unstarted
                 h.div(; class="u-mb-2")(
                     h.p(h.strong("Reparam: "),
-                        h.a("Run"; hx_get=__appdata__/"check/reparam/$pn",
+                        h.a("Run"; hx_get="/check/reparam/$pn",
                             hx_target="closest div", hx_swap="outerHTML",
                             class="u-pointer")))
             else
@@ -311,13 +315,28 @@ end
                      @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
     end
+end
 
-    # ============================================================
+const APPDATA = WhmcAppData(; cache_type=:parallel)
+
+# ============================================================
+# AppContext — ephemeral per-request DO. Holds rendering / page chrome
+# and routes; reads from `__appdata__` for everything data-side.
+# ============================================================
+
+@htmx struct AppContext
+    __appdata__ = APPDATA
+
+    # NOTE: deliberately NOT destructuring `(; posterior, posterior_names) =
+    # __appdata__` — that would bind the names as AppContext properties and
+    # collide with any future `@get posterior(...)` / similar route. Reach
+    # into `__appdata__.…` explicitly at the call site instead. (See the
+    # corresponding note in StanBlocks/PosteriorDBWeb.jl.)
+
     # === Page (overview, sidebar, page chrome) ===
-    # ============================================================
 
     overview = h.div(
-        h.h2("WarmupHMC PosteriorDB Dashboard ($(length(posterior_names)) posteriors)"),
+        h.h2("WarmupHMC PosteriorDB Dashboard ($(length(__appdata__.posterior_names)) posteriors)"),
         h.p(
             # Examples link disabled — example routes commented out during refactor.
             # hx_link("/examples")("Examples (progress demo)"),
@@ -353,11 +372,11 @@ end
                 ),
             ),
             h.tbody(reduce(vcat, [begin
-                                      p = @memo posterior(pn)
+                                      p = @memo __appdata__.posterior(pn)
                                       [p.summary_row, h.tr(; id="detail-$pn", class="hidden")]
                                   end
-                                  for pn in sort(posterior_names;
-                                                  by=pn -> !(@memo posterior(pn)).any_cached)];
+                                  for pn in sort(__appdata__.posterior_names;
+                                                  by=pn -> !(@memo __appdata__.posterior(pn)).any_cached)];
                             init=[])...; id="posterior-tbody")
         ),
         sortable_table_js(),
@@ -397,8 +416,8 @@ end
     # On failure compute_property re-throws → route safety wrapper renders the error.
     filtered_names(check, status_filter) = begin
         names = String[]
-        for pn in posterior_names
-            p = @memo posterior(pn)
+        for pn in __appdata__.posterior_names
+            p = @memo __appdata__.posterior(pn)
             s = (@memo p.result(Symbol(check))).status
             show = if status_filter == "pass"; s == :ready
             elseif status_filter == "fail"; s == :started
@@ -421,21 +440,21 @@ end
             ("Table", "/", "/"),
             (pn, nothing, nothing),
         ]),
-        (@memo posterior(pn)).detail_content,
+        (@memo __appdata__.posterior(pn)).detail_content,
     )
 
     # Collapsed check routes — one parameterized handler instead of five.
     # `:reparam` returns its own section; the four samplers return the
     # shared (detail_content, swapped-row template) tuple.
     @get check(method, pn) = begin
-        p = @memo posterior(pn)
+        p = @memo __appdata__.posterior(pn)
         m = Symbol(method)
         p.result(m).force!()
         m == :reparam ? p.reparam.section :
             [p.detail_content, p.summary_row => "row-$pn"]
     end
 
-    @get clear(check, pn) = (@memo posterior(pn)).result(Symbol(check)).clear!()
+    @get clear(check, pn) = (@memo __appdata__.posterior(pn)).result(Symbol(check)).clear!()
 
     @get filter(check, status="all") = join(filtered_names[check, status], "\n")
 
@@ -443,7 +462,7 @@ end
         targets = filtered_names[check, status]
         results = String[]
         for pn in targets
-            (@memo posterior(pn)).result(Symbol(check)).force!()
+            (@memo __appdata__.posterior(pn)).result(Symbol(check)).force!()
             push!(results, "PASS $pn")
         end
         join(results, "\n")

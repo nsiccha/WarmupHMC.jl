@@ -210,10 +210,12 @@ end
         seed     = 42
         n_draws  = 100
 
+        # Routes deliver `pn` as a SubString; PosteriorDB.posterior wants String.
+        # Convert once and reuse the underlying PosteriorDB handle.
+        pdb_posterior = PosteriorDB.posterior(pdb, String(pn))
         problem = StanLogDensityProblems.StanProblem(
-            PosteriorDB.path(PosteriorDB.implementation(
-                PosteriorDB.model(PosteriorDB.posterior(pdb, pn)), "stan")),
-            PosteriorDB.load(PosteriorDB.dataset(PosteriorDB.posterior(pdb, pn)), String);
+            PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(pdb_posterior), "stan")),
+            PosteriorDB.load(PosteriorDB.dataset(pdb_posterior), String);
             nan_on_error=true, make_args=["STAN_THREADS=TRUE"], warn=false)
         dimension = LogDensityProblems.dimension(problem)
 
@@ -228,7 +230,7 @@ end
             IndexedReparametrization(1:8 .=> Ref(Reparametrization(
                 PartiallyCentered(c), PartiallyCentered(c), x->x[9], x->x[10])))
         elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", pn))
-            J = PosteriorDB.load(PosteriorDB.dataset(PosteriorDB.posterior(pdb, pn)))["J"]
+            J = PosteriorDB.load(PosteriorDB.dataset(pdb_posterior))["J"]
             c = endswith(pn, "noncentered") ? 0. : 1.
             IndexedReparametrization(map(1:J) do i
                 i => Reparametrization(PartiallyCentered(c), PartiallyCentered(c),

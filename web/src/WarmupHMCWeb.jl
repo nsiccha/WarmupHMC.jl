@@ -300,13 +300,14 @@ end
 
         # Force (re)compute a single check, clearing prior-failure cache first.
         # On failure compute_property re-throws → route safety wrapper renders the error.
-        force(method::Symbol) = begin
+        # `!` suffix per Julia convention — these mutate the on-disk cache.
+        force!(method::Symbol) = begin
             m = getproperty(__self__, method)
             (@cache_status m.value) == :started && @clear_cache! m.value
             m.value
         end
 
-        clear(method::Symbol) = begin
+        clear!(method::Symbol) = begin
             m = getproperty(__self__, method)
             @clear_cache! m.value
             "Cleared $method cache for $pn"
@@ -428,12 +429,12 @@ end
     @get check(method, pn) = begin
         p = @memo posterior(pn)
         m = Symbol(method)
-        p.force(m)
+        p.force!(m)
         m == :reparam ? p.reparam.section :
             [p.detail_content, h.template(p.summary_row_swapped)]
     end
 
-    @get clear(check, pn) = (@memo posterior(pn)).clear(Symbol(check))
+    @get clear(check, pn) = (@memo posterior(pn)).clear!(Symbol(check))
 
     @get filter(check, status="all") = join(filtered_names[check, status], "\n")
 
@@ -441,7 +442,7 @@ end
         targets = filtered_names[check, status]
         results = String[]
         for pn in targets
-            (@memo posterior(pn)).force(Symbol(check))
+            (@memo posterior(pn)).force!(Symbol(check))
             push!(results, "PASS $pn")
         end
         join(results, "\n")

@@ -20,37 +20,6 @@ include("test/runtests.jl")
 
 # --- Web app ---
 
-function breadcrumb(items)
-    parts = []
-    for (i, (label, frag_url, push_url)) in enumerate(items)
-        i > 1 && push!(parts, h.span(" / "; class="bc-sep"))
-        if isnothing(frag_url)
-            push!(parts, h.span(label; class="bc-current"))
-        else
-            push!(parts, h.a(label;
-                hx_get=frag_url, hx_target="#content", hx_swap="innerHTML",
-                hx_push_url=push_url, class="bc-link"))
-        end
-    end
-    h.nav(parts...; class="breadcrumbs", aria_label="breadcrumb")
-end
-
-
-function status_cell_clickable(status::Symbol, check_url, detail_id)
-    if status == :ready
-        return h.td("PASS"; class="check-cell u-pointer u-text-success u-text-bold",
-            _="on click toggle .hidden on #$detail_id")
-    elseif status == :started
-        return h.td("FAIL"; class="check-cell u-pointer u-text-error u-text-bold",
-            hx_get=check_url, hx_target="#$detail_id", hx_swap="innerHTML",
-            _="on htmx:afterOnLoad if not me.classList.contains('batch') then remove .hidden from #$detail_id end remove .batch from me")
-    else
-        return h.td("-"; class="check-cell u-pointer u-text-muted",
-            hx_get=check_url, hx_target="#$detail_id", hx_swap="innerHTML",
-            _="on htmx:afterOnLoad if not me.classList.contains('batch') then remove .hidden from #$detail_id end remove .batch from me")
-    end
-end
-
 # ============================================================
 # AppData — the global singleton holding all data + per-(model, method)
 # computations. Long-running ops (Stan compile, MCMC sampling) live here
@@ -66,17 +35,18 @@ end
     pdb = PosteriorDB.database()
 
     @cached posterior_names = sort([
-        pn for pn in PosteriorDB.posterior_names(pdb)
-        if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, pn)), "stan"))
+        Symbol(name) for name in PosteriorDB.posterior_names(pdb)
+        if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, name)), "stan"))
     ])
 
-    @struct posterior(pn) = begin
+    @struct posterior(name::Symbol) = begin
         seed     = 42
         n_draws  = 100
 
-        # Routes deliver `pn` as a SubString; PosteriorDB.posterior wants String.
-        # Convert once and reuse the underlying PosteriorDB handle.
-        pdb_posterior = PosteriorDB.posterior(pdb, String(pn))
+        # `name` is a Symbol so it survives `cache_segment`'s `maybehash` as a
+        # readable directory name. PosteriorDB still wants a String; convert
+        # once here and reuse the underlying handle for everything below.
+        pdb_posterior = PosteriorDB.posterior(pdb, String(name))
         problem = StanLogDensityProblems.StanProblem(
             PosteriorDB.path(PosteriorDB.implementation(PosteriorDB.model(pdb_posterior), "stan")),
             PosteriorDB.load(PosteriorDB.dataset(pdb_posterior), String);
@@ -98,38 +68,36 @@ end
         @struct sample = begin
             label = "WarmupHMC"
             rng   = Xoshiro(seed)
-            @cached value = begin
-                t0  = time()
-                raw = adaptive_warmup_mcmc(rng, problem; n_draws)
-                (elapsed     = time() - t0,
-                 draws       = raw.posterior_position,
-                 n_divergent = raw.n_divergent_samples)
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
+                adaptive_warmup_mcmc(rng, cp; n_draws)
             end
-            (; elapsed, draws, n_divergent) = value
+            (; elapsed, n_evaluations, result) = value
+            draws       = result.posterior_position
+            n_divergent = result.n_divergent_samples
         end
 
         @struct dynamichmc = begin
             label = "DynamicHMC"
             rng   = Xoshiro(seed)
-            @cached value = begin
-                t0  = time()
-                raw = WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, problem, n_draws;
-                          reporter = WarmupHMC.DynamicHMC.NoProgressReport())
-                (elapsed     = time() - t0,
-                 draws       = raw.posterior_matrix,
-                 n_divergent = count(s -> WarmupHMC.DynamicHMC.is_divergent(s.termination),
-                                     raw.tree_statistics))
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
+                WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, cp, n_draws;
+                    reporter = WarmupHMC.DynamicHMC.NoProgressReport())
             end
-            (; elapsed, draws, n_divergent) = value
+            (; elapsed, n_evaluations, result) = value
+            draws       = result.posterior_matrix
+            n_divergent = count(s -> WarmupHMC.DynamicHMC.is_divergent(s.termination),
+                                result.tree_statistics)
         end
 
         @struct advancedhmc = begin
             label    = "AdvancedHMC"
             rng      = Xoshiro(seed)
-            n_adapts = 100
-            @cached value = begin
+            # Match DynamicHMC's default warmup budget for a fair comparison
+            # against the other samplers.
+            n_adapts = 1000
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 metric      = AdvancedHMC.DiagEuclideanMetric(Float64, dimension)
-                hamiltonian = AdvancedHMC.Hamiltonian(metric, problem)
+                hamiltonian = AdvancedHMC.Hamiltonian(metric, cp)
                 integrator  = AdvancedHMC.Leapfrog(0.1)
                 kernel      = AdvancedHMC.HMCKernel(AdvancedHMC.Trajectory{AdvancedHMC.MultinomialTS}(
                                   integrator, AdvancedHMC.GeneralisedNoUTurn(10, 1000.0)))
@@ -137,15 +105,14 @@ end
                                   AdvancedHMC.MassMatrixAdaptor(metric),
                                   AdvancedHMC.StepSizeAdaptor(0.8, integrator))
                 theta_init  = randn(rng, dimension)
-                t0          = time()
-                θs, stats   = AdvancedHMC.sample(rng, hamiltonian, kernel, theta_init,
-                                  n_draws + n_adapts, adaptor, n_adapts;
-                                  drop_warmup=true, verbose=false, progress=false)
-                (elapsed     = time() - t0,
-                 draws       = reduce(hcat, θs),
-                 n_divergent = sum(s.numerical_error for s in stats))
+                AdvancedHMC.sample(rng, hamiltonian, kernel, theta_init,
+                    n_draws + n_adapts, adaptor, n_adapts;
+                    drop_warmup=true, verbose=false, progress=false)
             end
-            (; elapsed, draws, n_divergent) = value
+            (; elapsed, n_evaluations, result) = value
+            θs, stats   = result
+            draws       = reduce(hcat, θs)
+            n_divergent = sum(s.numerical_error for s in stats)
         end
 
         @struct reparam = begin
@@ -155,16 +122,18 @@ end
             # Reparametrization spec dispatch (inlined from the old free
             # `posterior_reparametrization`). The richer mapping in
             # web/src/posteriordb_reparametrizations.jl can replace this later.
-            spec = if startswith(pn, "funnel")
+            # `name` is a Symbol; stringify once for the prefix/regex checks.
+            pn_str = String(name)
+            spec = if startswith(pn_str, "funnel")
                 IndexedReparametrization(2:dimension .=> Ref(Reparametrization(
                     PartiallyCentered(1.), PartiallyCentered(1.), 0., x->x[1])))
-            elseif !isnothing(match(r"-eight_schools_(non|)centered", pn))
-                c = endswith(pn, "noncentered") ? 0. : 1.
+            elseif !isnothing(match(r"-eight_schools_(non|)centered", pn_str))
+                c = endswith(pn_str, "noncentered") ? 0. : 1.
                 IndexedReparametrization(1:8 .=> Ref(Reparametrization(
                     PartiallyCentered(c), PartiallyCentered(c), x->x[9], x->x[10])))
-            elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", pn))
+            elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", pn_str))
                 J = PosteriorDB.load(PosteriorDB.dataset(pdb_posterior))["J"]
-                c = endswith(pn, "noncentered") ? 0. : 1.
+                c = endswith(pn_str, "noncentered") ? 0. : 1.
                 IndexedReparametrization(map(1:J) do i
                     i => Reparametrization(PartiallyCentered(c), PartiallyCentered(c),
                                             x->x[J+1], x->x[J+2])
@@ -173,37 +142,40 @@ end
                 nothing
             end
 
-            @cached value = begin
-                isnothing(spec) && error("No reparametrization defined for $pn")
+            @cached v"1" value = begin
+                isnothing(spec) && error("No reparametrization defined for $name")
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
                 init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
-                t0   = time()
-                raw  = adaptive_warmup_mcmc(rng, rp; n_draws, init)
-                (elapsed     = time() - t0,
-                 draws       = raw.posterior_position,
-                 n_divergent = raw.n_divergent_samples,
-                 centering   = [(idx, v.source.c) for (idx, v) in spec.pairs])
+                WarmupHMC.count_and_time(rp) do cp
+                    adaptive_warmup_mcmc(rng, cp; n_draws, init)
+                end
             end
-            (; elapsed, draws, n_divergent, centering) = value
+            (; elapsed, n_evaluations, result) = value
+            draws       = result.posterior_position
+            n_divergent = result.n_divergent_samples
+            centering   = isnothing(spec) ? [] :
+                          [(idx, v.source.c) for (idx, v) in spec.pairs]
 
             # Reparam-specific composed card: result html + centering line,
             # or a "Run" button when unstarted, or "" when no spec exists.
             section = if isnothing(spec)
                 ""
             elseif (@cache_status value) == :unstarted
-                h.div(; class="u-mb-2")(
+                h.section(
                     h.p(h.strong("Reparam: "),
-                        h.a("Run"; hx_get="/check/reparam/$pn",
-                            hx_target="closest div", hx_swap="outerHTML",
-                            class="u-pointer")))
+                        h.a("Run"; hx_post="/posteriors/$name/result/reparam/run",
+                            hx_target="closest div", hx_swap="outerHTML")))
             else
                 centering_info = !isempty(centering) ?
                     h.p(h.strong("Final centering: "),
                         join(["[$idx] = $(round(c; digits=3))" for (idx, c) in centering[1:min(8,end)]], ", "),
                         length(centering) > 8 ? ", ..." : "") : ""
-                h.div(; class="u-mb-2")(__parent__.result(:reparam).html, centering_info)
+                h.section(__parent__.result(:reparam).html, centering_info)
             end
         end
+
+        detail_id = "detail-$name"
+        toggle    = "on click toggle [@hidden] on #$detail_id"
 
         # === Rendering ===
 
@@ -211,30 +183,75 @@ end
             m      = getproperty(__parent__, method)
             status = @cache_status m.value
             label  = m.label
+            run_url = "/posteriors/$name/result/$method/run"
 
-            ess_vals    = MCMCDiagnosticTools.ess(reshape(m.draws', (:, 1, dimension)))
-            median_ess  = median(ess_vals)
-            min_ess     = minimum(ess_vals)
-            elapsed     = m.elapsed
-            n_divergent = m.n_divergent
+            ess_vals      = MCMCDiagnosticTools.ess(reshape(m.draws', (:, 1, dimension)))
+            median_ess    = median(ess_vals)
+            min_ess       = minimum(ess_vals)
+            elapsed       = m.elapsed
+            n_divergent   = m.n_divergent
+            n_evaluations = m.n_evaluations
 
+            # Encodes status into the cell text directly so the per-sampler
+            # status column can be dropped: number on success, "FAIL" on
+            # failure, "-" when unstarted.
             formatted(name::Symbol; digits=1, suffix="") =
-                status == :ready ? "$(round(getproperty(__self__, name); digits))$suffix" : "-"
+                status == :ready   ? "$(round(getproperty(__self__, name); digits))$suffix" :
+                status == :started ? "FAIL" : "-"
+
+            # Cells in the body row. Cells whose `data-status` is anything
+            # other than `success` carry a click→run handler; PASS cells just
+            # toggle the detail row. The batch-runner (search Enter handler)
+            # picks them up via `td[data-status]:not([data-status="success"])`,
+            # so no separate marker class is needed.
+            run_handler = "on htmx:afterOnLoad if me.hasAttribute('data-batch') is false then remove [@hidden] from #$detail_id end remove [@data-batch] from me"
+
+            # Compile-status cell (PASS/FAIL/-) for the "Compiles" column.
+            status_cell() =
+                status == :ready ?
+                    h.td("PASS"; data_status="success", _=toggle) :
+                status == :started ?
+                    h.td("FAIL"; data_status="error",
+                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         _=run_handler) :
+                    h.td("-"; data_status="muted",
+                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         _=run_handler)
+
+            # Per-sampler metric cell. On `:ready` the cell toggles the detail
+            # row; otherwise clicking posts the run URL.
+            metric_cell(text) =
+                status == :ready ?
+                    h.td(text; _=toggle) :
+                status == :started ?
+                    h.td(text; data_status="error",
+                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         _=run_handler) :
+                    h.td(text; data_status="muted",
+                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         _=run_handler)
+
+            # The 3 metric cells (min ESS, # grad, time) for a sampler row.
+            metric_cells() = (
+                metric_cell(formatted(:min_ess)),
+                metric_cell(formatted(:n_evaluations; digits=0)),
+                metric_cell(formatted(:elapsed; digits=2, suffix="s")),
+            )
 
             html = if status == :unstarted
                 ""
             elseif status == :started
-                h.div(; class="u-mb-2")(
+                h.section(
                     h.p(h.strong(label, ": "), status_badge(:failed; label="FAIL")),
                     h.p(h.em("Click the row's FAIL cell or re-run via the check route to view the error.")),
                 )
             elseif method == :compile
-                h.div(; class="u-mb-2")(
+                h.section(
                     h.p(h.strong(label, ": "), status_badge(:done; label="PASS")),
                     h.p(h.strong("Dimension: "), dimension),
                 )
             else
-                h.div(; class="u-mb-2")(
+                h.section(
                     h.p(h.strong(label, ": "), status_badge(:done; label="PASS")),
                     h.p(h.strong("Dimension: "), dimension),
                     h.p(h.strong("Draws: "), size(m.draws, 2),
@@ -245,8 +262,7 @@ end
                 )
             end
 
-            # Mutating actions on this method's cache. Callers use the fresh
-            # form (no `@memo`) so each invocation actually runs the body.
+            # Mutating actions on this method's cache.
             force!() = begin
                 status == :started && @clear_cache! m.value
                 m.value
@@ -254,37 +270,29 @@ end
 
             clear!() = begin
                 @clear_cache! m.value
-                "Cleared $method cache for $pn"
+                "Cleared $method cache for $name"
             end
         end
 
         # Per-row cells used by `summary_row` (and re-rendered into the
-        # OOB-swap response shape `summary_row => "row-$pn"` by routes).
-        row_cells = begin
-            detail_id = "detail-$pn"
-            toggle = "on click toggle .hidden on #$detail_id"
-            r_compile, r_sample, r_dynamichmc, r_advancedhmc =
-                result(:compile), result(:sample), result(:dynamichmc), result(:advancedhmc)
-            [
-                h.td(pn; class="u-pointer", _=toggle),
-                status_cell_clickable(r_compile.status,     "/check/compile/$pn",     detail_id),
-                status_cell_clickable(r_sample.status,      "/check/sample/$pn",      detail_id),
-                h.td(r_sample.formatted(:median_ess);                       class="u-pointer", _=toggle),
-                h.td(r_sample.formatted(:elapsed; digits=2, suffix="s");    class="u-pointer", _=toggle),
-                status_cell_clickable(r_dynamichmc.status,  "/check/dynamichmc/$pn",  detail_id),
-                h.td(r_dynamichmc.formatted(:median_ess);                   class="u-pointer", _=toggle),
-                h.td(r_dynamichmc.formatted(:elapsed; digits=2, suffix="s");class="u-pointer", _=toggle),
-                status_cell_clickable(r_advancedhmc.status, "/check/advancedhmc/$pn", detail_id),
-                h.td(r_advancedhmc.formatted(:median_ess);                  class="u-pointer", _=toggle),
-                h.td(r_advancedhmc.formatted(:elapsed; digits=2, suffix="s");class="u-pointer", _=toggle),
-            ]
-        end
+        # OOB-swap response shape `summary_row => "row-$name"` by routes).
+        # Layout: Posterior | Compiles | (ESS, Time) × 3 samplers = 8 cols.
+        # ESS/Time cells double as the per-sampler trigger: when status is
+        # `:ready` the cell toggles the detail row; otherwise it `hx_post`s
+        # the corresponding `/posteriors/<name>/result/<m>/run` to (re-)run.
+        row_cells = [
+            h.td(name; _=toggle),
+            result(:compile).status_cell(),
+            result(:sample).metric_cells()...,
+            result(:dynamichmc).metric_cells()...,
+            result(:advancedhmc).metric_cells()...,
+        ]
 
         # The bare row; the table wraps it together with a hidden sibling
         # for the expanded detail card. Routes that need to OOB-swap this
-        # row return `summary_row => "row-$pn"` (HTMX.jl's Pair handling
+        # row return `summary_row => "row-$name"` (HTMX.jl's Pair handling
         # auto-adds hx_swap_oob and templates around table elements).
-        summary_row = h.tr(row_cells...; id="row-$pn")
+        summary_row = h.tr(row_cells...; id="row-$name")
 
         detail_content = begin
             r_compile     = result(:compile)
@@ -294,12 +302,12 @@ end
             statuses = (r_compile.status, r_sample.status, r_dynamichmc.status, r_advancedhmc.status)
             any_fail = any(==(:started), statuses)
             all_pass_or_unstarted = all(s -> s in (:ready, :unstarted), statuses)
-            status_class = any_fail ? "u-status-callout u-status-error" :
-                           all_pass_or_unstarted ? "u-status-callout u-status-success" :
-                           "u-status-callout"
-            h.td(; colspan="11", class="whmc-detail-cell")(
-                h.div(; class=status_class)(
-                    h.h4(pn),
+            banner_status = any_fail ? "error" :
+                            all_pass_or_unstarted ? "success" :
+                            "neutral"
+            h.td(; colspan="11")(
+                h.div(; class="htmxo-status-banner", data_status=banner_status)(
+                    h.h4(name),
                     r_compile.html,
                     r_sample.html,
                     reparam.section,
@@ -315,16 +323,14 @@ end
                      @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
         # Compact card for the `/gallery` view: title + per-method status
-        # pills + deep link to `/model/$pn`. Cheap to render — only reads
+        # pills + deep link to `/model/$name`. Cheap to render — only reads
         # `@cache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
-            h.article(; class="htmxo-gallery-card")(
-                h.h4(; class="htmxo-gallery-card-title")(
-                    h.a(pn; href="/model/$pn"),
-                ),
-                h.div(; class="u-mb-2")(
+            h.article(
+                h.h4(h.a(name; href="/model/$name")),
+                h.ul(
                     [let r = result(method); s = r.status
-                        h.div(; class="u-mb-1")(
+                        h.li(
                             h.span(r.label, ": "),
                             status_badge(s == :ready  ? :done   :
                                          s == :started ? :failed : :info;
@@ -332,7 +338,7 @@ end
                                         s == :started ? "FAIL" : "-"))
                      end for method in methods]...,
                 ),
-                h.p(h.a("View detail →"; href="/model/$pn")),
+                h.p(h.a("View detail →"; href="/model/$name")),
             )
         end
     end
@@ -354,9 +360,22 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # into `__appdata__.…` explicitly at the call site instead. (See the
     # corresponding note in StanBlocks/PosteriorDBWeb.jl.)
 
-    # === Page (overview, sidebar, page chrome) ===
+    # === Page (sidebar, page chrome) ===
 
-    overview = h.div(
+    __page__(content) = htmx(
+        app_layout(
+            nav_sidebar(["Table" => "/", "Gallery" => "/gallery"]; prefix=string(__self__)),
+            content,
+        ),
+        h.style(".htmxo-status-banner section { margin-bottom: 0.5rem; }");
+        pico_version="2",
+    )
+
+    # ============================================================
+    # === Routes ===
+    # ============================================================
+
+    @get index = h.div(
         h.h2("WarmupHMC PosteriorDB Dashboard ($(length(__appdata__.posterior_names)) posteriors)"),
         h.p(
             # Examples link disabled — example routes commented out during refactor.
@@ -368,149 +387,119 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
             type="search",
             id="search",
             placeholder="Filter posteriors...",
-            _="on input set query to my value.toLowerCase() for row in <tr/> in #posterior-tbody if row.textContent.toLowerCase() contains query remove .hidden from row else add .hidden to row end end on keydown[key is 'Enter'] halt the event for row in <tr[id^='row-']/> in #posterior-tbody if row matches ':not(.hidden)' set target to null for cell in <td.check-cell/> in row if target is null and cell.textContent.trim() is not 'PASS' set target to cell end end if target is not null add .batch to target send click to target end end end",
-            class="u-w-full u-mb-4",
+            _="on input set query to my value.toLowerCase() for row in <tr/> in #posterior-tbody if row.textContent.toLowerCase() contains query remove [@hidden] from row else add [@hidden] to row end end on keydown[key is 'Enter'] halt the event for row in <tr[id^='row-']/> in #posterior-tbody if row matches ':not([hidden])' set target to null for cell in <td[data-status]:not([data-status='success'])/> in row if target is null set target to cell end end if target is not null set @data-batch to '' on target send click to target end end end",
         ),
-        h.table(class="striped"; role="grid")(
+        h.table(class="htmxo-sortable-table striped"; role="grid")(
             h.thead(
                 h.tr(
-                    h.th("Posterior"; _="on click call sortTable(0, me)", class="u-pointer", rowspan="2"),
-                    h.th("Compiles"; _="on click call sortTable(1, me)", class="u-pointer", rowspan="2"),
-                    h.th("WarmupHMC"; colspan="3", class="whmc-th-merge"),
-                    h.th("DynamicHMC"; colspan="3", class="whmc-th-merge"),
-                    h.th("AdvancedHMC"; colspan="3", class="whmc-th-merge"),
+                    h.th("Posterior"; _="on click call sortTable(0, me)", rowspan="2"),
+                    h.th("Compiles";  _="on click call sortTable(1, me)", rowspan="2"),
+                    h.th("WarmupHMC";   colspan="3"),
+                    h.th("DynamicHMC";  colspan="3"),
+                    h.th("AdvancedHMC"; colspan="3"),
                 ),
                 h.tr(
-                    h.th("Status"; _="on click call sortTable(2, me)", class="u-pointer"),
-                    h.th("ESS"; _="on click call sortTable(3, me)", class="u-pointer"),
-                    h.th("Time"; _="on click call sortTable(4, me)", class="u-pointer"),
-                    h.th("Status"; _="on click call sortTable(5, me)", class="u-pointer"),
-                    h.th("ESS"; _="on click call sortTable(6, me)", class="u-pointer"),
-                    h.th("Time"; _="on click call sortTable(7, me)", class="u-pointer"),
-                    h.th("Status"; _="on click call sortTable(8, me)", class="u-pointer"),
-                    h.th("ESS"; _="on click call sortTable(9, me)", class="u-pointer"),
-                    h.th("Time"; _="on click call sortTable(10, me)", class="u-pointer"),
+                    h.th("Min ESS"; _="on click call sortTable(2, me)"),
+                    h.th("# Grad";  _="on click call sortTable(3, me)"),
+                    h.th("Time";    _="on click call sortTable(4, me)"),
+                    h.th("Min ESS"; _="on click call sortTable(5, me)"),
+                    h.th("# Grad";  _="on click call sortTable(6, me)"),
+                    h.th("Time";    _="on click call sortTable(7, me)"),
+                    h.th("Min ESS"; _="on click call sortTable(8, me)"),
+                    h.th("# Grad";  _="on click call sortTable(9, me)"),
+                    h.th("Time";    _="on click call sortTable(10, me)"),
                 ),
             ),
             h.tbody(reduce(vcat, [begin
-                                      p = @memo __appdata__.posterior(pn)
-                                      [p.summary_row, h.tr(; id="detail-$pn", class="hidden")]
+                                      p = __appdata__.posterior(name)
+                                      [p.summary_row, h.tr(; id="detail-$name", hidden="")(p.detail_content)]
                                   end
-                                  for pn in sort(__appdata__.posterior_names;
-                                                  by=pn -> !(@memo __appdata__.posterior(pn)).any_cached)];
+                                  for name in sort(__appdata__.posterior_names;
+                                                  by=name -> !__appdata__.posterior(name).any_cached)];
                             init=[])...; id="posterior-tbody")
         ),
         sortable_table_js(),
-        h.style(".hidden { display: none; } tr[id^=row-]:hover { background: var(--pico-table-row-stripped-background-color); } details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.5rem; }"),
+        sortable_table_styles(),
     )
-
-    __page__(content) = htmx(
-        h.div(; class="grid")(
-            nav_sidebar(["Table" => "/", "Gallery" => "/gallery"]; prefix=string(__self__)),
-            h.div(content; id="content"),
-        ),
-        h.style("""
-            /* Breadcrumbs */
-            .breadcrumbs {
-                font-size: 0.85em;
-                margin-bottom: 16px;
-                padding: 6px 0;
-                border-bottom: 1px solid var(--pico-muted-border-color);
-            }
-            .bc-sep { color: var(--pico-muted-color); margin: 0 6px; }
-            .bc-current { color: var(--pico-color); font-weight: 500; }
-            .bc-link {
-                text-decoration: none !important;
-                color: var(--pico-primary) !important;
-                cursor: pointer;
-            }
-            .bc-link:hover { text-decoration: underline !important; }
-
-            /* WHMC table & detail card */
-            .whmc-th-merge { text-align: center; border-bottom: none; }
-            .whmc-detail-cell { padding: 0; border: none; }
-        """);
-        pico_version="2",
-    )
-
-    # Force (re)compute a single check, clearing prior-failure cache first.
-    # On failure compute_property re-throws → route safety wrapper renders the error.
-    filtered_names(check, status_filter) = begin
-        names = String[]
-        for pn in __appdata__.posterior_names
-            p = @memo __appdata__.posterior(pn)
-            s = (@memo p.result(Symbol(check))).status
-            show = if status_filter == "pass"; s == :ready
-            elseif status_filter == "fail"; s == :started
-            elseif status_filter == "unchecked"; s == :unstarted
-            else; true
-            end
-            show && push!(names, pn)
-        end
-        names
-    end
-
-    # ============================================================
-    # === Routes ===
-    # ============================================================
-
-    @get index = overview
 
     # Card-grid view. Same posteriors as `/`, just laid out as compact
     # cards with status pills + deep-links instead of a sortable table.
     @get gallery = h.div(
         h.h2("WarmupHMC Posterior Gallery ($(length(__appdata__.posterior_names)) posteriors)"),
         h.div(; class="htmxo-gallery")(
-            [(@memo __appdata__.posterior(pn)).gallery_card
-             for pn in __appdata__.posterior_names]...,
+            [__appdata__.posterior(name).gallery_card
+             for name in __appdata__.posterior_names]...,
         ),
     )
 
-    @get model(pn) = h.div(; id="content")(
-        breadcrumb([
-            ("Table", "/", "/"),
-            (pn, nothing, nothing),
-        ]),
-        (@memo __appdata__.posterior(pn)).detail_content,
-    )
+    # Drop all in-memory caches on the singleton appdata. Useful after
+    # property/value-shape edits that Revise tracks at the method level but
+    # can't invalidate per cached instance.
+    @delete cache = (clear_mem_caches!(__appdata__); "ok")
 
-    # Collapsed check routes — one parameterized handler instead of five.
-    # `:reparam` returns its own section; the four samplers return the
-    # shared (detail_content, swapped-row template) tuple.
-    @get check(method, pn) = begin
-        p = @memo __appdata__.posterior(pn)
-        m = Symbol(method)
-        p.result(m).force!()
-        m == :reparam ? p.reparam.section :
-            [p.detail_content, p.summary_row => "row-$pn"]
-    end
+    # Per-posterior view: routes mounted under /posteriors/<name>/…
+    @include posteriors(name::Symbol) = begin
+        @get index = h.div(
+            htmxo_breadcrumb([
+                ("Table", "/", "/"),
+                (name, nothing, nothing),
+            ]),
+            __appdata__.posterior(name).detail_content,
+        )
 
-    @get clear(check, pn) = (@memo __appdata__.posterior(pn)).result(Symbol(check)).clear!()
-
-    @get filter(check, status="all") = join(filtered_names[check, status], "\n")
-
-    @get recheck(check, status="fail") = begin
-        targets = filtered_names[check, status]
-        results = String[]
-        for pn in targets
-            (@memo __appdata__.posterior(pn)).result(Symbol(check)).force!()
-            push!(results, "PASS $pn")
+        # Per-(name, method) actions: /posteriors/<name>/result/<method>/{run,cache}
+        @include result(method::Symbol) = begin
+            # POST /posteriors/<name>/result/<method>/run — (re)compute that result.
+            # `:reparam` returns its own section; the four samplers return
+            # the shared (detail_content, OOB-row-swap) tuple.
+            @post run = begin
+                p = __appdata__.posterior(name)
+                p.result(method).force!()
+                method == :reparam ? p.reparam.section :
+                    [p.detail_content, p.summary_row => "row-$name"]
+            end
+            @delete cache = __appdata__.posterior(name).result(method).clear!()
         end
-        join(results, "\n")
     end
 
+    # Per-method view: cross-posterior aggregates mounted under /results/<method>/…
+    @include results(method::Symbol) = begin
+        # Posteriors filtered by their `result(method).status`. Stays a fresh
+        # call (no @memo / brackets) so disk-status changes are visible.
+        matching(status_filter) = begin
+            names = Symbol[]
+            for name in __appdata__.posterior_names
+                s = __appdata__.posterior(name).result(method).status
+                ok = if     status_filter == "pass";      s == :ready
+                     elseif status_filter == "fail";      s == :started
+                     elseif status_filter == "unchecked"; s == :unstarted
+                     else;                                true
+                     end
+                ok && push!(names, name)
+            end
+            names
+        end
+
+        @get  posteriors(status="all") = join(matching(status), "\n")
+        @post run(status="fail") = begin
+            for name in matching(status)
+                __appdata__.posterior(name).result(method).force!()
+            end
+            "ok"
+        end
+    end
 
     @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
 
     # GET `/record_gallery` — drives `RECORDING_STATE.record` to dump
-    # `/` (overview) + `/model/$pn` for every posterior into
+    # `/` (overview) + `/model/$name` for every posterior into
     # `docs/src/public/live-whmc/` as static HTML (full + HX shapes). The
     # docs build picks them up from there. Override `record_base` via
     # `RECORD_BASE_PREFIX` env var, or `record_dir` via `?record_dir=…`.
     @include record_gallery = RecordingRoutes(;
         app_type    = AppContext,
         paths       = vcat(["/", "/gallery"],
-                           ["/model/$pn" for pn in __appdata__.posterior_names]),
+                           ["/model/$name" for name in __appdata__.posterior_names]),
         record_dir  = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc"),
         record_base = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc"),
         label       = "Recording WHMC dashboard",

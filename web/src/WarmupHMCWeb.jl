@@ -143,7 +143,6 @@ include("test/runtests.jl")
             end
 
             @cached v"1" value = begin
-                isnothing(spec) && error("No reparametrization defined for $name")
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
                 init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
                 WarmupHMC.count_and_time(rp) do cp

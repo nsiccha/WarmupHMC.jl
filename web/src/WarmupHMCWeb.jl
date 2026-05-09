@@ -15,7 +15,9 @@ using Random
 using LinearAlgebra
 using TestModules
 
-include("test/runtests.jl")
+if @isdefined(IS_TESTING)
+    include("test/runtests.jl")
+end
 
 
 # --- Web app ---

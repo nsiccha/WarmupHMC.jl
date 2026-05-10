@@ -24,6 +24,28 @@ LogDensityProblems.logdensity_and_gradient(p::CountingPosterior, x) = begin
     LogDensityProblems.logdensity_and_gradient(parent(p), x)
 end
 
+"""
+    count_and_time(f, problem) -> (; elapsed, n_evaluations, result)
+
+Wrap `problem` in a fresh `CountingPosterior`, time the call to `f(wrapped)`,
+and return the elapsed wall-clock seconds, the total number of
+`logdensity_and_gradient` evaluations, and the closure's return value.
+
+Designed for `do`-block syntax so a sampler call site reads as:
+
+```julia
+(; elapsed, n_evaluations, result) = count_and_time(problem) do cp
+    sampler_call(rng, cp; ...)
+end
+```
+"""
+function count_and_time(f, problem)
+    cp = CountingPosterior(problem)
+    t0 = time()
+    result = f(cp)
+    (elapsed = time() - t0, n_evaluations = cp.count[], result)
+end
+
 struct RecordingPosterior2{P,T,R,G} <: WrappedLogDensityProblem{P}
     posterior::P
     halo_position::ElasticMatrix{T,Vector{T}}

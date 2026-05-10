@@ -376,7 +376,7 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # === Routes ===
     # ============================================================
 
-    @get index = h.div(
+    @get index() = h.div(
         h.h2("WarmupHMC PosteriorDB Dashboard ($(length(__appdata__.posterior_names)) posteriors)"),
         h.p(
             # Examples link disabled — example routes commented out during refactor.
@@ -425,7 +425,7 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
 
     # Card-grid view. Same posteriors as `/`, just laid out as compact
     # cards with status pills + deep-links instead of a sortable table.
-    @get gallery = h.div(
+    @get gallery() = h.div(
         h.h2("WarmupHMC Posterior Gallery ($(length(__appdata__.posterior_names)) posteriors)"),
         h.div(; class="htmxo-gallery")(
             [__appdata__.posterior(name).gallery_card
@@ -436,11 +436,11 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # Drop all in-memory caches on the singleton appdata. Useful after
     # property/value-shape edits that Revise tracks at the method level but
     # can't invalidate per cached instance.
-    @delete cache = (clear_mem_caches!(__appdata__); "ok")
+    @delete cache() = (clear_mem_caches!(__appdata__); "ok")
 
     # Per-posterior view: routes mounted under /posteriors/<name>/…
     @include posteriors(name::Symbol) = begin
-        @get index = h.div(
+        @get index() = h.div(
             htmxo_breadcrumb([
                 ("Table", "/", "/"),
                 (name, nothing, nothing),
@@ -453,13 +453,13 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
             # POST /posteriors/<name>/result/<method>/run — (re)compute that result.
             # `:reparam` returns its own section; the four samplers return
             # the shared (detail_content, OOB-row-swap) tuple.
-            @post run = begin
+            @post run() = begin
                 p = __appdata__.posterior(name)
                 p.result(method).force!()
                 method == :reparam ? p.reparam.section :
                     [p.detail_content, p.summary_row => "row-$name"]
             end
-            @delete cache = __appdata__.posterior(name).result(method).clear!()
+            @delete cache() = __appdata__.posterior(name).result(method).clear!()
         end
     end
 

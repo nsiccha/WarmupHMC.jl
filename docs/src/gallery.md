@@ -1,15 +1,23 @@
----
-htmxo-embed-fullwidth: true
----
-
 # Gallery
 
 The WarmupHMC dashboard runs every PosteriorDB model through four
 samplers (WarmupHMC, DynamicHMC, AdvancedHMC, plus an optional
 reparametrised pass) and reports compile / sample / ESS / time per
-posterior. The view below is the live dashboard during development; in
-the deployed docs it's the most recent recording committed under
+posterior. The views below are the live dashboard during development;
+in the deployed docs they're the most recent recording committed under
 `docs/src/public/live-whmc/`.
+
+## Overview table
+
+```@raw html
+<div class="htmxo-embed-fullwidth">
+<div class="htmxo-embed" data-hx-base="live-whmc/" hx-trigger="load" hx-swap="innerHTML">
+  <em>Loading WHMC overview…</em>
+</div>
+</div>
+```
+
+## Card grid
 
 ```@raw html
 <div class="htmxo-embed-fullwidth">

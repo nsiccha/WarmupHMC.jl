@@ -44,40 +44,89 @@ mypathfinder(args...;
 )
 
 """
-Adaptively 
+    adaptive_warmup_mcmc(rng, lpdf; kwargs...)
+    adaptive_warmup_mcmc(rngs::AbstractArray, lpdf_or_lpdfs; parallel=true, kwargs...)
 
-* learn a (currently only) linear transformation of the posterior that simplifies MCMC sampling,
-* learn a NUTS step size (using standard Dual Averaging), and
-* return samples from the posterior. 
+Run windowed adaptive NUTS warm-up + sampling against the
+`LogDensityProblems`-compatible `lpdf`, returning a `NamedTuple` of
+posterior positions/gradients plus diagnostics. Multi-chain dispatch
+broadcasts over `rngs` and (optionally) per-chain log densities.
 
-The warm-up procedure is windowed and inspired by [Stan](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)'s and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but differs in several important ways:
+The warm-up procedure is windowed and inspired by [Stan](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)'s
+and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but differs in several important ways:
 
-* We initialize using Pathfinder!
-* Our warm-up windows aim to reach a certain number of GRADIENT EVALUATIONS , instead of a certain number of MCMC transitions (Stan).
-We start with a (default) target of 1000 gradient evaluations, and double that target after each warm-up window.
-* Instead of only using the posterior positions (Stan), we use the posterior POSITIONS AND GRADIENTS (like e.g. nutpie).
-* Instead of only using the MCMC/posterior positions and gradients (Stan and nutpie), 
-we also store and use the INTERMEDIATE POSITIONS AND GRADIENTS, i.e. the ones that MCMC visits before returning the "final" new position. 
-We store up to (a default of) 1000 intermediate positions and gradients. 
-The stored intermediate positions get selected (pseudo-)randomly, and only get selected if the Hamiltonian error is small enough.
-* Instead of only learning a single (linear) transformation and upating that one repeatedly, we learn several transformations in parallel and
-at the end of each warm-up window select the one that minimizes a loss function. Currently, we learn three different linear transformations:
-    * Pathfinder's initial transformation, enriched by an updated additional diagonal scaling,
-    * A standard diagonal "mass matrix".
-    * A novel, adaptive sequence of Householder transformations followed by diagonal scaling.
+* Initializes via Pathfinder (LBFGS-based variational approximation).
+* Warm-up windows target a number of GRADIENT EVALUATIONS rather than
+  MCMC transitions. Default 1000, doubled after every window.
+* Uses POSITIONS AND GRADIENTS (like nutpie), plus the
+  INTERMEDIATE POSITIONS AND GRADIENTS visited during NUTS tree
+  traversal (selected pseudo-randomly, only if the Hamiltonian error is
+  small enough). Up to `recording_target` intermediate states are kept.
+* Learns three candidate linear transformations in parallel at the end
+  of every warm-up window:
+    * Pathfinder's initial transformation + an updated diagonal scaling,
+    * A standard diagonal "mass matrix",
+    * A novel, adaptive sequence of Householder reflections followed by
+      diagonal scaling.
 
-  The loss function that gets used to select the used linear transformation tries to reward transformations which turn the transformed posterior
-into something that's close to a Normal distribution without correlation. 
-For transformed positions p' and gradients g', the loss function is 
-    `loss(p', g') = sum((std(p') * std(g')))`, 
-which is zero for Normal distributions with zero correlations, independently of the sampled positions and gradients. 
-* Instead of running the warm-up for a fixed number of windows, 
-we try to estimate when continuing warming up is harmful/useless and stop warming up then. To facilitate this, we
-    * only ever adapt the stepsize until (a default of) 50 MCMC transitions have ocurred in the current warm-up window,
-    * and try to predict cost (in terms of gradient evaluations) for finishing sampling with the current kernel vs. restarting warm-up with a new window.
-    The way we do this prediction will probably be changed in the future.
+  Selection minimises `loss(p', g') = sum(abs2(log(std(p') * std(g'))))`
+  on the transformed intermediate positions/gradients — zero for an
+  uncorrelated Normal target.
+* Adapts step size for only the first `stepsize_adaptation_limit`
+  transitions per window (default 50), then freezes the step size and
+  treats subsequent transitions as posterior samples.
+* Stops warm-up adaptively: if the marginal-scale condition number drops
+  below `variance_cond_target` (default `2.0`), no new window starts.
 
-  By only ever having 50 stepsize adaptation MCMC transitions, we can start collecting posterior samples early.
+If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
+[`ReparametrizedProblem`](@ref), the active [`IndexedReparametrization`](@ref)
+is optimised at the end of every warm-up window, and posterior samples
+are transformed back to the original parametrization before returning.
+
+# `init` kwarg
+
+`init` controls per-chain initialization:
+
+* `missing` (default) — random `Uniform(-2, +2)` start, then Pathfinder.
+* a `Real` — random `Uniform(-init, +init)` start, then Pathfinder.
+* a `Distribution` — sample from it, then Pathfinder.
+* an `AbstractVector` — use as the unconstrained starting position, then
+  Pathfinder.
+* a `PathfinderResult` — take the first draw, skip running Pathfinder.
+* a `NamedTuple` — interpret as a pre-built initialization
+  (`position`, `position_and_gradient`, `scale`, `squared_scale`); skips
+  Pathfinder entirely.
+
+For the multi-chain method, pass either a scalar to broadcast or a
+`Vector` of length `length(rngs)` for per-chain initial values. There is
+no separate `initial_params` kwarg.
+
+# Selected keyword arguments
+
+* `n_draws=1000` — number of posterior draws to collect.
+* `n_evaluations=1000` — gradient-evaluation budget for the first
+  window; doubled each subsequent window.
+* `recording_target=1000` — maximum number of intermediate
+  positions/gradients to keep.
+* `stepsize_adaptation_limit=50` — per-window cap on step-size
+  adaptation transitions.
+* `target_acceptance_rate=0.8`, `max_tree_depth=10` — standard NUTS knobs.
+* `nonlinear_adapt=true` — whether to activate the reparametrization
+  hooks (no-op when `lpdf` carries no reparametrization).
+* `variance_cond_target=2.0` — restart threshold on the marginal-scale
+  condition number.
+* `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
+  diagnostic reporting via Treebars.
+* `parallel=true` (multi-chain only) — run chains on `Threads.@threads`.
+
+# Returns
+
+For the single-chain method, a `NamedTuple` with fields including
+`initial_position`, `halo_position`, `halo_gradient`,
+`posterior_position`, `posterior_gradient`, `ess`, `scale_options`,
+`active_transformation`, `stepsize`, `total_evaluation_counter`,
+`n_divergent_samples`, `position_and_gradient`, `scale_changes`.
+For the multi-chain method, a `Vector` of such `NamedTuple`s.
 """
 adaptive_warmup_mcmc(
     rng, lpdf; 

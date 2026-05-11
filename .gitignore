@@ -15,3 +15,11 @@ cache
 tmp
 Manifest.toml
 CLAUDE.md
+
+# Auto-generated HTMXObjects recording outputs — not committed to main
+docs/src/public/live-*/
+
+# Auto-installed by HTMXObjects.vitepress_theme_install during make.jl
+docs/src/.vitepress/theme/htmxo-embed.ts
+docs/src/.vitepress/theme/htmxo-gallery.css
+docs/src/.vitepress/theme/htmxo-syntax.css

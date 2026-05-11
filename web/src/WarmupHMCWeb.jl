@@ -19,6 +19,8 @@ if @isdefined(IS_TESTING)
     include("test/runtests.jl")
 end
 
+include("posteriordb_reparametrizations.jl")
+
 
 # --- Web app ---
 
@@ -121,28 +123,14 @@ end
             label = "Reparam"
             rng   = Xoshiro(seed)
 
-            # Reparametrization spec dispatch (inlined from the old free
-            # `posterior_reparametrization`). The richer mapping in
-            # web/src/posteriordb_reparametrizations.jl can replace this later.
-            # `name` is a Symbol; stringify once for the prefix/regex checks.
-            pn_str = String(name)
-            spec = if startswith(pn_str, "funnel")
-                IndexedReparametrization(2:dimension .=> Ref(Reparametrization(
-                    PartiallyCentered(1.), PartiallyCentered(1.), 0., x->x[1])))
-            elseif !isnothing(match(r"-eight_schools_(non|)centered", pn_str))
-                c = endswith(pn_str, "noncentered") ? 0. : 1.
-                IndexedReparametrization(1:8 .=> Ref(Reparametrization(
-                    PartiallyCentered(c), PartiallyCentered(c), x->x[9], x->x[10])))
-            elseif !isnothing(match(r"-radon_partially_pooled_(non|)centered", pn_str))
-                J = PosteriorDB.load(PosteriorDB.dataset(pdb_posterior))["J"]
-                c = endswith(pn_str, "noncentered") ? 0. : 1.
-                IndexedReparametrization(map(1:J) do i
-                    i => Reparametrization(PartiallyCentered(c), PartiallyCentered(c),
-                                            x->x[J+1], x->x[J+2])
-                end)
-            else
-                nothing
-            end
+            # Delegate to the richer per-posterior reparametrization table in
+            # posteriordb_reparametrizations.jl. The function takes a String
+            # posterior name, the dimension, and the loaded Stan JSON data.
+            # It always returns an IndexedReparametrization (empty for unknown
+            # posteriors, non-empty when a spec exists).
+            spec = reparametrization(String(name), dimension,
+                                     PosteriorDB.load(PosteriorDB.dataset(pdb_posterior)))
+            no_spec = isempty(spec.pairs)
 
             @cached v"1" value = begin
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
@@ -154,12 +142,11 @@ end
             (; elapsed, n_evaluations, result) = value
             draws       = result.posterior_position
             n_divergent = result.n_divergent_samples
-            centering   = isnothing(spec) ? [] :
-                          [(idx, v.source.c) for (idx, v) in spec.pairs]
+            centering   = [(idx, v.source.c) for (idx, v) in spec.pairs]
 
             # Reparam-specific composed card: result html + centering line,
             # or a "Run" button when unstarted, or "" when no spec exists.
-            section = if isnothing(spec)
+            section = if no_spec
                 ""
             elseif (@cache_status value) == :unstarted
                 h.section(
@@ -324,11 +311,11 @@ end
                      @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
         # Compact card for the `/gallery` view: title + per-method status
-        # pills + deep link to `/model/$name`. Cheap to render — only reads
+        # pills + deep link to `/posteriors/$name`. Cheap to render — only reads
         # `@cache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
-                h.h4(h.a(name; href="/model/$name")),
+                h.h4(h.a(name; href="/posteriors/$name")),
                 h.ul(
                     [let r = result(method); s = r.status
                         h.li(
@@ -339,7 +326,7 @@ end
                                         s == :started ? "FAIL" : "-"))
                      end for method in methods]...,
                 ),
-                h.p(h.a("View detail →"; href="/model/$name")),
+                h.p(h.a("View detail →"; href="/posteriors/$name")),
             )
         end
     end
@@ -490,17 +477,19 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
         end
     end
 
+    @include structure = HTMXObjects.StructureRoutes(; root=AppContext)
+
     @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
 
     # GET `/record_gallery` — drives `RECORDING_STATE.record` to dump
-    # `/` (overview) + `/model/$name` for every posterior into
+    # `/` (overview) + `/posteriors/$name` for every posterior into
     # `docs/src/public/live-whmc/` as static HTML (full + HX shapes). The
     # docs build picks them up from there. Override `record_base` via
     # `RECORD_BASE_PREFIX` env var, or `record_dir` via `?record_dir=…`.
     @include record_gallery = RecordingRoutes(;
         app_type    = AppContext,
         paths       = vcat(["/", "/gallery"],
-                           ["/model/$name" for name in __appdata__.posterior_names]),
+                           ["/posteriors/$name" for name in __appdata__.posterior_names]),
         record_dir  = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc"),
         record_base = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc"),
         label       = "Recording WHMC dashboard",

@@ -43,6 +43,18 @@ include("posteriordb_reparametrizations.jl")
         if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, name)), "stan"))
     ])
 
+    # === Recording (mirrors AlgebraOfVegaGallery §2b canonical form) ===
+    # Holding these on the cached AppData (rather than inline in the
+    # `@include record_gallery`) keeps the canonical AoV/htmxo-gallery
+    # shape and lets the path list be reused / inspected from outside the
+    # AppContext (e.g. from `record!` directly, or from a docs script).
+    recording_dir   = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc")
+    recording_base  = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc")
+    recording_paths = vcat(
+        ["/", "/gallery"],
+        ["/posteriors/$name" for name in posterior_names],
+    )
+
     @struct posterior(name::Symbol) = begin
         seed     = 42
         n_draws  = 100
@@ -484,14 +496,13 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # GET `/record_gallery` — drives `RECORDING_STATE.record` to dump
     # `/` (overview) + `/posteriors/$name` for every posterior into
     # `docs/src/public/live-whmc/` as static HTML (full + HX shapes). The
-    # docs build picks them up from there. Override `record_base` via
-    # `RECORD_BASE_PREFIX` env var, or `record_dir` via `?record_dir=…`.
+    # docs build picks them up from there. Paths / dir / base live on
+    # `WhmcAppData` to match the canonical AoV form (htmxo-gallery §2b).
     @include record_gallery = RecordingRoutes(;
         app_type    = AppContext,
-        paths       = vcat(["/", "/gallery"],
-                           ["/posteriors/$name" for name in __appdata__.posterior_names]),
-        record_dir  = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc"),
-        record_base = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc"),
+        paths       = __appdata__.recording_paths,
+        record_dir  = __appdata__.recording_dir,
+        record_base = __appdata__.recording_base,
         label       = "Recording WHMC dashboard",
     )
 end

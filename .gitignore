@@ -19,7 +19,6 @@ CLAUDE.md
 # Auto-generated HTMXObjects recording outputs — not committed to main
 docs/src/public/live-*/
 
-# Auto-installed by HTMXObjects.vitepress_theme_install during make.jl
-docs/src/.vitepress/theme/htmxo-embed.ts
-docs/src/.vitepress/theme/htmxo-gallery.css
-docs/src/.vitepress/theme/htmxo-syntax.css
+# (Formerly auto-installed by HTMXObjects.vitepress_theme_install during
+# make.jl. Now committed in-tree because HTMXObjects.jl is private and
+# CI has no PAT_TOKEN to clone it. Re-sync manually when needed.)

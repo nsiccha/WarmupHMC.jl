@@ -38,7 +38,7 @@ include("posteriordb_reparametrizations.jl")
 
     pdb = PosteriorDB.database()
 
-    @cached posterior_names = sort([
+    @diskcached posterior_names = sort([
         Symbol(name) for name in PosteriorDB.posterior_names(pdb)
         if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, name)), "stan"))
     ])
@@ -73,7 +73,7 @@ include("posteriordb_reparametrizations.jl")
 
         @struct compile = begin
             label = "Compiles"
-            @cached value = begin
+            @diskcached value = begin
                 t0 = time()
                 LogDensityProblems.dimension(problem)
                 (elapsed = time() - t0,)
@@ -84,7 +84,7 @@ include("posteriordb_reparametrizations.jl")
         @struct sample = begin
             label = "WarmupHMC"
             rng   = Xoshiro(seed)
-            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 adaptive_warmup_mcmc(rng, cp; n_draws)
             end
             (; elapsed, n_evaluations, result) = value
@@ -95,7 +95,7 @@ include("posteriordb_reparametrizations.jl")
         @struct dynamichmc = begin
             label = "DynamicHMC"
             rng   = Xoshiro(seed)
-            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, cp, n_draws;
                     reporter = WarmupHMC.DynamicHMC.NoProgressReport())
             end
@@ -111,7 +111,7 @@ include("posteriordb_reparametrizations.jl")
             # Match DynamicHMC's default warmup budget for a fair comparison
             # against the other samplers.
             n_adapts = 1000
-            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 metric      = AdvancedHMC.DiagEuclideanMetric(Float64, dimension)
                 hamiltonian = AdvancedHMC.Hamiltonian(metric, cp)
                 integrator  = AdvancedHMC.Leapfrog(0.1)
@@ -144,7 +144,7 @@ include("posteriordb_reparametrizations.jl")
                                      PosteriorDB.load(PosteriorDB.dataset(pdb_posterior)))
             no_spec = isempty(spec.pairs)
 
-            @cached v"1" value = begin
+            @diskcached v"1" value = begin
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
                 init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
                 WarmupHMC.count_and_time(rp) do cp
@@ -160,7 +160,7 @@ include("posteriordb_reparametrizations.jl")
             # or a "Run" button when unstarted, or "" when no spec exists.
             section = if no_spec
                 ""
-            elseif (@cache_status value) == :unstarted
+            elseif (@diskcache_status value) == :unstarted
                 h.section(
                     h.p(h.strong("Reparam: "),
                         h.a("Run"; hx_post="/posteriors/$name/result/reparam/run",
@@ -181,7 +181,7 @@ include("posteriordb_reparametrizations.jl")
 
         @struct result(method::Symbol) = begin
             m      = getproperty(__parent__, method)
-            status = @cache_status m.value
+            status = @diskcache_status m.value
             label  = m.label
             run_url = "/posteriors/$name/result/$method/run"
 
@@ -264,12 +264,12 @@ include("posteriordb_reparametrizations.jl")
 
             # Mutating actions on this method's cache.
             force!() = begin
-                status == :started && @clear_cache! m.value
+                status == :started && @clear_diskcache! m.value
                 m.value
             end
 
             clear!() = begin
-                @clear_cache! m.value
+                @clear_diskcache! m.value
                 "Cleared $method cache for $name"
             end
         end
@@ -319,12 +319,12 @@ include("posteriordb_reparametrizations.jl")
 
         # True iff any per-method `value` cache file exists for this posterior.
         # Used by `overview` to float touched posteriors to the top of the table.
-        any_cached = @is_cached(compile.value) || @is_cached(sample.value) ||
-                     @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
+        any_cached = @is_diskcached(compile.value) || @is_diskcached(sample.value) ||
+                     @is_diskcached(dynamichmc.value) || @is_diskcached(advancedhmc.value)
 
         # Compact card for the `/gallery` view: title + per-method status
         # pills + deep link to `/posteriors/$name`. Cheap to render — only reads
-        # `@cache_status m.value` per method, never triggers compute.
+        # `@diskcache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
                 h.h4(h.a(name; href="/posteriors/$name")),
@@ -465,7 +465,7 @@ const APPDATA = WhmcAppData(; cache_type=:parallel)
     # Per-method view: cross-posterior aggregates mounted under /results/<method>/…
     @include results(method::Symbol) = begin
         # Posteriors filtered by their `result(method).status`. Stays a fresh
-        # call (no @memo / brackets) so disk-status changes are visible.
+        # call (no @memo! / brackets) so disk-status changes are visible.
         matching(status_filter) = begin
             names = Symbol[]
             for name in __appdata__.posterior_names

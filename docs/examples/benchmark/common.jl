@@ -213,36 +213,36 @@ autoquarto(x::AbstractString) = x
     jidentifier = isa(identifier, AbstractString) ? "\"$identifier\"" : identifier
     cache_path = joinpath(project_dir, "benchmark", "cache", sidentifier)
     problem = stan_problem(identifier)
-    @cached dim = LogDensityProblems.dimension(problem)
+    @diskcached dim = LogDensityProblems.dimension(problem)
     progress = nothing
     ess_kinds = (mean, :bulk, :tail, std, median, mad)
-    @cached adaptive[seed] = WarmupHMC.adaptive_warmup_mcmc(Xoshiro(seed), problem; progress)
+    @diskcached adaptive[seed] = WarmupHMC.adaptive_warmup_mcmc(Xoshiro(seed), problem; progress)
     scale[seed] = adaptive[seed].scale_options[adaptive[seed].active_transformation]
-    @cached da[seed, target, reseed, n_draws] = da_adapt(
+    @diskcached da[seed, target, reseed, n_draws] = da_adapt(
         problem, adaptive[seed].position_and_gradient;
         target, n_draws, rng=Xoshiro(reseed), stepsize=adaptive[seed].stepsize, scale=scale[seed], 
     )
-    @cached ma[seed, reseed, n_draws] = metric_adapt(
+    @diskcached ma[seed, reseed, n_draws] = metric_adapt(
         problem, adaptive[seed].position_and_gradient;
         n_draws, rng=Xoshiro(reseed), stepsize=adaptive[seed].stepsize, scale=scale[seed], 
     )
-    # @cached uda[seed, target, reseed, n_draws] = da_adapt(
+    # @diskcached uda[seed, target, reseed, n_draws] = da_adapt(
     #     problem, adaptive[seed].position_and_gradient;
     #     target, n_draws, rng=Xoshiro(reseed), stepsize=adaptive[seed].stepsize * lmin(scale[seed]), 
     # )
-    # @cached da_stepsize[seed, target, reseed, n_draws] = da_adapt_stepsize(
+    # @diskcached da_stepsize[seed, target, reseed, n_draws] = da_adapt_stepsize(
     #     problem, adaptive[seed].position_and_gradient; 
     #     rng=Xoshiro(reseed), stepsize=adaptive[seed].stepsize, scale=adaptive[seed].scale_options[adaptive[seed].active_transformation], n_draws, target
     # )
-    # @cached bo_stepsize[seed, reseed, n_draws] = bo_adapt_stepsize(
+    # @diskcached bo_stepsize[seed, reseed, n_draws] = bo_adapt_stepsize(
     #     problem, adaptive[seed].position_and_gradient; 
     #     rng=Xoshiro(reseed), stepsize=adaptive[seed].stepsize, scale=adaptive[seed].scale_options[adaptive[seed].active_transformation], n_draws
     # )
-    @cached oracle_fit[seed, stepsize, n_draws] = mcmc(
+    @diskcached oracle_fit[seed, stepsize, n_draws] = mcmc(
         problem, adaptive[seed].position_and_gradient; 
         rng=Xoshiro(seed), stepsize, scale=scale[seed], n_draws
     )
-    @cached oracle_effs[seed, stepsize, n_draws, kind] = begin
+    @diskcached oracle_effs[seed, stepsize, n_draws, kind] = begin
         (;draws, n_steps) = oracle_fit[seed, stepsize, n_draws]
         minimum(WarmupHMC.MCMCDiagnosticTools.ess(draws; kind)) / n_steps
     end
@@ -300,7 +300,7 @@ autoquarto(x::AbstractString) = x
         end
         rescale!!(gp; n=length(effs))
     end
-    @cached stat[seed, i, stepsize] = begin 
+    @diskcached stat[seed, i, stepsize] = begin 
         draw = collect(view(adaptive[seed].posterior_position, :, i))
         p = WarmupHMC.NUTSPosterior(problem)
         position_and_gradient, stats = WarmupHMC.sample_tree!(
@@ -540,9 +540,9 @@ autoquarto(x::AbstractString) = x
     df_row = (;
         dim,
         link, 
-        # mass_adaptation=@cache_status(o.ma[1, 1, 1000]), 
-        # sampling_stats=@cache_status(o.stat_scan[1]),
-        # sampling_efficiency=@cache_status(o.oracle_gp[1, 3]), 
-        # dual_averaging=@cache_status(o.da[1, .6, 1, 100]), 
+        # mass_adaptation=@diskcache_status(o.ma[1, 1, 1000]), 
+        # sampling_stats=@diskcache_status(o.stat_scan[1]),
+        # sampling_efficiency=@diskcache_status(o.oracle_gp[1, 3]), 
+        # dual_averaging=@diskcache_status(o.da[1, .6, 1, 100]), 
     )
 end

@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           git clone https://github.com/nsiccha/TestModules.jl.git
-          git clone https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
           julia --project=docs -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="TestModules.jl"),

@@ -1,11 +1,11 @@
 using Documenter, DocumenterVitepress, WarmupHMC
-import HTMXObjects
 
-# Sync HTMXObjects' canonical `htmxo-embed.ts` (+ companion CSS) into our
-# theme dir before DocumenterVitepress runs. The theme's `index.ts`
-# imports `setupHtmxoEmbed` from it; calling this in make.jl keeps the
-# wiring auto-updated when HTMXObjects ships a new embed runtime.
-HTMXObjects.vitepress_theme_install(joinpath(@__DIR__, "src", ".vitepress", "theme"))
+# Note: the theme files under `src/.vitepress/theme/` (`htmxo-embed.ts`,
+# `htmxo-gallery.css`) are mirrored from HTMXObjects.jl. Previously
+# `make.jl` called `HTMXObjects.vitepress_theme_install(...)` here to
+# auto-sync them, but HTMXObjects.jl is a private repo and the CI
+# runner has no PAT_TOKEN to clone it. Re-sync manually (or via a
+# local helper) when HTMXObjects ships a new embed runtime.
 
 makedocs(
     sitename = "WarmupHMC.jl",

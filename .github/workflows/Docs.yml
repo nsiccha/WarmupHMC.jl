@@ -33,7 +33,12 @@ jobs:
       - name: Install dependencies
         run: |
           git clone https://github.com/nsiccha/TestModules.jl.git
-          julia --project=docs -e 'using Pkg; Pkg.develop([PackageSpec(path=pwd()), PackageSpec(path="TestModules.jl")]); Pkg.instantiate()'
+          git clone https://github.com/nsiccha/Treebars.jl.git
+          julia --project=docs -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="TestModules.jl"),
+            PackageSpec(path="Treebars.jl"),
+          ]); Pkg.instantiate()'
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

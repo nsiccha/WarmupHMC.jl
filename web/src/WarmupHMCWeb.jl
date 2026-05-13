@@ -55,7 +55,7 @@ include("posteriordb_reparametrizations.jl")
         ["/posteriors/$name" for name in posterior_names],
     )
 
-    @struct posterior(name::Symbol) = begin
+    @include posterior(name::Symbol) = begin
         seed     = 42
         n_draws  = 100
 
@@ -71,7 +71,7 @@ include("posteriordb_reparametrizations.jl")
 
         # === Per-method DOs ===
 
-        @struct compile = begin
+        @include compile = begin
             label = "Compiles"
             @diskcached value = begin
                 t0 = time()
@@ -81,7 +81,7 @@ include("posteriordb_reparametrizations.jl")
             (; elapsed) = value
         end
 
-        @struct sample = begin
+        @include sample = begin
             label = "WarmupHMC"
             rng   = Xoshiro(seed)
             @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
@@ -92,7 +92,7 @@ include("posteriordb_reparametrizations.jl")
             n_divergent = result.n_divergent_samples
         end
 
-        @struct dynamichmc = begin
+        @include dynamichmc = begin
             label = "DynamicHMC"
             rng   = Xoshiro(seed)
             @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
@@ -105,7 +105,7 @@ include("posteriordb_reparametrizations.jl")
                                 result.tree_statistics)
         end
 
-        @struct advancedhmc = begin
+        @include advancedhmc = begin
             label    = "AdvancedHMC"
             rng      = Xoshiro(seed)
             # Match DynamicHMC's default warmup budget for a fair comparison
@@ -131,7 +131,7 @@ include("posteriordb_reparametrizations.jl")
             n_divergent = sum(s.numerical_error for s in stats)
         end
 
-        @struct reparam = begin
+        @include reparam = begin
             label = "Reparam"
             rng   = Xoshiro(seed)
 
@@ -179,7 +179,7 @@ include("posteriordb_reparametrizations.jl")
 
         # === Rendering ===
 
-        @struct result(method::Symbol) = begin
+        @include result(method::Symbol) = begin
             m      = getproperty(__parent__, method)
             status = @diskcache_status m.value
             label  = m.label

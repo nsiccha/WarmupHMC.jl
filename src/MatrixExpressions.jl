@@ -16,6 +16,29 @@ struct SuccessiveReflections{T,I} <: AbstractMatrixExpression{T}
     transformation_losses::Vector{T}
 end
 
+# These are matrix-free operators: they subtype `AbstractMatrix` for the
+# operator interface (`mul!`/`ldiv!`) but deliberately define no `getindex`.
+# Base's generic `AbstractArray` `hash`/`isequal`/`==` iterate the elements via
+# `getindex` and therefore throw, which crashes as soon as one lands in a Dict
+# key (e.g. DynamicObjects' memoization cache). Define structural (all-fields)
+# hashing and equality instead — well-founded because every field is either a
+# plain array or another `AbstractMatrixExpression`.
+Base.hash(A::AbstractMatrixExpression, h::UInt) = begin
+    h = hash(typeof(A), h)
+    for i in 1:nfields(A)
+        h = hash(getfield(A, i), h)
+    end
+    h
+end
+Base.isequal(A::T, B::T) where {T<:AbstractMatrixExpression} =
+    all(i -> isequal(getfield(A, i), getfield(B, i)), 1:nfields(A))
+Base.:(==)(A::T, B::T) where {T<:AbstractMatrixExpression} =
+    all(i -> getfield(A, i) == getfield(B, i), 1:nfields(A))
+# Different concrete expression types are structurally distinct (consistent
+# with hashing `typeof` above); decide without touching `getindex`.
+Base.isequal(::AbstractMatrixExpression, ::AbstractMatrixExpression) = false
+Base.:(==)(::AbstractMatrixExpression, ::AbstractMatrixExpression) = false
+
 Base.show(io::IO, A::MatrixInverse) = print(io, "MatrixInverse($(parent(A)))")
 Base.size(A::MatrixInverse, args...) = size(parent(A), args...)
 Base.parent(A::MatrixInverse) = A.parent

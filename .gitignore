@@ -22,3 +22,6 @@ docs/src/public/live-*/
 # (Formerly auto-installed by HTMXObjects.vitepress_theme_install during
 # make.jl. Now committed in-tree because HTMXObjects.jl is private and
 # CI has no PAT_TOKEN to clone it. Re-sync manually when needed.)
+
+# Local byte-identity golden baseline (regenerated via `julia test/golden_awm.jl capture`)
+*.jls

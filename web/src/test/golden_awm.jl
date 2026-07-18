@@ -65,6 +65,17 @@ end
 
 run_all() = map(run_sampler, TARGETS)
 
+# Same run, but with an OBSERVATIONAL callback (records stages, reads state, but
+# consumes no rng and mutates nothing) — its result must equal the no-callback
+# baseline, proving the checkpoint hook itself introduces no drift.
+function run_with_callback(lpdf)
+    rng = Xoshiro(SEED)
+    stages = Symbol[]
+    cb = (state, stage) -> (push!(stages, stage); state.outer_counter; nothing)
+    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=200, progress=nothing, callback=cb)
+    (; result, rng_final=copy(rng), stages)
+end
+
 # --- Recursive exact comparison ---------------------------------------------
 # Returns a list of dotted-path diffs (empty ⇒ byte-identical). Short-circuits on
 # `isequal` (structural for the matrix-free AbstractMatrixExpression types, per
@@ -115,11 +126,18 @@ function main(mode)
     elseif mode == "check"
         golden = deserialize(GOLDEN_PATH)
         d = diffs(canon(golden), canon(out))
-        if isempty(d)
-            println("PASS — byte-identical to baseline")
+        # Observational callback must not perturb the result vs the baseline.
+        cbout = map(run_with_callback, TARGETS)
+        dcb = diffs(canon(golden), canon(cbout))
+        for (name, o) in pairs(cbout)
+            println("  [$name] callback stages: :init×$(count(==(:init), o.stages)) " *
+                    ":window×$(count(==(:window), o.stages))")
+        end
+        if isempty(d) && isempty(dcb)
+            println("PASS — default path AND observational callback byte-identical to baseline")
         else
-            println("FAIL — $(length(d)) diff(s):")
-            foreach(x -> println("  ", x), first(d, 20))
+            isempty(d) || (println("FAIL default — $(length(d)) diff(s):"); foreach(x -> println("  ", x), first(d, 15)))
+            isempty(dcb) || (println("FAIL callback — $(length(dcb)) diff(s):"); foreach(x -> println("  ", x), first(dcb, 15)))
         end
     else
         error("usage: golden_awm.jl [capture|check]")

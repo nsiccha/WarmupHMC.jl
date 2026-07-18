@@ -335,6 +335,15 @@ finalize_warmup!(state::AWMState) = begin
     )
 end
 
+# Observational checkpoint callback. Fires at the two checkpoint boundaries
+# (`stage = :init` after CP-0, `stage = :window` after each CP-N) with the live
+# `state`. It is OBSERVATIONAL: it may read `state` and request an early stop by
+# returning `true`, but must not mutate `state` (mutation would break the
+# byte-identity guarantee, which is then the caller's responsibility). The
+# default (`nothing`) is never called, so the default path is byte-identical.
+_fire_callback(::Nothing, state::AWMState, stage::Symbol) = false
+_fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage) === true
+
 """
     adaptive_warmup_mcmc(rng, lpdf; kwargs...)
     adaptive_warmup_mcmc(rngs::AbstractArray, lpdf_or_lpdfs; parallel=true, kwargs...)
@@ -438,6 +447,9 @@ adaptive_warmup_mcmc(
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
     variance_cond_target=2.,
+    # Observational checkpoint callback `(state, stage) -> should_stop`; see
+    # `_fire_callback`. Default `nothing` keeps the run byte-identical.
+    callback=nothing,
     kwargs...
     # For monitoring purposes: Displays the progress and additional info
 ) = with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
@@ -447,8 +459,10 @@ adaptive_warmup_mcmc(
         target_acceptance_rate, max_tree_depth, init, monitor_ess,
         nonlinear_adapt, variance_cond_target, kwargs...
     )
-    while size(state.recording_lpdf.posterior_position, 2) < state.n_draws
+    stop = _fire_callback(callback, state, :init)                       # CP-0
+    while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
         run_outer_iteration!(state)
+        stop = _fire_callback(callback, state, :window)                # CP-N
     end
     finalize_warmup!(state)
 end

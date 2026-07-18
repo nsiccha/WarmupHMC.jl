@@ -339,16 +339,55 @@ end
 
 _alive(state::CooperativeState) =
     count(c -> c.status === :sampling || c.status === :warming, state.chains) + state.n_starting
-_joint_ess(state::CooperativeState) = sum(state.chains; init=0.0) do c
-    (c.status === :sampling || c.status === :done) && c.n_samples > 10 ? c.ess[1] : 0.0
-end
 _total_evals(state::CooperativeState) = sum(c -> c.total_evaluation_counter, state.chains; init=0)
 _elapsed(state::CooperativeState) = (time_ns() - state.start_time) / 1e9
 
-_should_stop(state::CooperativeState) = state.stopped ||
-    _joint_ess(state) >= state.target_ess ||
-    _total_evals(state) >= state.eval_budget ||
-    _elapsed(state) >= state.time_budget
+# CHEAP proxy: sum of each chain's own min-ESS (`c.ess[1]`), over ALL sampling/done
+# chains. Ignores between-chain disagreement and short-chain noise, so it
+# OVER-counts — i.e. it is an upper bound on the true pooled ESS, which is exactly
+# what makes it a valid stop GATE (proxy < target ⟹ pooled < target). Reads only
+# scalars, so the benign race against a concurrently-advancing chain is harmless.
+_joint_ess_proxy(state::CooperativeState) = sum(state.chains; init=0.0) do c
+    (c.status === :sampling || c.status === :done) && c.n_samples > 10 ? c.ess[1] : 0.0
+end
+
+# ACCURATE joint ESS: pooled `MCMCDiagnosticTools.ess` over the stacked draws of
+# the sampling/done chains (min over parameters) — the definition promised in
+# decision tlg8p5. Chains being advanced right now (`state.busy`) are EXCLUDED:
+# their draw matrix is being `append!`ed OUTSIDE the lock, so reading it here
+# would race a resize. Non-busy chains are quiescent, hence safe to read under the
+# lock. Draws are truncated to the shortest included chain and stacked as
+# (draws, chains, params). Slightly conservative during a run (a busy chain's
+# draws don't count until it next idles); exact in `_finalize` (nothing is busy).
+_pooled_ess(state::CooperativeState) = begin
+    used = Matrix{Float64}[]
+    for c in state.chains
+        (c in state.busy) && continue
+        (c.status === :sampling || c.status === :done) || continue
+        n_chain_draws(c) > 10 || continue
+        push!(used, chain_draws(c)[:, :])   # copy the current draws (safe: c is quiescent)
+    end
+    isempty(used) && return 0.0
+    m = minimum(d -> size(d, 2), used)
+    m > 3 || return 0.0
+    dim = size(first(used), 1)
+    stacked = Array{Float64}(undef, m, length(used), dim)
+    for (j, d) in enumerate(used)
+        stacked[:, j, :] = @view(d[:, end-m+1:end])'
+    end
+    minimum(MCMCDiagnosticTools.ess(stacked))
+end
+
+_should_stop(state::CooperativeState) = begin
+    state.stopped && return true
+    _total_evals(state) >= state.eval_budget && return true
+    _elapsed(state) >= state.time_budget && return true
+    # Only pay for the accurate pooled ESS once the cheap upper-bound gate clears.
+    if isfinite(state.target_ess) && _joint_ess_proxy(state) >= state.target_ess
+        _pooled_ess(state) >= state.target_ess && return true
+    end
+    false
+end
 
 # Decide the next action for a freed core. Runs under `state.lock`. Returns
 # `:stop`, `:idle`, `(:advance, chain)`, or `(:start, rng_index)`. This is where
@@ -438,7 +477,9 @@ chain_result(chain::CooperativeChain) = begin
 end
 
 _finalize(state::CooperativeState) = begin
-    joint_ess = _joint_ess(state)
+    # Nothing is busy post-@sync, so _pooled_ess sees every usable chain.
+    joint_ess = _pooled_ess(state)
+    joint_ess_proxy = _joint_ess_proxy(state)
     total_evaluation_counter = _total_evals(state)
     elapsed = _elapsed(state)
     results = map(chain_result, state.chains)
@@ -447,7 +488,8 @@ _finalize(state::CooperativeState) = begin
         n_started=length(state.chains),
         n_used=count(r -> (r.status === :sampling || r.status === :done) && size(r.posterior_position, 2) > 0, results),
         n_stuck=count(r -> r.status === :stuck, results),
-        joint_ess,
+        joint_ess,          # accurate pooled ESS over stacked draws (tlg8p5 definition)
+        joint_ess_proxy,    # cheap sum-of-per-chain-min-ESS gate value, for reference
         total_evaluation_counter,
         elapsed,
     )
@@ -474,7 +516,15 @@ shared), advanced one window at a time via [`advance_window!`](@ref).
 * `n_cores` — how many chains run at once.
 * Stops when the pooled ESS reaches `target_ess`, the total gradient-evaluation
   budget `n_evaluations_budget` is spent, or `time_budget` seconds elapse. **At
-  least one bound must be finite.**
+  least one bound must be finite.** `target_ess` is measured as the accurate
+  pooled `MCMCDiagnosticTools.ess` over stacked draws, but only over chains that
+  are momentarily IDLE at the checkpoint (a chain being advanced has its draw
+  buffer mutated off-lock and can't be read safely). So with the cores saturated
+  the visible estimate lags the true total — the run **over-delivers** (realized
+  pooled ESS can exceed `target_ess` by up to roughly `n_cores`×, never less).
+  A future refinement (a per-chain last-committed-draws snapshot updated under
+  the lock) would tighten this; for now prefer bounding by budget/time when you
+  want a hard compute ceiling.
 * `max_window_evaluations` caps each window's eval budget so checkpoints stay
   frequent enough to reschedule.
 * Extra `kwargs` are forwarded to every chain (`recording_target`,
@@ -484,8 +534,9 @@ Real parallelism needs Julia started with threads (`julia -t N`); correctness
 holds at any thread count. Each chain gets a `deepcopy` of `lpdf`.
 
 Returns a `NamedTuple`: per-chain `results` (adaptive-style, see
-[`chain_result`](@ref)) plus pooled `joint_ess`, `n_started`, `n_used`,
-`n_stuck`, `total_evaluation_counter`, `elapsed`.
+[`chain_result`](@ref)) plus the accurate pooled `joint_ess` (over stacked
+draws), the cheap `joint_ess_proxy` (sum of per-chain min-ESS, the stop gate),
+`n_started`, `n_used`, `n_stuck`, `total_evaluation_counter`, `elapsed`.
 """
 cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_cores=length(rngs),

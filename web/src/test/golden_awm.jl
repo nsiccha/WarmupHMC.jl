@@ -12,6 +12,7 @@
 
 using WarmupHMC, Random, LogDensityProblems, LinearAlgebra, Serialization
 using ForwardDiff  # Pathfinder's default AutoForwardDiff needs it loaded in-session
+using DifferentiationInterface: AutoForwardDiff  # gradient path for ReparametrizedProblem
 
 # Pin BLAS to one thread so the baseline is reproducible: the adaptive
 # transformation update runs multithreaded BLAS whose reduction order is
@@ -56,6 +57,20 @@ end
 const SEED = 20260718
 const GOLDEN_PATH = joinpath(@__DIR__, "golden_awm.jls")
 const TARGETS = (gaussian = DiagGaussian(exp.(range(-1.5, 1.5, 6))), funnel = Funnel(5))
+
+# A REPARAMETRIZED funnel: exercises the state-in-lpdf path — `find_reparametrization!`
+# mutates `reparametrizer.pairs` in place, so resume must restore those scalar
+# source centerings onto a freshly-built problem. A fresh build below always
+# starts from `source = PartiallyCentered(1.0)`; if the restore were a no-op,
+# resumed windows would diverge.
+reparam_funnel() = begin
+    k = 5
+    ir = IndexedReparametrization([
+        i => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0), x -> 0.0, x -> x[1] / 2)
+        for i in 2:(k + 1)
+    ])
+    ReparametrizedProblem(ir, Funnel(k), AutoForwardDiff())
+end
 
 function run_sampler(lpdf)
     rng = Xoshiro(SEED)
@@ -114,11 +129,10 @@ end
 # SuccessiveReflections when the target never restarts), whose s1/s2/loss buffers
 # are `undef` (MatrixExpressions.jl:83-85) and so differ run-to-run. Compare only
 # the SELECTED operator (always initialized) plus every substantive output.
+canon_result(r) = merge(Base.structdiff(r, (; scale_options=nothing)),
+                        (; selected=r.scale_options[r.active_transformation]))
 canon(out) = map(out) do o
-    r = o.result
-    selected = r.scale_options[r.active_transformation]
-    (; result=merge(Base.structdiff(r, (; scale_options=nothing)), (; selected)),
-       rng_final=o.rng_final)
+    (; result=canon_result(o.result), rng_final=o.rng_final)
 end
 
 function main(mode)
@@ -153,13 +167,41 @@ function main(mode)
         end
         println("  checkpoint files written: ", join(sort(cpfiles), ", "))
         println("  checkpoints deserialize OK: ", cpok)
-        if isempty(d) && isempty(dcb) && isempty(dck) && cpok
-            println("PASS — default, callback, and checkpoint paths byte-identical; checkpoints valid")
+        # Resume ≡ straight-through: continuing from any written checkpoint must
+        # reproduce the full baseline result byte-for-byte (funnel: 4 windows).
+        rdir = mktempdir()
+        run_with_checkpoint(TARGETS.funnel, rdir)
+        resume_diffs = map(["cp_init.jls", "cp_window_2.jls", "cp_latest.jls"]) do cp
+            rr = resume_warmup_mcmc(TARGETS.funnel, joinpath(rdir, cp); progress=nothing)
+            cp => diffs(canon_result(golden.funnel.result), canon_result(rr))
+        end
+        for (cp, rd) in resume_diffs
+            println("  resume from $cp: ", isempty(rd) ? "byte-identical" : "$(length(rd)) DIFF(s)")
+            foreach(x -> println("      ", x), first(rd, 8))
+        end
+        resume_ok = all(isempty(last(x)) for x in resume_diffs)
+        # Reparametrized resume: the state-in-lpdf path. A fresh problem starts at
+        # source=1.0; restore must overwrite it with the checkpointed (optimized)
+        # scalars for the continuation to match straight-through.
+        rpdir = mktempdir()
+        rpfull = run_with_checkpoint(reparam_funnel(), rpdir)
+        rp_diffs = map(["cp_init.jls", "cp_latest.jls"]) do cp
+            rr = resume_warmup_mcmc(reparam_funnel(), joinpath(rpdir, cp); progress=nothing)
+            cp => diffs(canon_result(rpfull.result), canon_result(rr))
+        end
+        for (cp, rd) in rp_diffs
+            println("  reparam resume from $cp: ", isempty(rd) ? "byte-identical" : "$(length(rd)) DIFF(s)")
+        end
+        reparam_ok = all(isempty(last(x)) for x in rp_diffs)
+        if isempty(d) && isempty(dcb) && isempty(dck) && cpok && resume_ok && reparam_ok
+            println("PASS — default/callback/checkpoint byte-identical; checkpoints valid; resume ≡ straight-through")
         else
             isempty(d) || (println("FAIL default — $(length(d)) diff(s):"); foreach(x -> println("  ", x), first(d, 15)))
             isempty(dcb) || (println("FAIL callback — $(length(dcb)) diff(s):"); foreach(x -> println("  ", x), first(dcb, 15)))
             isempty(dck) || (println("FAIL checkpoint — $(length(dck)) diff(s):"); foreach(x -> println("  ", x), first(dck, 15)))
             cpok || println("FAIL — a checkpoint failed to deserialize")
+            resume_ok || println("FAIL — resume diverged from straight-through")
+            reparam_ok || println("FAIL — reparametrized resume diverged")
         end
     else
         error("usage: golden_awm.jl [capture|check]")

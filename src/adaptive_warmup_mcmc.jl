@@ -391,6 +391,48 @@ end
 _fire_callback(::Nothing, state::AWMState, stage::Symbol) = false
 _fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage) === true
 
+# Restore the reparametrizer's scalar `source` centerings (from `reparam_sources`)
+# onto a freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
+# structure (targets + index-extraction closures); only the mutated `source`
+# scalars are overwritten. No-op for a plain lpdf (empty `sources`).
+restore_reparam_sources!(lpdf, sources) = begin
+    isempty(sources) && return lpdf
+    ir = reparametrizer(lpdf)
+    ir.pairs .= [
+        idx => Reparametrization(value.target, src, value.args...)
+        for ((idx, value), (_, src)) in zip(ir.pairs, sources)
+    ]
+    lpdf
+end
+
+# Reconstruct a live `AWMState` from a deserialized checkpoint `p` and a freshly
+# supplied `lpdf`. Rewires the recording posterior around `lpdf` (sharing the one
+# deserialized rng between driver and recorder), rebuilds `energy_options` from
+# `scale_options`, recomputes `kinetic_energy`, and restores the reparametrizer
+# scalars onto `lpdf`. `progress`/`start_time` are fresh runtime handles.
+restore_state(p, lpdf, progress) = begin
+    restore_reparam_sources!(lpdf, p.reparam_sources)
+    recording_lpdf = RecordingPosterior2(
+        lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
+        p.recorder, p.rng,
+    )
+    energy_options = map(p.scale_options) do L
+        DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
+    end
+    kinetic_energy = energy_options[p.active_transformation]
+    AWMState(
+        lpdf, p.n_draws, p.stepsize_adaptation_limit, p.variance_cond_target, p.nonlinear_adapt,
+        p.monitor_ess, p.recording_target, p.kwargs, p.algorithm, p.stepsize_adaptation, p.dimension,
+        progress, time_ns(),
+        p.rng, recording_lpdf, p.position, p.scale_options, energy_options, p.active_transformation,
+        kinetic_energy, p.variance_memory, p.variance_position, p.variance_gradient, p.variance_cond,
+        p.scale_changes, p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
+        p.total_evaluation_counter, p.outer_counter, p.current_transition_counter,
+        p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
+        p.restart, p.n_samples,
+    )
+end
+
 """
     adaptive_warmup_mcmc(rng, lpdf; kwargs...)
     adaptive_warmup_mcmc(rngs::AbstractArray, lpdf_or_lpdfs; parallel=true, kwargs...)
@@ -518,6 +560,36 @@ adaptive_warmup_mcmc(
         stop = _fire_callback(callback, state, :window)
     end
     finalize_warmup!(state)
+end
+
+"""
+    resume_warmup_mcmc(lpdf, checkpoint_path; progress=nothing, description="MCMC",
+                       callback=nothing, checkpoint_dir=nothing)
+
+Resume [`adaptive_warmup_mcmc`](@ref) from an on-disk checkpoint written by the
+`checkpoint_dir` kwarg. `lpdf` is re-supplied by the caller (the checkpoint does
+not store the — possibly non-serializable — inner problem; only the
+reparametrizer's scalar state is restored onto it). The run continues from the
+saved boundary and returns the same `NamedTuple` as a single, uninterrupted run:
+for a fixed seed, resuming is byte-for-byte identical to running straight
+through. `callback` and `checkpoint_dir` behave as in `adaptive_warmup_mcmc`.
+"""
+resume_warmup_mcmc(lpdf, checkpoint_path;
+    progress=nothing, description="MCMC", callback=nothing, checkpoint_dir=nothing,
+) = begin
+    payload = deserialize(checkpoint_path)
+    with_progress(progress, payload.n_draws+payload.stepsize_adaptation_limit; description) do progress
+        state = restore_state(payload, lpdf, progress)
+        # Continue from AFTER the resumed boundary: the original run already fired
+        # the callback / wrote the checkpoint there, so we do not re-fire it here.
+        stop = false
+        while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
+            run_outer_iteration!(state)
+            _write_checkpoint(checkpoint_dir, state, :window)
+            stop = _fire_callback(callback, state, :window)
+        end
+        finalize_warmup!(state)
+    end
 end
 ensurevector(x, n) = Fill(x, n)
 ensurevector(x::AbstractVector, n) = begin

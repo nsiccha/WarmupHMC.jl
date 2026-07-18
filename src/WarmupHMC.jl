@@ -16,7 +16,7 @@ import DynamicHMC,
     Random
 using Serialization: serialize, deserialize
 
-export adaptive_warmup_mcmc,
+export adaptive_warmup_mcmc, resume_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization
 
 include("MatrixExpressions.jl")

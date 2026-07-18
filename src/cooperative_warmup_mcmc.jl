@@ -41,6 +41,7 @@ mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,K,NT}
     const nonlinear_adapt::Bool
     const monitor_ess::Bool
     const n_draws::Int
+    const max_window_evaluations::Int  # cap on the per-window eval budget (keeps checkpoints frequent)
     const scale_options::SO
     const energy_options::EO
     const kwargs::NT
@@ -98,6 +99,7 @@ cooperative_chain(
     variance_cond_target=2.,
     nonlinear_adapt=true,
     monitor_ess=false,
+    max_window_evaluations=typemax(Int),
     progress=nothing,
     kwargs...
 ) = begin
@@ -134,8 +136,8 @@ cooperative_chain(
     CooperativeChain(
         rng, lpdf, recording_lpdf, algorithm, stepsize_adaptation, dimension,
         recording_target, stepsize_adaptation_limit, variance_cond_target,
-        nonlinear_adapt, monitor_ess, n_draws, scale_options, energy_options,
-        NamedTuple(kwargs), start_time,
+        nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
+        scale_options, energy_options, NamedTuple(kwargs), start_time,
         position_and_gradient, active_transformation, kinetic_energy,
         stepsize, stepsize_state, n_evaluations, variance_memory,
         variance_position, variance_gradient, Inf, Float64[],
@@ -219,8 +221,8 @@ advance_window!(chain::CooperativeChain) = begin
     log_checkpoint!(chain)
     chain.status == :done && return chain.status
 
-    chain.n_evaluations *= 2
-    recording_lpdf.recorder.thin = chain.n_evaluations ÷ recording_target
+    chain.n_evaluations = min(chain.n_evaluations * 2, chain.max_window_evaluations)
+    recording_lpdf.recorder.thin = max(1, chain.n_evaluations ÷ recording_target)
     chain.restart || return chain.status
 
     # Restart the warm-up window: re-adapt the transformation, drop prior draws.
@@ -264,4 +266,239 @@ run_chain!(chain::CooperativeChain) = begin
     end
     chain.nonlinear_adapt && reparametrize!(chain.lpdf, chain_draws(chain))
     chain
+end
+
+# =============================================================================
+# Abandon-stuck predicate (the `abandon-stuck` scope)
+# =============================================================================
+
+"""
+    is_stuck(chain; min_windows=4, divergence_rate=0.4, cond_stall_ratio=0.9,
+             min_divergence_samples=30) -> Bool
+
+Heuristic: has `chain` stopped making useful progress and should be abandoned?
+Two pathologies, read from the per-window `chain.checkpoints` log:
+
+* **Geometry stall** — the last `min_windows` checkpoints all restarted warm-up
+  (`:warming`, never reached `:sampling`) and the marginal-scale condition
+  number has not improved (latest ≥ `cond_stall_ratio` × the value
+  `min_windows` windows ago): the chain cannot find a workable transformation.
+* **Divergence blow-up** — among the draws collected since the last restart the
+  divergent fraction exceeds `divergence_rate` (needs ≥ `min_divergence_samples`
+  draws to judge on).
+"""
+is_stuck(chain::CooperativeChain; min_windows=4, divergence_rate=0.4,
+         cond_stall_ratio=0.9, min_divergence_samples=30) = begin
+    cps = chain.checkpoints
+    length(cps) >= min_windows || return false
+    recent = @view cps[end-min_windows+1:end]
+    if all(cp -> cp.status === :warming, recent)
+        first_cond, last_cond = first(recent).variance_cond, last(recent).variance_cond
+        if isfinite(first_cond) && isfinite(last_cond) && last_cond >= cond_stall_ratio * first_cond
+            return true
+        end
+    end
+    if chain.n_samples >= min_divergence_samples &&
+       chain.n_divergent_samples / chain.n_samples > divergence_rate
+        return true
+    end
+    false
+end
+
+# =============================================================================
+# Cooperative scheduler
+# =============================================================================
+
+# Shared scheduler state. All mutation goes through `state.lock`; `advance_window!`
+# runs OUTSIDE the lock (it only touches its own chain), so the CPU-bound sampling
+# of different chains proceeds in parallel.
+mutable struct CooperativeState{RS,L,CFG}
+    const rngs::RS
+    const lpdf::L
+    const chain_cfg::CFG
+    const n_cores::Int
+    const pool_target::Int          # target number of alive (warming/sampling) chains
+    const n_draws::Int              # per-chain draw cap
+    const target_ess::Float64
+    const eval_budget::Int
+    const time_budget::Float64
+    const start_time::UInt64
+    const lock::ReentrantLock
+    chains::Vector{CooperativeChain}
+    busy::Base.IdSet{CooperativeChain}
+    n_started::Int                  # chains created (== length(chains) once installs settle)
+    n_starting::Int                 # reserved-but-not-yet-installed starts
+    stopped::Bool
+end
+
+_alive(state::CooperativeState) =
+    count(c -> c.status === :sampling || c.status === :warming, state.chains) + state.n_starting
+_joint_ess(state::CooperativeState) = sum(state.chains; init=0.0) do c
+    (c.status === :sampling || c.status === :done) && c.n_samples > 10 ? c.ess[1] : 0.0
+end
+_total_evals(state::CooperativeState) = sum(c -> c.total_evaluation_counter, state.chains; init=0)
+_elapsed(state::CooperativeState) = (time_ns() - state.start_time) / 1e9
+
+_should_stop(state::CooperativeState) = state.stopped ||
+    _joint_ess(state) >= state.target_ess ||
+    _total_evals(state) >= state.eval_budget ||
+    _elapsed(state) >= state.time_budget
+
+# Decide the next action for a freed core. Runs under `state.lock`. Returns
+# `:stop`, `:idle`, `(:advance, chain)`, or `(:start, rng_index)`. This is where
+# the continue / resume-another / start-new / (park-stuck) choice is made: the
+# least-progressed sampling chain wins (balancing pooled ESS), warming chains
+# come next, and a new chain starts only when the alive pool is under target.
+_plan!(state::CooperativeState) = begin
+    _should_stop(state) && (state.stopped = true; return :stop)
+    best = nothing
+    best_key = (typemax(Int), typemax(Int))
+    for c in state.chains
+        (c in state.busy) && continue
+        (c.status === :sampling || c.status === :warming) || continue
+        n_chain_draws(c) < state.n_draws || continue
+        key = (c.status === :sampling ? 0 : 1, n_chain_draws(c))
+        if best === nothing || key < best_key
+            best = c; best_key = key
+        end
+    end
+    if best !== nothing
+        push!(state.busy, best)
+        return (:advance, best)
+    end
+    if _alive(state) < state.pool_target && state.n_started < length(state.rngs)
+        state.n_started += 1
+        state.n_starting += 1
+        return (:start, state.n_started)
+    end
+    (isempty(state.busy) && state.n_starting == 0) ? (state.stopped = true; :stop) : :idle
+end
+
+_install!(state::CooperativeState, chain) = (push!(state.chains, chain); state.n_starting -= 1)
+_release!(state::CooperativeState, chain) = begin
+    delete!(state.busy, chain)
+    if (chain.status === :sampling || chain.status === :warming) && is_stuck(chain)
+        chain.status = :stuck
+    end
+end
+
+_worker!(state::CooperativeState) = while true
+    action = @lock state.lock _plan!(state)
+    if action === :stop
+        return
+    elseif action === :idle
+        sleep(0.002)
+    else
+        tag, val = action
+        if tag === :start
+            # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock.
+            chain = cooperative_chain(state.rngs[val], deepcopy(state.lpdf); state.chain_cfg...)
+            @lock state.lock _install!(state, chain)
+        else # :advance
+            advance_window!(val)
+            @lock state.lock _release!(state, val)
+        end
+    end
+end
+
+"""
+    chain_result(chain) -> NamedTuple
+
+Adaptive-style per-chain result. Maps draws back to the original
+parametrization (when `nonlinear_adapt`), then reports the collected positions/
+gradients plus diagnostics and the per-window `checkpoints` log.
+"""
+chain_result(chain::CooperativeChain) = begin
+    draws = chain_draws(chain)
+    chain.nonlinear_adapt && size(draws, 2) > 0 && reparametrize!(chain.lpdf, draws)
+    (;
+        posterior_position=draws,
+        posterior_gradient=chain.recording_lpdf.posterior_gradient,
+        ess=chain.ess,
+        stepsize=chain.stepsize,
+        active_transformation=chain.active_transformation,
+        status=chain.status,
+        n_samples=chain.n_samples,
+        n_divergent_samples=chain.n_divergent_samples,
+        total_evaluation_counter=chain.total_evaluation_counter,
+        n_windows=chain.outer_counter,
+        checkpoints=chain.checkpoints,
+    )
+end
+
+_finalize(state::CooperativeState) = begin
+    joint_ess = _joint_ess(state)
+    total_evaluation_counter = _total_evals(state)
+    elapsed = _elapsed(state)
+    results = map(chain_result, state.chains)
+    (;
+        results,
+        n_started=length(state.chains),
+        n_used=count(r -> (r.status === :sampling || r.status === :done) && size(r.posterior_position, 2) > 0, results),
+        n_stuck=count(r -> r.status === :stuck, results),
+        joint_ess,
+        total_evaluation_counter,
+        elapsed,
+    )
+end
+
+"""
+    cooperative_warmup_mcmc(rngs, lpdf; n_cores=length(rngs), target_ess=Inf,
+        n_evaluations_budget=typemax(Int), time_budget=Inf, min_chains=min(length(rngs),4),
+        max_window_evaluations=4000, n_draws=typemax(Int), nonlinear_adapt=true,
+        progress=nothing, kwargs...)
+
+Cooperative multi-chain adaptive-warmup NUTS. Keeps up to `n_cores` chains
+advancing concurrently; at each warm-up **window boundary (checkpoint)** a
+scheduler decides, per freed core, whether to CONTINUE that chain, RESUME
+another (a less-progressed one), or START a new one, and PARKS chains flagged
+stuck by [`is_stuck`](@ref) — greedily maximizing joint (pooled) ESS per
+gradient evaluation.
+
+Each chain is a resumable [`CooperativeChain`](@ref) built from the same
+adaptive procedure as [`adaptive_warmup_mcmc`](@ref) (the low-level pieces are
+shared), advanced one window at a time via [`advance_window!`](@ref).
+
+* `rngs` — a vector of RNGs; its length bounds the number of distinct chains.
+* `n_cores` — how many chains run at once.
+* Stops when the pooled ESS reaches `target_ess`, the total gradient-evaluation
+  budget `n_evaluations_budget` is spent, or `time_budget` seconds elapse. **At
+  least one bound must be finite.**
+* `max_window_evaluations` caps each window's eval budget so checkpoints stay
+  frequent enough to reschedule.
+* Extra `kwargs` are forwarded to every chain (`recording_target`,
+  `target_acceptance_rate`, `max_tree_depth`, `variance_cond_target`, `init`, …).
+
+Real parallelism needs Julia started with threads (`julia -t N`); correctness
+holds at any thread count. Each chain gets a `deepcopy` of `lpdf`.
+
+Returns a `NamedTuple`: per-chain `results` (adaptive-style, see
+[`chain_result`](@ref)) plus pooled `joint_ess`, `n_started`, `n_used`,
+`n_stuck`, `total_evaluation_counter`, `elapsed`.
+"""
+cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
+    n_cores=length(rngs),
+    target_ess=Inf,
+    n_evaluations_budget=typemax(Int),
+    time_budget=Inf,
+    min_chains=min(length(rngs), 4),
+    max_window_evaluations=4000,
+    n_draws=typemax(Int),
+    nonlinear_adapt=true,
+    progress=nothing,
+    kwargs...
+) = begin
+    @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
+    chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs...)
+    pool_target = min(length(rngs), max(min_chains, n_cores))
+    state = CooperativeState(
+        rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
+        Float64(target_ess), n_evaluations_budget, Float64(time_budget),
+        time_ns(), ReentrantLock(),
+        CooperativeChain[], Base.IdSet{CooperativeChain}(), 0, 0, false,
+    )
+    @sync for _ in 1:n_cores
+        Threads.@spawn _worker!(state)
+    end
+    _finalize(state)
 end

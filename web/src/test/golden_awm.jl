@@ -76,6 +76,14 @@ function run_with_callback(lpdf)
     (; result, rng_final=copy(rng), stages)
 end
 
+# Same run, opting into on-disk checkpoints. Result must equal the baseline, and
+# the written checkpoints must deserialize cleanly.
+function run_with_checkpoint(lpdf, dir)
+    rng = Xoshiro(SEED)
+    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=200, progress=nothing, checkpoint_dir=dir)
+    (; result, rng_final=copy(rng))
+end
+
 # --- Recursive exact comparison ---------------------------------------------
 # Returns a list of dotted-path diffs (empty ⇒ byte-identical). Short-circuits on
 # `isequal` (structural for the matrix-free AbstractMatrixExpression types, per
@@ -133,11 +141,25 @@ function main(mode)
             println("  [$name] callback stages: :init×$(count(==(:init), o.stages)) " *
                     ":window×$(count(==(:window), o.stages))")
         end
-        if isempty(d) && isempty(dcb)
-            println("PASS — default path AND observational callback byte-identical to baseline")
+        # Opt-in disk checkpointing must not perturb the result, and every written
+        # checkpoint must deserialize cleanly.
+        dir = mktempdir()
+        ckout = map(lpdf -> run_with_checkpoint(lpdf, dir), TARGETS)
+        dck = diffs(canon(golden), canon(ckout))
+        cpfiles = filter(f -> endswith(f, ".jls"), readdir(dir))
+        cpok = all(cpfiles) do f
+            p = deserialize(joinpath(dir, f))
+            p isa NamedTuple && haskey(p, :stage) && haskey(p, :rng) && haskey(p, :reparam_sources)
+        end
+        println("  checkpoint files written: ", join(sort(cpfiles), ", "))
+        println("  checkpoints deserialize OK: ", cpok)
+        if isempty(d) && isempty(dcb) && isempty(dck) && cpok
+            println("PASS — default, callback, and checkpoint paths byte-identical; checkpoints valid")
         else
             isempty(d) || (println("FAIL default — $(length(d)) diff(s):"); foreach(x -> println("  ", x), first(d, 15)))
             isempty(dcb) || (println("FAIL callback — $(length(dcb)) diff(s):"); foreach(x -> println("  ", x), first(dcb, 15)))
+            isempty(dck) || (println("FAIL checkpoint — $(length(dck)) diff(s):"); foreach(x -> println("  ", x), first(dck, 15)))
+            cpok || println("FAIL — a checkpoint failed to deserialize")
         end
     else
         error("usage: golden_awm.jl [capture|check]")

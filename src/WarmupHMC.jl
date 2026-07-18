@@ -14,6 +14,7 @@ using LogDensityProblems,
 import DynamicHMC,
     OnlineStatsBase,
     Random
+using Serialization: serialize, deserialize
 
 export adaptive_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization

@@ -335,6 +335,53 @@ finalize_warmup!(state::AWMState) = begin
     )
 end
 
+# Extract the reparametrizer's DYNAMIC scalar state — the per-index `source`
+# centering that `optimize!` mutates in place. The lpdf itself (possibly a
+# non-serializable native problem) and the reparametrizer's index-extraction
+# closures are NOT serialized; on resume these `source` values are restored onto
+# a freshly supplied lpdf. Empty for a plain lpdf.
+reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(lpdf).pairs]
+
+# A serializable snapshot of everything needed to resume at a checkpoint,
+# EXCLUDING the lpdf and runtime handles (`progress`/`start_time`). The recording
+# posterior is decomposed into its arrays + recorder; its wrapped lpdf and its
+# rng (shared with `state.rng`, serialized once here) are omitted and rewired on
+# resume. `energy_options`/`kinetic_energy` are omitted too: both are pure
+# functions of `scale_options` (which they alias) and are rebuilt on resume.
+checkpoint_payload(state::AWMState, stage::Symbol) = (;
+    stage,
+    state.n_draws, state.stepsize_adaptation_limit, state.variance_cond_target,
+    state.nonlinear_adapt, state.monitor_ess, state.recording_target, state.kwargs,
+    state.algorithm, state.stepsize_adaptation, state.dimension,
+    halo_position=state.recording_lpdf.halo_position,
+    halo_gradient=state.recording_lpdf.halo_gradient,
+    posterior_position=state.recording_lpdf.posterior_position,
+    posterior_gradient=state.recording_lpdf.posterior_gradient,
+    recorder=state.recording_lpdf.recorder,
+    state.rng, state.position, state.scale_options, state.active_transformation,
+    state.variance_memory, state.variance_position, state.variance_gradient,
+    state.variance_cond, state.scale_changes, state.position_and_gradient, state.stepsize,
+    state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
+    state.outer_counter, state.current_transition_counter, state.total_transition_counter,
+    state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
+    state.restart, state.n_samples,
+    reparam_sources=reparam_sources(state.lpdf),
+)
+
+# Opt-in on-disk checkpoint write at a boundary. Pure read of `state` + file
+# writes — consumes no rng and mutates nothing, so it never perturbs the run.
+# Writes both a stage-specific file (`cp_init.jls` / `cp_window_<n>.jls`, for
+# "enter at a specific state") and an overwritten `cp_latest.jls`.
+_write_checkpoint(::Nothing, state::AWMState, stage::Symbol) = nothing
+_write_checkpoint(dir, state::AWMState, stage::Symbol) = begin
+    mkpath(dir)
+    payload = checkpoint_payload(state, stage)
+    name = stage === :init ? "cp_init.jls" : "cp_window_$(state.outer_counter).jls"
+    serialize(joinpath(dir, name), payload)
+    serialize(joinpath(dir, "cp_latest.jls"), payload)
+    nothing
+end
+
 # Observational checkpoint callback. Fires at the two checkpoint boundaries
 # (`stage = :init` after CP-0, `stage = :window` after each CP-N) with the live
 # `state`. It is OBSERVATIONAL: it may read `state` and request an early stop by
@@ -450,6 +497,10 @@ adaptive_warmup_mcmc(
     # Observational checkpoint callback `(state, stage) -> should_stop`; see
     # `_fire_callback`. Default `nothing` keeps the run byte-identical.
     callback=nothing,
+    # Opt-in on-disk checkpointing: a directory to write resumable state into at
+    # each checkpoint. Default `nothing` writes nothing and keeps the run
+    # byte-identical (the write is a pure read + file I/O).
+    checkpoint_dir=nothing,
     kwargs...
     # For monitoring purposes: Displays the progress and additional info
 ) = with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
@@ -459,10 +510,12 @@ adaptive_warmup_mcmc(
         target_acceptance_rate, max_tree_depth, init, monitor_ess,
         nonlinear_adapt, variance_cond_target, kwargs...
     )
-    stop = _fire_callback(callback, state, :init)                       # CP-0
+    _write_checkpoint(checkpoint_dir, state, :init)                    # CP-0
+    stop = _fire_callback(callback, state, :init)
     while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
         run_outer_iteration!(state)
-        stop = _fire_callback(callback, state, :window)                # CP-N
+        _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
+        stop = _fire_callback(callback, state, :window)
     end
     finalize_warmup!(state)
 end

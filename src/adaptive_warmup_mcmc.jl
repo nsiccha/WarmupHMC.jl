@@ -508,6 +508,29 @@ no separate `initial_params` kwarg.
 * `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
   diagnostic reporting via Treebars.
 * `parallel=true` (multi-chain only) — run chains on `Threads.@threads`.
+* `callback=nothing` — observational checkpoint callback (see below).
+* `checkpoint_dir=nothing` — opt-in on-disk checkpointing (see below).
+
+# Checkpoints, callbacks and resume
+
+The warm-up has two checkpoint boundaries: **CP-0**, right after initialization
+(Pathfinder), and **CP-N**, after each outer warm-up window ("big iteration").
+Three opt-in, independent mechanisms hang off these boundaries; all default to
+off, and with them off the run is byte-for-byte identical to the plain sampler.
+
+* **`callback=(state, stage) -> should_stop`** fires at each boundary
+  (`stage ∈ (:init, :window)`) with the live state. It is *observational*: it
+  may read `state` and request an early stop by returning `true`, but must not
+  mutate `state` (mutation makes byte-identity the caller's responsibility).
+* **`checkpoint_dir=path`** serializes a resumable snapshot at each boundary
+  (`cp_init.jls`, `cp_window_<n>.jls`, and an overwritten `cp_latest.jls`). The
+  snapshot excludes the (possibly non-serializable) inner problem and stores the
+  reparametrizer only as its scalar `source` centerings. The multi-chain method
+  writes chain `i` under `path/chain_<i>/`.
+* **[`resume_warmup_mcmc`](@ref)`(lpdf, cp_path; ...)`** re-supplies `lpdf` and
+  continues from a checkpoint, returning the same result as an uninterrupted
+  run. The multi-chain form takes the parent `dir` and resumes each chain from
+  its `chain_<i>/` subdirectory.
 
 # Returns
 
@@ -591,25 +614,59 @@ resume_warmup_mcmc(lpdf, checkpoint_path;
         finalize_warmup!(state)
     end
 end
+
+"""
+    resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
+                       parallel=true, progress=nothing, description="MCMC",
+                       callback=nothing, checkpoint_dir=nothing)
+
+Multi-chain resume: resume chain `i` from `dir/chain_<i>/<checkpoint_name>` — the
+per-chain layout written by the multi-chain `adaptive_warmup_mcmc(rngs, lpdfs;
+checkpoint_dir=dir)`. Returns a `Vector` of per-chain result `NamedTuple`s.
+"""
+resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
+    parallel=true, progress=nothing, description="MCMC", callback=nothing, checkpoint_dir=nothing,
+) = with_progress(progress, length(lpdfs); description) do progress
+    n_chains = length(lpdfs)
+    rv = Vector{Any}(missing, n_chains)
+    if parallel
+        Threads.@threads for i in 1:n_chains
+            rv[i] = resume_warmup_mcmc(lpdfs[i], joinpath(_chain_dir(dir, i), checkpoint_name);
+                progress, description=description*".$i", callback, checkpoint_dir=_chain_dir(checkpoint_dir, i))
+            update_progress!(progress)
+        end
+    else
+        for i in 1:n_chains
+            rv[i] = resume_warmup_mcmc(lpdfs[i], joinpath(_chain_dir(dir, i), checkpoint_name);
+                progress, description=description*".$i", callback, checkpoint_dir=_chain_dir(checkpoint_dir, i))
+            update_progress!(progress)
+        end
+    end
+    identity.(rv)
+end
 ensurevector(x, n) = Fill(x, n)
 ensurevector(x::AbstractVector, n) = begin
     @assert length(x) == n
     x
 end
+# Per-chain checkpoint subdirectory, so chains never collide on `cp_*.jls`.
+_chain_dir(::Nothing, i) = nothing
+_chain_dir(dir, i) = joinpath(dir, "chain_$i")
+
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...)
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing,
-monitor_ess=!isnothing(progress), description="MCMC", init=missing, kwargs...) = with_progress(progress, length(rngs); description) do progress
+monitor_ess=!isnothing(progress), description="MCMC", init=missing, checkpoint_dir=nothing, kwargs...) = with_progress(progress, length(rngs); description) do progress
     n_chains = length(rngs)
     rv = Vector{Any}(missing, n_chains)
     init = ensurevector(init, n_chains)
     if parallel
         Threads.@threads for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], checkpoint_dir=_chain_dir(checkpoint_dir, i), kwargs...)
             update_progress!(progress)
         end
     else
         for i in 1:n_chains
-            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], kwargs...)
+            rv[i] = adaptive_warmup_mcmc(rngs[i], lpdfs[i]; progress, monitor_ess, description=description*".$i", init=init[i], checkpoint_dir=_chain_dir(checkpoint_dir, i), kwargs...)
             update_progress!(progress)
         end
     end

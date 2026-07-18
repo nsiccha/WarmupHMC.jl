@@ -208,4 +208,7 @@ function main(mode)
     end
 end
 
-main(get(ARGS, 1, "check"))
+# Only run when invoked as a script (not when `include`d for its helpers).
+if abspath(PROGRAM_FILE) == (@__FILE__)
+    main(get(ARGS, 1, "check"))
+end

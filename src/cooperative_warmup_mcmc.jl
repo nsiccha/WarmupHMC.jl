@@ -260,6 +260,12 @@ log_checkpoint!(chain::CooperativeChain) = push!(chain.checkpoints, (;
 Drive `chain` to completion window-by-window (the resumable equivalent of the
 single-chain `adaptive_warmup_mcmc` loop). Used to validate that the resumable
 stepper reproduces the monolith.
+
+Terminal finalizer: it maps the collected draws back to the original
+parametrization in place (like the monolith's final step). Do NOT also call
+[`chain_result`](@ref) on the same chain — that reparametrizes a second time and
+corrupts the draws. The scheduler path (`advance_window!` + `chain_result`)
+never calls `run_chain!`, so this only matters if you drive a chain by hand.
 """
 run_chain!(chain::CooperativeChain) = begin
     while advance_window!(chain) != :done
@@ -407,6 +413,11 @@ end
 Adaptive-style per-chain result. Maps draws back to the original
 parametrization (when `nonlinear_adapt`), then reports the collected positions/
 gradients plus diagnostics and the per-window `checkpoints` log.
+
+Terminal finalizer: it reparametrizes the draws in place, so call it exactly
+once per chain and never after [`run_chain!`](@ref) (double reparametrization
+corrupts the draws). The scheduler drives chains with `advance_window!` alone —
+which does not reparametrize — so `_finalize` is the single such call.
 """
 chain_result(chain::CooperativeChain) = begin
     draws = chain_draws(chain)

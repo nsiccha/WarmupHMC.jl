@@ -22,6 +22,7 @@ include("MatrixExpressions.jl")
 include("WrappedLogDensityProblems.jl")
 include("Reparametrizations.jl")
 include("adaptive_warmup_mcmc.jl")
+include("cooperative_warmup_mcmc.jl")
 include("progress.jl")
 
 end

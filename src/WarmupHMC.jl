@@ -15,7 +15,7 @@ import DynamicHMC,
     OnlineStatsBase,
     Random
 
-export adaptive_warmup_mcmc, cooperative_warmup_mcmc,
+export adaptive_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization
 
 include("MatrixExpressions.jl")
@@ -25,6 +25,7 @@ include("adaptive_warmup_mcmc.jl")
 include("pooled_scale.jl")
 include("clustering.jl")
 include("cooperative_warmup_mcmc.jl")
+include("clustered_warmup_mcmc.jl")
 include("progress.jl")
 
 end

@@ -39,19 +39,20 @@
 _diagonal_energy(scale::Diagonal) =
     DynamicHMC.GaussianKineticEnergy(MatrixFactorization(scale, scale'), MatrixInverse(scale'))
 
-"Reset ONLY the halo ring buffer (and its recorder), leaving the collected draws intact."
-_reset_halo!(p::RecordingPosterior2) = (reset!(p.halo_position); reset!(p.halo_gradient); reset!(p.recorder); p)
+"Reset ONLY the halo ring buffer (its leaves + recorder), leaving the collected draws intact."
+_reset_halo!(p::RecordingPosterior2) = (reset!(p.halo_position); reset!(p.halo_gradient); reset!(p.leaves); reset!(p.recorder); p)
 
 """
     default_weighting(halo_position, halo_gradient) -> weights
 
 Default state-weighting for the pooled mass-matrix estimate (decision
-`1s8blg3`): every recorded halo state gets weight 1. The halo is already
-`|dH|`-gated by [`LimitedRecorder2`](@ref) (only small-Hamiltonian-error
-intermediate states are kept), so this is the "|dH|-halo" scheme. A weighting
-is any `(halo_position, halo_gradient) -> AbstractVector` of per-column weights;
-swap in another (e.g. proper leaf weights, todo `myvkgz`) via the `weighting`
-kwarg.
+`1s8blg3`): every recorded halo state gets weight 1. On `dev` the recorder
+([`RecordingPosterior2`](@ref)) already stores each halo state by sampling one
+NUTS leaf per transition PROPORTIONAL to its proper marginal proposal
+probability (`sample_leaf`/`finalize_leaf_weights!`, the `myvkgz` leaf-weights
+work), so equal weights here already realise proper leaf-weighting via that
+selection. A weighting is any `(halo_position, halo_gradient) -> AbstractVector`
+of per-column weights; swap in another scheme via the `weighting` kwarg.
 """
 default_weighting(halo_position, halo_gradient) = Ones(size(halo_position, 2))
 
@@ -131,7 +132,7 @@ clustered_chain(
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     algorithm = DynamicHMC.NUTS(;max_depth=max_tree_depth)
     dimension = LogDensityProblems.dimension(lpdf)
-    recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
+    recorder = LimitedRecorder2(recording_target)   # ring of `recording_target` leaf-weighted halo states
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale = Diagonal(sqrt.(diag(squared_scale))::Vector{Float64})
@@ -177,9 +178,11 @@ advance_chain!(chain::ClusteredChain) = begin
     current_evaluation_counter = 0
     while size(posterior_position, 2) < n_draws && current_evaluation_counter < chain.n_evaluations
         chain.current_transition_counter += 1
+        reset!(recording_lpdf.leaves)   # per-transition: fresh leaf buffer before the tree (dev's protocol)
         chain.position_and_gradient, stats = DynamicHMC.sample_tree(
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
+        finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
         chain.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         is_divergent = DynamicHMC.is_divergent(stats.termination)
@@ -240,7 +243,6 @@ cluster_and_adapt!(chains::AbstractVector{<:ClusteredChain};
             end
             log_checkpoint!(chain)
             chain.n_evaluations = min(chain.n_evaluations * 2, chain.max_window_evaluations)   # decision 4hobr0
-            chain.recording_lpdf.recorder.thin = max(1, chain.n_evaluations ÷ chain.recording_target)
         end
     end
     clusters

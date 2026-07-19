@@ -107,7 +107,7 @@ cooperative_chain(
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     algorithm = DynamicHMC.NUTS(;max_depth=max_tree_depth)
     dimension = LogDensityProblems.dimension(lpdf)
-    recorder = LimitedRecorder2(recording_target, n_evaluations ÷ recording_target)
+    recorder = LimitedRecorder2(recording_target)
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;
@@ -174,9 +174,11 @@ advance_window!(chain::CooperativeChain) = begin
     while size(posterior_position, 2) < n_draws && current_evaluation_counter < chain.n_evaluations
         chain.current_transition_counter += 1
         chain.total_transition_counter += 1
+        reset!(recording_lpdf.leaves)   # per-transition: fresh leaf buffer before the tree (dev's protocol)
         chain.position_and_gradient, stats = DynamicHMC.sample_tree(
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
+        finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
         chain.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(chain.steps_per_draw, stats.steps)
@@ -222,7 +224,6 @@ advance_window!(chain::CooperativeChain) = begin
     chain.status == :done && return chain.status
 
     chain.n_evaluations = min(chain.n_evaluations * 2, chain.max_window_evaluations)
-    recording_lpdf.recorder.thin = max(1, chain.n_evaluations ÷ recording_target)
     chain.restart || return chain.status
 
     # Restart the warm-up window: re-adapt the transformation, drop prior draws.

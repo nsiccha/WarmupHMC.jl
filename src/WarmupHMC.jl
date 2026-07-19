@@ -14,11 +14,13 @@ using LogDensityProblems,
 import DynamicHMC,
     OnlineStatsBase,
     Random
+using Serialization: serialize, deserialize
 
-export adaptive_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
+export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization
 
 include("MatrixExpressions.jl")
+include("NUTSLeafWeights.jl")
 include("WrappedLogDensityProblems.jl")
 include("Reparametrizations.jl")
 include("adaptive_warmup_mcmc.jl")
@@ -29,4 +31,3 @@ include("clustered_warmup_mcmc.jl")
 include("progress.jl")
 
 end
--

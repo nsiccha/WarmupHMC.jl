@@ -23,6 +23,7 @@ include("WrappedLogDensityProblems.jl")
 include("Reparametrizations.jl")
 include("adaptive_warmup_mcmc.jl")
 include("pooled_scale.jl")
+include("clustering.jl")
 include("cooperative_warmup_mcmc.jl")
 include("progress.jl")
 

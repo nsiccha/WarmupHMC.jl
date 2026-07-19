@@ -6,3 +6,4 @@ using WarmupHMC, Random, Test
 end
 
 include("cooperative.jl")
+include("clustered.jl")

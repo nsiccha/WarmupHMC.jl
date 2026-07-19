@@ -317,6 +317,16 @@ self-adaptation) — the two share primitives, not a joint driver.
 Returns a `NamedTuple`: `clusters` (a per-cluster `NamedTuple` of `chain_indices`
 + pooled `ess`/`rhat`/`n_draws`, decision `1bfkc9a`), the per-chain
 `chains`/`results`, `n_windows`, and `total_evaluation_counter`.
+
+## Resumability
+
+The run is assembled from resumable pieces (decision `1nfpfei` scoped *disk*
+resume out of v1; in-memory resume is free here): [`clustered_chains`](@ref)
+builds the per-chain state, [`clustered_step!`](@ref) advances every chain one
+window and re-clusters, and [`clustered_output`](@ref) finalizes. All mutable
+state — including each chain's RNG — lives in the returned `chains`, so a run
+split across several `clustered_step!` calls is BIT-IDENTICAL to a single loop;
+hold the `chains`, checkpoint or inspect, and continue where you left off.
 """
 clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_draws=1000,
@@ -331,33 +341,63 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     progress=nothing,
     kwargs...
 ) = begin
+    chains = clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, kwargs...)
+    clusters = [collect(eachindex(chains))]
+    n_windows = 0
+    for _ in 1:max_windows
+        n_windows += 1
+        clusters = clustered_step!(chains; cluster_fn, metric, threshold, parallel)
+        all(c -> c.status === :done, chains) && break
+        sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget && break
+    end
+    clustered_output(chains, clusters, n_windows)
+end
+
+"""
+    clustered_chains(rngs, lpdf; n_draws=1000, weighting=default_weighting,
+                     init=missing, parallel=true, progress=nothing, kwargs...) -> Vector{ClusteredChain}
+
+Build the per-chain state for a clustered run — the resumable handle. Each chain
+gets a `deepcopy` of `lpdf`. Advance the result with [`clustered_step!`](@ref).
+"""
+clustered_chains(rngs::AbstractVector, lpdf; n_draws=1000, weighting=default_weighting,
+    init=missing, parallel=true, progress=nothing, kwargs...) = begin
     n_chains = length(rngs)
     inits = ensurevector(init, n_chains)
     chains = Vector{ClusteredChain}(undef, n_chains)
     _pforeach(parallel, 1:n_chains) do i
         chains[i] = clustered_chain(rngs[i], deepcopy(lpdf); n_draws, weighting, init=inits[i], progress, kwargs...)
     end
-    clusters = [collect(1:n_chains)]
-    n_windows = 0
-    for _ in 1:max_windows
-        n_windows += 1
-        _pforeach(parallel, 1:n_chains) do i
-            advance_chain!(chains[i])
-        end
-        clusters = cluster_and_adapt!(chains; cluster_fn, metric, threshold)
-        all(c -> c.status === :done, chains) && break
-        sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget && break
-    end
-    (;
-        clusters=map(enumerate(clusters)) do (cid, members)
-            (; cluster_id=cid, chain_indices=members, cluster_diagnostics(chains[members])...)
-        end,
-        chains,
-        results=map(clustered_result, chains),
-        n_windows,
-        total_evaluation_counter=sum(c -> c.total_evaluation_counter, chains; init=0),
-    )
+    chains
 end
+
+"""
+    clustered_step!(chains; cluster_fn=assign_clusters, metric=cond_compatibility,
+                    threshold=sqrt(2), parallel=true) -> clusters
+
+Advance EVERY chain one window ([`advance_chain!`](@ref)) then cluster + adopt
+pooled scales ([`cluster_and_adapt!`](@ref)); returns the cluster partition. This
+is ONE cooperative window and the resumable unit — call it repeatedly (all state
+lives in `chains`, RNG included, so splitting the loop is bit-identical).
+"""
+clustered_step!(chains::AbstractVector{<:ClusteredChain};
+    cluster_fn=assign_clusters, metric=cond_compatibility, threshold=sqrt(2.0), parallel=true) = begin
+    _pforeach(parallel, eachindex(chains)) do i
+        advance_chain!(chains[i])
+    end
+    cluster_and_adapt!(chains; cluster_fn, metric, threshold)
+end
+
+"Finalize a clustered run into the public result (per-cluster labeled output + per-chain results)."
+clustered_output(chains::AbstractVector{<:ClusteredChain}, clusters, n_windows) = (;
+    clusters=map(enumerate(clusters)) do (cid, members)
+        (; cluster_id=cid, chain_indices=members, cluster_diagnostics(chains[members])...)
+    end,
+    chains,
+    results=map(clustered_result, chains),
+    n_windows,
+    total_evaluation_counter=sum(c -> c.total_evaluation_counter, chains; init=0),
+)
 
 "Per-chain result: the collected draws + diagnostics (mirrors the adaptive/cooperative result shape)."
 clustered_result(chain::ClusteredChain) = (;

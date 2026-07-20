@@ -128,12 +128,7 @@ init_state(
     # The dimension of the posterior
     dimension = LogDensityProblems.dimension(lpdf)
     # A thin wrapper around the posterior that enables us to record the intermediate positions and gradients
-    recorder = LimitedRecorder2(
-        # As above
-        recording_target,
-        # The initial "thinning" of intermediate positions and gradients
-        n_evaluations ÷ recording_target,
-    )
+    recorder = LimitedRecorder2(recording_target)
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
@@ -228,7 +223,9 @@ run_outer_iteration!(state::AWMState) = begin
         state.current_transition_counter += 1
         state.total_transition_counter += 1
         # One MCMC transition
+        reset!(recording_lpdf.leaves)
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
+        finalize_leaf_recording!(recording_lpdf, stats.depth)
         state.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(state.steps_per_draw, stats.steps)
@@ -286,8 +283,6 @@ run_outer_iteration!(state::AWMState) = begin
     state.n_samples < state.n_draws || return state
     # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
     state.n_evaluations *= 2
-    # Recompute the thinning factor for the intermediate positions and gradients
-    recording_lpdf.recorder.thin = state.n_evaluations ÷ state.recording_target
     state.restart || return state
     state.stepsize = DynamicHMC.final_ϵ(state.stepsize_state)
     state.stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, state.stepsize)
@@ -414,7 +409,7 @@ restore_state(p, lpdf, progress) = begin
     restore_reparam_sources!(lpdf, p.reparam_sources)
     recording_lpdf = RecordingPosterior2(
         lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
-        p.recorder, p.rng,
+        NUTSLeaves(p.dimension), p.recorder, p.rng,
     )
     energy_options = map(p.scale_options) do L
         DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
@@ -448,10 +443,11 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
 * Initializes via Pathfinder (LBFGS-based variational approximation).
 * Warm-up windows target a number of GRADIENT EVALUATIONS rather than
   MCMC transitions. Default 1000, doubled after every window.
-* Uses POSITIONS AND GRADIENTS (like nutpie), plus the
-  INTERMEDIATE POSITIONS AND GRADIENTS visited during NUTS tree
-  traversal (selected pseudo-randomly, only if the Hamiltonian error is
-  small enough). Up to `recording_target` intermediate states are kept.
+* Uses POSITIONS AND GRADIENTS (like nutpie), plus one state from every NUTS
+  tree traversal. The state is drawn from the exact marginal proposal
+  probabilities induced by all leaf Hamiltonian errors, including the
+  probability of staying at the initial state. Up to `recording_target` such
+  states are kept.
 * Learns three candidate linear transformations in parallel at the end
   of every warm-up window:
     * Pathfinder's initial transformation + an updated diagonal scaling,
@@ -496,7 +492,7 @@ no separate `initial_params` kwarg.
 * `n_draws=1000` — number of posterior draws to collect.
 * `n_evaluations=1000` — gradient-evaluation budget for the first
   window; doubled each subsequent window.
-* `recording_target=1000` — maximum number of intermediate
+* `recording_target=1000` — maximum number of acceptance-weighted NUTS leaf
   positions/gradients to keep.
 * `stepsize_adaptation_limit=50` — per-window cap on step-size
   adaptation transitions.

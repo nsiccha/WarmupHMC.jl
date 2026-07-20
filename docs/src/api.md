@@ -4,6 +4,7 @@
 
 ```@docs
 WarmupHMC.adaptive_warmup_mcmc
+WarmupHMC.resume_warmup_mcmc
 ```
 
 ## Reparametrizations

@@ -54,6 +54,51 @@ result = adaptive_warmup_mcmc(rng, rp)
 Reparametrization is controlled by the `nonlinear_adapt` keyword (default `true`).
 Posterior samples are automatically transformed back to the original parametrization.
 
+## Checkpoints, Callbacks and Resume
+
+Warm-up has two checkpoint boundaries: **CP-0**, right after initialization
+(Pathfinder), and **CP-N**, after each outer warm-up window. Three opt-in,
+independent mechanisms hang off these boundaries. All default to off, and with
+them off the run is byte-for-byte identical to the plain sampler.
+
+**Observing progress.** `callback=(state, stage) -> should_stop` fires at each
+boundary with `stage ∈ (:init, :window)`. It may read `state` and request an
+early stop by returning `true`, but it is *observational* — it must not mutate
+`state`:
+
+```julia
+result = adaptive_warmup_mcmc(rng, lpdf; callback=(state, stage) -> begin
+    @info "boundary" stage stepsize=state.stepsize
+    false  # keep going
+end)
+```
+
+**Writing checkpoints.** `checkpoint_dir=path` serializes a resumable snapshot at
+each boundary as `cp_init.jls`, `cp_window_<n>.jls`, and an overwritten
+`cp_latest.jls`. The multi-chain method writes chain `i` under `path/chain_<i>/`:
+
+```julia
+result = adaptive_warmup_mcmc(rng, lpdf; checkpoint_dir="checkpoints/")
+```
+
+The snapshot deliberately excludes the (possibly non-serializable) inner problem
+and stores the reparametrizer only as its scalar centering values.
+
+**Resuming.** [`resume_warmup_mcmc`](@ref) re-supplies `lpdf` and continues from a
+checkpoint. For a fixed seed the result is identical to an uninterrupted run:
+
+```julia
+# single chain: point at a specific checkpoint file
+result = resume_warmup_mcmc(lpdf, "checkpoints/cp_latest.jls")
+
+# multi-chain: point at the parent directory; chain i resumes from chain_<i>/
+results = resume_warmup_mcmc(lpdfs, "checkpoints/")
+```
+
+Because the checkpoint does not carry the inner problem, the `lpdf` you pass to
+`resume_warmup_mcmc` must be reconstructed by you — typically the same way you
+built it for the original call.
+
 ## See Also
 
 - [Stan's warm-up documentation](https://mc-stan.org/docs/reference-manual/mcmc.html#automatic-parameter-tuning)

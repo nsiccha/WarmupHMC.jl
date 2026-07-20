@@ -292,6 +292,13 @@ run_outer_iteration!(state::AWMState) = begin
     state.steps_per_draw = OnlineStatsBase.Mean()
     state.n_divergent = 0
     state.n_divergent_samples = 0
+    # `reset!(recording_lpdf)` below empties `posterior_position`, and `n_samples`
+    # mirrors `size(posterior_position, 2)` — so it must be zeroed with the other
+    # counters. Leaving it stale is invisible internally (every read is preceded by
+    # a fresh assignment in the transition loop) but IS visible to consumers: the
+    # CP-N checkpoint is serialized after this reset, so the payload would pair a
+    # non-zero `n_samples` with zero retained draws.
+    state.n_samples = 0
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.
     state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(lpdf, recording_lpdf.halo_position, recording_lpdf.halo_gradient, state.position_and_gradient))

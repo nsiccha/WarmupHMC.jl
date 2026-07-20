@@ -242,12 +242,17 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
 end
 
+# Draws are stored in the SAMPLING parametrization: `logdensity` receives the
+# sampler position in `source` coordinates and maps it through `ir`
+# (source -> target) before handing `y` to the inner problem. Reporting draws in
+# the model's own (`target`) parametrization therefore applies `ir` itself.
+# Applying `inverse(ir)` here maps target -> source, i.e. the wrong direction —
+# it was a no-op only while adaptation left `source == target`.
 reparametrize!(lpdf, posterior_position) = begin
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return
-    inv_ir = inverse(ir)
     for col in eachcol(posterior_position)
-        ljac, y = inv_ir(col)
+        ljac, y = ir(col)
         col .= y
     end
 end

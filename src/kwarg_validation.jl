@@ -73,17 +73,20 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
         :target_acceptance_rate, :max_tree_depth, :init, :progress, :description,
         :monitor_ess, :nonlinear_adapt, :variance_cond_target, :callback,
-        :checkpoint_dir, :pathfinder_kw,
+        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
+    # `resume_warmup_mcmc` is deprecated in favour of `resume=true` on the sampler
+    # itself. It now also accepts the config kwargs, because checkpoints no longer
+    # carry config — see `checkpoint_payload`.
     :resume_warmup_mcmc => (
         :progress, :description, :callback, :checkpoint_dir,
-        :checkpoint_name, :parallel,
+        :checkpoint_name, :parallel, :n_draws, :stepsize_adaptation_limit,
     ),
     :cooperative_warmup_mcmc => (
         :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,
         :max_window_evaluations, :n_draws, :nonlinear_adapt, :progress,
-        :checkpoint_dir, :pathfinder_kw, _COOPERATIVE_CHAIN_KWARGS...,
+        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw, _COOPERATIVE_CHAIN_KWARGS...,
     ),
     :clustered_warmup_mcmc => (
         :n_draws, :max_windows, :cluster_fn, :weighting, :metric, :threshold,

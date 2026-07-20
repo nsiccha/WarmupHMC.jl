@@ -6,6 +6,7 @@ include("leaf_weights.jl")
     @test isdefined(WarmupHMC, :WarmupHMC)
 end
 
+include("resume_api.jl")
 include("cooperative.jl")
 include("clustered.jl")
 include("kwarg_validation.jl")

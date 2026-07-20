@@ -623,7 +623,7 @@ Policy (the contract, not just the number):
   since additions never bump, a higher version can only mean existing semantics
   changed.
 """
-checkpoint_schema_version() = 1
+checkpoint_schema_version() = 2
 
 """
     cooperative_checkpoint_payload(chain) -> NamedTuple
@@ -783,11 +783,17 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     nonlinear_adapt=true,
     progress=nothing,
     checkpoint_dir=nothing,
+    # Discard whatever `checkpoint_dir` already holds and start fresh. `resume` is
+    # accepted so the error is a clear "not supported yet" rather than a silent
+    # no-op; the guard itself matters regardless — see `guard_run_dir!`.
+    resume=false,
+    overwrite=false,
     # Forwarded verbatim to the Pathfinder initializer; see `_check_kwargs`.
     pathfinder_kw=(;),
     kwargs...
 ) = begin
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
+    guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
     chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs..., pathfinder_kw...)
     pool_target = min(length(rngs), max(min_chains, n_cores))

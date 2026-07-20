@@ -495,6 +495,113 @@ _worker!(state::CooperativeState) = while true
     end
 end
 
+# --- Run manifest / summary ----------------------------------------------------
+#
+# TWO WRITE-ONCE JSON files at the checkpoint_dir root, never rewritten:
+#
+#   run_manifest.json  at run START    — run identity + the criteria in force
+#   run_summary.json   at FINALIZE     — the terminal answer
+#
+# EXISTENCE of run_summary.json IS the run-completed signal: a consumer polling
+# for "is this run done?" needs no parsing and no field. An earlier draft had a
+# single manifest rewritten at finalize; that reintroduces the cp_latest.jls
+# torn-read hazard in the one file every consumer must read to identify a run,
+# so it was rejected in review.
+#
+# JSON rather than .jls so a web process can read run identity WITHOUT a Julia
+# runtime — that is the whole point, and it is why this hand-rolls a tiny writer
+# instead of taking a JSON dependency: the contents are a flat, fully-controlled
+# set of scalars and small arrays, and WarmupHMC is heading for General
+# registration where every added dep is a liability.
+
+_json_esc(s) = replace(string(s), '\\' => "\\\\", '"' => "\\\"", '\n' => "\\n")
+_json_val(::Nothing) = "null"
+_json_val(x::Bool) = x ? "true" : "false"
+_json_val(x::Real) = isfinite(x) ? string(x) : "null"   # Inf/NaN are not JSON
+_json_val(x::Union{AbstractString,Symbol}) = "\"" * _json_esc(x) * "\""
+_json_val(x::AbstractVector) = "[" * join(map(_json_val, x), ",") * "]"
+_json_val(x) = _json_val(string(x))
+_json_object(pairs) = "{" * join(
+    [ "\"" * _json_esc(k) * "\":" * _json_val(v) for (k, v) in pairs ], ",") * "}"
+
+# Atomic write, same reason as the checkpoints: a crash during a WRITE-ONCE file
+# must not strand a half-written one that a consumer would read as authoritative.
+# `pairs` is deliberately Pair{String,Any} at every call site: a literal array
+# mixing an Int with an Inf promotes to Float64, which would silently render
+# `schema_version` as `1.0` and break a consumer parsing it as an integer.
+_write_json(path, pairs) = begin
+    mkpath(dirname(path))
+    tmp, io = mktemp(dirname(path); cleanup=false)
+    try
+        write(io, _json_object(pairs))
+        close(io)
+        mv(tmp, path; force=true)
+    catch
+        close(io); rm(tmp; force=true); rethrow()
+    end
+    nothing
+end
+
+"Write `run_manifest.json` once, at run start. Never rewritten."
+write_run_manifest(::Nothing, state) = nothing
+write_run_manifest(dir::AbstractString, state::CooperativeState) = _write_json(
+    joinpath(dir, "run_manifest.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "cooperative",
+        "n_chains_requested" => length(state.rngs),
+        "n_cores" => state.n_cores,
+        "pool_target" => state.pool_target,
+        # The stopping criteria ACTUALLY in force. Non-finite means "not set":
+        # JSON has no Inf, so an unset bound reads as null rather than a lie.
+        "n_draws" => state.n_draws == typemax(Int) ? nothing : state.n_draws,
+        "target_ess" => state.target_ess,
+        "n_evaluations_budget" => state.eval_budget == typemax(Int) ? nothing : state.eval_budget,
+        "time_budget" => state.time_budget,
+        # Xoshiro prints its full internal state, so this is the reproducible
+        # per-chain seed, not a label.
+        "chain_rngs" => map(string, state.rngs),
+        "start_time_unix" => time(),
+    ])
+
+"""
+    write_run_summary(dir, state, result) -> nothing
+
+Write `run_summary.json` once, at finalize. Its EXISTENCE is the run-completed
+signal — a consumer need not parse it to answer "is this run done?".
+
+`stop_reason` here is RUN-level and answers a different question from a chain's
+`stop_reason`: a chain can be final while the pool keeps going.
+"""
+write_run_summary(::Nothing, state, result) = nothing
+write_run_summary(dir::AbstractString, state::CooperativeState, result) = _write_json(
+    joinpath(dir, "run_summary.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "cooperative",
+        "is_final" => true,
+        "stop_reason" => string(run_stop_reason(state)),
+        "n_started" => result.n_started,
+        "n_used" => result.n_used,
+        "n_stuck" => result.n_stuck,
+        "joint_ess" => result.joint_ess,
+        "total_evaluation_counter" => result.total_evaluation_counter,
+        "elapsed" => result.elapsed,
+        "end_time_unix" => time(),
+    ])
+
+"""
+    run_stop_reason(state) -> Symbol
+
+Which bound actually ended the run: `:eval_budget`, `:time_budget`,
+`:target_ess`, or `:exhausted` (every chain reached `n_draws` or was abandoned).
+Checked in the same order as `_should_stop` so the reported reason matches the
+one that fired.
+"""
+run_stop_reason(state::CooperativeState) =
+    _total_evals(state) >= state.eval_budget ? :eval_budget :
+    _elapsed(state) >= state.time_budget ? :time_budget :
+    (isfinite(state.target_ess) && _pooled_ess(state) >= state.target_ess) ? :target_ess :
+    :exhausted
+
 """
     checkpoint_schema_version() -> Int
 
@@ -681,8 +788,11 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
         time_ns(), ReentrantLock(), checkpoint_dir,
         CooperativeChain[], Base.IdSet{CooperativeChain}(), 0, 0, false,
     )
+    write_run_manifest(checkpoint_dir, state)
     @sync for _ in 1:n_cores
         Threads.@spawn _worker!(state)
     end
-    _finalize(state)
+    result = _finalize(state)
+    write_run_summary(checkpoint_dir, state, result)
+    result
 end

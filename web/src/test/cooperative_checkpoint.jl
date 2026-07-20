@@ -111,3 +111,46 @@ end
     @test stuck_reason(chain; min_windows=1) === :divergence_blowup
     @test is_stuck(chain; min_windows=1)
 end
+
+@testset "run manifest / summary JSON" begin
+    using WarmupHMC: _json_val, _json_object, _write_json,
+                     write_run_manifest, write_run_summary
+
+    @testset "JSON has no Inf/NaN — unset bounds must read as null, not a lie" begin
+        # `target_ess` and `time_budget` default to Inf. Emitting `Inf` produces
+        # invalid JSON that a strict parser rejects; emitting a big number would
+        # claim a bound that was never set.
+        @test _json_val(Inf) == "null"
+        @test _json_val(-Inf) == "null"
+        @test _json_val(NaN) == "null"
+        @test _json_val(1000) == "1000"
+        @test _json_val(nothing) == "null"
+        @test _json_val(true) == "true"
+        @test _json_val(:cooperative) == "\"cooperative\""
+        @test _json_val(["a", "b"]) == "[\"a\",\"b\"]"
+        # Xoshiro reprs contain no quotes, but escaping must hold regardless.
+        @test _json_val("a\"b") == "\"a\\\"b\""
+    end
+
+    @testset "object shape" begin
+        @test _json_object(["a" => 1, "b" => nothing]) == "{\"a\":1,\"b\":null}"
+    end
+
+    @testset "write is atomic and leaves no litter" begin
+        mktempdir() do dir
+            path = joinpath(dir, "run_manifest.json")
+            _write_json(path, Pair{String,Any}["schema_version" => 1, "target_ess" => Inf])
+            @test isfile(path)
+            @test read(path, String) == "{\"schema_version\":1,\"target_ess\":null}"
+            @test readdir(dir) == ["run_manifest.json"]
+        # Integers must not be promoted to floats by a mixed literal — a consumer
+        # parsing schema_version as an Int would break on `1.0`.
+        @test occursin("\"schema_version\":1,", read(path, String))
+        end
+    end
+
+    @testset "nothing disables both writers" begin
+        @test write_run_manifest(nothing, nothing) === nothing
+        @test write_run_summary(nothing, nothing, nothing) === nothing
+    end
+end

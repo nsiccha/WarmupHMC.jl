@@ -344,17 +344,33 @@ end
 # a freshly supplied lpdf. Empty for a plain lpdf.
 reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(lpdf).pairs]
 
-# A serializable snapshot of everything needed to resume at a checkpoint,
-# EXCLUDING the lpdf and runtime handles (`progress`/`start_time`). The recording
-# posterior is decomposed into its arrays + recorder; its wrapped lpdf and its
-# rng (shared with `state.rng`, serialized once here) are omitted and rewired on
-# resume. `energy_options`/`kinetic_energy` are omitted too: both are pure
-# functions of `scale_options` (which they alias) and are rebuilt on resume.
-checkpoint_payload(state::AWMState, stage::Symbol) = (;
-    stage,
-    state.n_draws, state.stepsize_adaptation_limit, state.variance_cond_target,
-    state.nonlinear_adapt, state.monitor_ess, state.recording_target, state.kwargs,
-    state.algorithm, state.stepsize_adaptation, state.dimension,
+# A serializable snapshot of the TRANSIENT SAMPLER STATE at a checkpoint —
+# nothing else.
+#
+# Three categories are deliberately absent:
+#
+#   * the lpdf and runtime handles (`progress`/`start_time`) — the lpdf is
+#     possibly non-serializable, and the caller re-supplies it;
+#   * `energy_options`/`kinetic_energy` — pure functions of `scale_options`
+#     (which they alias), rebuilt on resume;
+#   * **CONFIG** — `n_draws`, `stepsize_adaptation_limit`, `variance_cond_target`,
+#     `nonlinear_adapt`, `monitor_ess`, `recording_target`, `kwargs`, `algorithm`
+#     and `stepsize_adaptation` all used to live here. They are caller-owned
+#     INPUT, exactly like the lpdf, and persisting one but not the other was
+#     arbitrary. Taking config from the resuming CALL instead is what makes
+#     post-hoc reconfiguration possible at all — most importantly resuming with a
+#     larger `n_draws` to keep sampling rather than re-running a fixed-length
+#     batch. See `resume=` on `adaptive_warmup_mcmc`.
+#
+# `dimension` is kept, but as a VALIDATION anchor rather than config: it must
+# still match the freshly-supplied lpdf.
+#
+# The old `stage` field is gone. It was written at every boundary and read by
+# nothing — the filename (`cp_init.jls` vs `cp_window_<n>.jls`) already carries it.
+checkpoint_payload(state::AWMState) = (;
+    schema_version=checkpoint_schema_version(),
+    sampler=:adaptive,
+    state.dimension,
     halo_position=state.recording_lpdf.halo_position,
     halo_gradient=state.recording_lpdf.halo_gradient,
     posterior_position=state.recording_lpdf.posterior_position,
@@ -399,11 +415,100 @@ end
 _write_checkpoint(::Nothing, state::AWMState, stage::Symbol) = nothing
 _write_checkpoint(dir, state::AWMState, stage::Symbol) = begin
     mkpath(dir)
-    payload = checkpoint_payload(state, stage)
+    payload = checkpoint_payload(state)
     name = stage === :init ? "cp_init.jls" : "cp_window_$(state.outer_counter).jls"
     _atomic_serialize(joinpath(dir, name), payload)
     _atomic_serialize(joinpath(dir, "cp_latest.jls"), payload)
     nothing
+end
+
+_checkpoint_files(dir) = isdir(dir) ?
+    sort!(filter(f -> startswith(f, "cp_") && endswith(f, ".jls"), readdir(dir))) : String[]
+
+"""
+    resolve_checkpoint_dir(dir, resume, overwrite) -> payload_or_nothing
+
+Decide what pointing a sampler at `checkpoint_dir` means, and refuse to guess.
+
+A checkpoint directory that already holds state is ambiguous: the caller might
+mean "continue that run" or "throw it away and start over", and silently picking
+either one is a way to lose a long run. So a non-empty directory REQUIRES
+`resume=true` or `overwrite=true`; without one, this errors and names what it
+found. An empty or absent directory needs no flag.
+
+Returns the deserialized `cp_latest.jls` payload to resume from, or `nothing` to
+start fresh.
+"""
+resolve_checkpoint_dir(::Nothing, resume::Bool, overwrite::Bool) = begin
+    (resume || overwrite) && throw(ArgumentError(
+        "`resume`/`overwrite` are meaningless without `checkpoint_dir`."))
+    nothing
+end
+resolve_checkpoint_dir(dir, resume::Bool, overwrite::Bool) = begin
+    resume && overwrite && throw(ArgumentError(
+        "`resume=true` and `overwrite=true` are mutually exclusive."))
+    existing = _checkpoint_files(dir)
+    if isempty(existing)
+        resume && throw(ArgumentError(
+            "`resume=true` but no checkpoints were found in $(repr(dir))."))
+        return nothing
+    end
+    overwrite && (foreach(f -> rm(joinpath(dir, f)), existing); return nothing)
+    resume || throw(ArgumentError("""
+    $(repr(dir)) already contains $(length(existing)) checkpoint(s): $(join(existing, ", ")).
+
+    Refusing to guess. Pass one of:
+      resume=true     continue that run (config comes from THIS call, so a larger
+                      `n_draws` keeps sampling rather than restarting)
+      overwrite=true  discard them and start fresh
+    """))
+    latest = joinpath(dir, "cp_latest.jls")
+    isfile(latest) || throw(ArgumentError(
+        "`resume=true` but $(repr(latest)) is missing (found: $(join(existing, ", ")))."))
+    deserialize(latest)
+end
+
+"""
+    guard_run_dir!(dir, resume, overwrite, sampler::Symbol)
+
+The multi-chain / whole-run counterpart of [`resolve_checkpoint_dir`](@ref), for
+samplers that lay out `dir/chain_<i>/` subdirectories rather than a single
+`cp_*.jls` set.
+
+Same rule: a directory that already holds a run is ambiguous, so it requires an
+explicit `resume=true` or `overwrite=true`. This is worth having even where
+`resume` is not yet implemented — without it, pointing a second run at a live
+checkpoint directory silently interleaves two runs' chain state.
+"""
+guard_run_dir!(::Nothing, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
+    (resume || overwrite) && throw(ArgumentError(
+        "`resume`/`overwrite` are meaningless without `checkpoint_dir`."))
+    nothing
+end
+guard_run_dir!(dir, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
+    resume && overwrite && throw(ArgumentError(
+        "`resume=true` and `overwrite=true` are mutually exclusive."))
+    existing = isdir(dir) ?
+        sort!(filter(f -> startswith(f, "chain_") || startswith(f, "run_"), readdir(dir))) : String[]
+    if isempty(existing)
+        resume && throw(ArgumentError(
+            "`resume=true` but no run was found in $(repr(dir))."))
+        return nothing
+    end
+    if overwrite
+        foreach(f -> rm(joinpath(dir, f); recursive=true), existing)
+        return nothing
+    end
+    resume && throw(ArgumentError(
+        "`resume=true` is not supported by `$(sampler)_warmup_mcmc` yet — only " *
+        "`adaptive_warmup_mcmc` can resume. Use `overwrite=true` to start fresh, " *
+        "or point `checkpoint_dir` somewhere empty."))
+    throw(ArgumentError("""
+    $(repr(dir)) already contains a run: $(join(existing, ", ")).
+
+    Refusing to guess — a second run writing here would interleave with it. Pass
+    `overwrite=true` to discard it, or point `checkpoint_dir` somewhere empty.
+    """))
 end
 
 # Observational checkpoint callback. Fires at the two checkpoint boundaries
@@ -429,12 +534,76 @@ restore_reparam_sources!(lpdf, sources) = begin
     lpdf
 end
 
-# Reconstruct a live `AWMState` from a deserialized checkpoint `p` and a freshly
-# supplied `lpdf`. Rewires the recording posterior around `lpdf` (sharing the one
-# deserialized rng between driver and recorder), rebuilds `energy_options` from
-# `scale_options`, recomputes `kinetic_energy`, and restores the reparametrizer
-# scalars onto `lpdf`. `progress`/`start_time` are fresh runtime handles.
-restore_state(p, lpdf, progress) = begin
+"""
+    checkpoint_sampler(payload) -> Symbol
+
+Which sampler wrote `payload`. Checkpoints written before the `sampler` tag
+existed carry no field; adaptive was the only writer then, so an absent tag reads
+as `:adaptive`. That keeps every pre-tag checkpoint readable — no migration.
+"""
+checkpoint_sampler(p) = hasproperty(p, :sampler) ? p.sampler : :adaptive
+
+"""
+    check_checkpoint_compatible(payload, reader::Symbol, accepted)
+
+The masquerade guard. Every sampler writes into the same `chain_<i>/cp_*.jls`
+layout, so a directory alone cannot say which sampler produced it — a reader must
+check the tag rather than discover the mismatch as a missing field several frames
+deep.
+
+`accepted` encodes the one-way lattice: adaptive reads only its own state,
+cooperative may additionally adopt adaptive state, clustered may read anything.
+The asymmetry is not stylistic — a clustered chain's scale is pooled across its
+cluster-mates (`cluster_and_adapt!`), so clustered state is only meaningful as a
+whole ensemble and must never be resumed as a lone adaptive or cooperative chain.
+"""
+check_checkpoint_compatible(p, reader::Symbol, accepted) = begin
+    writer = checkpoint_sampler(p)
+    writer in accepted && return nothing
+    throw(ArgumentError("""
+    This checkpoint was written by `$(writer)_warmup_mcmc`, which `$(reader)_warmup_mcmc` cannot resume.
+
+      accepted here: $(join(string.(accepted), ", "))
+
+    Sampler state does not transfer in this direction. Resume it with \
+    `$(writer)_warmup_mcmc`, or point `checkpoint_dir` at a fresh directory.
+    """))
+end
+
+# Reconstruct a live `AWMState` from a deserialized checkpoint `p`, a freshly
+# supplied `lpdf`, and CALLER-SUPPLIED CONFIG. Rewires the recording posterior
+# around `lpdf` (sharing the one deserialized rng between driver and recorder),
+# rebuilds `energy_options` from `scale_options`, recomputes `kinetic_energy`, and
+# restores the reparametrizer scalars onto `lpdf`. `progress`/`start_time` are
+# fresh runtime handles.
+#
+# `algorithm` and `stepsize_adaptation` are rebuilt from the scalars the caller
+# passed rather than read back from the payload. That is safe in both directions:
+# `DualAveragingState`'s type does not depend on δ, so a rebuilt adaptation always
+# accepts the persisted `stepsize_state`.
+restore_state(p, lpdf, progress;
+    n_draws=1000, stepsize_adaptation_limit=50, variance_cond_target=2.,
+    nonlinear_adapt=true, monitor_ess=!isnothing(progress),
+    target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
+    kwargs...
+) = begin
+    check_checkpoint_compatible(p, :adaptive, (:adaptive,))
+    lpdf_dimension = LogDensityProblems.dimension(lpdf)
+    p.dimension == lpdf_dimension || throw(DimensionMismatch(
+        "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *
+        "lpdf has dimension $lpdf_dimension."
+    ))
+    # `recording_target` sizes the recorder's ring buffer, and `outer_count` (the
+    # next destination) is persisted with it — so shrinking it below the retained
+    # contents would corrupt the ring. `nothing` (the default) inherits the
+    # persisted value, which keeps a plain resume working when the original run
+    # used a non-default target; an explicit DIFFERENT value is refused rather
+    # than silently discarding recorded halo state.
+    isnothing(recording_target) || recording_target == p.recorder.target || throw(ArgumentError(
+        "`recording_target` cannot change on resume (checkpoint has " *
+        "$(p.recorder.target), got $recording_target): the recorder's ring buffer " *
+        "and its retained contents are part of the persisted state. Omit it to inherit."
+    ))
     restore_reparam_sources!(lpdf, p.reparam_sources)
     recording_lpdf = RecordingPosterior2(
         lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
@@ -445,8 +614,10 @@ restore_state(p, lpdf, progress) = begin
     end
     kinetic_energy = energy_options[p.active_transformation]
     AWMState(
-        lpdf, p.n_draws, p.stepsize_adaptation_limit, p.variance_cond_target, p.nonlinear_adapt,
-        p.monitor_ess, p.recording_target, p.kwargs, p.algorithm, p.stepsize_adaptation, p.dimension,
+        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target, nonlinear_adapt,
+        monitor_ess, p.recorder.target, (; kwargs...),
+        DynamicHMC.NUTS(; max_depth=max_tree_depth),
+        DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
         progress, time_ns(),
         p.rng, recording_lpdf, p.position, p.scale_options, energy_options, p.active_transformation,
         kinetic_energy, p.variance_memory, p.variance_position, p.variance_gradient, p.variance_cond,
@@ -572,8 +743,10 @@ adaptive_warmup_mcmc(
     n_draws=1000,
     # The number of GRADIENT EVALUATIONS in the first window
     n_evaluations=1000,
-    # The upper limit of (intermediate) positions and gradients that will be recorded and then used for adaptation
-    recording_target=1000,
+    # The upper limit of (intermediate) positions and gradients that will be recorded and then used for adaptation.
+    # `nothing` means "unset": 1000 for a fresh run, and on `resume=true` it
+    # inherits the checkpoint's value (which cannot be changed — see `restore_state`).
+    recording_target=nothing,
     # The maximum number of transitions (per window) for which the stepsize gets adapted
     stepsize_adaptation_limit=50,
     target_acceptance_rate=.8,
@@ -591,6 +764,12 @@ adaptive_warmup_mcmc(
     # each checkpoint. Default `nothing` writes nothing and keeps the run
     # byte-identical (the write is a pure read + file I/O).
     checkpoint_dir=nothing,
+    # Continue from `checkpoint_dir`'s `cp_latest.jls` instead of initializing.
+    # Config comes from THIS call, so resuming with a larger `n_draws` keeps
+    # sampling rather than re-running a fixed-length batch.
+    resume=false,
+    # Discard whatever `checkpoint_dir` already holds and start fresh.
+    overwrite=false,
     # Keywords forwarded verbatim to the Pathfinder initializer. This is the
     # escape hatch that lets a bare unrecognised keyword be an ERROR (see
     # `_check_kwargs`) without closing off Pathfinder's open kwarg surface.
@@ -599,15 +778,28 @@ adaptive_warmup_mcmc(
     # For monitoring purposes: Displays the progress and additional info
 ) = begin
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
+    resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
-        state = init_state(
-            rng, lpdf, progress;
-            n_draws, n_evaluations, recording_target, stepsize_adaptation_limit,
-            target_acceptance_rate, max_tree_depth, init, monitor_ess,
-            nonlinear_adapt, variance_cond_target, kwargs..., pathfinder_kw...
-        )
-        _write_checkpoint(checkpoint_dir, state, :init)                    # CP-0
-        stop = _fire_callback(callback, state, :init)
+        # On resume, do NOT re-fire the init callback or rewrite CP-0: the
+        # original run already did both at that boundary.
+        state, stop = if isnothing(resumed)
+            s = init_state(
+                rng, lpdf, progress;
+                n_draws, n_evaluations, recording_target=something(recording_target, 1000),
+                stepsize_adaptation_limit,
+                target_acceptance_rate, max_tree_depth, init, monitor_ess,
+                nonlinear_adapt, variance_cond_target, kwargs..., pathfinder_kw...
+            )
+            _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
+            s, _fire_callback(callback, s, :init)
+        else
+            restore_state(
+                resumed, lpdf, progress;
+                n_draws, stepsize_adaptation_limit, variance_cond_target,
+                nonlinear_adapt, monitor_ess, target_acceptance_rate,
+                max_tree_depth, recording_target, kwargs...
+            ), false
+        end
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
             run_outer_iteration!(state)
             _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
@@ -621,20 +813,37 @@ end
     resume_warmup_mcmc(lpdf, checkpoint_path; progress=nothing, description="MCMC",
                        callback=nothing, checkpoint_dir=nothing)
 
+!!! warning "Deprecated"
+    Resuming is no longer a separate function. Point the sampler itself at the
+    directory instead:
+
+    ```julia
+    adaptive_warmup_mcmc(rng, lpdf; checkpoint_dir=dir, resume=true)
+    ```
+
+    That form takes its config from the CALL, so resuming with a larger `n_draws`
+    keeps sampling rather than re-running a fixed-length batch. This function
+    remains for existing callers and is implemented on the same machinery.
+
 Resume [`adaptive_warmup_mcmc`](@ref) from an on-disk checkpoint written by the
 `checkpoint_dir` kwarg. `lpdf` is re-supplied by the caller (the checkpoint does
 not store the — possibly non-serializable — inner problem; only the
 reparametrizer's scalar state is restored onto it). The run continues from the
-saved boundary and returns the same `NamedTuple` as a single, uninterrupted run:
-for a fixed seed, resuming is byte-for-byte identical to running straight
-through. `callback` and `checkpoint_dir` behave as in `adaptive_warmup_mcmc`.
+saved boundary.
+
+Config kwargs (`n_draws`, `stepsize_adaptation_limit`, …) are accepted here too
+and default to the same values as `adaptive_warmup_mcmc` — they are NO LONGER
+read from the checkpoint, so a resume that relied on the payload carrying the
+original run's config must now pass it explicitly.
 """
 resume_warmup_mcmc(lpdf, checkpoint_path;
     progress=nothing, description="MCMC", callback=nothing, checkpoint_dir=nothing,
+    n_draws=1000, stepsize_adaptation_limit=50, kwargs...
 ) = begin
     payload = deserialize(checkpoint_path)
-    with_progress(progress, payload.n_draws+payload.stepsize_adaptation_limit; description) do progress
-        state = restore_state(payload, lpdf, progress)
+    with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
+        state = restore_state(payload, lpdf, progress;
+            n_draws, stepsize_adaptation_limit, monitor_ess=!isnothing(progress), kwargs...)
         # Continue from AFTER the resumed boundary: the original run already fired
         # the callback / wrote the checkpoint there, so we do not re-fire it here.
         stop = false

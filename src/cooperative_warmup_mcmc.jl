@@ -783,10 +783,13 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     nonlinear_adapt=true,
     progress=nothing,
     checkpoint_dir=nothing,
+    # Forwarded verbatim to the Pathfinder initializer; see `_check_kwargs`.
+    pathfinder_kw=(;),
     kwargs...
 ) = begin
+    _check_kwargs(:cooperative_warmup_mcmc, kwargs)
     @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
-    chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs...)
+    chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs..., pathfinder_kw...)
     pool_target = min(length(rngs), max(min_chains, n_cores))
     state = CooperativeState(
         rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,

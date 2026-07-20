@@ -19,6 +19,7 @@ using Serialization: serialize, deserialize
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization
 
+include("kwarg_validation.jl")
 include("MatrixExpressions.jl")
 include("NUTSLeafWeights.jl")
 include("WrappedLogDensityProblems.jl")

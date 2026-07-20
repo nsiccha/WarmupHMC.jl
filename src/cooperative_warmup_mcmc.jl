@@ -75,6 +75,10 @@ mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,K,NT}
     restart::Bool
     n_samples::Int
     status::Symbol
+    # Why this chain was abandoned, recorded AT the moment `status` became `:stuck`
+    # rather than re-derived later — a stored decision cannot drift from the
+    # decision that was actually acted on. `nothing` while the chain is alive.
+    stuck_reason::Union{Nothing,Symbol}
     checkpoints::Vector{NamedTuple}     # per-window log for the scheduler/selector
 end
 
@@ -149,7 +153,7 @@ cooperative_chain(
         stepsize, stepsize_state, n_evaluations, variance_memory,
         variance_position, variance_gradient, Inf, Float64[],
         0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension),
-        true, 0, :warming, NamedTuple[],
+        true, 0, :warming, nothing, NamedTuple[],
     )
 end
 
@@ -241,6 +245,11 @@ advance_window!(chain::CooperativeChain) = begin
     chain.steps_per_draw = OnlineStatsBase.Mean()
     chain.n_divergent = 0
     chain.n_divergent_samples = 0
+    # Same invariant as the adaptive restart block (`0f0f0c0`): `reset!(recording_lpdf)`
+    # below empties `posterior_position`, and `n_samples` mirrors its column count, so
+    # leaving it stale exports a chain claiming draws it no longer holds — via
+    # `chain_result`, `_joint_ess_proxy`, and (once this lands) the on-disk payload.
+    chain.n_samples = 0
     nonlinear_adapt && (chain.position_and_gradient = find_reparametrization!(chain.lpdf, halo_position, halo_gradient, chain.position_and_gradient))
     chain.active_transformation = argmin(
         map(L->update_loss!(L, halo_position, halo_gradient; chain.kwargs...), scale_options)
@@ -287,8 +296,13 @@ end
 # =============================================================================
 
 """
-    is_stuck(chain; min_windows=4, divergence_rate=0.4, cond_stall_ratio=0.9,
-             min_divergence_samples=30) -> Bool
+    stuck_reason(chain; min_windows=4, divergence_rate=0.4, cond_stall_ratio=0.9,
+                 min_divergence_samples=30) -> Union{Nothing,Symbol}
+
+Which pathology (if any) makes `chain` stuck — `:geometry_stall`,
+`:divergence_blowup`, or `nothing`. Single source of truth: [`is_stuck`](@ref) is
+derived from it, so a reason recorded in a checkpoint can never disagree with the
+decision to abandon, and a consumer can explain WHY a chain was dropped.
 
 Heuristic: has `chain` stopped making useful progress and should be abandoned?
 Two pathologies, read from the per-window `chain.checkpoints` log:
@@ -300,24 +314,28 @@ Two pathologies, read from the per-window `chain.checkpoints` log:
 * **Divergence blow-up** — among the draws collected since the last restart the
   divergent fraction exceeds `divergence_rate` (needs ≥ `min_divergence_samples`
   draws to judge on).
+
 """
-is_stuck(chain::CooperativeChain; min_windows=4, divergence_rate=0.4,
-         cond_stall_ratio=0.9, min_divergence_samples=30) = begin
+stuck_reason(chain::CooperativeChain; min_windows=4, divergence_rate=0.4,
+             cond_stall_ratio=0.9, min_divergence_samples=30) = begin
     cps = chain.checkpoints
-    length(cps) >= min_windows || return false
+    length(cps) >= min_windows || return nothing
     recent = @view cps[end-min_windows+1:end]
     if all(cp -> cp.status === :warming, recent)
         first_cond, last_cond = first(recent).variance_cond, last(recent).variance_cond
         if isfinite(first_cond) && isfinite(last_cond) && last_cond >= cond_stall_ratio * first_cond
-            return true
+            return :geometry_stall
         end
     end
     if chain.n_samples >= min_divergence_samples &&
        chain.n_divergent_samples / chain.n_samples > divergence_rate
-        return true
+        return :divergence_blowup
     end
-    false
+    nothing
 end
+
+"Has `chain` stopped making useful progress? See [`stuck_reason`](@ref) for which pathology."
+is_stuck(chain::CooperativeChain; kwargs...) = !isnothing(stuck_reason(chain; kwargs...))
 
 # =============================================================================
 # Cooperative scheduler
@@ -338,6 +356,7 @@ mutable struct CooperativeState{RS,L,CFG}
     const time_budget::Float64
     const start_time::UInt64
     const lock::ReentrantLock
+    const checkpoint_dir::Union{Nothing,String}
     chains::Vector{CooperativeChain}
     busy::Base.IdSet{CooperativeChain}
     n_started::Int                  # chains created (== length(chains) once installs settle)
@@ -428,11 +447,32 @@ _plan!(state::CooperativeState) = begin
 end
 
 _install!(state::CooperativeState, chain) = (push!(state.chains, chain); state.n_starting -= 1)
+# Returns the work needed to persist this chain's checkpoint, or `nothing`.
+# The PAYLOAD IS BUILT UNDER THE LOCK (a pure read of chain state, cheap) but the
+# disk write happens outside it — see `_flush_checkpoint!`. Building it later
+# would race: once `_release!` returns, another worker may pick the chain up via
+# `_plan!` and start mutating it mid-serialization.
 _release!(state::CooperativeState, chain) = begin
     delete!(state.busy, chain)
-    if (chain.status === :sampling || chain.status === :warming) && is_stuck(chain)
-        chain.status = :stuck
+    if chain.status === :sampling || chain.status === :warming
+        why = stuck_reason(chain)
+        if !isnothing(why)
+            chain.status = :stuck
+            chain.stuck_reason = why
+        end
     end
+    paths = _chain_checkpoint_paths(state.checkpoint_dir, chain)
+    isnothing(paths) ? nothing : (paths, cooperative_checkpoint_payload(chain))
+end
+
+# Atomic temp+rename, so a crash mid-write cannot truncate a checkpoint — the
+# whole point of checkpointing a run that may die. Shared with the adaptive path.
+_flush_checkpoint!(::Nothing) = nothing
+_flush_checkpoint!(((dir, window_path, latest_path), payload)) = begin
+    mkpath(dir)
+    _atomic_serialize(window_path, payload)
+    _atomic_serialize(latest_path, payload)
+    nothing
 end
 
 _worker!(state::CooperativeState) = while true
@@ -449,9 +489,79 @@ _worker!(state::CooperativeState) = while true
             @lock state.lock _install!(state, chain)
         else # :advance
             advance_window!(val)
-            @lock state.lock _release!(state, val)
+            pending = @lock state.lock _release!(state, val)
+            _flush_checkpoint!(pending)
         end
     end
+end
+
+"""
+    checkpoint_schema_version() -> Int
+
+Version of the on-disk checkpoint/manifest contract, shared by ALL samplers.
+
+Policy (the contract, not just the number):
+
+* **Additive changes do NOT bump it.** New keys may appear at any time, so
+  readers MUST ignore unknown keys.
+* **Changing an existing key's meaning or type, or removing it, DOES bump it.**
+  A bump means exactly "re-read the contract".
+* Therefore a reader seeing a version NEWER than it knows should **fail loudly**:
+  since additions never bump, a higher version can only mean existing semantics
+  changed.
+"""
+checkpoint_schema_version() = 1
+
+"""
+    cooperative_checkpoint_payload(chain) -> NamedTuple
+
+Serializable snapshot of `chain` at a window boundary.
+
+Deliberately EXCLUDES `lpdf` (possibly a non-serializable BridgeStan handle —
+resume re-supplies it, exactly as the adaptive payload does).
+
+`status` and `stuck_reason` are AS OF THIS CHECKPOINT and are never backfilled:
+if a chain is abandoned at window 7, `cp_window_3.jls` still reads `:warming`.
+That keeps written checkpoints immutable, which is what lets a consumer pin a
+`(config, checkpoint#)` view and trust an old file.
+
+`is_final` means THIS CHAIN will produce no more draws — not that the run is
+over. A chain can be final while the pool keeps going; the run-level answer
+needs scheduler intent and lives in the run summary instead.
+"""
+cooperative_checkpoint_payload(chain::CooperativeChain) = (;
+    schema_version=checkpoint_schema_version(),
+    sampler=:cooperative,
+    chain_index=chain.chain_index,
+    status=chain.status,
+    stuck_reason=chain.stuck_reason,
+    is_final=chain.status === :done || chain.status === :stuck,
+    stop_reason=chain.status === :done ? :n_draws :
+                chain.status === :stuck ? :stuck : :running,
+    window=chain.outer_counter,
+    halo_position=chain.recording_lpdf.halo_position,
+    halo_gradient=chain.recording_lpdf.halo_gradient,
+    posterior_position=chain.recording_lpdf.posterior_position,
+    posterior_gradient=chain.recording_lpdf.posterior_gradient,
+    recorder=chain.recording_lpdf.recorder,
+    chain.rng, chain.position_and_gradient, chain.active_transformation,
+    chain.scale_options, chain.stepsize, chain.stepsize_state,
+    chain.n_evaluations, chain.variance_memory, chain.variance_position,
+    chain.variance_gradient, chain.variance_cond, chain.scale_changes,
+    chain.total_evaluation_counter, chain.current_transition_counter,
+    chain.total_transition_counter, chain.n_divergent, chain.n_divergent_samples,
+    chain.steps_per_draw, chain.ess, chain.restart, chain.n_samples,
+    chain.n_draws, chain.dimension, chain.checkpoints,
+    reparam_sources=reparam_sources(chain.lpdf),
+)
+
+# Per-chain checkpoint paths. `chain_<i>/` reuses the adaptive layout, and the
+# index is stable and never reused (see `CooperativeChain.chain_index`), so
+# `chain_3/cp_window_5.jls` and `chain_3/cp_window_2.jls` are the same chain.
+_chain_checkpoint_paths(::Nothing, ::CooperativeChain) = nothing
+_chain_checkpoint_paths(dir::AbstractString, chain::CooperativeChain) = begin
+    d = joinpath(dir, "chain_$(chain.chain_index)")
+    (d, joinpath(d, "cp_window_$(chain.outer_counter).jls"), joinpath(d, "cp_latest.jls"))
 end
 
 """
@@ -559,6 +669,7 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_draws=typemax(Int),
     nonlinear_adapt=true,
     progress=nothing,
+    checkpoint_dir=nothing,
     kwargs...
 ) = begin
     @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
@@ -567,7 +678,7 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     state = CooperativeState(
         rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
         Float64(target_ess), n_evaluations_budget, Float64(time_budget),
-        time_ns(), ReentrantLock(),
+        time_ns(), ReentrantLock(), checkpoint_dir,
         CooperativeChain[], Base.IdSet{CooperativeChain}(), 0, 0, false,
     )
     @sync for _ in 1:n_cores

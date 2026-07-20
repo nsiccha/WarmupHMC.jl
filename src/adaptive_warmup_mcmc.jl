@@ -374,13 +374,35 @@ checkpoint_payload(state::AWMState, stage::Symbol) = (;
 # writes — consumes no rng and mutates nothing, so it never perturbs the run.
 # Writes both a stage-specific file (`cp_init.jls` / `cp_window_<n>.jls`, for
 # "enter at a specific state") and an overwritten `cp_latest.jls`.
+#
+# Writes are ATOMIC: serialize to a temp file in the SAME directory, then rename.
+# A rename within one filesystem is atomic, so a crash (or a kill) mid-write can
+# never leave a truncated file behind — a reader sees either the previous
+# complete checkpoint or the new one. This matters most for `cp_latest.jls`,
+# which is what `resume_warmup_mcmc` reads by default: a plain `serialize`
+# straight to that path leaves it corrupt if the process dies mid-write, i.e.
+# exactly the crash the checkpoint exists to survive.
+_atomic_serialize(path, payload) = begin
+    tmp, io = mktemp(dirname(path); cleanup=false)
+    try
+        serialize(io, payload)
+        close(io)
+        mv(tmp, path; force=true)
+    catch
+        close(io)
+        rm(tmp; force=true)
+        rethrow()
+    end
+    nothing
+end
+
 _write_checkpoint(::Nothing, state::AWMState, stage::Symbol) = nothing
 _write_checkpoint(dir, state::AWMState, stage::Symbol) = begin
     mkpath(dir)
     payload = checkpoint_payload(state, stage)
     name = stage === :init ? "cp_init.jls" : "cp_window_$(state.outer_counter).jls"
-    serialize(joinpath(dir, name), payload)
-    serialize(joinpath(dir, "cp_latest.jls"), payload)
+    _atomic_serialize(joinpath(dir, name), payload)
+    _atomic_serialize(joinpath(dir, "cp_latest.jls"), payload)
     nothing
 end
 

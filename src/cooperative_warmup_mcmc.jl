@@ -30,6 +30,12 @@ scheduler).
 mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,K,NT}
     # --- configuration (set once) ---
     const rng::R
+    # Stable 1-based identity of this chain, equal to its index into `rngs`.
+    # `_plan!` only ever increments `n_started`, so an index is never reused: a
+    # replaced chain takes the NEXT rng rather than a freed slot. That is what
+    # makes an on-disk `chain_<i>/` layout safe — `chain_3/cp_window_5.jls` and
+    # `chain_3/cp_window_2.jls` always belong to the same chain. 0 means unset.
+    const chain_index::Int
     const lpdf::L
     const recording_lpdf::RL           # RecordingPosterior2 wrapping lpdf
     const algorithm::A                 # DynamicHMC.NUTS
@@ -89,6 +95,7 @@ call order), so `run_chain!` on the result reproduces the single-chain result.
 """
 cooperative_chain(
     rng, lpdf;
+    chain_index=0,
     n_draws=1000,
     n_evaluations=1000,
     recording_target=1000,
@@ -134,7 +141,7 @@ cooperative_chain(
     )
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     CooperativeChain(
-        rng, lpdf, recording_lpdf, algorithm, stepsize_adaptation, dimension,
+        rng, chain_index, lpdf, recording_lpdf, algorithm, stepsize_adaptation, dimension,
         recording_target, stepsize_adaptation_limit, variance_cond_target,
         nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
         scale_options, energy_options, NamedTuple(kwargs), start_time,
@@ -438,7 +445,7 @@ _worker!(state::CooperativeState) = while true
         tag, val = action
         if tag === :start
             # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock.
-            chain = cooperative_chain(state.rngs[val], deepcopy(state.lpdf); state.chain_cfg...)
+            chain = cooperative_chain(state.rngs[val], deepcopy(state.lpdf); chain_index=val, state.chain_cfg...)
             @lock state.lock _install!(state, chain)
         else # :advance
             advance_window!(val)
@@ -463,6 +470,9 @@ chain_result(chain::CooperativeChain) = begin
     draws = chain_draws(chain)
     chain.nonlinear_adapt && size(draws, 2) > 0 && reparametrize!(chain.lpdf, draws)
     (;
+        # `state.chains` is in install-COMPLETION order, not index order, so
+        # `results[i]` is not chain `i`. Carry the identity explicitly.
+        chain_index=chain.chain_index,
         posterior_position=draws,
         posterior_gradient=chain.recording_lpdf.posterior_gradient,
         ess=chain.ess,

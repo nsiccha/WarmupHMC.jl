@@ -9,3 +9,4 @@ end
 include("cooperative.jl")
 include("clustered.jl")
 include("kwarg_validation.jl")
+include("clustered_checkpoint.jl")

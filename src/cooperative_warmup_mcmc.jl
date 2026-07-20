@@ -27,7 +27,7 @@ and resumed to an identical state.
 `:done` (collected `n_draws`), or `:stuck` (marked for parking by the
 scheduler).
 """
-mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,K,NT}
+mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,NT}
     # --- configuration (set once) ---
     const rng::R
     # Stable 1-based identity of this chain, equal to its index into `rngs`.
@@ -55,7 +55,13 @@ mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,K,NT}
     # --- mutable window-loop state ---
     position_and_gradient
     active_transformation::Symbol
-    kinetic_energy::K
+    # Untyped, for the same reason as `AWMState.kinetic_energy`: reassigned at
+    # every window boundary across `energy_options` entries, which are
+    # heterogeneously typed (each transformation yields a distinct
+    # GaussianKineticEnergy type), so no single concrete type fits. A concrete
+    # `::K` here made every restart that switched transformation throw
+    # `MethodError: Cannot convert`.
+    kinetic_energy
     stepsize::Float64
     stepsize_state
     n_evaluations::Int                 # current window's gradient-eval budget

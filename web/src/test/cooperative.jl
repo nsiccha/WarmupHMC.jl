@@ -103,6 +103,23 @@ ckpt(; status, variance_cond, n_samples=0) = (;
         end
     end
 
+    @testset "kinetic_energy accepts every transformation" begin
+        # `advance_window!` reassigns `chain.kinetic_energy` from `energy_options`
+        # at every window boundary, and the three options are heterogeneously
+        # typed (each linear transformation yields a distinct
+        # GaussianKineticEnergy type). A concretely-typed field made every
+        # restart that switched away from the construction-time choice throw
+        # `MethodError: Cannot convert`, so the field must stay untyped — same
+        # as `AWMState.kinetic_energy`.
+        chain = cheap_chain(8)
+        opts = chain.energy_options
+        @test length(unique(typeof(opts[k]) for k in keys(opts))) == length(keys(opts))
+        for k in keys(opts)
+            chain.kinetic_energy = opts[k]
+            @test chain.kinetic_energy === opts[k]
+        end
+    end
+
     @testset "cooperative_warmup_mcmc public entry" begin
         lpdf = build_target(3)
 

@@ -313,12 +313,32 @@ self-adaptation) — the two share primitives, not a joint driver.
 * `cluster_fn` / `weighting` / `metric` / `threshold` — the tuneable knobs
   (defaults: greedy clustering, |dH|-halo weights, cond-number metric at √2).
 * `parallel=true` — advance chains on `Threads.@threads` within each window.
+* `checkpoint_dir` — opt-in on-disk checkpointing; see *Checkpointing* below.
 * extra `kwargs` (`recording_target`, `target_acceptance_rate`, `max_tree_depth`,
   `init`, `regularizing_n`, `regularizing_var`, …) are forwarded per chain.
 
 Returns a `NamedTuple`: `clusters` (a per-cluster `NamedTuple` of `chain_indices`
 + pooled `ess`/`rhat`/`n_draws`, decision `1bfkc9a`), the per-chain
 `chains`/`results`, `n_windows`, and `total_evaluation_counter`.
+
+## Checkpointing
+
+`checkpoint_dir=path` writes the SAME layout and payload contract as
+[`cooperative_warmup_mcmc`](@ref), so one consumer read path serves both:
+`path/chain_<i>/cp_window_<n>.jls` + `cp_latest.jls` after every window, plus
+write-once `run_manifest.json` (at start) and `run_summary.json` (at finalize)
+at the root. Payloads carry `sampler === :clustered` and the clustered-only
+`cluster_id`; see [`clustered_checkpoint_payload`](@ref).
+
+Like the cooperative sampler this writes no `cp_init.jls` — the first
+checkpoint is `cp_window_1.jls`, so a reader must not require one.
+
+**Writing is not resuming.** These files let a consumer inspect, list and
+materialize a clustered run exactly as it does an adaptive or cooperative one,
+but there is no `resume_clustered_warmup_mcmc`, and pointing
+[`resume_warmup_mcmc`](@ref) at this directory will throw — the payload is a
+different shape, not a subset. Disk resume remains scoped out (decision
+`1nfpfei`); in-memory resume below is unaffected.
 
 ## Resumability
 
@@ -341,22 +361,156 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_evaluations_budget=typemax(Int),
     init=missing,
     progress=nothing,
+    checkpoint_dir=nothing,
     # Forwarded verbatim to the Pathfinder initializer; see `_check_kwargs`.
     pathfinder_kw=(;),
     kwargs...
 ) = begin
+    # Validate BEFORE any side effect, so a rejected call writes no manifest.
     _check_kwargs(:clustered_warmup_mcmc, kwargs)
+    write_clustered_run_manifest(checkpoint_dir, rngs,
+        (; n_draws, max_windows, n_evaluations_budget, threshold))
     chains = clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, pathfinder_kw, kwargs...)
     clusters = [collect(eachindex(chains))]
     n_windows = 0
+    stop_reason = :max_windows
     for _ in 1:max_windows
         n_windows += 1
         clusters = clustered_step!(chains; cluster_fn, metric, threshold, parallel)
-        all(c -> c.status === :done, chains) && break
-        sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget && break
+        # AFTER the step, so `cluster_id` and any restart are already reflected.
+        _write_clustered_checkpoints(checkpoint_dir, chains, n_windows)
+        if all(c -> c.status === :done, chains)
+            stop_reason = :n_draws
+            break
+        end
+        if sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget
+            stop_reason = :eval_budget
+            break
+        end
     end
-    clustered_output(chains, clusters, n_windows)
+    out = clustered_output(chains, clusters, n_windows)
+    write_clustered_run_summary(checkpoint_dir, out, stop_reason)
+    out
 end
+
+# --- On-disk checkpointing (opt-in, `checkpoint_dir=`) ------------------------
+#
+# Deliberately the SAME layout and payload contract as `cooperative_warmup_mcmc`
+# (`checkpoint_schema_version`, whose policy is explicitly "shared by ALL
+# samplers"), so one consumer read path serves every sampler that checkpoints:
+# per-chain `chain_<i>/cp_window_<n>.jls` + `cp_latest.jls`, plus the two
+# write-once JSON files at the `checkpoint_dir` root.
+#
+# `chain_index` is the chain's position in the `chains` vector. The cooperative
+# scheduler needs a STORED index because it installs chains in completion order;
+# here `clustered_chains` builds the vector once and never reorders it, so
+# position is a stable identity for the life of the run.
+#
+# Like every other payload in this package this EXCLUDES `lpdf`, and that is
+# load-bearing here rather than incidental: `ClusteredChain` holds `const lpdf`,
+# which naive whole-struct serialization would drag in (possibly a
+# non-serializable BridgeStan handle). Selecting fields into a NamedTuple
+# sidesteps it, which is why checkpoint WRITING needs no change to the struct —
+# only RESUME, which must reconstruct a chain, still does.
+
+"""
+    clustered_checkpoint_payload(chain, chain_index, window) -> NamedTuple
+
+Serializable snapshot of a clustered chain at a window boundary, in the shared
+checkpoint contract (`sampler === :clustered`).
+
+Carries `cluster_id` — the contract's clustered-only key — recording which pool
+this chain sampled under AS OF this checkpoint. Like `status` it is never
+backfilled: a chain that moves pools at window 5 still reads its old
+`cluster_id` in `cp_window_4.jls`. Written checkpoints stay immutable, which is
+what lets a consumer pin a `(config, checkpoint#)` view and trust an old file.
+
+`stuck_reason` is always `nothing` and `is_final` never reports abandonment:
+the clustered sampler restarts chains onto a new pooled scale rather than
+abandoning them, so it has no `:stuck` status. The keys are present anyway so a
+generic reader needs no per-sampler branch.
+
+Excludes `lpdf` (resume re-supplies it), exactly as the adaptive and cooperative
+payloads do.
+"""
+clustered_checkpoint_payload(chain::ClusteredChain, chain_index::Int, window::Int) = (;
+    schema_version=checkpoint_schema_version(),
+    sampler=:clustered,
+    chain_index,
+    status=chain.status,
+    stuck_reason=nothing,
+    is_final=chain.status === :done,
+    stop_reason=chain.status === :done ? :n_draws : :running,
+    window,
+    cluster_id=chain.cluster_id,
+    halo_position=chain.recording_lpdf.halo_position,
+    halo_gradient=chain.recording_lpdf.halo_gradient,
+    posterior_position=chain.recording_lpdf.posterior_position,
+    posterior_gradient=chain.recording_lpdf.posterior_gradient,
+    recorder=chain.recording_lpdf.recorder,
+    chain.rng, chain.position_and_gradient, chain.scale, chain.stepsize,
+    chain.stepsize_state, chain.n_evaluations, chain.adaptation,
+    chain.total_evaluation_counter, chain.current_transition_counter,
+    chain.n_divergent_samples, chain.n_samples, chain.n_draws, chain.dimension,
+    chain.checkpoints,
+    reparam_sources=reparam_sources(chain.lpdf),
+)
+
+# Atomic temp+rename per file, so a crash mid-write cannot strand a truncated
+# checkpoint — same writer the adaptive and cooperative paths use.
+_write_clustered_checkpoints(::Nothing, chains, window) = nothing
+_write_clustered_checkpoints(dir::AbstractString, chains::AbstractVector{<:ClusteredChain}, window::Int) = begin
+    for (i, chain) in enumerate(chains)
+        d = joinpath(dir, "chain_$i")
+        mkpath(d)
+        payload = clustered_checkpoint_payload(chain, i, window)
+        _atomic_serialize(joinpath(d, "cp_window_$window.jls"), payload)
+        _atomic_serialize(joinpath(d, "cp_latest.jls"), payload)
+    end
+    nothing
+end
+
+"Write `run_manifest.json` once, at run start. Never rewritten (see the cooperative writer for why)."
+write_clustered_run_manifest(::Nothing, rngs, cfg) = nothing
+write_clustered_run_manifest(dir::AbstractString, rngs, cfg) = _write_json(
+    joinpath(dir, "run_manifest.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "clustered",
+        "n_chains_requested" => length(rngs),
+        # The stopping criteria ACTUALLY in force; JSON has no Inf, so an unset
+        # bound reads as null rather than a lie.
+        "n_draws" => cfg.n_draws,
+        "max_windows" => cfg.max_windows,
+        "n_evaluations_budget" => cfg.n_evaluations_budget == typemax(Int) ? nothing : cfg.n_evaluations_budget,
+        "threshold" => cfg.threshold,
+        "chain_rngs" => map(string, rngs),
+        "start_time_unix" => time(),
+    ])
+
+"""
+    write_clustered_run_summary(dir, out, stop_reason) -> nothing
+
+Write `run_summary.json` once, at finalize. Its EXISTENCE is the run-completed
+signal, so a consumer answering "is this run done?" needs no parsing.
+
+Carries `cluster_assignments` — the final pooling. That is genuinely run-level
+state: a per-chain checkpoint records the `cluster_id` a chain believed it was
+in, but only the run knows the partition those ids resolve to.
+"""
+write_clustered_run_summary(::Nothing, out, stop_reason) = nothing
+write_clustered_run_summary(dir::AbstractString, out, stop_reason) = _write_json(
+    joinpath(dir, "run_summary.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "clustered",
+        "is_final" => true,
+        "stop_reason" => string(stop_reason),
+        "n_windows" => out.n_windows,
+        "n_chains" => length(out.results),
+        "n_clusters" => length(out.clusters),
+        "cluster_assignments" => [r.cluster_id for r in out.results],
+        "total_evaluation_counter" => out.total_evaluation_counter,
+        "end_time_unix" => time(),
+    ])
 
 """
     clustered_chains(rngs, lpdf; n_draws=1000, weighting=default_weighting,

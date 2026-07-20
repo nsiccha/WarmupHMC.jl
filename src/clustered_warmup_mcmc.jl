@@ -341,9 +341,12 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_evaluations_budget=typemax(Int),
     init=missing,
     progress=nothing,
+    # Forwarded verbatim to the Pathfinder initializer; see `_check_kwargs`.
+    pathfinder_kw=(;),
     kwargs...
 ) = begin
-    chains = clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, kwargs...)
+    _check_kwargs(:clustered_warmup_mcmc, kwargs)
+    chains = clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, pathfinder_kw, kwargs...)
     clusters = [collect(eachindex(chains))]
     n_windows = 0
     for _ in 1:max_windows
@@ -363,12 +366,13 @@ Build the per-chain state for a clustered run — the resumable handle. Each cha
 gets a `deepcopy` of `lpdf`. Advance the result with [`clustered_step!`](@ref).
 """
 clustered_chains(rngs::AbstractVector, lpdf; n_draws=1000, weighting=default_weighting,
-    init=missing, parallel=true, progress=nothing, kwargs...) = begin
+    init=missing, parallel=true, progress=nothing, pathfinder_kw=(;), kwargs...) = begin
+    _check_kwargs(:clustered_chains, kwargs)
     n_chains = length(rngs)
     inits = ensurevector(init, n_chains)
     chains = Vector{ClusteredChain}(undef, n_chains)
     _pforeach(parallel, 1:n_chains) do i
-        chains[i] = clustered_chain(rngs[i], deepcopy(lpdf); n_draws, weighting, init=inits[i], progress, kwargs...)
+        chains[i] = clustered_chain(rngs[i], deepcopy(lpdf); n_draws, weighting, init=inits[i], progress, kwargs..., pathfinder_kw...)
     end
     chains
 end

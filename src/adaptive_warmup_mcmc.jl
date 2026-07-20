@@ -591,23 +591,30 @@ adaptive_warmup_mcmc(
     # each checkpoint. Default `nothing` writes nothing and keeps the run
     # byte-identical (the write is a pure read + file I/O).
     checkpoint_dir=nothing,
+    # Keywords forwarded verbatim to the Pathfinder initializer. This is the
+    # escape hatch that lets a bare unrecognised keyword be an ERROR (see
+    # `_check_kwargs`) without closing off Pathfinder's open kwarg surface.
+    pathfinder_kw=(;),
     kwargs...
     # For monitoring purposes: Displays the progress and additional info
-) = with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
-    state = init_state(
-        rng, lpdf, progress;
-        n_draws, n_evaluations, recording_target, stepsize_adaptation_limit,
-        target_acceptance_rate, max_tree_depth, init, monitor_ess,
-        nonlinear_adapt, variance_cond_target, kwargs...
-    )
-    _write_checkpoint(checkpoint_dir, state, :init)                    # CP-0
-    stop = _fire_callback(callback, state, :init)
-    while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
-        run_outer_iteration!(state)
-        _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
-        stop = _fire_callback(callback, state, :window)
+) = begin
+    _check_kwargs(:adaptive_warmup_mcmc, kwargs)
+    with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
+        state = init_state(
+            rng, lpdf, progress;
+            n_draws, n_evaluations, recording_target, stepsize_adaptation_limit,
+            target_acceptance_rate, max_tree_depth, init, monitor_ess,
+            nonlinear_adapt, variance_cond_target, kwargs..., pathfinder_kw...
+        )
+        _write_checkpoint(checkpoint_dir, state, :init)                    # CP-0
+        stop = _fire_callback(callback, state, :init)
+        while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
+            run_outer_iteration!(state)
+            _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
+            stop = _fire_callback(callback, state, :window)
+        end
+        finalize_warmup!(state)
     end
-    finalize_warmup!(state)
 end
 
 """

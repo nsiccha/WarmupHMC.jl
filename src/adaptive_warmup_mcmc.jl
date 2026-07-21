@@ -1,3 +1,12 @@
+_initial_diagonal_scale(squared_scale::AbstractMatrix) =
+    Diagonal(sqrt.(Float64.(diag(squared_scale))))
+
+function _initial_pathfinder_scale(squared_scale::AbstractMatrix, dimension)
+    decomposition = factorize(squared_scale)
+    factor = decomposition isa Diagonal ? _initial_diagonal_scale(squared_scale) : decomposition.L
+    MatrixFactorization(factor, Diagonal(ones(dimension)))
+end
+
 initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
 initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 1:ntries
@@ -24,10 +33,46 @@ initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin
     dimension = length(position)
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
     squared_scale = init.fit_distribution.Σ
-    scale = MatrixFactorization(factorize(squared_scale).L, Diagonal(ones(dimension)))
+    scale = _initial_pathfinder_scale(squared_scale, dimension)
     initialize_mcmc(lpdf, (;position, position_and_gradient, scale, squared_scale))
 end
-initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = init
+initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = begin
+    required = (:position, :squared_scale)
+    all(k -> hasproperty(init, k), required) || throw(ArgumentError(
+        "init NamedTuple must contain `position` and `squared_scale`; got keys $(keys(init))"
+    ))
+
+    dimension = LogDensityProblems.dimension(lpdf)
+    position = init.position
+    position isa AbstractVector || throw(ArgumentError(
+        "init.position must be an AbstractVector of length $dimension; got $(typeof(position))"
+    ))
+    length(position) == dimension || throw(ArgumentError(
+        "init.position must have length $dimension; got length $(length(position))"
+    ))
+
+    squared_scale = init.squared_scale
+    if squared_scale isa AbstractVector
+        length(squared_scale) == dimension || throw(ArgumentError(
+            "init.squared_scale as a diagonal variance vector must have length $dimension; " *
+            "got length $(length(squared_scale))"
+        ))
+        squared_scale = Diagonal(collect(Float64, squared_scale))
+    elseif squared_scale isa AbstractMatrix
+        size(squared_scale) == (dimension, dimension) || throw(ArgumentError(
+            "init.squared_scale as a full squared-scale matrix must have size " *
+            "($dimension, $dimension); got size $(size(squared_scale))"
+        ))
+    else
+        throw(ArgumentError(
+            "init.squared_scale must be either a diagonal variance vector of length $dimension " *
+            "or a full squared-scale matrix of size ($dimension, $dimension); " *
+            "got $(typeof(squared_scale))"
+        ))
+    end
+
+    merge(init, (;position, squared_scale))
+end
 "Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"
 mypathfinder(args...;
     ndraws=1, ndraws_elbo=1, ntries=1,
@@ -135,9 +180,9 @@ init_state(
     # We currently learn three linear transformation options
     scale_options = (;
         # Corresponds to a standard diagonal mass matrix
-        diagonal=Diagonal(sqrt.(diag(squared_scale))::Vector{Float64}),
+        diagonal=_initial_diagonal_scale(squared_scale),
         # Corresponds to Pathfinder's linear transformation with an added diagonal scaling term that can be updated
-        pathfinder=MatrixFactorization(factorize(squared_scale).L, Diagonal(ones(dimension))),
+        pathfinder=_initial_pathfinder_scale(squared_scale, dimension),
         # Something new. Corresponds to a sequence of Householder reflections, followed by a diagonal scaling term.
         # Both the reflections and the diagonal scaling term will be updated.
         adaptive=MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
@@ -679,9 +724,11 @@ are transformed back to the original parametrization before returning.
 * an `AbstractVector` — use as the unconstrained starting position, then
   Pathfinder.
 * a `PathfinderResult` — take the first draw, skip running Pathfinder.
-* a `NamedTuple` — interpret as a pre-built initialization
-  (`position`, `position_and_gradient`, `scale`, `squared_scale`); skips
-  Pathfinder entirely.
+* a `NamedTuple` — interpret as a pre-built initialization and skip
+  Pathfinder entirely. The required keys are `position`, an unconstrained
+  vector of target dimension, and `squared_scale`, either a same-length vector
+  of diagonal variances or a full target-dimension × target-dimension matrix.
+  A `Diagonal` matrix is accepted. Optional extra keys are preserved.
 
 For the multi-chain method, pass either a scalar to broadcast or a
 `Vector` of length `length(rngs)` for per-chain initial values. There is

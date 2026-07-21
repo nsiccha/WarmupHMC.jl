@@ -128,8 +128,8 @@ cooperative_chain(
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;
-        diagonal=Diagonal(sqrt.(diag(squared_scale))::Vector{Float64}),
-        pathfinder=MatrixFactorization(factorize(squared_scale).L, Diagonal(ones(dimension))),
+        diagonal=_initial_diagonal_scale(squared_scale),
+        pathfinder=_initial_pathfinder_scale(squared_scale, dimension),
         adaptive=MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
     )
     energy_options = map(scale_options) do L

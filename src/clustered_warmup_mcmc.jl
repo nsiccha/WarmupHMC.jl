@@ -96,6 +96,13 @@ mutable struct ClusteredChain{R,L,RL,A,SA,K,W}
     n_samples::Int                     # draws collected since the last restart
     status::Symbol
     checkpoints::Vector{NamedTuple}
+    # Draws DROPPED at the most recent scale adoption — same contract as
+    # `AWMState.dropped_posterior_position`. `adopt_scale!` empties the recorder
+    # and `_write_clustered_checkpoints` runs after the whole cluster round, so
+    # an adopting chain would otherwise checkpoint zero draws. Inert on read-back.
+    dropped_posterior_position::Matrix{Float64}
+    dropped_posterior_gradient::Matrix{Float64}
+    dropped_n_divergent_samples::Int
 end
 
 "Positions collected as posterior draws since the last restart (dimension × n_samples)."
@@ -152,6 +159,7 @@ clustered_chain(
         weighting,
         position_and_gradient, scale, kinetic_energy, stepsize, stepsize_state,
         n_evaluations, adaptation, 0, 0, 0, 0, 0, :warming, NamedTuple[],
+        Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
 end
 
@@ -256,6 +264,11 @@ adopt_scale!(chain::ClusteredChain, scale_vec::AbstractVector) = begin
     chain.stepsize_state = DynamicHMC.initial_adaptation_state(chain.stepsize_adaptation, chain.stepsize)
     chain.stepsize = DynamicHMC.current_ϵ(chain.stepsize_state)
     chain.current_transition_counter = 0
+    # Preserve the discarded draws before the counter and the recorder are cleared
+    # — the checkpoint for this window is written after the cluster round returns.
+    chain.dropped_posterior_position = Matrix{Float64}(chain_draws(chain))
+    chain.dropped_posterior_gradient = Matrix{Float64}(chain.recording_lpdf.posterior_gradient)
+    chain.dropped_n_divergent_samples = chain.n_divergent_samples
     chain.n_divergent_samples = 0
     reset!(chain.recording_lpdf)
     chain.n_samples = 0
@@ -453,6 +466,8 @@ clustered_checkpoint_payload(chain::ClusteredChain, chain_index::Int, window::In
     chain.total_evaluation_counter, chain.current_transition_counter,
     chain.n_divergent_samples, chain.n_samples, chain.n_draws, chain.dimension,
     chain.checkpoints,
+    chain.dropped_posterior_position, chain.dropped_posterior_gradient,
+    chain.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(chain.lpdf),
 )
 

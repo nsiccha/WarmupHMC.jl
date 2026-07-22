@@ -32,6 +32,8 @@ _cchain(; dimension=2) = begin
         NutpieScaleAdaptation(dimension),
         0, 0, 0, 0, 0,                      # cluster_id + the four counters
         :warming, NamedTuple[],
+        # dropped draws (empty until the first scale adoption)
+        Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
 end
 
@@ -130,7 +132,10 @@ end
     m = read(joinpath(dir, "run_manifest.json"), String)
 
     @test occursin("\"sampler\":\"clustered\"", m)
-    @test occursin("\"schema_version\":1", m)   # Int, not 1.0
+    # Int, not 1.0. Interpolated rather than hard-coded: this asserted `:1` while
+    # the constant was already 2, so the suite was red at HEAD for a reason that
+    # had nothing to do with the property it means to guard.
+    @test occursin("\"schema_version\":$(checkpoint_schema_version())", m)
     @test occursin("\"n_chains_requested\":2", m)
     # JSON has no Inf: an unset bound reads as null rather than a lie.
     @test occursin("\"n_evaluations_budget\":null", m)

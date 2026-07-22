@@ -86,6 +86,14 @@ mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,NT}
     # decision that was actually acted on. `nothing` while the chain is alive.
     stuck_reason::Union{Nothing,Symbol}
     checkpoints::Vector{NamedTuple}     # per-window log for the scheduler/selector
+    # Draws DROPPED at the most recent restart — same contract as
+    # `AWMState.dropped_posterior_position`, and for the same reason: this chain's
+    # payload is built in `_release!`, i.e. after `advance_window!` has already
+    # emptied the recorder, so a restarting window would otherwise checkpoint zero
+    # draws. Inert: nothing reads them back.
+    dropped_posterior_position::Matrix{Float64}
+    dropped_posterior_gradient::Matrix{Float64}
+    dropped_n_divergent_samples::Int
 end
 
 "Positions collected as posterior draws so far (dimension × n_samples)."
@@ -160,6 +168,7 @@ cooperative_chain(
         variance_position, variance_gradient, Inf, Float64[],
         0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension),
         true, 0, :warming, nothing, NamedTuple[],
+        Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
 end
 
@@ -244,6 +253,12 @@ advance_window!(chain::CooperativeChain) = begin
     chain.restart || return chain.status
 
     # Restart the warm-up window: re-adapt the transformation, drop prior draws.
+    # Preserve them first — `_release!` builds this chain's payload only after
+    # this call returns, so the reset below would otherwise checkpoint a chain
+    # with full resume state and zero draws.
+    chain.dropped_posterior_position = Matrix{Float64}(posterior_position)
+    chain.dropped_posterior_gradient = Matrix{Float64}(recording_lpdf.posterior_gradient)
+    chain.dropped_n_divergent_samples = chain.n_divergent_samples
     chain.stepsize = DynamicHMC.final_ϵ(chain.stepsize_state)
     chain.stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, chain.stepsize)
     chain.stepsize = DynamicHMC.current_ϵ(chain.stepsize_state)
@@ -641,6 +656,11 @@ That keeps written checkpoints immutable, which is what lets a consumer pin a
 `is_final` means THIS CHAIN will produce no more draws — not that the run is
 over. A chain can be final while the pool keeps going; the run-level answer
 needs scheduler intent and lives in the run summary instead.
+
+`posterior_position` is empty at every checkpoint whose window restarted (the
+reset precedes the write); `dropped_posterior_position` holds what that restart
+discarded. Same additive contract and same consumer rule as the adaptive
+payload — see the comment above `checkpoint_payload`.
 """
 cooperative_checkpoint_payload(chain::CooperativeChain) = (;
     schema_version=checkpoint_schema_version(),
@@ -665,6 +685,8 @@ cooperative_checkpoint_payload(chain::CooperativeChain) = (;
     chain.total_transition_counter, chain.n_divergent, chain.n_divergent_samples,
     chain.steps_per_draw, chain.ess, chain.restart, chain.n_samples,
     chain.n_draws, chain.dimension, chain.checkpoints,
+    chain.dropped_posterior_position, chain.dropped_posterior_gradient,
+    chain.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(chain.lpdf),
 )
 

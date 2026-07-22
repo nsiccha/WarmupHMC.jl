@@ -158,6 +158,22 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,SO,EO,VP,VG,POS,PG,SS,MN}
     n_divergent_samples::Int
     restart::Bool
     n_samples::Int
+    # ── draws DROPPED at the most recent restart (consumer-facing, inert on resume) ──
+    # A restarting window empties the recorder (`reset!(recording_lpdf)`) and the
+    # checkpoint is serialized AFTER that, so CP-N would otherwise pair complete
+    # resume state with ZERO retained draws. These hold exactly what that reset
+    # threw away: the post-stepsize-adaptation draws of the epoch that just
+    # ended, sampled under the metric and step size that were frozen for it.
+    #
+    # They are NEVER read back into the sampler — `restore_state` carries them
+    # forward verbatim and nothing else touches them — so a resumed run cannot
+    # mistake them for draws it still holds. `dimension × 0` until the first
+    # restart.
+    dropped_posterior_position::Matrix{Float64}
+    dropped_posterior_gradient::Matrix{Float64}
+    # `n_divergent_samples` as of that reset, so the dropped draws' divergence
+    # rate is recoverable (the live counter is zeroed with them).
+    dropped_n_divergent_samples::Int
 end
 
 # Setup + initialization, up to and including the initial step-size search and
@@ -252,6 +268,7 @@ init_state(
         total_evaluation_counter, outer_counter, current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples,
+        Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
 end
 
@@ -334,6 +351,14 @@ run_outer_iteration!(state::AWMState) = begin
     # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
     state.n_evaluations *= 2
     state.restart || return state
+    # Preserve what this restart is about to throw away, BEFORE any counter is
+    # zeroed or `reset!(recording_lpdf)` runs at the end of this function. The
+    # checkpoint is written after this call returns, so without this copy a
+    # restarting window's payload carries no draws at all — see
+    # `AWMState.dropped_posterior_position` and `checkpoint_payload`.
+    state.dropped_posterior_position = Matrix{Float64}(recording_lpdf.posterior_position)
+    state.dropped_posterior_gradient = Matrix{Float64}(recording_lpdf.posterior_gradient)
+    state.dropped_n_divergent_samples = state.n_divergent_samples
     state.stepsize = DynamicHMC.final_ϵ(state.stepsize_state)
     state.stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, state.stepsize)
     state.stepsize = DynamicHMC.current_ϵ(state.stepsize_state)
@@ -417,6 +442,25 @@ reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(
 #
 # The old `stage` field is gone. It was written at every boundary and read by
 # nothing — the filename (`cp_init.jls` vs `cp_window_<n>.jls`) already carries it.
+#
+# READING DRAWS OUT OF A CHECKPOINT. `posterior_position` holds the draws the
+# run still HAS, and is empty at every checkpoint whose window restarted (the
+# reset happens before the write). `dropped_posterior_position` holds the ones
+# that restart discarded. So a consumer materializing partial results wants:
+#
+#     draws = isempty(payload.posterior_position) ?
+#         get(payload, :dropped_posterior_position, nothing) : payload.posterior_position
+#
+# Both are in the sampler's WORKING parametrization — `finalize_warmup!` is what
+# applies the back-transform, and it never runs for a checkpoint; `reparam_sources`
+# is in the payload for exactly that. The dropped draws are legitimate MCMC draws
+# for a shorter run under a less-adapted metric: within an epoch the kernel is
+# fixed (metric and step size frozen once `stepsize_adaptation_limit` is passed),
+# which is precisely why the sampler recorded them.
+#
+# The three `dropped_*` keys are ADDITIVE — `checkpoint_schema_version` does NOT
+# move for them, so existing readers are unaffected and new readers use
+# `get(payload, key, default)`.
 checkpoint_payload(state::AWMState) = (;
     schema_version=checkpoint_schema_version(),
     sampler=:adaptive,
@@ -433,6 +477,8 @@ checkpoint_payload(state::AWMState) = (;
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
     state.restart, state.n_samples,
+    state.dropped_posterior_position, state.dropped_posterior_gradient,
+    state.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(state.lpdf),
 )
 
@@ -675,6 +721,12 @@ restore_state(p, lpdf, progress;
         p.total_evaluation_counter, p.outer_counter, p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
         p.restart, p.n_samples,
+        # Carried forward, never read back into the sampler. `get` (not `p.x`) so
+        # a checkpoint written before these keys existed still resumes — they are
+        # ADDITIVE, which is why `checkpoint_schema_version` does NOT move.
+        get(p, :dropped_posterior_position, Matrix{Float64}(undef, p.dimension, 0)),
+        get(p, :dropped_posterior_gradient, Matrix{Float64}(undef, p.dimension, 0)),
+        get(p, :dropped_n_divergent_samples, 0),
     )
 end
 

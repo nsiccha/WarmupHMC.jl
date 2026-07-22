@@ -34,6 +34,8 @@ _chain(; chain_index=0, dimension=2) = begin
         zeros(dimension), nothing, nothing, Inf, Float64[],
         0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension),
         true, 0, :warming, nothing, NamedTuple[],
+        # dropped draws (empty until the first restart)
+        Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
 end
 

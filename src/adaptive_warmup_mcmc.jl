@@ -77,6 +77,11 @@ end
 mypathfinder(args...;
     ndraws=1, ndraws_elbo=1, ntries=1,
     history_length=6,
+    # WarmupHMC targets already provide `logdensity_and_gradient`. Telling
+    # Optimization to synthesize another gradient makes its default
+    # AutoForwardDiff path call `logdensity` with Dual-valued parameters,
+    # which native-backed targets such as BridgeStan cannot accept.
+    adtype=Pathfinder.SciMLBase.NoAD(),
     optimizer=Pathfinder.Optim.LBFGS(;
         m=history_length,
         linesearch=Pathfinder.LineSearches.HagerZhang(),
@@ -85,7 +90,7 @@ mypathfinder(args...;
     kwargs...
 ) = pathfinder(
     args...;
-    ndraws, ntries, ndraws_elbo, optimizer, kwargs...
+    ndraws, ntries, ndraws_elbo, adtype, optimizer, kwargs...
 )
 
 # ── Windowed adaptive warm-up: explicit state object + stage functions ──────

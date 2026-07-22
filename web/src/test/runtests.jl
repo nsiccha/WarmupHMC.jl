@@ -1,6 +1,7 @@
 using Test, WarmupHMC, Random
 
 include("leaf_weights.jl")
+include("namedtuple_init.jl")
 
 @testset "module loads" begin
     @test isdefined(WarmupHMC, :WarmupHMC)

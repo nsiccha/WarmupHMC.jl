@@ -135,7 +135,7 @@ clustered_chain(
     recorder = LimitedRecorder2(recording_target)   # ring of `recording_target` leaf-weighted halo states
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
-    scale = Diagonal(sqrt.(diag(squared_scale))::Vector{Float64})
+    scale = _initial_diagonal_scale(squared_scale)
     kinetic_energy = _diagonal_energy(scale)
     adaptation = NutpieScaleAdaptation(dimension; regularizing_n, regularizing_var)
     # Initial stepsize (consumes rng via rand_p, exactly as the monolith does).

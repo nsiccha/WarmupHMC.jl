@@ -351,6 +351,7 @@ config = Dict(
     "blas_threads" => BLAS.get_num_threads(),
     "host" => get(ENV, "KB_HOST", "unknown"),
     "runner" => "docs/benchmark/adaptive_centering_fixed_c_run.jl",
+    "reproduction" => "ACE_SEEDS=16 ACE_DRAWS=5000 ACE_EVALUATIONS=1000 ACE_FAMILIES=gaussian,student julia --startup-file=no --history-file=no --project=docs/benchmark docs/benchmark/adaptive_centering_fixed_c_run.jl",
     "sampler" => "adaptive_warmup_mcmc",
     "target_gradient" => "analytic",
     "ad_backend" => "not applicable (target supplies logdensity_and_gradient)",

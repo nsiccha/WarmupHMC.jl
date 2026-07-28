@@ -1,0 +1,130 @@
+# Do the benchmark probes still write what the docs pages read?
+#
+# WHY THIS EXISTS, AND WHY NO OTHER JOB COVERS IT
+#
+# Every number in the manual comes from JSON under docs/benchmark/results/.
+# The generators live in docs/benchmark/ and run under docs/benchmark/Project.toml;
+# the consumers are `@eval` blocks in docs/src/*.md, run by docs/make.jl under
+# docs/Project.toml. Two environments, and until this job existed, no CI step ran
+# one of each. So a generator could change its output keys and sit green next to a
+# months-old checked-in JSON for as long as nobody regenerated it.
+#
+# That is not a hypothetical failure mode. `655218e` changed capture_boxing.jl to
+# emit `boxed/*` + `unboxed/*` instead of `shipped/*` + `deboxed/*`, and to split
+# `ab_max_grad_diff` in two. Nothing surfaced it. When the results were finally
+# regenerated the docs build went red on three KeyErrors at once, in a file whose
+# owner had touched neither side.
+#
+# The shape is WarmupHMC:nonlinear-online's `smoke` job from
+# nonlinear-weighting.yml, applied across the environment split: run the
+# generator, then run the real consumer over what it just wrote. A schema check,
+# not a numeric one. ROUNDS/NCALLS are floored because the assertion is only that
+# the docs can still consume freshly written rows — the timings this produces are
+# meaningless and the built site is discarded.
+#
+# WHY THE SEED STEP DELETES THE THREE FILES IT COULD HAVE COPIED
+#
+# The temp dir is seeded with every result EXCEPT the three these probes write, so
+# a probe that fails to write where it was told takes the build down with
+# "Benchmark results not found" instead of silently leaving the checked-in copy in
+# place for the consumer to validate. Without that, the guard's own failure mode is
+# a green run that checked nothing. Verified both directions before this job was
+# committed: absent the three, makedocs exits 1 naming the missing paths; present,
+# it exits 0.
+#
+# ONE CLONE, AND NO `secrets.PAT_TOKEN`
+#
+# Same policy as nonlinear-weighting.yml. docs/benchmark needs Treebars, which is
+# unregistered, hence the clone; `--branch dev` is required because `round2` is
+# added a method by src/progress.jl at load time and exists on dev but NOT on main,
+# so a default-branch clone dies at precompile before any job code runs. docs/
+# itself resolves WarmupHMC through [sources] and needs nothing cloned.
+
+name: Probe schema
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'docs/benchmark/*.jl'
+      - 'docs/tables.jl'
+      - 'docs/evidence.jl'
+      - 'docs/make.jl'
+      - 'docs/src/**.md'
+      - '.github/workflows/probe-schema.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'docs/benchmark/*.jl'
+      - 'docs/tables.jl'
+      - 'docs/evidence.jl'
+      - 'docs/make.jl'
+      - 'docs/src/**.md'
+      - '.github/workflows/probe-schema.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  regenerate-and-build:
+    name: Regenerate probes, then build the docs against them
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+
+      - name: Instantiate the benchmark and docs environments
+        run: |
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="Treebars.jl"),
+          ]); Pkg.instantiate()'
+          julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Seed a results dir WITHOUT the files these probes write
+        run: |
+          FRESH="${RUNNER_TEMP}/fresh-results"
+          cp -r docs/benchmark/results "$FRESH"
+          rm -f "$FRESH/annotation_sweep.json" \
+                "$FRESH/capture_boxing.json" \
+                "$FRESH/typical_positions.json"
+          echo "FRESH=$FRESH" >> "$GITHUB_ENV"
+          echo "Seeded without the three regenerated files:"
+          ls "$FRESH"
+
+      - name: Regenerate the probes the docs pages read
+        env:
+          ROUNDS: '1'
+          NCALLS: '5'
+        run: |
+          for p in capture_boxing annotation_sweep typical_positions; do
+            echo "::group::$p"
+            WHMC_BENCH_OUT="$FRESH" julia --project=docs/benchmark "docs/benchmark/$p.jl"
+            echo "::endgroup::"
+          done
+          # Guard the guard: an empty WHMC_BENCH_OUT would send these to the CWD
+          # and leave the seeded dir untouched, so assert they actually landed.
+          for f in annotation_sweep capture_boxing typical_positions; do
+            test -s "$FRESH/$f.json" || {
+              echo "::error::$f.json was not written to \$FRESH — the probe wrote somewhere else"
+              exit 1
+            }
+          done
+
+      - name: Build the docs against the freshly written results
+        run: WHMC_BENCH_OUT="$FRESH" julia --project=docs docs/make.jl
+
+      - name: What a failure here means
+        if: failure()
+        run: |
+          echo "A generator under docs/benchmark/ and a consumer in docs/src/ have"
+          echo "drifted. Either a probe changed the keys or shape it writes, or a"
+          echo "page reads a key no probe emits. Fix the page and the probe"
+          echo "together; do not regenerate the checked-in JSON to match a page."

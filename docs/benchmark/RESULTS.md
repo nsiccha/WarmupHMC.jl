@@ -252,6 +252,19 @@ ForwardDiff the same three overheads are +56%, +123% and +109%, and the two smal
 targets go to +232% and 15.4× — the backend choice is most of what makes this
 affordable.
 
+Every one of those figures is a ratio of two medians, which is exactly the shape
+that produced a reversed verdict elsewhere on this page, so the direction is
+checked against the individual rounds rather than assumed from the summary. The
+rounds pair: `gradient_overhead` times all three variants on the *same* `xs`
+within each round, rotating the order, so round `r`'s live and bare timings are
+adjacent in time on identical inputs. Pairing them that way, **69 of the 70
+paired rounds** across both backends and all five targets put the wrapper above
+the bare gradient. The single exception is one `seeds` round under Enzyme at
+`0.49×`, against six others from `1.06×` to `1.50×` — one anomalous round in the
+cell with the smallest genuine overhead, not evidence the wrapper is ever free.
+So the *sizes* above are medians and carry the usual round-to-round spread, but
+the *sign* does not depend on them.
+
 ## Which AD backend
 
 The differentiated objective `x -> ljac(x) + dot(g_y, y(x))` is scalar in the
@@ -335,7 +348,7 @@ the causal evidence and it costs seconds. It builds the boxed spec deliberately
 alongside the shipped one — same 85 pairs, same indices, same centerings,
 closures reading the same `x[86]`/`x[87]`, and **gradients agreeing to exactly
 0.0** — and times both. On `radon_partially_pooled`, 5 rounds × 1000 calls with
-the order rotated, against a bare gradient of 27431 ns:
+the order rotated, against a bare gradient of 25863 ns:
 
 | spec | ForwardDiff | Enzyme/`Const` | Enzyme ÷ ForwardDiff |
 |---|---|---|---|
@@ -350,8 +363,15 @@ gradients: no backend verdict measured through an uninspected spec means
 anything.
 
 Note what the unboxed Enzyme figure implies for the wrapper as a whole: 28824 ns
-against a bare gradient of 25863 ns is **11% overhead**. On this target the
-transform is now nearly free under reverse mode and was a 16× tax before.
+against a bare gradient of 25863 ns is **11% overhead**. Measured the same way —
+against that same bare gradient — the boxed spec was a **18× tax** (468606 ns).
+So on this target the transform went from dominating the gradient to nearly free
+under reverse mode, and de-boxing is the whole of that change.
+
+Both figures in that sentence are ratios to the *bare gradient*, and they have to
+be: the 16.26× in the table above is boxed-against-unboxed, a different
+denominator, and quoting it here instead would understate the tax by a factor
+that happens to look plausible. This paragraph previously did exactly that.
 
 `web/src/posteriordb_reparametrizations.jl` is outside this directory's
 ownership; the defect was reported rather than edited here, and the fix landed as

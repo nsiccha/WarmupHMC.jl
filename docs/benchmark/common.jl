@@ -244,7 +244,8 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
                 ess_min = NaN, ess_median = NaN, ess_con_min = NaN, ess_con_median = NaN,
                 ess_min_per_s = NaN, ess_min_per_grad = NaN,
                 c_before, c_after = Float64[], con_names = String[],
-                con_mean = Float64[], con_sd = Float64[], n_con_kept = 0)
+                con_mean = Float64[], con_sd = Float64[], ess_con = Float64[],
+                n_con_kept = 0)
     end
 
     draws = Matrix{Float64}(res.posterior_position)
@@ -257,7 +258,7 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
     ess = ess_per_coordinate(draws)
     ess_min, ess_med = nanmin(ess), nanmed(ess)
 
-    con_names, con_mean, con_sd = String[], Float64[], Float64[]
+    con_names, con_mean, con_sd, ess_con = String[], Float64[], Float64[], Float64[]
     ess_con_min, ess_con_med, n_con = NaN, NaN, 0
     if !isnothing(model) && n > 0
         nms, cvals = constrained(model, draws)
@@ -266,8 +267,13 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
             con_names = nms
             con_mean = vec(mean(cvals; dims = 2))
             con_sd = vec(std(cvals; dims = 2))
-            ce = ess_per_coordinate(cvals)
-            ess_con_min, ess_con_med = nanmin(ce), nanmed(ce)
+            # Kept per NAME, not just reduced: the hand-written noncentered
+            # sibling declares more constrained parameters than the centered
+            # model (its `theta_trans`), so a min over each model's own full set
+            # compares different quantities. Keeping the vector lets the write-up
+            # take the min over the names the two models share.
+            ess_con = collect(ess_per_coordinate(cvals))
+            ess_con_min, ess_con_med = nanmin(ess_con), nanmed(ess_con)
         end
     end
 
@@ -279,7 +285,7 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
      ess_min_per_s = ess_min / wall,
      ess_min_per_grad = ess_min / max(res.total_evaluation_counter, 1),
      c_before, c_after = isnothing(spec) ? Float64[] : source_cs(spec),
-     con_names, con_mean, con_sd, n_con_kept = n_con)
+     con_names, con_mean, con_sd, ess_con, n_con_kept = n_con)
 end
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ makedocs(
         "Reparametrization" => "reparametrization.md",
         "Linear restart evidence" => "linear-restart.md",
         "Nonlinear weighting evidence" => "nonlinear-weighting.md",
+        "Adaptive centering at fixed c" => "adaptive-centering.md",
         "Gallery"         => "gallery.md",
         "Evidence"        => "evidence.md",
         "API"             => "api.md",

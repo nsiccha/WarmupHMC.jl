@@ -79,3 +79,38 @@ jobs:
         # so a broken AD setup fails the job instead of silently skipping every
         # reparametrization testset.
         run: julia --project=. -e 'include("web/src/test/runtests.jl")'
+
+  # Reverse-mode (Enzyme) coverage — ONE job, deliberately outside the matrix
+  # above.
+  #
+  # The main suite pins `AutoForwardDiff()`, which is the one backend immune to
+  # the failures this job exists to catch: `dbde8d2` broke `Enzyme.Const` — the
+  # backend the `ReparametrizedProblem` docstring and both docs pages recommend
+  # — and landed fully green, because nothing committed here executed a
+  # reverse-mode backend.
+  #
+  # Not folded into the matrix: Enzyme's compile is heavy and the matrix is nine
+  # rows, so that would be nine Enzyme builds per push. Not added to the root
+  # `Project.toml` either — that would make WarmupHMC itself hard-depend on one
+  # specific AD backend, which is the opposite of the `ad_backend=nothing`,
+  # user-supplies-the-backend design.
+  enzyme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git for private unregistered dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Instantiate the Enzyme environment
+        # `Pkg.develop` rather than `[sources]`: the package under test is the
+        # checkout itself, and this has to work on the same Julia versions the
+        # matrix uses.
+        run: |
+          julia --project=web/src/test/enzyme -e 'using Pkg;
+            Pkg.develop(PackageSpec(path=pwd()));
+            Pkg.instantiate()'
+      - name: Run Enzyme tests
+        run: julia --project=web/src/test/enzyme web/src/test/enzyme/runtests.jl

@@ -116,13 +116,21 @@ _evidence_order(names, priority) = vcat(
 # are short label lists, and an empty one must read as empty, not as missing.
 evidence_cell(::Nothing) = "—"
 evidence_cell(x::Bool) = x ? "yes" : "no"
-evidence_cell(x::AbstractString) = isempty(x) ? "—" : replace(x, "|" => "\\|")
+# Values are escaped for the same reason names are, and this half was found the
+# hard way SECOND: escaping only the keys left `nonlinear_weighting.jl`,
+# `all_good_leaves`, `max_tree_depth` and `ad_backend_check` rendering as
+# emphasis inside provenance text. Values carry far more identifiers than keys do
+# — filenames, symbol names, whole reproduction recipes — so this is the larger
+# exposure of the two. `|` on top of the inline escapes, since a cell sits inside
+# a pipe table.
+evidence_cell(x::AbstractString) =
+    isempty(x) ? "—" : replace(esc_md(x), "|" => "\\|")
 evidence_cell(x::Real) = num(x)
 evidence_cell(x::AbstractVector) = isempty(x) ? "—" : join(evidence_cell.(x), ", ")
 evidence_cell(x::AbstractDict) =
     isempty(x) ? "—" :
-    join(["$k=$(evidence_cell(x[k]))" for k in sort(collect(keys(x)))], " ")
-evidence_cell(x) = string(x)
+    join(["$(esc_md(k))=$(evidence_cell(x[k]))" for k in sort(collect(keys(x)))], " ")
+evidence_cell(x) = evidence_cell(string(x))
 
 "Column names of a row table: the union over all rows, priority-ordered."
 function evidence_columns(rows)
@@ -152,9 +160,27 @@ names do not, and eight of them shipped mangled on the page:
 across the change, not from reading the code.
 
 The escape is consumed by the parser, so the rendered text and the anchor
-VitePress derives from it are unchanged.
+VitePress derives from it are unchanged — for every character in the class
+BELOW, which is not the class this function started with. Measured, one
+character at a time, through `Markdown.parse`:
+
+  * `` ` `` `*` `_` `[` `]` `{` `}` and `\\` are consumed, as documented;
+  * **`<` and `>` are NOT.** A `\\>` ships the backslash VISIBLY — a spec
+    string reading `x -> x[1]/2` rendered as `x -\\> x[1]/2`. Backslash
+    escaping is simply not available for those two here, so they are mapped
+    to HTML entities instead. That is also the safer target: VitePress runs
+    the page through Vue, which parses a bare `<Foo>` in markdown as a
+    component, and an entity cannot be mistaken for one.
+
+The entity form costs one thing worth knowing: `Markdown`'s own HTML writer
+re-escapes the `&`, so a local `show(MIME"text/html"(), …)` preview displays
+`&amp;lt;`. The shipped path is markdown-out to VitePress, where it is a `<`.
 """
-esc_md(s) = replace(string(s), r"([\\`*_\[\]{}<>])" => s"\\\1")
+esc_md(s) = replace(string(s),
+    r"([\\`*_\[\]{}])" => s"\\\1",
+    '<' => "&lt;",
+    '>' => "&gt;",
+)
 _join_md(parts) = Markdown.MD(reduce(vcat, (p.content for p in parts); init = Any[]))
 
 """

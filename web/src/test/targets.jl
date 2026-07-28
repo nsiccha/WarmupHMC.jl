@@ -17,6 +17,26 @@ LogDensityProblems.logdensity(g::DiagGaussian, x) = -sum(abs2, x ./ g.sigma) / 2
 LogDensityProblems.logdensity_and_gradient(g::DiagGaussian, x) =
     (LogDensityProblems.logdensity(g, x), -x ./ g.sigma .^ 2)
 
+# --- Correlated Gaussian ----------------------------------------------------
+# Analytic dense-covariance control for linear adaptation. Unlike the other
+# self-contained targets below, this has genuine off-diagonal geometry for a
+# non-diagonal linear transform to learn.
+struct CorrelatedGaussian{M}
+    covariance::M
+    precision::M
+end
+CorrelatedGaussian(covariance::AbstractMatrix) = begin
+    covariance = Matrix(Symmetric(covariance))
+    CorrelatedGaussian(covariance, inv(covariance))
+end
+LogDensityProblems.dimension(g::CorrelatedGaussian) = size(g.precision, 1)
+LogDensityProblems.capabilities(::Type{<:CorrelatedGaussian}) =
+    LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity(g::CorrelatedGaussian, x) =
+    -dot(x, g.precision, x) / 2
+LogDensityProblems.logdensity_and_gradient(g::CorrelatedGaussian, x) =
+    (LogDensityProblems.logdensity(g, x), -(g.precision * x))
+
 # --- Neal's funnel ----------------------------------------------------------
 # v ~ N(0, 3), xᵢ | v ~ N(0, exp(v/2)).  Coordinate 1 is `v`, coordinates
 # 2:k+1 are the `xᵢ` — the layout the `funnel` branch of

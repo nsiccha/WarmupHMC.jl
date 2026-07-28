@@ -112,12 +112,42 @@ mypathfinder(args...;
 # `progress` and `start_time` are runtime handles that are re-supplied rather
 # than restored on resume (the inner problem may wrap a non-serializable native
 # gradient; wall-clock timing is display-only).
-mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,POS,PG,SS,MN}
+const _LINEAR_RESTART_SOURCES = (
+    :halo,
+    :all_good_leaves,
+    :nuts_weighted,
+)
+const _LINEAR_TRAJECTORY_WEIGHTINGS = (:unit, :stepsize)
+
+function _validate_linear_restart_source(source, weighting)
+    source in _LINEAR_RESTART_SOURCES || throw(ArgumentError(
+        "linear_restart_source must be one of " *
+        "$(join(repr.(_LINEAR_RESTART_SOURCES), ", ")); got $(repr(source))",
+    ))
+    source === :halo && weighting !== :unit && throw(ArgumentError(
+        "linear_trajectory_weighting=$(repr(weighting)) cannot affect " *
+        "linear_restart_source=:halo; use :unit or opt into a running source",
+    ))
+    source
+end
+function _validate_linear_trajectory_weighting(weighting)
+    weighting in _LINEAR_TRAJECTORY_WEIGHTINGS || throw(ArgumentError(
+        "linear_trajectory_weighting must be one of " *
+        "$(join(repr.(_LINEAR_TRAJECTORY_WEIGHTINGS), ", ")); got $(repr(weighting))",
+    ))
+    weighting
+end
+_uses_running_linear_restart(source) = source !== :halo
+
+mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     # ── config (set once) ──
     lpdf::L
     n_draws::Int
     stepsize_adaptation_limit::Int
     variance_cond_target::Float64
+    linear_restart_source::Symbol
+    linear_trajectory_weighting::Symbol
+    linear_metric_fallback::Bool
     nonlinear_adapt::Bool
     monitor_ess::Bool
     recording_target::Int
@@ -141,10 +171,13 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,POS,PG,SS,MN}
     # GaussianKineticEnergy type), so no single concrete type fits.
     kinetic_energy::Any
     variance_memory::Vector{Float64}
+    transformed_position_memory::Vector{Float64}
     variance_position::VP
     variance_gradient::VG
+    transformed_adaptation::TA
     variance_cond::Float64
     scale_changes::Vector{Float64}
+    linear_metric_fallbacks::Int
     position_and_gradient::PG
     stepsize::Float64
     stepsize_state::SS
@@ -177,6 +210,94 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,POS,PG,SS,MN}
     dropped_n_divergent_samples::Int
 end
 
+function _fit_transformed_observation!(adaptation, position_memory, gradient_memory, scale,
+                                       position, gradient, weight)
+    iszero(weight) && return adaptation
+    ldiv!(position_memory, scale, position)
+    mul!(gradient_memory, scale', gradient)
+    OnlineStatsBase.fit!(adaptation, position_memory, gradient_memory; dw=weight)
+end
+
+const _GOOD_LEAF_MIN_DH = log(1e-2)
+
+function _fit_transformed_trajectory!(adaptation, position_memory, gradient_memory,
+                                      scale, leaves,
+                                      source, weighting, stepsize)
+    source === :halo && return zero(stepsize)
+    trajectory_weight = weighting === :unit ? one(stepsize) : stepsize
+    total_weight = zero(stepsize)
+    if source === :all_good_leaves
+        for i in 2:length(leaves)
+            leaves.dH[i] > _GOOD_LEAF_MIN_DH || continue
+            _fit_transformed_observation!(
+                adaptation, position_memory, gradient_memory, scale,
+                view(leaves.position, :, i), view(leaves.gradient, :, i),
+                trajectory_weight,
+            )
+            total_weight += trajectory_weight
+        end
+    else
+        source === :nuts_weighted || throw(ArgumentError(
+            "unsupported running linear restart source $(repr(source))",
+        ))
+        for i in eachindex(leaves.weights)
+            weight = trajectory_weight * leaves.weights[i]
+            iszero(weight) && continue
+            _fit_transformed_observation!(
+                adaptation, position_memory, gradient_memory, scale,
+                view(leaves.position, :, i), view(leaves.gradient, :, i), weight,
+            )
+            total_weight += weight
+        end
+    end
+    total_weight
+end
+
+function _halo_restart_scales!(out, position_stats, gradient_stats, memory,
+                               scale, halo_position, halo_gradient)
+    for (position, gradient) in zip(eachcol(halo_position), eachcol(halo_gradient))
+        ldiv!(memory, scale, position)
+        OnlineStatsBase.fit!(position_stats, memory)
+        mul!(memory, scale', gradient)
+        OnlineStatsBase.fit!(gradient_stats, memory)
+    end
+    out .= sqrt.(std.(position_stats.stats) ./ std.(gradient_stats.stats))
+    for i in eachindex(position_stats.stats)
+        position_stats.stats[i] = OnlineStatsBase.Variance()
+        gradient_stats.stats[i] = OnlineStatsBase.Variance()
+    end
+    out
+end
+
+function _linear_restart_scales!(out, source, transformed_adaptation,
+                                 position_stats, gradient_stats, memory, scale,
+                                 halo_position, halo_gradient)
+    if source === :halo
+        _halo_restart_scales!(
+            out, position_stats, gradient_stats, memory,
+            scale, halo_position, halo_gradient,
+        )
+    else
+        out .= marginal_scales(transformed_adaptation)
+    end
+    out
+end
+
+function _linear_restart_condition(scales)
+    all(x -> isfinite(x) && x > 0, scales) || return Inf
+    lo, hi = extrema(scales)
+    hi / lo
+end
+
+function _apply_linear_metric_fallback!(scale_options, old_diagonal, correction;
+                                        enabled, old_active, new_active,
+                                        nonlinear_changed)
+    enabled && old_active === :diagonal && new_active === :diagonal &&
+        !nonlinear_changed && all(x -> isfinite(x) && x > 0, correction) || return false
+    scale_options.diagonal.diag .= old_diagonal .* correction
+    true
+end
+
 # Setup + initialization, up to and including the initial step-size search and
 # the first progress tick. Returns the state as of CP-0 ("after Pathfinder").
 init_state(
@@ -184,8 +305,12 @@ init_state(
     n_draws, n_evaluations, recording_target, stepsize_adaptation_limit,
     target_acceptance_rate, max_tree_depth, init, monitor_ess,
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
-    nonlinear_good_leaf_threshold, variance_cond_target, kwargs...
+    nonlinear_good_leaf_threshold, variance_cond_target,
+    linear_restart_source=:halo, linear_trajectory_weighting=:unit,
+    linear_metric_fallback=true, kwargs...
 ) = begin
+    _validate_linear_trajectory_weighting(linear_trajectory_weighting)
+    _validate_linear_restart_source(linear_restart_source, linear_trajectory_weighting)
     start_time = time_ns()
     # Standard Stepsize Search
     stepsize_search = DynamicHMC.InitialStepsizeSearch()
@@ -231,8 +356,10 @@ init_state(
     kinetic_energy = energy_options[active_transformation]
     # Online variance recorders
     variance_memory = zeros(dimension)
+    transformed_position_memory = zeros(dimension)
     variance_position = OnlineStatsBase.Group([OnlineStatsBase.Variance() for i in 1:dimension])
     variance_gradient = OnlineStatsBase.Group([OnlineStatsBase.Variance() for i in 1:dimension])
+    transformed_adaptation = WeightedScaleAdaptation(dimension)
     variance_cond = Inf
     scale_changes = Float64[]
 
@@ -273,12 +400,17 @@ init_state(
     )
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     AWMState(
-        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target, nonlinear_adapt,
+        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        linear_restart_source, linear_trajectory_weighting,
+        linear_metric_fallback, nonlinear_adapt,
         monitor_ess, recording_target, (; kwargs...), algorithm, stepsize_adaptation, dimension,
         progress, start_time,
-        rng, recording_lpdf, nonlinear_recorder, position, scale_options, energy_options, active_transformation,
-        kinetic_energy, variance_memory, variance_position, variance_gradient, variance_cond,
-        scale_changes, position_and_gradient, stepsize, stepsize_state, n_evaluations,
+        rng, recording_lpdf, nonlinear_recorder,
+        position, scale_options, energy_options, active_transformation,
+        kinetic_energy, variance_memory, transformed_position_memory,
+        variance_position, variance_gradient,
+        transformed_adaptation, variance_cond, scale_changes, 0,
+        position_and_gradient, stepsize, stepsize_state, n_evaluations,
         total_evaluation_counter, outer_counter, current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples,
@@ -305,6 +437,7 @@ run_outer_iteration!(state::AWMState) = begin
         state.total_transition_counter += 1
         # One MCMC transition
         reset!(recording_lpdf.leaves)
+        trajectory_stepsize = state.stepsize
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
         finalize_leaf_recording!(recording_lpdf, stats.depth)
         state.nonlinear_adapt && record_nonlinear!(
@@ -320,6 +453,15 @@ run_outer_iteration!(state::AWMState) = begin
         OnlineStatsBase.fit!(state.steps_per_draw, stats.steps)
         is_divergent = DynamicHMC.is_divergent(stats.termination)
         is_divergent && (state.n_divergent += 1)
+        if _uses_running_linear_restart(state.linear_restart_source)
+            _fit_transformed_trajectory!(
+                state.transformed_adaptation,
+                state.transformed_position_memory, state.variance_memory,
+                state.scale_options[state.active_transformation],
+                recording_lpdf.leaves, state.linear_restart_source,
+                state.linear_trajectory_weighting, trajectory_stepsize,
+            )
+        end
         if state.current_transition_counter < state.stepsize_adaptation_limit
             # The current warm-up window has seen fewer MCMC transitions than our step size adaptation limit.
             # Continue adapting the step size.
@@ -338,19 +480,14 @@ run_outer_iteration!(state::AWMState) = begin
         end
         if current_evaluation_counter >= state.n_evaluations
             scale = state.scale_options[state.active_transformation]
-            for (pi, gi) in zip(eachcol(recording_lpdf.halo_position), eachcol(recording_lpdf.halo_gradient))
-                ldiv!(state.variance_memory, scale, pi)
-                OnlineStatsBase.fit!(state.variance_position, state.variance_memory)
-                mul!(state.variance_memory, scale', gi)
-                OnlineStatsBase.fit!(state.variance_gradient, state.variance_memory)
-            end
-            state.variance_memory .= sqrt.(std.(state.variance_position.stats) ./ std.(state.variance_gradient.stats))
-            for i in 1:dimension
-                state.variance_position.stats[i] = OnlineStatsBase.Variance()
-                state.variance_gradient.stats[i] = OnlineStatsBase.Variance()
-            end
-            lmin, lmax = extrema(state.variance_memory)
-            state.variance_cond = lmax / lmin
+            _linear_restart_scales!(
+                state.variance_memory, state.linear_restart_source,
+                state.transformed_adaptation,
+                state.variance_position, state.variance_gradient,
+                state.variance_memory, scale,
+                recording_lpdf.halo_position, recording_lpdf.halo_gradient,
+            )
+            state.variance_cond = _linear_restart_condition(state.variance_memory)
             pushfirst!(state.scale_changes, sqrt(state.variance_cond))
             state.restart = state.variance_cond >= state.variance_cond_target
         end
@@ -401,6 +538,10 @@ run_outer_iteration!(state::AWMState) = begin
     state.n_samples = 0
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.
+    uses_running_restart = _uses_running_linear_restart(state.linear_restart_source)
+    old_active = state.active_transformation
+    old_diagonal = uses_running_restart ? copy(state.scale_options.diagonal.diag) : nothing
+    old_sources = uses_running_restart ? reparam_sources(lpdf) : nothing
     state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(
         lpdf, state.nonlinear_recorder, recording_lpdf.halo_position,
         recording_lpdf.halo_gradient, state.position_and_gradient,
@@ -409,10 +550,22 @@ run_outer_iteration!(state::AWMState) = begin
     state.active_transformation = argmin(
         map(L->update_loss!(L, (recording_lpdf.halo_position), (recording_lpdf.halo_gradient); state.kwargs...), state.scale_options)
     )
+    if uses_running_restart
+        nonlinear_changed = reparam_sources(lpdf) != old_sources
+        fallback_applied = _apply_linear_metric_fallback!(
+            state.scale_options, old_diagonal, state.variance_memory;
+            enabled=state.linear_metric_fallback,
+            old_active,
+            new_active=state.active_transformation,
+            nonlinear_changed,
+        )
+        fallback_applied && (state.linear_metric_fallbacks += 1)
+    end
     state.kinetic_energy = state.energy_options[state.active_transformation]
     update_progress!(progress, nothing;
         active_transformation=ActiveTransformation(state.kinetic_energy, state.scale_changes),
     )
+    uses_running_restart && reset!(state.transformed_adaptation)
     reset!(recording_lpdf)
     state
 end
@@ -445,6 +598,10 @@ finalize_warmup!(state::AWMState) = begin
         ess=state.ess,
         scale_options=state.scale_options,
         active_transformation=state.active_transformation,
+        linear_restart_source=state.linear_restart_source,
+        linear_trajectory_weighting=state.linear_trajectory_weighting,
+        linear_metric_fallback=state.linear_metric_fallback,
+        linear_metric_fallbacks=state.linear_metric_fallbacks,
         stepsize=state.stepsize,
         total_evaluation_counter=state.total_evaluation_counter,
         n_divergent_samples=state.n_divergent_samples,
@@ -470,8 +627,10 @@ reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(
 #   * `energy_options`/`kinetic_energy` — pure functions of `scale_options`
 #     (which they alias), rebuilt on resume;
 #   * **CONFIG** — `n_draws`, `stepsize_adaptation_limit`, `variance_cond_target`,
-#     `nonlinear_adapt`, `monitor_ess`, `recording_target`, `kwargs`, `algorithm`
-#     and `stepsize_adaptation` all used to live here. They are caller-owned
+#     `linear_restart_source`, `linear_trajectory_weighting`,
+#     `linear_metric_fallback`, `nonlinear_adapt`,
+#     `monitor_ess`, `recording_target`, `kwargs`, `algorithm` and
+#     `stepsize_adaptation` all used to live here. They are caller-owned
 #     INPUT, exactly like the lpdf, and persisting one but not the other was
 #     arbitrary. Taking config from the resuming CALL instead is what makes
 #     post-hoc reconfiguration possible at all — most importantly resuming with a
@@ -514,7 +673,13 @@ checkpoint_payload(state::AWMState) = (;
     nonlinear_recorder=state.nonlinear_recorder,
     state.rng, state.position, state.scale_options, state.active_transformation,
     state.variance_memory, state.variance_position, state.variance_gradient,
-    state.variance_cond, state.scale_changes, state.position_and_gradient, state.stepsize,
+    linear_recorder=(;
+        source=state.linear_restart_source,
+        trajectory_weighting=state.linear_trajectory_weighting,
+        adaptation=state.transformed_adaptation,
+    ),
+    state.variance_cond, state.scale_changes,
+    state.linear_metric_fallbacks, state.position_and_gradient, state.stepsize,
     state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
@@ -721,6 +886,8 @@ end
 # accepts the persisted `stepsize_state`.
 restore_state(p, lpdf, progress;
     n_draws=1000, stepsize_adaptation_limit=50, variance_cond_target=2.,
+    linear_restart_source=nothing, linear_trajectory_weighting=nothing,
+    linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
     nonlinear_evidence=nothing, nonlinear_trajectory_weighting=:auto,
@@ -769,19 +936,41 @@ restore_state(p, lpdf, progress;
         trajectory_weighting=nonlinear_trajectory_weighting,
         good_leaf_threshold=restored_threshold,
     )
+    saved_linear_recorder = get(p, :linear_recorder, nothing)
+    restored_linear_source = something(
+        linear_restart_source,
+        isnothing(saved_linear_recorder) ? :halo : saved_linear_recorder.source,
+    )
+    restored_linear_weighting = something(
+        linear_trajectory_weighting,
+        isnothing(saved_linear_recorder) ? :unit : saved_linear_recorder.trajectory_weighting,
+    )
+    _validate_linear_trajectory_weighting(restored_linear_weighting)
+    _validate_linear_restart_source(restored_linear_source, restored_linear_weighting)
+    can_reuse_linear = !isnothing(saved_linear_recorder) &&
+        saved_linear_recorder.source === restored_linear_source &&
+        saved_linear_recorder.trajectory_weighting === restored_linear_weighting
     energy_options = map(p.scale_options) do L
         DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
     end
     kinetic_energy = energy_options[p.active_transformation]
+    transformed_adaptation = can_reuse_linear ?
+        saved_linear_recorder.adaptation : WeightedScaleAdaptation(p.dimension)
     AWMState(
-        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target, nonlinear_adapt,
+        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        restored_linear_source, restored_linear_weighting,
+        linear_metric_fallback, nonlinear_adapt,
         monitor_ess, p.recorder.target, (; kwargs...),
         DynamicHMC.NUTS(; max_depth=max_tree_depth),
         DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
         progress, time_ns(),
-        p.rng, recording_lpdf, nonlinear_recorder, p.position, p.scale_options, energy_options, p.active_transformation,
-        kinetic_energy, p.variance_memory, p.variance_position, p.variance_gradient, p.variance_cond,
-        p.scale_changes, p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
+        p.rng, recording_lpdf, nonlinear_recorder,
+        p.position, p.scale_options, energy_options, p.active_transformation,
+        kinetic_energy, p.variance_memory, zeros(p.dimension),
+        p.variance_position, p.variance_gradient,
+        transformed_adaptation, p.variance_cond, p.scale_changes,
+        get(p, :linear_metric_fallbacks, 0),
+        p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
         p.total_evaluation_counter, p.outer_counter, p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
         p.restart, p.n_samples,
@@ -829,6 +1018,13 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   treats subsequent transitions as posterior samples.
 * Stops warm-up adaptively: if the marginal-scale condition number drops
   below `variance_cond_target` (default `2.0`), no new window starts.
+  `linear_restart_source=:halo` preserves the existing thinned-halo criterion.
+  Opt-in `:nuts_weighted` uses each trajectory's exact NUTS proposal
+  distribution, while `:all_good_leaves` weights every eligible noninitial
+  leaf equally. `linear_trajectory_weighting=:unit` gives each trajectory or
+  eligible leaf unit exposure; `:stepsize` multiplies those weights by the
+  trajectory step size. There is no adaptation-phase or validity-fraction
+  branch: unit versus step-size weighting is an empirical choice throughout.
 
 If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
 [`ReparametrizedProblem`](@ref), the active [`IndexedReparametrization`](@ref)
@@ -898,6 +1094,16 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   subordinate to a restart independently requested by the linear criterion.
 * `variance_cond_target=2.0` — restart threshold on the marginal-scale
   condition number.
+* `linear_restart_source=:halo` — source for that condition number. The
+  running alternatives above replace (rather than supplement) the halo-only
+  criterion and retain `sum(w)` plus `sum(w^2)` for general weighted moments.
+* `linear_trajectory_weighting=:unit` — trajectory exposure for a running
+  source; set to `:stepsize` to use step-size exposure. `:halo` requires
+  `:unit`, because it has no trajectory weights to modify.
+* `linear_metric_fallback=true` — for an opt-in running estimator, if a restart
+  keeps the diagonal family and nonlinear parametrization unchanged, apply the
+  running transformed marginal correction to that diagonal metric. Other
+  families continue to use their ordinary halo fit.
 * `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
   diagnostic reporting via Treebars.
 * `parallel=true` (multi-chain only) — run chains on `Threads.@threads`.
@@ -959,6 +1165,9 @@ adaptive_warmup_mcmc(
     nonlinear_trajectory_weighting=:auto,
     nonlinear_good_leaf_threshold=nothing,
     variance_cond_target=2.,
+    linear_restart_source=nothing,
+    linear_trajectory_weighting=nothing,
+    linear_metric_fallback=true,
     # Observational checkpoint callback `(state, stage) -> should_stop`; see
     # `_fire_callback`. Default `nothing` keeps the run byte-identical.
     callback=nothing,
@@ -996,7 +1205,11 @@ adaptive_warmup_mcmc(
                 nonlinear_good_leaf_threshold=something(
                     nonlinear_good_leaf_threshold, log(1e-2),
                 ),
-                variance_cond_target, kwargs..., pathfinder_kw...
+                variance_cond_target,
+                linear_restart_source=something(linear_restart_source, :halo),
+                linear_trajectory_weighting=something(linear_trajectory_weighting, :unit),
+                linear_metric_fallback,
+                kwargs..., pathfinder_kw...
             )
             _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
             s, _fire_callback(callback, s, :init)
@@ -1004,6 +1217,8 @@ adaptive_warmup_mcmc(
             restore_state(
                 resumed, lpdf, progress;
                 n_draws, stepsize_adaptation_limit, variance_cond_target,
+                linear_restart_source, linear_trajectory_weighting,
+                linear_metric_fallback,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,
                 max_tree_depth, recording_target, nonlinear_evidence,
                 nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,

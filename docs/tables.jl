@@ -189,12 +189,78 @@ function load_harness(relpath::AbstractString)
 end
 
 """
+    vega_figure(spec; caption="") -> Markdown.MD
+
+Render a Vega-Lite `spec` (anything `JSON.json` accepts) as a figure, by
+emitting it as a fenced ` ```vega-lite ` block. `setupVegaFigures` in
+`docs/src/.vitepress/theme/vega-figure.ts` finds the rendered block and swaps a
+chart in; the runtimes are CDN tags in `config.mts`.
+
+**A code fence is not a stylistic choice — it is the only construct that
+survives this pipeline.** The obvious shape, an `@eval` block returning a
+`<div data-spec="…">`, cannot work, and both layers that break it break it
+silently:
+
+  * `Markdown.parse` destroys the JSON before anything sees it. `\$schema` is
+    read as inline math and `ns_const` as emphasis, so the text that reaches
+    the AST is already corrupt — measured, not feared.
+  * DocumenterVitepress escapes `<` and `>` in *every* text node
+    (`escape_markdown_text`, `writer.jl`), by design, because Vue would
+    otherwise parse a bare `<` as a tag. A div therefore arrives at the browser
+    as `&lt;div&gt;`.
+
+Raw HTML reaches the page only through `@raw html`, which is a static fence and
+cannot carry a computed value. Fenced code is the one path a generated string
+crosses untouched: markdown does not interpret inside it, and VitePress marks
+code blocks `v-pre`, so Vue does not either.
+
+Figures are DERIVED, never checked in. Build the spec from the rows at
+docs-build time — see [`load_harness`](@ref) — for the same reason a summary
+table is derived: a spec stored beside the rows it plots is a second copy of
+them that nothing forces to agree, and it goes stale in the silent direction,
+because a chart still renders when its numbers are old.
+
+If the runtime is unreachable the block stays a readable JSON dump rather than
+becoming a blank gap, which is the right failure: the figure's data is still
+on the page.
+"""
+function vega_figure(spec; caption::AbstractString = "")
+    parts = Any[Markdown.Code("vega-lite", JSON.json(spec))]
+    isempty(caption) || append!(parts, Markdown.parse("*" * caption * "*").content)
+    Markdown.MD(parts)
+end
+
+"""
     md_table(headers, rows) -> Markdown.MD
 
 Build a markdown table. Cells are passed through `string`, so pre-format
 anything that needs it (see [`num`](@ref)).
+
+**Zero rows is an error, not an empty table.** A headers-only table is valid
+markdown, so it renders as a blank table and the build exits 0 — an artifact
+that still parses but has lost its rows would ship as an empty table with
+nothing anywhere saying so. [`load_results`](@ref) only guards the file being
+*absent*; this guards it being present and empty.
+
+Measured before this check existed: emptying `rows` in one artifact and
+rebuilding took the build down only because a *derivation* called `median` on
+an empty array two sections further down. The three tables above it rendered
+blank and reported nothing. The catch was incidental to what the harness
+happened to compute, which is not a guarantee.
+
+If an empty result is meaningful somewhere, branch on `isempty` in the `@eval`
+block and emit prose saying so — the derived blocks in `adaptive-centering.md`
+do exactly that, and prose is the honest rendering of "there is nothing here".
 """
 function md_table(headers::AbstractVector, rows::AbstractVector)
+    isempty(rows) && error("""
+        md_table was given zero rows (headers: $(join(string.(headers), ", "))).
+
+        This is refused rather than rendered, because a headers-only table is
+        valid markdown: the page would show a blank table and the build would
+        succeed. If the underlying artifact can legitimately be empty, branch on
+        `isempty` in the @eval block and emit prose instead of a table.
+        """)
     io = IOBuffer()
     println(io, "| ", join(string.(headers), " | "), " |")
     println(io, "|", join(fill("---", length(headers)), "|"), "|")

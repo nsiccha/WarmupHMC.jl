@@ -1,0 +1,141 @@
+# Does every checked-in measurement still describe the CURRENT sampler?
+#
+# WHY THIS EXISTS, AND WHY IT IS SEPARATE FROM EVERY OTHER JOB
+#
+# `docs/benchmark/artifact_currency.jl` walks every tracked artifact under
+# results/, reads the `warmuphmc_sha` it recorded, and asks whether that
+# revision's `src/` still defines the same methods as the tip. It has been
+# written, correct, and — since `c7c6d7c` — RED, and nothing anywhere said so:
+# seven files reference the script in prose and, until this job, zero workflows
+# invoked it. Both agents who found the red found it by running it by hand.
+#
+# That is the sharpest member of a family this repo keeps hitting. An
+# enumerating consumer cannot fail on a deleted file; a census in prose cannot
+# fail on a new site; and a check wired to nothing cannot fail at all. The last
+# is the worst of the three, because the check itself is already correct — the
+# only missing part was somewhere to run it.
+#
+# WHY NOT FOLD IT INTO THE DOCS BUILD
+#
+# `Docs.yml` checks out at depth 1 and `makedocs` has no history to consult, so
+# no artifact's base SHA would resolve there and the script would go red on
+# every run for a reason that has nothing to do with currency. Wrong signal, and
+# a job that is red for the wrong reason is a job that gets muted.
+#
+# WHY `fetch-depth: 0` IS NOT OPTIONAL
+#
+# Base-SHA resolution IS the check. `actions/checkout@v4` defaults to depth 1 —
+# the tip and nothing else — so every base would come back unresolvable. The
+# script reports that as red rather than skipping it, deliberately: a currency
+# check that passes because it could not look anything up is worse than none.
+#
+# But an all-unresolvable red and a genuinely-stale red BOTH exit 1, and they
+# look different only if someone reads the log. So the step below asserts the
+# clone is not shallow BEFORE running the script, and fails with its own message
+# if it is. Without that assertion, dropping `fetch-depth: 0` would leave a job
+# that is still red, still exits 1, and no longer checks anything — the guard's
+# own failure mode, the same one probe-schema.yml's seed step exists to close.
+#
+# `fetch-depth: 0` IS NECESSARY BUT NOT SUFFICIENT
+#
+# A base can also be recorded that no ref contains — rebased away, or never
+# published. Measured on the `5637fcf` pair: present in the KB mirror as an
+# object, contained by zero refs, absent from the `--all` walk, on no tag. No
+# checkout setting recovers that; a fresh clone never had the object at all. The
+# script distinguishes the three states (not fetched + shallow, not fetched +
+# full clone, present + on no ref) so the log names which one applies. Do not
+# read a red here as "raise the fetch depth" without checking which it says.
+#
+# WHY `src/**` IS A TRIGGER AND `results/**` IS THE LESSER ONE
+#
+# This check goes red when the SAMPLER changes, not when the numbers do. A
+# commit touching only `src/` can invalidate every artifact in the repo without
+# going near results/ — that is exactly what `c7c6d7c` did, staling 12 of them
+# at once. Omitting `src/**` would leave the job firing only on the side that is
+# not the cause.
+#
+# NO JULIA ENVIRONMENT
+#
+# The script shells out to `git` and includes `code_identical.jl`; it needs no
+# package environment, no `instantiate`, no BridgeStan, and no Treebars clone.
+# That is why this is its own small job rather than a step bolted onto a heavy
+# one — it costs a checkout and a Julia startup.
+
+name: Artifact currency
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'docs/benchmark/results/**'
+      - 'docs/benchmark/artifact_currency.jl'
+      - 'docs/benchmark/code_identical.jl'
+      - '.github/workflows/artifact-currency.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'src/**'
+      - 'docs/benchmark/results/**'
+      - 'docs/benchmark/artifact_currency.jl'
+      - 'docs/benchmark/code_identical.jl'
+      - '.github/workflows/artifact-currency.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  currency:
+    name: Every checked-in measurement still describes the current sampler
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # REQUIRED. See the header: at the default depth 1 no base resolves and
+      # this job checks nothing while still exiting 1.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - name: Guard the guard — refuse to run against a shallow clone
+        run: |
+          shallow=$(git rev-parse --is-shallow-repository)
+          echo "is-shallow-repository: $shallow"
+          if [ "$shallow" != "false" ]; then
+            echo "::error::This clone is SHALLOW, so no artifact's base SHA can resolve."
+            echo "::error::The currency check would report every artifact as unfetched"
+            echo "::error::and exit 1 while verifying nothing. Restore 'fetch-depth: 0'"
+            echo "::error::on the checkout step above."
+            exit 1
+          fi
+          echo "Full history present: $(git rev-list --count HEAD) commits."
+
+      - name: Are the checked-in measurements current?
+        run: julia --startup-file=no docs/benchmark/artifact_currency.jl
+
+      - name: What a failure here means
+        if: failure()
+        run: |
+          echo "An artifact under docs/benchmark/results/ no longer describes the"
+          echo "sampler at this tip, or its recorded base cannot be resolved. The"
+          echo "log names each one and which of the two it is."
+          echo
+          echo "STALE       -> re-measure that artifact. Do not edit the recorded"
+          echo "               warmuphmc_sha to match the tip; that asserts a"
+          echo "               measurement nobody made."
+          echo "NOT FETCHED -> read whether it says shallow or FULL clone. Shallow"
+          echo "               is a checkout setting; full clone means the object"
+          echo "               is not in the repository at all."
+          echo "ON NO REF   -> the base was rebased away or never published. No"
+          echo "               checkout setting recovers it. Re-measure, or mark"
+          echo "               the run SUPERSEDED with a reason if it is kept as"
+          echo "               history."
+          echo
+          echo "A run kept deliberately as history (a before/after pair, an"
+          echo "outdated base a result is argued from) is SUPPOSED to differ from"
+          echo "the tip. Say so with a SUPERSEDED file in that run's own"
+          echo "directory, whose first line is the reason."

@@ -1,0 +1,4 @@
+base 7556a15, DIRTY worktree — superseded by results/forwarddiff-d68d680/
+The ForwardDiff half of the dirty-tree pair; see results/enzyme-7556a15/SUPERSEDED
+for why both are kept and why the directory was renamed. Bit-identical to
+results/forwarddiff-d68d680/ on all 184 runs except wall-clock.

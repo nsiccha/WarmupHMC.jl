@@ -1,7 +1,19 @@
-base b5c7dee, the BOXED-spec base — superseded by results/enzyme-5637fcf/
+base b5c7dee, the BOXED-spec base — superseded by results/enzyme-d68d680/
 Measured before the Core.Box capture defect was repaired in
 web/src/posteriordb_reparametrizations.jl: the per-pair closures on
 radon_partially_pooled, radon_variable_intercept and seeds captured a Core.Box,
 so these numbers measure the box, not the backend. Kept as the evidence that the
 fix changed the headline (a wall-clock loss on those three targets became a win
 on all five). It is SUPPOSED to differ from the tip.
+Two disclosures this marker used to omit, both true when it was written:
+ON NO REF: `git for-each-ref --contains b5c7dee` returns nothing, and b5c7dee is
+absent from the `--all` walk. Like 5637fcf, it is present here as an object and
+reachable from nothing, so it resolves in no fresh clone and `git gc` may drop
+it. The supersession claim above is checkable; the base it names is not.
+DIRTY: this run also records `worktree_dirty = true`, so even where the SHA does
+resolve it does not describe the code that ran. Kept deliberately anyway -- a
+dirty measurement is unattributable, not worthless, and this one is retained for
+a before/after comparison rather than as a standalone number.
+This pointer was repointed from results/enzyme-5637fcf/, which has itself been
+superseded. A "superseded by" line that names a superseded run is a chain that
+goes stale one link at a time; it should always name the LIVE pair.

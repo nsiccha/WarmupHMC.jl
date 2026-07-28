@@ -1,0 +1,5 @@
+base 5637fcf — replaced by results/forwarddiff-d68d680/, AND 5637fcf is on no ref
+The ForwardDiff half of the previous live pair. See
+results/enzyme-5637fcf/SUPERSEDED for both reasons in full: replaced by a clean
+code-identical re-run that is bit-identical except for wall-clock, and measured
+on a base that is contained by zero refs and resolves in no fresh clone.

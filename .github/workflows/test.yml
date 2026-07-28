@@ -51,7 +51,7 @@ jobs:
           version: ${{ matrix.julia-version }}
           arch: ${{ matrix.julia-arch }}
       - uses: julia-actions/cache@v2
-      - name: Dev unregistered dependencies
+      - name: Instantiate the test environment
         # `--branch dev` is load-bearing, exactly as in Docs.yml: `Treebars.round2`
         # — which `src/progress.jl` adds a method to at load time — exists on
         # `origin/dev` but NOT on `origin/main`, so a default-branch clone fails
@@ -59,41 +59,48 @@ jobs:
         #
         # The explicit `Pkg.develop` is needed on every matrix row, not just as a
         # pin: `[sources]` is honoured from Julia 1.11 only, so on `lts` (1.10)
-        # Treebars would otherwise resolve as "expected to be registered".
-        # Batched (§ the one-resolve rule) even at length 1, for when it grows.
+        # Treebars would otherwise resolve as "expected to be registered". A
+        # runner has no `Manifest.toml` either (it is gitignored) and WarmupHMC's
+        # `[sources]` is not consulted for a dev'd *dependency* of another
+        # environment, so this cannot be dropped on the strength of a local run.
+        # Batched (§ the one-resolve rule) so Pkg sees both paths in one resolve.
         run: |
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
-          julia --project=. -e 'using Pkg; Pkg.develop([
+          julia --project=web/src/test -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
-      - uses: julia-actions/julia-buildpkg@v1
       - name: Run tests
         # NOT `julia-actions/julia-runtest@v1`: this package's suite lives at
         # `web/src/test/runtests.jl`, not the `test/runtests.jl` the action and
-        # `Pkg.test` assume. Running against `--project=.` rather than the test
-        # target is deliberate and sufficient — the suite needs neither
-        # TestModules nor Documenter, and it needs `ForwardDiff` (transitive,
-        # via Pathfinder) to be in the manifest, which it is only in the package
-        # env. `web/src/test/ad_backend.jl` loads it by UUID and aborts loudly
-        # if it is missing or if the reparametrization gradient method is gone,
-        # so a broken AD setup fails the job instead of silently skipping every
-        # reparametrization testset.
-        run: julia --project=. -e 'include("web/src/test/runtests.jl")'
+        # `Pkg.test` assume. (`test/` IS a symlink to it, but git checks symlinks
+        # out as plain text files on Windows unless core.symlinks is on, so the
+        # real path is the portable one.)
+        #
+        # `--skip-tag=enzyme` is what keeps Enzyme out of all nine rows; the job
+        # below runs those items once. Skipping a tag is a no-op if no item
+        # carries it, so this stays correct if the Enzyme items are ever removed.
+        run: julia --project=web/src/test -e 'include("web/src/test/runtests.jl")' -- --skip-tag=enzyme
 
   # Reverse-mode (Enzyme) coverage — ONE job, deliberately outside the matrix
   # above.
   #
-  # The main suite pins `AutoForwardDiff()`, which is the one backend immune to
-  # the failures this job exists to catch: `dbde8d2` broke `Enzyme.Const` — the
-  # backend the `ReparametrizedProblem` docstring and both docs pages recommend
-  # — and landed fully green, because nothing committed here executed a
-  # reverse-mode backend.
+  # The rest of the suite pins `AutoForwardDiff()`, which is the one backend
+  # immune to the failures this job exists to catch: `dbde8d2` broke
+  # `Enzyme.Const` — the backend the `ReparametrizedProblem` docstring and both
+  # docs pages recommend — and landed fully green, because nothing committed
+  # here executed a reverse-mode backend.
   #
   # Not folded into the matrix: Enzyme's compile is heavy and the matrix is nine
   # rows, so that would be nine Enzyme builds per push. Not added to the root
   # `Project.toml` either — that would make WarmupHMC itself hard-depend on one
   # specific AD backend, which is the opposite of the `ad_backend=nothing`,
   # user-supplies-the-backend design.
+  #
+  # It is no longer a separate ENVIRONMENT, though. `web/src/test/enzyme/` had
+  # its own `Project.toml` to keep Enzyme out of the matrix; a `:enzyme` tag on
+  # the item does the same job with one manifest instead of two, so the two jobs
+  # can no longer drift apart in what they resolve.
   enzyme:
     runs-on: ubuntu-latest
     steps:
@@ -104,29 +111,17 @@ jobs:
         with:
           version: '1'
       - uses: julia-actions/cache@v2
-      - name: Instantiate the Enzyme environment
-        # `Pkg.develop` rather than `[sources]`: the package under test is the
-        # checkout itself, and this has to work on the same Julia versions the
-        # matrix uses.
-        #
-        # Treebars MUST be cloned and dev'd explicitly here, for the same reason
-        # the matrix job does it — and it is easy to conclude otherwise from a
-        # local run. On a developer box this step resolves fine without the
-        # clone, because Pkg finds a Treebars checkout already on disk. A GitHub
-        # runner has neither that checkout nor a root `Manifest.toml` (it is
-        # gitignored), and WarmupHMC's `[sources]` is not consulted for a *dev'd
-        # dependency* of this environment — only for an active project. So
-        # without these lines the step resolves Treebars as "expected to be
-        # registered" on a clean runner.
-        #
-        # `--branch dev` is the same load-bearing detail as the matrix job:
-        # `Treebars.round2`, which `src/progress.jl` adds a method to at load
-        # time, exists on `origin/dev` and NOT on `origin/main`.
+      - name: Instantiate the test environment
+        # Identical to the matrix job's step, and for the same reasons — the two
+        # now share one environment, so keep them in step.
         run: |
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
-          julia --project=web/src/test/enzyme -e 'using Pkg; Pkg.develop([
+          julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
-      - name: Run Enzyme tests
-        run: julia --project=web/src/test/enzyme web/src/test/enzyme/runtests.jl
+      - name: Run the Enzyme items
+        # `--tag=enzyme` errors if it matches nothing, so deleting or retagging
+        # the last Enzyme item turns this job red rather than letting it pass
+        # while running no tests at all.
+        run: julia --project=web/src/test -e 'include("web/src/test/runtests.jl")' -- --tag=enzyme

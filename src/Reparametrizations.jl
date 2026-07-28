@@ -4,6 +4,72 @@
 maybecall(f::Function, args...; kwargs...) = f(args...; kwargs...)
 maybecall(x, args...; kwargs...) = x
 
+struct DirectCandidateScoring end
+const DIRECT_CANDIDATE_SCORING = DirectCandidateScoring()
+
+"""
+    CandidateScoringPlan(prepare, score; synchronize! = identity)
+
+A pluggable strategy for scoring reparametrization candidates from online
+evidence, attached with
+`ReparametrizedProblem(ir, problem, backend; scoring_plan = plan)`.
+
+Every `ReparametrizedProblem` has a plan — the public `nothing` default resolves
+to an internal direct-scoring plan. Passing one therefore replaces a strategy
+rather than enabling one. Declining a pair is not the same as having no plan:
+`score` returning `nothing` restores the direct scoring formula for that pair,
+but attaching any custom plan already determines the evidence source, so a plan
+that declines every pair is still not equivalent to the default.
+
+# Callbacks
+
+`prepare(ir, position, gradient)` runs once per online evidence observation and
+returns a transient frame. The frame is opaque to WarmupHMC and is passed
+unchanged to every `score` call arising from that observation, so it is where
+work shared across candidates belongs rather than being repeated per pair.
+
+`score(frame, pair_number, idx, reparametrization, candidate)` returns
+`(ljac, position, gradient)` for `candidate`, where `ljac` is the log-Jacobian
+term in `logdensity(rp, x) == ljac + logdensity(problem, y)`. `pair_number` is
+the pair's one-based position in `ir.pairs`; `idx` is that pair's source-vector
+coordinate selector. Returning `nothing` instead delegates that one pair to
+direct scoring; the choice is per pair, so a plan may score only the pairs it
+has an opinion about.
+
+`synchronize!(ir)` runs after construction, after every winner commit, and when
+a checkpoint source is restored — the points at which `ir` may have changed
+underneath a plan holding derived state. The default `identity` is correct for
+a stateless plan.
+
+# Evidence source
+
+A custom plan interprets `nonlinear_evidence=:linear_pool` as online
+all-good-leaf evidence; it never replays the retained linear pool.
+
+# Checkpoints
+
+Checkpoint payloads are `Serialization`-based and deliberately exclude the
+log-density and the scoring plan, so a plan does not survive a checkpoint. If a
+run recorded a non-default plan, restoring it without attaching one is an error,
+not a silent fall back to direct scoring: the fallback would resume a different
+problem than the one recorded while looking like a successful restore.
+
+See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
+[Adaptive centering at fixed `c`](@ref) for a measured comparison of a
+strict-online scoring proxy against an exact-score reference.
+"""
+struct CandidateScoringPlan{P,S,Y}
+    prepare::P
+    score::S
+    synchronize!::Y
+end
+CandidateScoringPlan(prepare, score; synchronize! = identity) =
+    CandidateScoringPlan(prepare, score, synchronize!)
+
+_synchronize_scoring!(::DirectCandidateScoring, ir) = ir
+_synchronize_scoring!(plan::CandidateScoringPlan, ir) =
+    (plan.synchronize!(ir); ir)
+
 """
     ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing; scoring_plan=nothing)
 
@@ -202,72 +268,6 @@ reparametrizer's source frame either way.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
 """
-struct DirectCandidateScoring end
-const DIRECT_CANDIDATE_SCORING = DirectCandidateScoring()
-
-"""
-    CandidateScoringPlan(prepare, score; synchronize! = identity)
-
-A pluggable strategy for scoring reparametrization candidates from online
-evidence, attached with
-`ReparametrizedProblem(ir, problem, backend; scoring_plan = plan)`.
-
-Every `ReparametrizedProblem` has a plan — the public `nothing` default resolves
-to an internal direct-scoring plan. Passing one therefore replaces a strategy
-rather than enabling one. Declining a pair is not the same as having no plan:
-`score` returning `nothing` restores the direct scoring formula for that pair,
-but attaching any custom plan already determines the evidence source, so a plan
-that declines every pair is still not equivalent to the default.
-
-# Callbacks
-
-`prepare(ir, position, gradient)` runs once per online evidence observation and
-returns a transient frame. The frame is opaque to WarmupHMC and is passed
-unchanged to every `score` call arising from that observation, so it is where
-work shared across candidates belongs rather than being repeated per pair.
-
-`score(frame, pair_number, idx, reparametrization, candidate)` returns
-`(ljac, position, gradient)` for `candidate`, where `ljac` is the log-Jacobian
-term in `logdensity(rp, x) == ljac + logdensity(problem, y)`. `pair_number` is
-the pair's one-based position in `ir.pairs`; `idx` is that pair's source-vector
-coordinate selector. Returning `nothing` instead delegates that one pair to
-direct scoring; the choice is per pair, so a plan may score only the pairs it
-has an opinion about.
-
-`synchronize!(ir)` runs after construction, after every winner commit, and when
-a checkpoint source is restored — the points at which `ir` may have changed
-underneath a plan holding derived state. The default `identity` is correct for
-a stateless plan.
-
-# Evidence source
-
-A custom plan interprets `nonlinear_evidence=:linear_pool` as online
-all-good-leaf evidence; it never replays the retained linear pool.
-
-# Checkpoints
-
-Checkpoint payloads are `Serialization`-based and deliberately exclude the
-log-density and the scoring plan, so a plan does not survive a checkpoint. If a
-run recorded a non-default plan, restoring it without attaching one is an error,
-not a silent fall back to direct scoring: the fallback would resume a different
-problem than the one recorded while looking like a successful restore.
-
-See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
-[Adaptive centering at fixed `c`](@ref) for a measured comparison of a
-strict-online scoring proxy against an exact-score reference.
-"""
-struct CandidateScoringPlan{P,S,Y}
-    prepare::P
-    score::S
-    synchronize!::Y
-end
-CandidateScoringPlan(prepare, score; synchronize! = identity) =
-    CandidateScoringPlan(prepare, score, synchronize!)
-
-_synchronize_scoring!(::DirectCandidateScoring, ir) = ir
-_synchronize_scoring!(plan::CandidateScoringPlan, ir) =
-    (plan.synchronize!(ir); ir)
-
 struct ReparametrizedProblem{R,P,B,S}
     reparametrizer::R
     problem::P

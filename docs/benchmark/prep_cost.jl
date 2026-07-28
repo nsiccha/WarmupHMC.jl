@@ -37,6 +37,29 @@ const BE = ["fd" => AutoForwardDiff(),
             "const" => AutoEnzyme(; function_annotation = Enzyme.Const)]
 const N = parse(Int, get(ENV, "NCALLS", "400"))
 
+# WHY THIS IS REPLICATED, having previously been a single loop per cell.
+#
+# Each of the three costs below used to be ONE timed pass of N calls, and
+# `prep_share` was the ratio of two such passes. Two independent runs of the
+# identical script disagreed by more than a factor of THIRTY on one cell
+# (`eight_schools`/`fd` read 113% of the call, then 3629%), and half the ten
+# cells moved by more than 2x. A GC pause or a first-touch compile landing in
+# one unreplicated pass is indistinguishable from a cost, and RESULTS.md was
+# quoting the output to three significant figures ("26.1 of 28.6 µs").
+#
+# So: ROUNDS repeats, medians reported, and the RAW rounds persisted beside
+# them. The order of the three timed blocks ROTATES per round, because they are
+# not symmetric -- whichever runs first in a process pays for anything not yet
+# specialised, and a fixed order charges that permanently to `prep`.
+#
+# A share above 100% is NOT automatically a measurement error, and the raw
+# rounds are what let a reader tell the two apart: `value_and_gradient` without
+# a prep object is free to take a lighter path than an explicit
+# `prepare_gradient` builds, so prep genuinely CAN cost more than the unprepped
+# call it is nominally a part of. A stable 101% means that; a 3629% that reads
+# 113% on the next run means the timer caught something else.
+const ROUNDS = parse(Int, get(ENV, "ROUNDS", "5"))
+
 rows = []
 
 function probe(label, problem, spec, dim, csrc)
@@ -59,26 +82,28 @@ function probe(label, problem, spec, dim, csrc)
         value_and_gradient(f0, prep, be, xs[1])
         value_and_gradient(f0, be, xs[1])
 
-        t = time_ns()
-        for x in xs
-            f = objective_at(x)
-            prepare_gradient(f, be, x)
+        timed = Dict("prep" => () -> for x in xs
+                         f = objective_at(x)
+                         prepare_gradient(f, be, x)
+                     end,
+                     "prepped" => () -> for x in xs
+                         f = objective_at(x)
+                         value_and_gradient(f, prep, be, x)
+                     end,
+                     "unprepped" => () -> for x in xs
+                         f = objective_at(x)
+                         value_and_gradient(f, be, x)
+                     end)
+        blocks = ["prep", "prepped", "unprepped"]
+        samples = Dict(b => Float64[] for b in blocks)
+        for r in 1:ROUNDS, b in circshift(blocks, r)
+            t = time_ns()
+            timed[b]()
+            push!(samples[b], (time_ns() - t) / N)
         end
-        prep_ns = (time_ns() - t) / N
-
-        t = time_ns()
-        for x in xs
-            f = objective_at(x)
-            value_and_gradient(f, prep, be, x)
-        end
-        prepped_ns = (time_ns() - t) / N
-
-        t = time_ns()
-        for x in xs
-            f = objective_at(x)
-            value_and_gradient(f, be, x)
-        end
-        unprepped_ns = (time_ns() - t) / N
+        prep_ns = median(samples["prep"])
+        prepped_ns = median(samples["prepped"])
+        unprepped_ns = median(samples["unprepped"])
 
         # Does prep reuse across a changed closure even give the right answer?
         xt = xs[end]
@@ -87,14 +112,20 @@ function probe(label, problem, spec, dim, csrc)
         g_pre = value_and_gradient(ft, prep, be, xt)[2]
         agree = maximum(abs.(g_pre .- g_ref))
 
+        # `samples` is additive; every key that existed keeps its name and its
+        # meaning (a per-call nanosecond cost), so a reader indexing
+        # `row["prep_share"]` is unaffected by the replication.
         push!(rows, Dict("target" => label, "dim" => dim, "c_source" => csrc,
                          "backend" => nm, "prep_ns" => prep_ns,
                          "prepped_ns" => prepped_ns, "unprepped_ns" => unprepped_ns,
                          "prep_share" => prep_ns / unprepped_ns,
+                         "rounds" => ROUNDS, "samples" => samples,
                          "reuse_grad_diff" => agree))
-        @printf("%-14s d=%-3d c=%.1f %-6s | prep %9.0f  prepped %9.0f  unprepped %9.0f | prep is %3.0f%% of the call | reuse |Δg| %.1e %s\n",
+        @printf("%-14s d=%-3d c=%.1f %-6s | prep %9.0f  prepped %9.0f  unprepped %9.0f | prep is %3.0f%% of the call (rounds %3.0f-%3.0f%%) | reuse |Δg| %.1e %s\n",
                 label, dim, csrc, nm, prep_ns, prepped_ns, unprepped_ns,
-                100 * prep_ns / unprepped_ns, agree,
+                100 * prep_ns / unprepped_ns,
+                100 * minimum(samples["prep"]) / unprepped_ns,
+                100 * maximum(samples["prep"]) / unprepped_ns, agree,
                 agree > 1e-8 ? "<-- WRONG, prep reuse is not valid here" : "(ok)")
         flush(stdout)
     end
@@ -115,7 +146,7 @@ open(joinpath(OUT_DIR, "prep_cost.json"), "w") do io
         "note" => "Share of the wrapper's per-gradient cost spent in DI preparation. " *
                   "The package calls value_and_gradient with no prep object, so it " *
                   "re-prepares on every gradient evaluation.",
-        "julia" => string(VERSION), "n_calls" => N,
+        "julia" => string(VERSION), "n_calls" => N, "rounds" => ROUNDS,
         git_provenance()...,
         "rows" => rows), 2)
 end

@@ -79,5 +79,7 @@
     4.125243419588266
   ],
   "seed": 11,
-  "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16"
+  "src_dirty": false,
+  "warmuphmc_sha": "ef3a6af786d8721033f272ea25266d733bd8b4ce",
+  "worktree_dirty": false
 }

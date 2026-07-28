@@ -2,7 +2,7 @@
   "ab_max_grad_diff_boxed": 0.0,
   "ab_max_grad_diff_unboxed": 0.0,
   "ab_target": "radon_mn-radon_partially_pooled_centered",
-  "bare_ns_median": 25613.425,
+  "bare_ns_median": 25862.969,
   "blas_threads": 1,
   "boxed_specs": [],
   "captures": [
@@ -196,35 +196,37 @@
   "note": "Which posteriordb specs capture a Core.Box, and what it costs on the gradient path. The A/B builds both a boxed and an unboxed control locally and asserts their gradients are bit-identical to the shipped spec's, so the delta is pure overhead and the measurement is independent of how the shipped table is written.",
   "rounds": 5,
   "shipped_spec_is_boxed": false,
+  "src_dirty": false,
   "timings_ns": {
     "boxed/const": [
-      482297.195,
-      441669.166,
-      417340.425,
-      460321.442,
-      451132.859
+      468605.61,
+      451829.433,
+      449363.919,
+      469344.229,
+      478318.987
     ],
     "boxed/fd": [
-      352322.611,
-      326127.233,
-      318582.859,
-      336298.774,
-      325444.291
+      315750.776,
+      316092.228,
+      338839.626,
+      344564.028,
+      325328.255
     ],
     "unboxed/const": [
-      38404.319,
-      28613.215,
-      27324.896,
-      27444.252,
-      27329.323
+      28823.687,
+      27764.093,
+      38339.172,
+      42964.647,
+      27666.72
     ],
     "unboxed/fd": [
-      79413.645,
-      75532.648,
-      80741.418,
-      72553.616,
-      77636.341
+      80349.129,
+      69091.37,
+      75014.176,
+      74444.388,
+      73671.292
     ]
   },
-  "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16"
+  "warmuphmc_sha": "ef3a6af786d8721033f272ea25266d733bd8b4ce",
+  "worktree_dirty": false
 }

@@ -267,11 +267,21 @@ large `d`.
 
 | target | `d` | Enzyme/Const ÷ ForwardDiff | |
 |---|---|---|---|
-| `radon_partially_pooled` | 88 | **0.40–0.53×** | Enzyme 1.9–2.5× faster |
-| `radon_variable_intercept` | 89 | **0.55–0.69×** | Enzyme 1.4–1.8× faster |
-| `seeds` | 26 | **0.33–0.59×** | Enzyme 1.7–3.0× faster |
-| `eight_schools` | 10 | **0.13–0.66×** | Enzyme 1.5–7.6× faster |
-| `funnel` | 10 | **0.36–0.43×** | Enzyme 2.4–2.8× faster |
+| `radon_partially_pooled` | 88 | **0.36–0.55×** | Enzyme 1.8–2.7× faster |
+| `radon_variable_intercept` | 89 | **0.50–0.65×** | Enzyme 1.5–2.0× faster |
+| `seeds` | 26 | **0.32–0.63×** | Enzyme 1.6–3.1× faster |
+| `eight_schools` | 10 | **0.43–0.61×** | Enzyme 1.6–2.3× faster |
+| `funnel` | 10 | **0.37–0.65×** | Enzyme 1.5–2.7× faster |
+
+**This table is not hand-copied — run `docs/benchmark/backend_bands.jl` and
+paste what it prints.** It reads the same four harnesses, takes the live set
+from `artifact_currency.jl`'s own supersession list (so the boxed-spec run dirs,
+where Enzyme measured *slower*, cannot silently widen a band), and errors rather
+than narrowing if a source is missing. The reason it exists is two paragraphs of
+this document's own history: a band was widened four minutes before the files it
+was computed from were regenerated, and the result excluded values that were in
+the files while including values that were in none of them. That is not a
+mistake anyone can see in a diff — the band is prose and the evidence is JSON.
 
 Every range spans **four independent harnesses**, each writing its own JSON:
 `replicate_backends.jl` (7 rounds × 1000 calls, backend order rotated per round,
@@ -329,19 +339,19 @@ the order rotated, against a bare gradient of 27431 ns:
 
 | spec | ForwardDiff | Enzyme/`Const` | Enzyme ÷ ForwardDiff |
 |---|---|---|---|
-| boxed | 339163 ns | 444685 ns | 1.31× — Enzyme *slower* |
-| unboxed (**as shipped today**) | 72873 ns | **28536 ns** | **0.39× — Enzyme faster** |
-| de-boxing speedup | 4.65× | **15.58×** | |
+| boxed | 325328 ns | 468606 ns | 1.44× — Enzyme *slower* |
+| unboxed (**as shipped today**) | 74444 ns | **28824 ns** | **0.39× — Enzyme faster** |
+| de-boxing speedup | 4.37× | **16.26×** | |
 
-Both backends are hurt by the box; Enzyme is hurt ~3.4× harder, and that alone
+Both backends are hurt by the box; Enzyme is hurt ~3.7× harder, and that alone
 **inverts which backend looks faster**. Two numbers in one table that disagree in
 direction, from one process, minutes apart, on specs that produce identical
 gradients: no backend verdict measured through an uninspected spec means
 anything.
 
-Note what the unboxed Enzyme figure implies for the wrapper as a whole: 28536 ns
-against a bare gradient of 27431 ns is **4% overhead**. On this target the
-transform is now essentially free under reverse mode and was a 15× tax before.
+Note what the unboxed Enzyme figure implies for the wrapper as a whole: 28824 ns
+against a bare gradient of 25863 ns is **11% overhead**. On this target the
+transform is now nearly free under reverse mode and was a 16× tax before.
 
 `web/src/posteriordb_reparametrizations.jl` is outside this directory's
 ownership; the defect was reported rather than edited here, and the fix landed as
@@ -358,31 +368,59 @@ Three other things were checked, and none of them changes the ratios either:
 - **Evaluation position.** The microbenchmarks evaluate at `randn(d)`, which is
   not where a sampler spends its time. Re-timing at the positions the sampler
   *actually visited* — draws captured in the source frame from the
-  `fixed_noncentered` arm itself — leaves the ratio within a few points on the
-  four posteriordb targets (`radon_partially_pooled` 0.46× at `randn` vs 0.47×
-  typical; `eight_schools` 0.59× vs 0.59×; `radon_variable_intercept` 0.62× vs
-  0.55×; `seeds` 0.64× vs 0.56×) and changes no verdict. The funnel is the one
-  wide swing (0.70× vs 0.38×), and its `bare` column moves 85 → 44 ns in the same
-  pair, so that is the `randn` round being noisy on a 50 ns call rather than a
-  position effect. Recorded in `results/typical_positions.json`.
+  `fixed_noncentered` arm itself — **changes no verdict: Enzyme is faster at
+  both position sets on all five targets** (`randn` → typical:
+  `radon_partially_pooled` 0.55× → 0.48×; `radon_variable_intercept` 0.62× →
+  0.60×; `seeds` 0.60× → 0.61×; `eight_schools` 0.59× → 0.43×; `funnel` 0.41× →
+  0.65×). Recorded in `results/typical_positions.json`.
+
+  **No single target's shift is separable from repeat-to-repeat noise, and the
+  file now carries what proves it.** Each median is over `ROUNDS` timing rounds
+  and those rounds are persisted raw, so three independent statistics can be
+  computed by a reader rather than taken on trust: the per-round shift ranges
+  all straddle zero (`eight_schools` spans −93.8% to +3.9%); the `randn` and
+  typical ranges OVERLAP on every target, with the ratio spread running 9.3% to
+  126.1% of its own median; and median-to-median across two independent runs of
+  *identical code* moves as much as **71.1%** (`funnel` 0.379 → 0.649), against a
+  smallest-distance-from-1.0× of 35% for any median in the run. A 71% mover
+  cannot resolve a 12-point shift. An earlier revision of this bullet read the
+  funnel's swing in the *opposite direction* (0.70× at `randn` vs 0.38× typical,
+  where this run has 0.41× vs 0.65×) and explained it with a story about a noisy
+  `bare` column — a sign flip is what a noise column looks like when each cell is
+  quoted once and there is nothing checked in to contradict it.
 - **DI preparation.** The hot path calls `value_and_gradient` with **no prep
   object** (`src/Reparametrizations.jl:148`), so DifferentiationInterface
   re-prepares on every gradient evaluation. Now that the call itself is cheap,
-  `prepare_gradient` alone accounts for **89–95% of the whole unprepped Enzyme
-  call** on the three larger targets (26.1 of 28.6 µs on `radon_partially_pooled`,
-  43.3 of 45.6 µs on `radon_variable_intercept`, 4.4 of 4.9 µs on `seeds`) —
-  against 33–65% under ForwardDiff. That reads like an obvious speedup and **it
-  is not one**: reusing a prep object measured −2% on `radon_partially_pooled`,
-  +12% (worse) on `radon_variable_intercept` and +2% (worse) on `seeds`. The
-  costs do not decompose additively under Enzyme, so the 90% share is not 90%
-  that can be removed. Under ForwardDiff reuse *would* be worth 21% and 33% on
-  the two radon targets — but ForwardDiff is the slower backend to begin with, so
-  the prepped-ForwardDiff figure (65.0 µs) is still more than twice the
-  unprepped-Enzyme one (28.6 µs). Reuse also returned gradients identical to the
-  unprepped path (`|Δg| = 0.0`) in all ten configurations, which is worth knowing
-  but is **not** a licence to reuse in the sampler: the objective closes over
-  `g_y`, which changes every call, and this probe holds it fixed. Recorded in
-  `results/prep_cost.json`.
+  `prepare_gradient` alone accounts for **93–97% of the whole unprepped Enzyme
+  call** on the three larger targets (26.5 of 28.5 µs on `radon_partially_pooled`,
+  42.8 of 44.3 µs on `radon_variable_intercept`, 4.0 of 4.2 µs on `seeds`) —
+  against 35–64% under ForwardDiff on the same three. That reads like an obvious
+  speedup and **it is not one**: reusing a prep object is worse or flat on
+  **every** Enzyme target — +1% on `radon_partially_pooled`, +2% on
+  `radon_variable_intercept`, +5% on `seeds`, +7% on `funnel`, −2% on
+  `eight_schools`. The costs do not decompose additively under Enzyme, so a 95%
+  share is not 95% that can be removed. Under ForwardDiff reuse *is* worth
+  something — 3% and 10% on the two radon targets, 43% and 52% on the two small
+  ones — but ForwardDiff is the slower backend to begin with, so the
+  prepped-ForwardDiff figure (74.8 µs on `radon_partially_pooled`) is still 2.6×
+  the unprepped-Enzyme one (28.5 µs). Reuse also returned gradients identical to
+  the unprepped path (`|Δg| = 0.0`) in all ten configurations, which is worth
+  knowing but is **not** a licence to reuse in the sampler: the objective closes
+  over `g_y`, which changes every call, and this probe holds it fixed. Recorded
+  in `results/prep_cost.json`.
+
+  **These are medians over five rounds, which is a change: each cell used to be
+  one unreplicated timed loop, and the shares above were quoted from it to three
+  significant figures.** Two independent runs of the identical script disagreed
+  by more than a factor of thirty on one cell — `eight_schools`/ForwardDiff read
+  113% of the call, then 3629% — and half the ten cells moved by more than 2×.
+  With rounds, the outlier is visible for what it is: exactly one round per cell
+  spikes (up to 4105% of the call), the other four agree closely, and the medians
+  above are stable. Note that a share *above* 100% is not automatically an error
+  — `value_and_gradient` with no prep object may take a lighter path than
+  `prepare_gradient` builds, so prep genuinely can cost more than the call it is
+  nominally part of. The raw rounds are checked in, which is what lets a reader
+  tell that case from a timer artefact.
 
 ### `function_annotation` is required, and how much it costs is target-dependent
 
@@ -398,21 +436,21 @@ this section. Both centerings, `annotation_sweep.jl`:
 
 | target | `d` | `Duplicated` ÷ `Const` | absolute penalty |
 |---|---|---|---|
-| `funnel` | 10 | 12.7–16.1× | ~5 µs |
-| `eight_schools` | 10 | 4.5–8.9× | ~6–9 µs |
-| `seeds` | 26 | 3.3–3.5× | ~9–10 µs |
-| `radon_partially_pooled` | 88 | 2.1× | ~38–43 µs |
-| `radon_variable_intercept` | 89 | 1.6–2.0× | ~37–52 µs |
+| `funnel` | 10 | 11.7–27.4× | ~4–9 µs |
+| `eight_schools` | 10 | 5.3–10.1× | ~3–7 µs |
+| `seeds` | 26 | 4.1–5.0× | ~11–15 µs |
+| `radon_partially_pooled` | 88 | 1.7–2.1× | ~24–30 µs |
+| `radon_variable_intercept` | 89 | 1.7× | ~32 µs |
 
-The penalty is roughly a **fixed per-call cost that grows with `d`** — ~5 µs at
-`d = 10`, ~9 µs at `d = 26`, ~40 µs at `d ≈ 88` — so the *ratio* is largest
+The penalty is roughly a **fixed per-call cost that grows with `d`** — ~3–9 µs at
+`d = 10`, ~11–15 µs at `d = 26`, ~24–32 µs at `d ≈ 88` — so the *ratio* is largest
 exactly where the call is otherwise cheapest. Both gradients are equally correct
 (they agree to ≤ 6.8e-13).
 
 **The previous revision of this table said `Duplicated` was free on the three
 larger targets (0.96–1.06×), and it flagged the reason to distrust that: those
 were the three boxed specs, where a ~15× defect swallowed a 40 µs shadow copy.**
-That caveat was right. Unboxed, the same three targets show a 1.6–3.5× penalty.
+That caveat was right. Unboxed, the same three targets show a 1.7–5.0× penalty.
 It is a useful calibration on how much a confounded measurement can hide: not a
 few percent, but the entire effect.
 
@@ -843,7 +881,7 @@ which would each have silently corrupted the fixed-parametrization arms:
   move. `frame_check.jl` pins the new behaviour: a centered funnel sampled
   through a noncentered source returns coordinate 1 at mean −0.006, sd 2.934
   against the known `Normal(0, 3)` marginal, and applying `reparametrize!` on top
-  inflates the leg sds to 100–300. **Numbers in `results/before`, `results/after`,
+  inflates the leg sds to 66–301. **Numbers in `results/before`, `results/after`,
   `results/forwarddiff-b5c7dee` and `results/enzyme-b5c7dee` were all measured on
   bases predating `b109210`, where the compensation was correct.** Anything
   measured after it must not carry one.
@@ -943,23 +981,31 @@ which would each have silently corrupted the fixed-parametrization arms:
      the narrower predecessors were not re-derivable from anything checked in.
      That widening was honest against the files it was computed from, and it
      landed **four minutes before** the regeneration in `176a061` moved those
-     files underneath it: recomputed across all five checked-in sources, `funnel`
-     is 0.137–0.713× and `eight_schools` 0.331–0.641×, so `eight_schools`' upper
-     bound of 0.66 now exceeds every value in every file and its lower bound of
-     0.43 excludes real ones. **A band derived from checked-in JSON is only a
-     floor until someone regenerates the JSON** — which is the same coupling that
-     broke `docs/src/reparametrization.md` in the same window, and the reason
-     this table should be generated rather than hand-copied. From the single
-     harness the docstring names, over 14 rounds each (7 per centering), the
-     per-round `min`–`max` and the median of the per-round ratios are:
+     files underneath it, leaving a band that excluded values present in the
+     files and included values present in none of them. **A band derived from
+     checked-in JSON is only a floor until someone regenerates the JSON** — the
+     same coupling that broke `docs/src/reparametrization.md` in the same window,
+     and the reason this table is now generated rather than hand-copied.
+     `docs/benchmark/backend_bands.jl` is that generator; across the four live
+     harnesses it currently gives `funnel` 0.37–0.65× and `eight_schools`
+     0.43–0.61×, so the docstring's `funnel` band still contains every measured
+     value while its `eight_schools` upper bound of 0.66 exceeds all of them.
+
+     That is a band over per-harness medians. From the single harness the
+     docstring names, over 14 rounds each (7 per centering), the per-round
+     `min`–`max` and the median of the per-round ratios are:
 
      | target | `d` | per-round min–max | median |
      |---|---|---|---|
-     | `funnel`                   | 10 | 0.14–0.71× | **0.40×** |
-     | `eight_schools`            | 10 | 0.40–0.60× | **0.49×** |
-     | `seeds`                    | 26 | 0.16–1.54× | **0.58×** |
-     | `radon_partially_pooled`   | 88 | 0.36–0.63× | **0.50×** |
-     | `radon_variable_intercept` | 89 | 0.51–0.64× | **0.58×** |
+     | `funnel`                   | 10 | 0.29–0.97× | **0.42×** |
+     | `eight_schools`            | 10 | 0.04–0.69× | **0.55×** |
+     | `seeds`                    | 26 | 0.13–0.64× | **0.58×** |
+     | `radon_partially_pooled`   | 88 | 0.32–0.49× | **0.42×** |
+     | `radon_variable_intercept` | 89 | 0.44–0.58× | **0.50×** |
+
+     The per-round spans are wide — `eight_schools` covers 0.04× to 0.69× — and
+     that is the point of showing them next to the medians. A band quoted from
+     medians is a statement about the typical round, not a bound on any round.
 
      The two outlier-carrying rows are outliers and not a second finding:
      `seeds`' 1.54 is one round in which Enzyme's own timing spread hit ±184%,

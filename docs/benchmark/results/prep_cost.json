@@ -2,117 +2,360 @@
   "julia": "1.10.11",
   "n_calls": 400,
   "note": "Share of the wrapper's per-gradient cost spent in DI preparation. The package calls value_and_gradient with no prep object, so it re-prepares on every gradient evaluation.",
+  "rounds": 5,
   "rows": [
     {
       "backend": "fd",
       "c_source": 0.0,
       "dim": 10,
-      "prep_ns": 1637.16,
-      "prep_share": 1.1346375422978499,
-      "prepped_ns": 979.8025,
+      "prep_ns": 1370.4925,
+      "prep_share": 0.7575674241461083,
+      "prepped_ns": 1035.555,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          21340.4325,
+          1300.42,
+          1244.8925,
+          1370.4925,
+          1639.49
+        ],
+        "prepped": [
+          26802.0725,
+          79792.065,
+          913.6625,
+          1035.555,
+          961.425
+        ],
+        "unprepped": [
+          38029.395,
+          1804.2175,
+          1809.07,
+          1975.1275,
+          1643.495
+        ]
+      },
       "target": "eight_schools-eight_schools_centered",
-      "unprepped_ns": 1442.8925
+      "unprepped_ns": 1809.07
     },
     {
       "backend": "const",
       "c_source": 0.0,
       "dim": 10,
-      "prep_ns": 672.7775,
-      "prep_share": 0.7298341058067036,
-      "prepped_ns": 899.6425,
+      "prep_ns": 943.88,
+      "prep_share": 0.6639502677417369,
+      "prepped_ns": 1386.665,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          20604.645,
+          781.3525,
+          806.8125,
+          943.88,
+          953.54
+        ],
+        "prepped": [
+          30635.3625,
+          936.04,
+          1772.445,
+          1386.665,
+          1380.03
+        ],
+        "unprepped": [
+          25304.73,
+          1445.395,
+          1233.475,
+          1421.6125,
+          1326.2525
+        ]
+      },
       "target": "eight_schools-eight_schools_centered",
-      "unprepped_ns": 921.8225
+      "unprepped_ns": 1421.6125
     },
     {
       "backend": "fd",
       "c_source": 0.0,
       "dim": 88,
-      "prep_ns": 54430.685,
-      "prep_share": 0.6017422446372594,
-      "prepped_ns": 53193.8725,
+      "prep_ns": 29136.2175,
+      "prep_share": 0.3522858250478539,
+      "prepped_ns": 74765.63,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          59018.565,
+          29136.2175,
+          30102.4775,
+          28788.0875,
+          27423.03
+        ],
+        "prepped": [
+          110294.7975,
+          156609.6525,
+          74765.63,
+          55575.615,
+          51907.675
+        ],
+        "unprepped": [
+          83623.455,
+          57261.09,
+          82706.1875,
+          88458.28,
+          51923.5475
+        ]
+      },
       "target": "radon_mn-radon_partially_pooled_centered",
-      "unprepped_ns": 90455.15
+      "unprepped_ns": 82706.1875
     },
     {
       "backend": "const",
       "c_source": 0.0,
       "dim": 88,
-      "prep_ns": 26385.4825,
-      "prep_share": 0.9636091276967824,
-      "prepped_ns": 28072.335,
+      "prep_ns": 26544.6675,
+      "prep_share": 0.9318186804516946,
+      "prepped_ns": 28751.21,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          47147.28,
+          26827.5325,
+          26281.55,
+          26446.48,
+          26544.6675
+        ],
+        "prepped": [
+          56580.8275,
+          28315.2375,
+          28457.685,
+          28751.21,
+          30624.75
+        ],
+        "unprepped": [
+          52073.9325,
+          28003.0275,
+          28192.34,
+          28626.665,
+          28486.945
+        ]
+      },
       "target": "radon_mn-radon_partially_pooled_centered",
-      "unprepped_ns": 27381.935
+      "unprepped_ns": 28486.945
     },
     {
       "backend": "fd",
       "c_source": 0.0,
       "dim": 89,
-      "prep_ns": 47128.2975,
-      "prep_share": 0.48863449589188235,
-      "prepped_ns": 108930.335,
+      "prep_ns": 44283.4025,
+      "prep_share": 0.45319344943237605,
+      "prepped_ns": 95027.995,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          45624.6275,
+          44283.4025,
+          43361.63,
+          43574.825,
+          47803.6375
+        ],
+        "prepped": [
+          121700.69,
+          97979.6725,
+          67103.225,
+          91267.005,
+          95027.995
+        ],
+        "unprepped": [
+          77281.4,
+          97714.1275,
+          68104.1325,
+          111562.6975,
+          105602.0675
+        ]
+      },
       "target": "radon_mn-radon_variable_intercept_centered",
-      "unprepped_ns": 96448.9775
+      "unprepped_ns": 97714.1275
     },
     {
       "backend": "const",
       "c_source": 0.0,
       "dim": 89,
-      "prep_ns": 43569.31,
-      "prep_share": 0.8403245686915701,
-      "prepped_ns": 44604.6125,
+      "prep_ns": 42826.5425,
+      "prep_share": 0.96736669568474,
+      "prepped_ns": 45127.5425,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          44593.7575,
+          42346.3025,
+          42057.03,
+          45165.5675,
+          42826.5425
+        ],
+        "prepped": [
+          44818.6425,
+          43674.36,
+          45391.28,
+          45197.79,
+          45127.5425
+        ],
+        "unprepped": [
+          46871.3475,
+          43918.8,
+          45205.55,
+          44271.26,
+          43096.8625
+        ]
+      },
       "target": "radon_mn-radon_variable_intercept_centered",
-      "unprepped_ns": 51848.1925
+      "unprepped_ns": 44271.26
     },
     {
       "backend": "fd",
       "c_source": 0.0,
       "dim": 26,
-      "prep_ns": 28384.5175,
-      "prep_share": 4.649118274039758,
-      "prepped_ns": 5534.465,
+      "prep_ns": 3705.59,
+      "prep_share": 0.6394433156026075,
+      "prepped_ns": 5031.395,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          31521.035,
+          3705.59,
+          3766.1775,
+          3578.49,
+          3581.2425
+        ],
+        "prepped": [
+          33040.785,
+          5201.58,
+          5031.395,
+          4869.045,
+          4783.355
+        ],
+        "unprepped": [
+          102440.455,
+          6068.2025,
+          5795.025,
+          5665.57,
+          5636.68
+        ]
+      },
       "target": "seeds_data-seeds_centered_model",
-      "unprepped_ns": 6105.355
+      "unprepped_ns": 5795.025
     },
     {
       "backend": "const",
       "c_source": 0.0,
       "dim": 26,
-      "prep_ns": 3286.8125,
-      "prep_share": 0.9371026281426234,
-      "prepped_ns": 3655.1225,
+      "prep_ns": 4024.1025,
+      "prep_share": 0.9656488297745338,
+      "prepped_ns": 4385.8775,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          17037.1675,
+          4024.1025,
+          4095.955,
+          2691.09,
+          2774.18
+        ],
+        "prepped": [
+          25475.49,
+          4725.045,
+          3978.865,
+          3243.8025,
+          4385.8775
+        ],
+        "unprepped": [
+          24190.9925,
+          4734.885,
+          3307.0625,
+          3226.18,
+          4167.2525
+        ]
+      },
       "target": "seeds_data-seeds_centered_model",
-      "unprepped_ns": 3507.42
+      "unprepped_ns": 4167.2525
     },
     {
       "backend": "fd",
       "c_source": 0.0,
       "dim": 10,
-      "prep_ns": 808.315,
-      "prep_share": 0.9158416823165845,
-      "prepped_ns": 512.8325,
+      "prep_ns": 925.8025,
+      "prep_share": 0.8889232948067068,
+      "prepped_ns": 497.1375,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          18377.915,
+          925.8025,
+          882.9675,
+          787.3375,
+          1125.98
+        ],
+        "prepped": [
+          21146.565,
+          439.6325,
+          431.77,
+          497.1375,
+          572.615
+        ],
+        "unprepped": [
+          22912.23,
+          1041.4875,
+          897.24,
+          941.35,
+          1202.46
+        ]
+      },
       "target": "funnel",
-      "unprepped_ns": 882.5925
+      "unprepped_ns": 1041.4875
     },
     {
       "backend": "const",
       "c_source": 0.0,
       "dim": 10,
-      "prep_ns": 208.9125,
-      "prep_share": 0.6109490491961486,
-      "prepped_ns": 406.9875,
+      "prep_ns": 258.9325,
+      "prep_share": 0.6819845920853361,
+      "prepped_ns": 406.7625,
       "reuse_grad_diff": 0.0,
+      "rounds": 5,
+      "samples": {
+        "prep": [
+          15584.965,
+          279.435,
+          258.9325,
+          103.4925,
+          106.1975
+        ],
+        "prepped": [
+          20332.6175,
+          471.2975,
+          406.7625,
+          332.6575,
+          359.67
+        ],
+        "unprepped": [
+          24346.7525,
+          558.845,
+          379.675,
+          372.3125,
+          341.895
+        ]
+      },
       "target": "funnel",
-      "unprepped_ns": 341.9475
+      "unprepped_ns": 379.675
     }
   ],
-  "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16"
+  "src_dirty": false,
+  "warmuphmc_sha": "089c122f12cc22abc20c4c671d1d4f7ac9715eec",
+  "worktree_dirty": true
 }

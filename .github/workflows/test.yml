@@ -125,3 +125,60 @@ jobs:
         # the last Enzyme item turns this job red rather than letting it pass
         # while running no tests at all.
         run: julia --project=web/src/test -e 'include("web/src/test/runtests.jl")' -- --tag=enzyme
+
+  # Run a deterministic smoke of the same driver that produces the checked-in
+  # quiet-host study. This is not a performance threshold: the gate checks that
+  # every arm executes, the correlated control actually selects a non-diagonal
+  # metric, and the forced diagonal control reaches the fallback. The full
+  # PosteriorDB matrix stays a deliberate quiet-host run because shared CI
+  # timing is noisy; this job still uploads all of its per-seed rows.
+  linear-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Instantiate the benchmark environment
+        # These are the unregistered local dependencies developed by the
+        # benchmark environment's canonical resolve. Pin their active branches
+        # explicitly: several default branches are stale, and HTMXObjects is
+        # private (the PAT rewrite above supplies read access).
+        run: |
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
+          git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
+          git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
+          julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="Treebars.jl"),
+            PackageSpec(path="DynamicObjects.jl"),
+            PackageSpec(path="HTMX.jl"),
+            PackageSpec(path="HTMXObjects.jl"),
+          ]); Pkg.instantiate()'
+      - name: Run the linear evidence smoke
+        env:
+          WHMC_LINEAR_BENCH_SEEDS: '2'
+          WHMC_LINEAR_BENCH_DRAWS: '250'
+          WHMC_LINEAR_BENCH_EVALS: '250'
+          WHMC_LINEAR_BENCH_TARGETS: diag_gaussian,diag_fallback_probe,correlated_gaussian
+        run: julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl
+      - name: Check qualitative controls
+        run: |
+          jq -e '
+            .worktree_dirty == false and
+            .nonlinear_adapt == false and
+            .n_seeds == 2 and
+            (.runs | length) == 30 and
+            all(.runs[]; .ok == true and .divergences == 0) and
+            any(.runs[]; .target == "correlated_gaussian" and .adaptive_reflections > 0) and
+            any(.runs[]; .target == "diag_fallback_probe" and .arm != "halo_unit" and .linear_metric_fallbacks > 0)
+          ' docs/benchmark/results/linear_restart.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linear-restart-evidence-smoke
+          path: docs/benchmark/results/linear_restart.json

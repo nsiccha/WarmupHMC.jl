@@ -47,17 +47,23 @@ the transform, per gradient evaluation. The transform is therefore on the
 gradient hot path, and the accessor closures in each
 [`Reparametrization`](@ref) run under AD.
 
-`ad_backend` is a DifferentiationInterface.jl backend — `AutoMooncake()`,
-`AutoForwardDiff()`, and so on; the objective is scalar in the full parameter
-vector, so a reverse-mode backend scales better with dimension. It is required
-in practice: the two-argument constructor stores `nothing`, which is not a
-backend, and the gradient call then fails. If DifferentiationInterface is not
-loaded at all, the error says so by name.
+`ad_backend` is a DifferentiationInterface.jl backend. `AutoForwardDiff()` is
+what this project actually uses and the only one reachable from the shipped
+environment; the objective is scalar in the full parameter vector, so for a
+high-dimensional problem a reverse-mode backend such as `AutoMooncake()` will
+scale better, at the cost of adding that dependency yourself.
+
+A backend is required in practice, and omitting it fails *late*: the
+two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
+is not a backend, so `logdensity` keeps working on that object and the first
+`logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
+Construction itself never complains. If DifferentiationInterface is not loaded
+at all, the error says so by name instead.
 
 # Example
 
 ```julia
-using WarmupHMC, DifferentiationInterface, Mooncake
+using WarmupHMC, DifferentiationInterface, ForwardDiff
 
 # Coordinates 2:11 are the group effects; their location is fixed at 0 and their
 # log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
@@ -66,7 +72,7 @@ ir = IndexedReparametrization([
                            0., x -> x[1] / 2)
     for i in 2:11
 ])
-rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
+rp = ReparametrizedProblem(ir, my_problem, AutoForwardDiff())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -136,7 +142,9 @@ the textbook non-centering — subtract the location, divide by the scale.
 
 Use `Float64` centerings (`PartiallyCentered(1.0)`, not `PartiallyCentered(1)`):
 warm-up writes the fitted value back into the same `pairs` vector it read, and an
-`Int`-parameterized element cannot hold a `Float64` centering.
+`Int`-parameterized element cannot hold a `Float64` centering. This fails *late* —
+not at construction, but with `MethodError: Cannot convert` at the end of the
+first restarting warm-up window, the first time a centering is written back.
 
 # How the value gets chosen
 

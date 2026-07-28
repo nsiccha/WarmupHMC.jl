@@ -205,22 +205,38 @@ that tree also differed is not recoverable.
 An earlier version of this docstring said the other artifacts from
 then-unfixed harnesses read `false` "only because each was generated onto a
 path that was still untracked at the time". That is wrong as an account of the
-repo, and the cleanest disproof is a WITHIN-COMMIT CONTROL rather than a
-census: `typical_positions.json` and `prep_cost.json` record the same
-`089c122`. At that revision both harnesses were bug-shaped, both artifacts were
-tracked, and both bound `OUT_DIR` through `env_dir("WHMC_BENCH_OUT", ...)` with
-the identical default — everything held fixed except where the bytes went — and
-they disagree, `false` against `true`. The same holds across
-`capture_boxing.json`, `annotation_sweep.json`, `frame_check.json` and
-`backend_replication.json`, each bug-shaped AND tracked at its own recorded
-SHA; the pair is worth citing first because it isolates the destination without
-varying the commit.
+repo, and every member disproves it on its own. The mechanism is deterministic
+once the output path is tracked — measured in a throwaway clone:
+`worktree_dirty` is `false` immediately before the `open` and `true` from
+inside it, `src_dirty` `false` throughout. So for a harness that was
+bug-shaped, with its artifact already tracked, a recorded `false` is a proof
+the run did not write to that tracked path. `capture_boxing.json`,
+`annotation_sweep.json`, `typical_positions.json`, `frame_check.json` and
+`backend_replication.json` each satisfy both conditions at their own recorded
+SHA — checked with `git show <sha>:<harness>`, not read off the current tree,
+which would beg the question. `env_dir("WHMC_BENCH_OUT", ...)` is what permits
+writing elsewhere; all six bind `OUT_DIR` through it, at those SHAs, with the
+identical default.
 
-The mechanism is deterministic once the output path is tracked — measured in a
-throwaway clone: `worktree_dirty` is `false` immediately before the `open` and
-`true` from inside it, `src_dirty` `false` throughout. So the `false` readings
-are proof those runs did not write to a tracked path in the tree they measured;
-`env_dir("WHMC_BENCH_OUT", ...)` is what permits that.
+# The same-SHA pair is a POSITIVE CONTROL, not an isolation of the variable
+
+`typical_positions.json` and `prep_cost.json` both record `089c122`, and they
+disagree — `false` against `true`. It is tempting to call that a within-commit
+control that holds everything fixed but the destination. It is not, and the
+sentence about `prep_cost` above already says why: `true` is what write-in-place
+produces, but it is equally what a redirected write plus any other dirty
+non-`src` file produces. The `true` half therefore pins nothing about where
+`prep_cost` wrote, and a pair whose halves do not both pin the variable does not
+isolate it.
+
+What the pair does contribute is worth more than a restatement of the census.
+It is a POSITIVE CONTROL: a run recorded at `089c122` DID report `true`, so the
+flag was capable of firing at that revision, and the siblings' `false` cannot be
+dismissed as the constant output of a detector that was never able to say
+anything else. Note the scope — a `git` that could not run records `missing`
+(JSON `null`) by design, so the mode this closes is the narrower one where git
+ran, succeeded, and reported clean because it was looking at a tree the harness
+was not writing into.
 
 Do not read the retraction as the refuted claim in gentler words. Those files
 EXISTED and were TRACKED at the SHA they name. What arrived afterwards was

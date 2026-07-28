@@ -50,9 +50,30 @@ that guard exists to prevent. Refusing blank closes it independent of step
 order.
 
 Mirrors `env_dir` in `docs/benchmark/common.jl`. Duplicated rather than shared
-on purpose: the docs environment may only depend on what `docs/Project.toml`
-has, and including `common.jl` would drag BridgeStan and PosteriorDB into the
-docs build. Keep the two in lockstep — one variable, one meaning.
+on purpose: `common.jl` pulls PosteriorDB, BridgeStan and
+StanLogDensityProblems, none of which `docs/Project.toml` has, so including it
+would drag the whole measurement stack into `makedocs`.
+
+This is not the only such copy. `env_dir` serves every generator that can
+afford `common.jl`, and the scripts that cannot afford it inline their own
+guard, each documenting its own reason. Change the rule and you must change all
+of them, so find them with:
+
+    grep -rl 'is set but blank' docs/
+
+**Do not anchor that search on the variable name.** One rule guards several —
+`WHMC_BENCH_OUT` here and in most generators, `WHMC_NW_OUT` in
+`nonlinear_weighting_run.jl`, `WHMC_LINEAR_BENCH_OUT` in
+`run_linear_restart_benchmark.jl` — so a variable grep silently returns a
+*subset*, which is the failure direction that matters: a site you never see is
+a site you never fix.
+
+The error string cannot fail that way. It over-reports instead — a file that
+merely *cites* this anchor matches it too — and that is the direction to
+prefer, because an extra file to glance at costs seconds while a missed one
+ships the bug. For the same reason this paragraph gives no count: a number in
+prose has nothing to check it, and every count this note has carried was wrong
+within the hour of being written.
 """
 function results_dir()
     haskey(ENV, "WHMC_BENCH_OUT") ||

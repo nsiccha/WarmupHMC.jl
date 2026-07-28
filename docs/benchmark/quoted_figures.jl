@@ -123,6 +123,7 @@ import JSON
 import Statistics: median
 
 const RESULTS_MD = joinpath(REPO, "docs", "benchmark", "RESULTS.md")
+const RESULTS_DIR = joinpath(REPO, RESULTS)
 
 # The one live driver pair. Kept in step with `backend_bands.jl`'s DRIVER_SHA
 # deliberately: two scripts naming two different "live" drivers would let a
@@ -163,6 +164,39 @@ checks = NamedTuple[]
 # -- the first version of this file did exactly that.
 literal(label, ss...) = push!(checks, (kind = :literal, label = label, want = collect(ss)))
 pattern(label, re, s) = push!(checks, (kind = :pattern, label = label, re = re, want = s))
+
+# A THIRD KIND, whose falsifier is not a number moving but A FILE APPEARING.
+#
+# `absence(label, claim, token)` guards a sentence that says the evidence does
+# NOT contain something -- "was not measured", "no numbers yet". Every check
+# above recomputes a figure from an artifact and so is blind to this class by
+# construction: when such a sentence goes false, no figure anywhere changes.
+# What changes is that a results file starts existing.
+#
+# This is the exact dual of the blindness recorded in `artifact_currency.jl`'s
+# neighbourhood -- an enumerator cannot detect a file's ABSENCE, because "what
+# should exist" is not information it has. But it detects PRESENCE perfectly,
+# and a claim of absence is falsified by a presence. So the direction that is
+# hopeless for one is the cheap one here: scan `results/` for the token and go
+# red if the prose still denies it.
+#
+# Measured on this repo before writing it: a phrase-level lint for the tells
+# ("not in yet", "remains untested") returns ~80% false positives on the real
+# corpus -- it matches "not inlined", "not inferred from timings", "does not
+# invalidate" -- so it would redden correct prose, which is how a checker gets
+# deleted. Hence one explicit binding per claim, and only two claims repo-wide.
+# That is a census and it will need adding to; it is worth it at this size, and
+# an unmatched claim is reported rather than skipped so a reword cannot silently
+# unbind it.
+function absence(label, claim, token)
+    hits = String[]
+    for (root, _, files) in walkdir(RESULTS_DIR), f in files
+        endswith(f, ".json") || continue
+        occursin(token, read(joinpath(root, f), String)) &&
+            push!(hits, relpath(joinpath(root, f), REPO))
+    end
+    push!(checks, (kind = :absence, label = label, want = claim, evidence = hits))
+end
 
 "Both renderings of a ratio, so a check accepts whichever the prose chose."
 both(r) = (string("+", round(Int, 100 * (r - 1)), "%"), string(round(r, digits = 1), "×"))
@@ -283,6 +317,18 @@ let pc = live_json("docs/benchmark/results/prep_cost.json")
             us(row("radon_mn-radon_partially_pooled_centered", "fd")["prepped_ns"]))
 end
 
+# ------------------------------------------------------------- absence claims
+#
+# The limitations section states what the evidence does NOT cover. Those
+# sentences are the ones a NEW measurement falsifies, and nothing else in this
+# file can see that happen. Live instance of the class, on a neighbouring page:
+# `reparametrization.md` said "Those numbers are not in yet", true when written
+# at `df35a1c` (07:57) and false from `b95f872` (14:28), when the fixed-c
+# comparison artifact landed. Six hours, a green build throughout, and it was
+# found by a reader following a link -- not by any check.
+absence("limitation: cooperative_warmup_mcmc unmeasured",
+        "`cooperative_warmup_mcmc` was not measured", "cooperative_warmup_mcmc")
+
 # ------------------------------------------------------------------------- run
 function main_figures()
     isfile(RESULTS_MD) || (println("FAILED: $RESULTS_MD is missing."); return 1)
@@ -305,6 +351,24 @@ function main_figures()
             println(rpad(c.label, 52), ok ? "ok    " : "WRONG ", "expected ", shown,
                     ok ? " (found `$(c.want[hit])`)" : "")
             ok || push!(bad, "$(c.label): RESULTS.md contains neither of $shown")
+        elseif c.kind === :absence
+            # Two ways to be wrong, and they need opposite fixes. The claim can
+            # have gone FALSE (a results file now carries the thing the prose
+            # denies), or it can have been reworded out of existence, which
+            # leaves it unguarded exactly as a reworded :pattern does.
+            stated = occursin(c.want, text) || occursin(c.want, flat)
+            if !stated
+                println(rpad(c.label, 52), "WRONG ", "claim not found: `", c.want, "`")
+                push!(bad, "$(c.label): RESULTS.md no longer contains `$(c.want)` — " *
+                           "the absence claim was reworded or removed, so it is now unchecked")
+            elseif !isempty(c.evidence)
+                println(rpad(c.label, 52), "WRONG ", "claim is now FALSE — evidence in ",
+                        join(c.evidence, ", "))
+                push!(bad, "$(c.label): RESULTS.md still says `$(c.want)`, but " *
+                           join(c.evidence, ", ") * " now contains it")
+            else
+                println(rpad(c.label, 52), "ok    ", "still true: `", c.want, "`")
+            end
         else
             ms = collect(eachmatch(c.re, text))
             if isempty(ms)

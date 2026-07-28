@@ -126,18 +126,36 @@ if SAME_SOURCE
     # The claim under test, stated as a check rather than left to the reader:
     # a backend swap must not change how many gradients the sampler asks for.
     println()
-    worst = 0.0
+    # A comprehension, not an accumulator loop: a top-level `for` is soft scope,
+    # so `worst = max(worst, …)` inside one is treated as a NEW LOCAL and the
+    # read of it throws UndefVarError. This block only runs when both SHAs match,
+    # so it stayed latent until the first same-source comparison.
+    drifts = Float64[]
+    offenders = String[]
     for t in targets, a in ARM_ORDER
         ra, rb = sel(A, t, a), sel(B, t, a)
         (isempty(ra) || isempty(rb)) && continue
         x, y = med(ra, "grad_evals"), med(rb, "grad_evals")
         (isfinite(x) && isfinite(y) && x != 0) || continue
-        worst = max(worst, abs(y - x) / x)
+        d = abs(y - x) / x
+        push!(drifts, d)
+        d >= 0.02 && push!(offenders, @sprintf("`%s`/%s %+.0f%%", t, a, 100 * (y - x) / x))
     end
+    worst = isempty(drifts) ? 0.0 : maximum(drifts)
     @printf("Largest gradient-count drift across all arms: %.1f%%. ", 100 * worst)
-    println(worst < 0.02 ?
-            "Under 2% — the backend changed the cost per gradient, not the sampling." :
-            "**Over 2% — the runs are NOT sampling-identical, so the wall-clock\ndelta above is not a clean backend comparison. Investigate before quoting it.**")
+    if worst < 0.02
+        println("Under 2% — the backend changed the cost per gradient, not the sampling.")
+    else
+        # Naming the offenders, not just the max: drift is usually confined to a
+        # few arms, and a global max says nothing about whether the arms a
+        # verdict actually quotes are clean. Without the list the only safe
+        # reading is "distrust the whole table", which is wrong most of the time.
+        println("**Over 2% — the runs are NOT sampling-identical on every arm.**")
+        println()
+        println("Arms at or above 2%: ", join(offenders, ", "), ".")
+        println("Every other arm is under 2%. A wall-clock claim is clean exactly")
+        println("for the arms NOT in that list; check yours against it before quoting.")
+    end
 end
 
 # ---------------------------------------------------------------------------

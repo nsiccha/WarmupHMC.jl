@@ -147,8 +147,14 @@ whmc_sha() = try
 catch
     "unknown"
 end
+# `--untracked-files=no` is load-bearing, not tidiness. This benchmark WRITES
+# its results into the repo, so a bare `--porcelain` counts the previous run's
+# untracked output directory and reports every run after the first as DIRTY —
+# by construction, with the tracked source byte-identical. That fires exactly
+# when two runs are being compared, which is the one time the flag has to mean
+# something. Only tracked modifications can change what code ran.
 whmc_dirty() = try
-    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain`))
+    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no`))
 catch
     missing
 end

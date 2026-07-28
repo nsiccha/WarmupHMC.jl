@@ -1,0 +1,114 @@
+{
+  "blas_threads": 1,
+  "julia": "1.10.11",
+  "note": "Per-gradient backend cost at sampler-visited (source-frame) positions vs randn(dim). Reconciles the microbenchmark with the end-to-end runs.",
+  "rounds": 5,
+  "rows": [
+    {
+      "c_source": 0.0,
+      "const_over_fd_randn": 0.5450392662943101,
+      "const_over_fd_typical": 0.4639161614969712,
+      "dim": 10,
+      "n_positions": 1000,
+      "randn": {
+        "bare": 457.822,
+        "const": 929.583,
+        "dup": 4272.797,
+        "fd": 1705.534
+      },
+      "rounds": 5,
+      "target": "eight_schools-eight_schools_centered",
+      "typical": {
+        "bare": 448.369,
+        "const": 841.35,
+        "dup": 4028.239,
+        "fd": 1813.582
+      }
+    },
+    {
+      "c_source": 0.0,
+      "const_over_fd_randn": 2.0108864032331253,
+      "const_over_fd_typical": 2.0502559805830813,
+      "dim": 88,
+      "n_positions": 1000,
+      "randn": {
+        "bare": 26905.978,
+        "const": 372465.688,
+        "dup": 420155.188,
+        "fd": 185224.629
+      },
+      "rounds": 5,
+      "target": "radon_mn-radon_partially_pooled_centered",
+      "typical": {
+        "bare": 26648.132,
+        "const": 388408.409,
+        "dup": 439310.081,
+        "fd": 189443.861
+      }
+    },
+    {
+      "c_source": 0.0,
+      "const_over_fd_randn": 1.6966505735778203,
+      "const_over_fd_typical": 1.6995680865760556,
+      "dim": 89,
+      "n_positions": 1000,
+      "randn": {
+        "bare": 44145.328,
+        "const": 393501.346,
+        "dup": 456425.928,
+        "fd": 231928.337
+      },
+      "rounds": 5,
+      "target": "radon_mn-radon_variable_intercept_centered",
+      "typical": {
+        "bare": 45429.141,
+        "const": 392348.386,
+        "dup": 435157.789,
+        "fd": 230851.82
+      }
+    },
+    {
+      "c_source": 0.0,
+      "const_over_fd_randn": 3.66616930921572,
+      "const_over_fd_typical": 4.14248835568121,
+      "dim": 26,
+      "n_positions": 1000,
+      "randn": {
+        "bare": 2832.428,
+        "const": 90723.462,
+        "dup": 105616.854,
+        "fd": 24746.119
+      },
+      "rounds": 5,
+      "target": "seeds_data-seeds_centered_model",
+      "typical": {
+        "bare": 2915.473,
+        "const": 90532.629,
+        "dup": 102029.194,
+        "fd": 21854.649
+      }
+    },
+    {
+      "c_source": 0.0,
+      "const_over_fd_randn": 0.4074110220431992,
+      "const_over_fd_typical": 0.38681821664064464,
+      "dim": 10,
+      "n_positions": 1000,
+      "randn": {
+        "bare": 49.918,
+        "const": 367.356,
+        "dup": 4014.741,
+        "fd": 901.684
+      },
+      "rounds": 5,
+      "target": "funnel",
+      "typical": {
+        "bare": 50.9,
+        "const": 358.495,
+        "dup": 4320.122,
+        "fd": 926.779
+      }
+    }
+  ],
+  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7"
+}

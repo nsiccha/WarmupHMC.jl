@@ -1,0 +1,86 @@
+{
+  "ad_backend": "forwarddiff",
+  "blas_threads": 1,
+  "julia": "1.10.11",
+  "n_draws_floor": 1000,
+  "n_seeds": 8,
+  "overheads": [
+    {
+      "bare_ns": 452.5695,
+      "dim": 10,
+      "live_ns": 1653.9275,
+      "live_ratio": 3.654527094733516,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 1625.6895,
+      "noop_ratio": 3.5921322581393573,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "bare_ns": 28084.473,
+      "dim": 88,
+      "live_ns": 401676.482,
+      "live_ratio": 14.302439714642322,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 447685.048,
+      "noop_ratio": 15.940660449637065,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "bare_ns": 43946.5245,
+      "dim": 89,
+      "live_ns": 214698.028,
+      "live_ratio": 4.885438164740422,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 250158.4885,
+      "noop_ratio": 5.692338389580728,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "bare_ns": 2714.7675,
+      "dim": 26,
+      "live_ns": 23443.752,
+      "live_ratio": 8.635638963557653,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 21496.8695,
+      "noop_ratio": 7.918493756831847,
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "bare_ns": 46.2185,
+      "dim": 10,
+      "live_ns": 1015.937,
+      "live_ratio": 21.981176368770083,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 1007.3459999999999,
+      "noop_ratio": 21.795298419464064,
+      "target": "funnel"
+    }
+  ],
+  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7",
+  "worktree_dirty": false
+}

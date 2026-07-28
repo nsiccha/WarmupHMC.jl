@@ -84,8 +84,28 @@ function compare_positions(label, problem, spec, dim)
                 push!(samples[nm], ns_per_grad(probs[nm], xs))
             end
         end
+        # The medians are what the tables quote; `samples` is what makes them
+        # falsifiable. Without it nothing checked in can separate a real
+        # per-target shift from repeat-to-repeat variation — the page reporting
+        # shifts of +3.0% and -12.8% could say which of those was a result only
+        # by re-running this script, which is the definition of a number nobody
+        # can check. Five rounds is a weak dispersion estimate; it is still the
+        # difference between weak evidence and none.
+        #
+        # RAW, not a summary. A min/max/IQR stored beside the median would be a
+        # derived value sitting next to its own inputs — it can disagree with
+        # them after any edit, and it forecloses whatever question the next
+        # reader has. Same rule the weighting study states as "rows only, every
+        # summary derived at read time". ROUNDS is 5, so this is free.
+        #
+        # ADDITIVE: every existing key keeps its name and meaning, so a reader
+        # indexing `["typical"]["const"]` is unaffected. That is deliberate —
+        # a key-set change is the half of a regeneration that breaks somebody
+        # else's page while looking like a re-measurement in the diff.
         out[pname] = Dict("bare" => median(bares),
-                          [nm => median(samples[nm]) for nm in BACKENDS]...)
+                          [nm => median(samples[nm]) for nm in BACKENDS]...,
+                          "samples" => merge(Dict("bare" => bares),
+                                             Dict(nm => samples[nm] for nm in BACKENDS)))
         @printf("%-14s d=%-3d %-8s | bare %9.0f | fd %9.0f  const %9.0f  dup %9.0f | const/fd %.2fx\n",
                 label, dim, pname, median(bares),
                 median(samples["fd"]), median(samples["const"]), median(samples["dup"]),

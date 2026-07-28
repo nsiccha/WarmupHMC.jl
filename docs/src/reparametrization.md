@@ -355,13 +355,15 @@ thing to quote from this page. Where a gradient is taken is part of what a
 gradient benchmark measures.
 
 !!! warning "The per-target `shift` column is not a result"
-    Read the shifts as *unresolved*, not as small findings. Each cell in the
-    two ratio columns is a **median over `rounds` repeats, and only that median
-    is stored** — the spread across those repeats, which is the one number that
-    would say whether a shift of a few percent is real, was computed during the
-    run and thrown away. So this page cannot tell you whether a shift is
-    separable from run-to-run variation, and neither can you from what is
-    checked in.
+    Read the shifts as *unresolved*, not as small findings — and the harness now
+    carries the evidence for that rather than leaving it as a caution. Each cell
+    in the two ratio columns is a median over `rounds` repeats, and **those
+    repeats are stored raw** beside it, under `samples` in
+    `typical_positions.json`. Three statistics computed from them agree that no
+    single target's shift is separable from repeat-to-repeat variation: the
+    per-round shift ranges all straddle zero, the two columns' ranges overlap on
+    every target, and median-to-median across two independent runs of identical
+    code moves by as much as 71%.
 
     That is not a hypothetical worry about clocks in general. A companion
     end-to-end measurement timed two **code-identical** revisions with
@@ -394,8 +396,9 @@ Markdown.parse(
      "statement about which backend is ahead can rest on these numbers while " *
      "the individual shifts cannot." :
      "**Those are now comparable, so the sign statement above no longer has " *
-     "margin over the shifts and should not be relied on until the harness " *
-     "records its per-round spread.**") * "*")
+     "margin over the individual shifts. The per-round spread is checked in " *
+     "under `samples`, and it says the shifts are not separable — so the " *
+     "shifts are what to discount here, not the sign.**") * "*")
 ```
 
 A gradient *count* elsewhere in this manual carries weight these timings do not:

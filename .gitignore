@@ -25,3 +25,10 @@ docs/src/public/live-*/
 
 # Local byte-identity golden baseline (regenerated via `julia test/golden_awm.jl capture`)
 *.jls
+
+# Third-party datasets the BRM catalogue benchmark downloads on demand. NOT
+# vendored: the data belongs to its upstream (Rdatasets, pymc-examples), and
+# checking it in would make this repository a redistributor of it. The runner
+# records each file's source URL and sha256 in the artifact instead, so a rerun
+# that silently picked up different data is still detectable.
+docs/benchmark/brm/data/

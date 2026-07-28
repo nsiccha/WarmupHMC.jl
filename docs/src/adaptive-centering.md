@@ -226,7 +226,7 @@ load_harness("adaptive_centering_fixed_c.jl")
 import Markdown
 d = load_results("adaptive_centering_fixed_c/rows.json")
 n = length(d["rows"])
-Markdown.parse("*" * provenance(d; harness = "adaptive_centering_fixed_c.jl") *
+Markdown.parse("*" * provenance(d; harness = "docs/benchmark/adaptive_centering_fixed_c.jl") *
                " $(n) rows; summaries derived by " *
                "`docs/benchmark/adaptive_centering_fixed_c.jl` at build time.*")
 ```

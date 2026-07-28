@@ -329,6 +329,31 @@ opposite_c(spec) = target_cs(spec)[1] == 1.0 ? 0.0 : 1.0
 # Metrics
 # ---------------------------------------------------------------------------
 
+# WHY `ess_con_min` EQUALS `ess_min` IN EVERY RESULT FILE — NOT A BUG
+#
+# Callers record ESS twice, once on the sampler's unconstrained draws and once
+# on `constrained(model, draws)`. Across the whole corpus the two MINIMA are
+# byte-identical in every row (measured 2026-07-28: 152 rows per file, zero
+# differences, plus 48 in `sampler_comparison.json`), which reads exactly like
+# one of them was computed from the wrong matrix.
+#
+# It isn't. `MCMCDiagnosticTools.ess` defaults to BULK ESS, which rank-normalizes
+# the draws first, so it is invariant under any strictly monotone
+# reparametrization of a coordinate. Stan's constraining maps are monotone
+# coordinate-wise (`log tau -> tau`, and so on), so every declared parameter has
+# the same bulk ESS in both frames — verified directly on an AR(1) series:
+# `ess(x)`, `ess(exp(x))` and `ess(x^3)` agree to 14 digits, `ess(-x)` to 12, and
+# `ess(x^2)` — not monotone — does not agree at all. Under `kind = :basic` they
+# separate (119.5 vs 296.6), so this is a property of the default, not of ESS.
+#
+# The MEDIANS do differ (56 of 152 rows in `results/before/runs.json`), because
+# `include_tp = true` adds transformed parameters, which are functions of several
+# coordinates at once and so have no unconstrained counterpart to be invariant
+# to. That is the whole difference between the two columns.
+#
+# Keep recording both. The pair is a cheap standing check that the constraining
+# path still runs, and the day it stops being an identity is the day something
+# changed — a non-monotone declared transform, or a different `kind`.
 """ESS per coordinate, draws given as `dimension × ndraws`."""
 function ess_per_coordinate(draws::AbstractMatrix)
     d, n = size(draws)

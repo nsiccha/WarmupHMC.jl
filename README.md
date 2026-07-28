@@ -43,6 +43,14 @@ The result is a NamedTuple, with its `posterior_position` field containing the p
 
 Results should come in faster than with "standard" methods, and should often be better.
 
+That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`
+runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and
+[WarmupHMC vs other samplers](https://nsiccha.github.io/WarmupHMC.jl/dev/sampler-comparison)
+renders the result — verdict included — from the checked-in JSON at build time.
+Read that page for what "faster" does and does not mean here: the lead is in
+**gradient evaluations**, which is the portable number, and wall-clock is a
+closer thing.
+
 ## Stability
 
 Semantic versioning covers the exported names above, the keywords

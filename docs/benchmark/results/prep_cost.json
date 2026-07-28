@@ -1,0 +1,118 @@
+{
+  "julia": "1.10.11",
+  "n_calls": 400,
+  "note": "Share of the wrapper's per-gradient cost spent in DI preparation. The package calls value_and_gradient with no prep object, so it re-prepares on every gradient evaluation.",
+  "rows": [
+    {
+      "backend": "fd",
+      "c_source": 0.0,
+      "dim": 10,
+      "prep_ns": 1841.4375,
+      "prep_share": 1.2703752442614722,
+      "prepped_ns": 1013.8225,
+      "reuse_grad_diff": 0.0,
+      "target": "eight_schools-eight_schools_centered",
+      "unprepped_ns": 1449.5225
+    },
+    {
+      "backend": "const",
+      "c_source": 0.0,
+      "dim": 10,
+      "prep_ns": 747.78,
+      "prep_share": 0.8732126279405152,
+      "prepped_ns": 943.35,
+      "reuse_grad_diff": 0.0,
+      "target": "eight_schools-eight_schools_centered",
+      "unprepped_ns": 856.355
+    },
+    {
+      "backend": "fd",
+      "c_source": 0.0,
+      "dim": 88,
+      "prep_ns": 37484.8325,
+      "prep_share": 0.11385788128018928,
+      "prepped_ns": 350137.7275,
+      "reuse_grad_diff": 0.0,
+      "target": "radon_mn-radon_partially_pooled_centered",
+      "unprepped_ns": 329224.75
+    },
+    {
+      "backend": "const",
+      "c_source": 0.0,
+      "dim": 88,
+      "prep_ns": 42877.8075,
+      "prep_share": 0.09872947912620726,
+      "prepped_ns": 487516.3025,
+      "reuse_grad_diff": 0.0,
+      "target": "radon_mn-radon_partially_pooled_centered",
+      "unprepped_ns": 434295.895
+    },
+    {
+      "backend": "fd",
+      "c_source": 0.0,
+      "dim": 89,
+      "prep_ns": 55245.6225,
+      "prep_share": 0.15581043807192557,
+      "prepped_ns": 360593.28,
+      "reuse_grad_diff": 0.0,
+      "target": "radon_mn-radon_variable_intercept_centered",
+      "unprepped_ns": 354569.4575
+    },
+    {
+      "backend": "const",
+      "c_source": 0.0,
+      "dim": 89,
+      "prep_ns": 53553.015,
+      "prep_share": 0.13170804427443136,
+      "prepped_ns": 486096.85,
+      "reuse_grad_diff": 0.0,
+      "target": "radon_mn-radon_variable_intercept_centered",
+      "unprepped_ns": 406603.98
+    },
+    {
+      "backend": "fd",
+      "c_source": 0.0,
+      "dim": 26,
+      "prep_ns": 6329.7175,
+      "prep_share": 0.39183283034010963,
+      "prepped_ns": 16880.925,
+      "reuse_grad_diff": 0.0,
+      "target": "seeds_data-seeds_centered_model",
+      "unprepped_ns": 16154.1275
+    },
+    {
+      "backend": "const",
+      "c_source": 0.0,
+      "dim": 26,
+      "prep_ns": 9631.265,
+      "prep_share": 0.07353915764590918,
+      "prepped_ns": 187939.8175,
+      "reuse_grad_diff": 0.0,
+      "target": "seeds_data-seeds_centered_model",
+      "unprepped_ns": 130967.845
+    },
+    {
+      "backend": "fd",
+      "c_source": 0.0,
+      "dim": 10,
+      "prep_ns": 934.5875,
+      "prep_share": 1.0097644643725352,
+      "prepped_ns": 561.2725,
+      "reuse_grad_diff": 0.0,
+      "target": "funnel",
+      "unprepped_ns": 925.55
+    },
+    {
+      "backend": "const",
+      "c_source": 0.0,
+      "dim": 10,
+      "prep_ns": 139.3675,
+      "prep_share": 0.3492022725991443,
+      "prepped_ns": 355.1375,
+      "reuse_grad_diff": 0.0,
+      "target": "funnel",
+      "unprepped_ns": 399.1025
+    }
+  ],
+  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7"
+}

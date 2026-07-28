@@ -1,0 +1,86 @@
+{
+  "ad_backend": "enzyme",
+  "blas_threads": 1,
+  "julia": "1.10.11",
+  "n_draws_floor": 1000,
+  "n_seeds": 8,
+  "overheads": [
+    {
+      "bare_ns": 473.2335,
+      "dim": 10,
+      "live_ns": 898.7605,
+      "live_ratio": 1.8991903574028466,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 868.674,
+      "noop_ratio": 1.8356139199781927,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "bare_ns": 26513.4595,
+      "dim": 88,
+      "live_ns": 381379.5235,
+      "live_ratio": 14.3843742269846,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 383667.572,
+      "noop_ratio": 14.470671848764209,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "bare_ns": 42083.7435,
+      "dim": 89,
+      "live_ns": 378159.654,
+      "live_ratio": 8.985884395003977,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 373369.191,
+      "noop_ratio": 8.872052720309922,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "bare_ns": 2796.35,
+      "dim": 26,
+      "live_ns": 89291.5995,
+      "live_ratio": 31.931481931803958,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 91404.587,
+      "noop_ratio": 32.68710533373862,
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "bare_ns": 44.336,
+      "dim": 10,
+      "live_ns": 337.977,
+      "live_ratio": 7.623082822085889,
+      "n_calls": 2000,
+      "nonfinite": {
+        "bare": 0.0,
+        "live": 0.0,
+        "noop": 0.0
+      },
+      "noop_ns": 345.747,
+      "noop_ratio": 7.798335438469867,
+      "target": "funnel"
+    }
+  ],
+  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7",
+  "worktree_dirty": true
+}

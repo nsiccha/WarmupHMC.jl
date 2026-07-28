@@ -1,0 +1,98 @@
+{
+  "blas_threads": 1,
+  "julia": "1.10.11",
+  "note": "Enzyme function_annotation Const vs Duplicated, per target and source centering",
+  "rows": [
+    {
+      "c_source": 0.0,
+      "dim": 10,
+      "max_grad_diff": 0.0,
+      "ns_const": 941.3955,
+      "ns_duplicated": 5969.8785,
+      "ns_forwarddiff": 1774.201,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "c_source": 0.5,
+      "dim": 10,
+      "max_grad_diff": 8.881784197001252e-16,
+      "ns_const": 860.3485,
+      "ns_duplicated": 4838.6905,
+      "ns_forwarddiff": 1499.352,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "c_source": 0.0,
+      "dim": 88,
+      "max_grad_diff": 2.2737367544323206e-13,
+      "ns_const": 448636.328,
+      "ns_duplicated": 481872.5145,
+      "ns_forwarddiff": 352265.7165,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "c_source": 0.5,
+      "dim": 88,
+      "max_grad_diff": 6.821210263296962e-13,
+      "ns_const": 428629.921,
+      "ns_duplicated": 456790.69,
+      "ns_forwarddiff": 321515.485,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "c_source": 0.0,
+      "dim": 89,
+      "max_grad_diff": 1.1368683772161603e-13,
+      "ns_const": 474486.5695,
+      "ns_duplicated": 536286.967,
+      "ns_forwarddiff": 373613.457,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "c_source": 0.5,
+      "dim": 89,
+      "max_grad_diff": 1.7053025658242404e-13,
+      "ns_const": 464102.713,
+      "ns_duplicated": 497067.9895,
+      "ns_forwarddiff": 377523.9905,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "c_source": 0.0,
+      "dim": 26,
+      "max_grad_diff": 3.410605131648481e-13,
+      "ns_const": 105068.139,
+      "ns_duplicated": 112829.417,
+      "ns_forwarddiff": 24425.0065,
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "c_source": 0.5,
+      "dim": 26,
+      "max_grad_diff": 5.684341886080802e-14,
+      "ns_const": 96135.667,
+      "ns_duplicated": 115626.442,
+      "ns_forwarddiff": 34076.4825,
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "c_source": 0.0,
+      "dim": 10,
+      "max_grad_diff": 8.881784197001252e-16,
+      "ns_const": 366.7365,
+      "ns_duplicated": 5537.2955,
+      "ns_forwarddiff": 999.0305,
+      "target": "funnel"
+    },
+    {
+      "c_source": 0.5,
+      "dim": 10,
+      "max_grad_diff": 4.440892098500626e-16,
+      "ns_const": 569.3165,
+      "ns_duplicated": 5839.313,
+      "ns_forwarddiff": 1192.473,
+      "target": "funnel"
+    }
+  ],
+  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7"
+}

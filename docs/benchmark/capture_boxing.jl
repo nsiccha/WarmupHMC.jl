@@ -52,7 +52,7 @@
 # and because it must run in a process that has not sampled (see README).
 include(joinpath(@__DIR__, "common.jl"))
 
-const OUT_DIR = get(ENV, "WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
+const OUT_DIR = env_dir("WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
 mkpath(OUT_DIR)
 using Printf, Statistics, Enzyme
 import JSON

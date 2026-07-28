@@ -120,6 +120,39 @@ import JSON
 const BENCH_DIR = @__DIR__
 const REPO_ROOT = normpath(joinpath(BENCH_DIR, "..", ".."))
 
+"""
+    env_dir(name, default) -> String
+
+Read an output-directory override from the environment, treating a
+**set-but-blank** value as an error rather than as a path.
+
+`get(ENV, name, default)` does not do this, and the difference is not cosmetic:
+an unset shell variable expands to `""`, `get` then returns `""` rather than the
+default, and `joinpath("", "x")` is the RELATIVE path `"x"` — so the script
+writes its JSON into whatever the current directory happens to be. That is
+silent on success. It put a stray `typical_positions.json` in the repository
+root once, and in CI it is worse: a guard that regenerates artifacts into a temp
+directory and then validates them would write them somewhere else entirely and
+still exit 0, i.e. pass while checking nothing.
+
+Blank is therefore refused loudly. Unset still falls back to `default`.
+"""
+function env_dir(name::AbstractString, default::AbstractString)
+    haskey(ENV, name) || return default
+    value = ENV[name]
+    isempty(strip(value)) && error("""
+        $(name) is set but blank.
+
+        A blank value is almost always an unset shell variable that expanded to
+        the empty string. It is refused rather than defaulted, because
+        `joinpath("", f)` is relative and this script would write $(name)'s
+        artifacts into the current directory ($(pwd())) without saying so.
+
+        Unset $(name) to use the default ($(default)), or give it a real path.
+        """)
+    return value
+end
+
 # The per-posterior reparametrization table already shipped with the package.
 # Reused rather than re-derived: it is what web/ samples through, so the
 # benchmark measures the specs the package actually offers.

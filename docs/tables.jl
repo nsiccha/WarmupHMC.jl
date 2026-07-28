@@ -20,8 +20,30 @@
 
 import JSON, Markdown, Printf
 
-"Directory holding the checked-in benchmark result JSON."
-results_dir() = normpath(joinpath(@__DIR__, "benchmark", "results"))
+"""
+Directory holding the checked-in benchmark result JSON.
+
+`WHMC_BENCH_OUT` overrides it, which is what lets a CI job point the *consumer*
+at results a generator has just written. The generators under `docs/benchmark/`
+already honour that variable; without it on this side there is no job that can
+run a probe and `makedocs` against the same files, and a generator is free to
+change its output keys next to a stale checked-in JSON indefinitely. That is not
+hypothetical — `655218e` changed `capture_boxing.jl`'s keys and nothing surfaced
+it until the results were regenerated months later, which took the docs build
+red.
+
+**An empty value is treated as unset, deliberately.** `get(ENV, k, default)`
+returns `""` for an exported-but-empty variable, and `joinpath("", "x")` is
+*relative* — so the naive form silently resolves to the process's working
+directory. On the generator side that scatters result files into the repo root;
+here it would be worse, because the consumer would read whatever happened to be
+there and the guard would pass while checking nothing.
+"""
+function results_dir()
+    override = get(ENV, "WHMC_BENCH_OUT", "")
+    isempty(override) || return normpath(override)
+    normpath(joinpath(@__DIR__, "benchmark", "results"))
+end
 
 """
     load_results(relpath) -> Dict

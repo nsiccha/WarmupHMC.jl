@@ -857,12 +857,17 @@ which would each have silently corrupted the fixed-parametrization arms:
      dimension, spanning the whole between-target range on its own. The apparent
      trend is which figure you pick per target, not `d`.
   3. **Its provenance line points at a superseded measurement, and one of its
-     SHAs does not resolve.** It reads "Measured at `b5c7dee` … results checked
-     in at `068cdeb`", both of which predate the de-boxing; this revision
-     measures `5637fcf`/`c4e4670`. Separately, it names the de-boxing commit as
-     `f639bb1`, and `git rev-parse f639bb1` fails on every ref in this repo —
-     the landed commit is **`e9bcfd0`**. A SHA in a docstring is only useful if
-     it resolves.
+     SHAs is unreachable.** It reads "Measured at `b5c7dee` … results checked in
+     at `068cdeb`", both of which predate the de-boxing; this revision measures
+     `5637fcf`/`c4e4670`. Separately, it names the de-boxing commit as
+     `f639bb1` — the orphaned **pre-rebase** copy of the same change that landed
+     as **`e9bcfd0`**. The distinction is the useful part: `f639bb1` is
+     reachable from **no ref**, so it resolves in the worktree that did the
+     rebase and dies in a fresh clone. It was written down *because* it resolved
+     when it was checked. `git rev-parse <sha>` in your own worktree is
+     therefore not evidence a SHA is citable; `git merge-base --is-ancestor
+     <sha> <ref>`, or a resolve in a fresh clone, is. Same failure shape as a
+     `git fetch` with no remote configured exiting 0.
 
   4. **Its DI-preparation figure inverted, though its conclusion held.** It
      records prep as "10–16% of the call at `d ≈ 88`, and equal under both

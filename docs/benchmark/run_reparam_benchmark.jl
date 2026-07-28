@@ -19,7 +19,7 @@ include(joinpath(@__DIR__, "common.jl"))
 # let noise pass for a result.
 const N_SEEDS = parse(Int, get(ENV, "WHMC_BENCH_SEEDS", "8"))
 const N_DRAWS = parse(Int, get(ENV, "WHMC_BENCH_DRAWS", "1000"))
-const OUT_DIR = get(ENV, "WHMC_BENCH_OUT", joinpath(BENCH_DIR, "results"))
+const OUT_DIR = env_dir("WHMC_BENCH_OUT", joinpath(BENCH_DIR, "results"))
 const WARMUP_DRAWS = 50   # discarded; only there so the timed runs are not JIT-bound
 
 const SELECTED = let raw = get(ENV, "WHMC_BENCH_TARGETS", "")

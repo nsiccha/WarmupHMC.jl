@@ -29,13 +29,25 @@ DynamicHMC = "3.6"
 ElasticArrays = "1.2"
 FillArrays = "1.16"
 InverseFunctions = "0.1"
+LinearAlgebra = "1.10"
 LogDensityProblems = "2.1"
 LogExpFunctions = "0.3"
 MCMCDiagnosticTools = "0.3"
 OnlineStatsBase = "1.7"
 Pathfinder = "0.9"
+Random = "1.10"
+Serialization = "1.10"
+Statistics = "1.10"
 TSVD = "0.4"
-julia = "1.9"
+Treebars = "0.1"
+# NOT "1.9". That bound was not merely untested — it was UNSATISFIABLE: nine of the
+# thirteen non-stdlib direct dependencies declare `julia = "1.10"` themselves
+# (DifferentiationInterface, Distributions, DynamicHMC, FillArrays,
+# LogDensityProblems, LogExpFunctions, MCMCDiagnosticTools, Pathfinder, Treebars),
+# so no 1.9 resolution of this project exists. All three committed manifests are
+# 1.10.11, and the CI matrix is lts/1/pre. `test/compat.jl` now checks that this
+# bound is never again lower than a dependency's.
+julia = "1.10"
 
 # Test dependencies live in test/Project.toml (the modern layout); the legacy
 # [extras]/[targets] pair — which pinned the unregistered TestModules — was

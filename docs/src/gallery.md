@@ -22,9 +22,14 @@ The examples that you *can* run are, smallest first:
 
 "Executed at build time" means the outputs on those pages are what the code
 returned during this build, and that a change breaking the example fails the
-build rather than leaving a page that reads correctly and is wrong. The funnel
-example is complete and self-contained but is not run here; see
-[A note on the code blocks](@ref).
+build rather than leaving a page that reads correctly and is wrong. A `no` does
+not mean incomplete — those examples are self-contained, they just need
+something the docs environment deliberately does not carry, so nothing checks
+them. See [A note on the code blocks](@ref).
+
+**Adding a runnable example? Add its row here.** This table is the only place
+the executed/not-executed split is written down; the prose elsewhere points at
+it rather than repeating it.
 
 ## Overview table
 

@@ -363,7 +363,13 @@ is settled below rather than asserted here.
     carries the evidence for that rather than leaving it as a caution. Each cell
     in the two ratio columns is a median over `rounds` repeats, and **those
     repeats are stored raw** beside it, under `samples` in
-    `typical_positions.json`. What they support is computed below rather than
+    `typical_positions.json`. Within one column those repeats are paired by
+    construction — `typical_positions.jl` binds the position set once and times
+    every backend on it inside each round, rotating which goes first — so a
+    per-round ratio compares like with like, and the count below is a count of
+    paired comparisons. Across the two columns they are not: those are separate
+    timing loops over different positions, which is why only their ranges are
+    compared below. What they support is computed below rather than
     summarised here. Note what five repeats can and cannot settle: whether two
     ranges overlap, yes — how *likely* a difference is, no. Nothing here should
     be read as a significance claim.
@@ -520,7 +526,9 @@ returning them, so nothing downstream has to know a reparametrization happened.
     figures were materially different a few commits earlier. So read the chain
     above as a record of revisions somebody checked, **not as a currency
     claim** — a plain `julia` fence is not executed by the docs build, so these
-    numbers ship unchanged whether or not they still reproduce.
+    numbers ship unchanged whether or not they still reproduce. ([Runnable
+    examples](@ref) is where which examples run and which do not is tracked;
+    this one is listed there as not executed.)
 
     You do not have to re-run blindly to find out. Ask whether the code this
     example calls has moved since the last revision named above:

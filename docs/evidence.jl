@@ -142,10 +142,17 @@ Escape markdown inline syntax in text that is INTERPOLATED into a string this
 file then parses — file keys and column names, which come from filenames and
 JSON keys and so are not under this file's control.
 
-`_probe_config` renders as *probe*config without this: two underscores in one
-word are emphasis. Every key checked in today happens to carry exactly one, which
-is why it does not currently show. The escape is consumed by the parser, so the
-rendered text and the anchor VitePress derives from it are unchanged.
+Two underscores in one word are emphasis, so `n_draws_floor` rendered as
+n*draws*floor. This was **not** hypothetical and was not caught by looking at
+file keys — those happen to carry one underscore each. Column and provenance
+names do not, and eight of them shipped mangled on the page:
+`n_draws_floor`, `max_grad_diff`, `ab_max_grad_diff`, `bare_ns_median`,
+`reuse_grad_diff`, `const_over_fd_randn`, `const_over_fd_typical`,
+`first_window_gradient_budget`. It surfaced from diffing the rendered output
+across the change, not from reading the code.
+
+The escape is consumed by the parser, so the rendered text and the anchor
+VitePress derives from it are unchanged.
 """
 esc_md(s) = replace(string(s), r"([\\`*_\[\]{}<>])" => s"\\\1")
 _join_md(parts) = Markdown.MD(reduce(vcat, (p.content for p in parts); init = Any[]))

@@ -141,13 +141,20 @@ let f = Funnel(9), dim = LogDensityProblems.dimension(Funnel(9))
     probe("funnel", f, funnel_spec(f, 0.0), dim, 0.0)
 end
 
+# `git_provenance()` BEFORE the `open` — see the trap documented on it in
+# `common.jl`. `open(path, "w")` truncates immediately, so a provenance call
+# inside this block would see this very file as an uncommitted change. This is
+# the one harness in the repo where that already HAPPENED: the checked-in
+# `results/prep_cost.json` carries `worktree_dirty = true, src_dirty = false`,
+# the pair this bug produces and the only such pair in the repo.
+const PROV = git_provenance()
 open(joinpath(OUT_DIR, "prep_cost.json"), "w") do io
     JSON.print(io, Dict(
         "note" => "Share of the wrapper's per-gradient cost spent in DI preparation. " *
                   "The package calls value_and_gradient with no prep object, so it " *
                   "re-prepares on every gradient evaluation.",
         "julia" => string(VERSION), "n_calls" => N, "rounds" => ROUNDS,
-        git_provenance()...,
+        PROV...,
         "rows" => rows), 2)
 end
 println("\nwrote results/prep_cost.json")

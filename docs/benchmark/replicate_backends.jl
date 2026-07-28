@@ -112,13 +112,17 @@ let f = Funnel(9), dim = LogDensityProblems.dimension(Funnel(9))
     end
 end
 
+# `git_provenance()` BEFORE the `open` — see the trap documented on it in
+# `common.jl`. `open(path, "w")` truncates immediately, so a provenance call
+# inside this block would see this very file as an uncommitted change.
+const PROV = git_provenance()
 open(joinpath(OUT_DIR, "backend_replication.json"), "w") do io
     JSON.print(io, Dict(
         "note" => "ForwardDiff vs Enzyme/Const vs Enzyme/Duplicated per gradient call. " *
                   "Rounds are interleaved and rotated so drift is not charged to one backend.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
         "rounds" => ROUNDS, "n_calls" => NCALLS,
-        git_provenance()...,
+        PROV...,
         "rows" => rows), 2)
 end
 println("\nwrote results/backend_replication.json")

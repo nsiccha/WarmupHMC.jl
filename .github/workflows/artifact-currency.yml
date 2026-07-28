@@ -83,6 +83,23 @@
 # apart). `RESULTS.md` is a path trigger above for exactly this reason: a
 # prose-only edit is the commit that most needs this job and the one that would
 # otherwise never fire it.
+#
+# THE THIRD CHECK IS ASKED OF THE HARNESSES, NOT THE ARTIFACTS
+#
+# `provenance_ordering.jl` parses every harness under `docs/benchmark/` and
+# `bench/` and goes red on a `git_provenance()` (or a private `*_dirty`) call
+# sitting inside that harness's own `open(path, "w") do ... end`. `open`
+# truncates at open, so such a call sees the file it is writing and records
+# `worktree_dirty = true` over a clean tree.
+#
+# It belongs in THIS job for two reasons. It is dependency-free — it parses, and
+# `Base.JuliaSyntax` is in the standard library — so it keeps the property the
+# section above is arranged around. And it is the only one of the three that can
+# go red BEFORE the damage exists: the other two read artifacts, and this defect
+# is invisible in an artifact until the file is tracked, which is one commit
+# after the diff that introduced it. The artifact-side signature, once there is
+# one, is the pair `(worktree_dirty = true, src_dirty = false)`; that is read by
+# `docs/tables.jl:provenance`, not here.
 
 name: Artifact currency
 
@@ -92,9 +109,11 @@ on:
     paths:
       - 'src/**'
       - 'docs/benchmark/results/**'
-      - 'docs/benchmark/artifact_currency.jl'
-      - 'docs/benchmark/code_identical.jl'
-      - 'docs/benchmark/quoted_figures.jl'
+      # Every harness, not a list of them: the ordering check below is asked of
+      # whatever files exist, and a named-script list would silently stop
+      # triggering on the harness someone adds next.
+      - 'docs/benchmark/**.jl'
+      - 'bench/**.jl'
       - 'docs/benchmark/RESULTS.md'
       - '.github/workflows/artifact-currency.yml'
   push:
@@ -102,9 +121,11 @@ on:
     paths:
       - 'src/**'
       - 'docs/benchmark/results/**'
-      - 'docs/benchmark/artifact_currency.jl'
-      - 'docs/benchmark/code_identical.jl'
-      - 'docs/benchmark/quoted_figures.jl'
+      # Every harness, not a list of them: the ordering check below is asked of
+      # whatever files exist, and a named-script list would silently stop
+      # triggering on the harness someone adds next.
+      - 'docs/benchmark/**.jl'
+      - 'bench/**.jl'
       - 'docs/benchmark/RESULTS.md'
       - '.github/workflows/artifact-currency.yml'
 
@@ -144,6 +165,15 @@ jobs:
       - name: Are the checked-in measurements current?
         run: julia --startup-file=no docs/benchmark/artifact_currency.jl
 
+      # The third question, and the only one asked of the HARNESSES rather than
+      # of the artifacts: does any of them read its git provenance inside the
+      # block that truncates its own output file? That records
+      # `worktree_dirty = true` over a clean tree, and it is invisible until the
+      # artifact is committed -- so the diff that would have shown it is landed
+      # by the time the flag first lies. Parses; needs no environment at all.
+      - name: Does any harness read provenance inside its own write block?
+        run: julia --startup-file=no docs/benchmark/provenance_ordering.jl
+
       # The neighbouring question, and a genuinely different one: the step above
       # asks whether the JSON still describes today's sampler, this one asks
       # whether RESULTS.md still quotes the JSON correctly. Both can be true
@@ -169,7 +199,7 @@ jobs:
       - name: What a failure here means
         if: failure()
         run: |
-          echo "TWO different checks run in this job. Read which step went red."
+          echo "THREE different checks run in this job. Read which step went red."
           echo
           echo "=== 'Do the figures quoted in RESULTS.md still match' ==="
           echo "A number in RESULTS.md disagrees with the artifact it was read"
@@ -214,6 +244,22 @@ jobs:
           echo "               checkout setting recovers it. Re-measure, or mark"
           echo "               the run SUPERSEDED with a reason if it is kept as"
           echo "               history."
+          echo
+          echo "=== 'Does any harness read provenance inside its own write block' ==="
+          echo "A harness splats git_provenance() (or its own *_dirty helper)"
+          echo "inside open(path, \"w\") do ... end. open truncates at open, so"
+          echo "that call sees the harness's own half-written output and records"
+          echo "worktree_dirty = true over a CLEAN tree. No number is wrong; the"
+          echo "provenance line under the table is."
+          echo
+          echo "Fix the ORDER, not the artifact: bind it before the open"
+          echo "(const PROV = git_provenance()) and splat PROV inside. Editing a"
+          echo "recorded flag to say 'clean' asserts something nobody checked."
+          echo
+          echo "This is red on SOURCE, so it can fire before any artifact exists."
+          echo "If one already does, its signature is the pair"
+          echo "(worktree_dirty = true, src_dirty = false) -- results/prep_cost.json"
+          echo "is the one place in this repo where that already happened."
           echo
           echo "A run kept deliberately as history (a before/after pair, an"
           echo "outdated base a result is argued from) is SUPPOSED to differ from"

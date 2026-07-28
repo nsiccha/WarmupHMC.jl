@@ -56,8 +56,7 @@ would drag the whole measurement stack into `makedocs`.
 
 This is not the only such copy. `env_dir` serves every generator that can
 afford `common.jl`, and the scripts that cannot afford it inline their own
-guard, each documenting its own reason. Change the rule and you must change all
-of them, so find them with:
+guard. Change the rule and you must change all of them, so find them with:
 
     grep -rl 'is set but blank' docs/
 
@@ -124,6 +123,39 @@ itself to satisfy this function. If the file has a `config` object, provenance i
 read from there — the preferred shape, since a single copy of `warmuphmc_sha`
 cannot disagree with a duplicate of itself. Otherwise, or for any field `config`
 omits, it falls back to the top level, which is the older flat shape.
+
+**A SHA recorded from a DIRTY worktree is not provenance at all**, and it is the
+one failure here with no detector but the flag itself. `warmuphmc_sha` renders
+identically whether the tree was clean or carried uncommitted changes, so it
+reads as full attribution while pointing at code that never ran. Unlike a stale
+SHA, this cannot be discharged afterwards: there is no revision to compare
+against, so `code_identical.jl` structurally cannot answer it. `worktree_dirty`
+is therefore rendered beside the SHA rather than dropped, and an artifact that
+does not record the flag says so — silence would be indistinguishable from a
+verified-clean tree, which is the whole defect.
+
+It is rendered rather than refused because a dirty measurement is not worthless,
+only unattributable, and some are kept deliberately as history: the `b5c7dee`
+boxed-spec base carries `worktree_dirty = true` and is `SUPERSEDED` on purpose.
+Erroring would take the build red on artifacts nobody intends to re-run. Zero
+rows is the opposite case — no information at all — which is why
+[`md_table`](@ref) refuses that one instead.
+
+**The SHA this renders is provenance, not currency.** It says which revision was
+measured, which stays true forever; it says nothing about whether that revision
+still describes the sampler. Those come apart silently and in the reassuring
+direction — the caption keeps naming a real commit, the table keeps rendering,
+and the build stays green while every number on the page describes code that no
+longer exists.
+
+Do not try to close that here. `makedocs` has no history to consult, and on CI
+the checkout is depth 1, so an artifact's base SHA does not even resolve — a
+currency check wired into the docs build would be red for the wrong reason on
+every run. The question is answered out of band, by
+`docs/benchmark/artifact_currency.jl`, which walks every tracked artifact and
+asks `code_identical.jl` whether `src/` at the recorded SHA still defines the
+same methods as `src/` at a given revision. Run it after anything lands in
+`src/`; nothing on this side can notice for you.
 """
 function provenance(d::AbstractDict; harness::AbstractString)
     cfg = get(d, "config", nothing)
@@ -136,7 +168,14 @@ function provenance(d::AbstractDict; harness::AbstractString)
     jl === nothing || push!(bits, "Julia $(jl)")
     bt = field("blas_threads")
     bt === nothing || push!(bits, "$(bt) BLAS thread$(bt == 1 ? "" : "s")")
-    string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
+    base = string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
+    dirty = field("worktree_dirty")
+    dirty === true && return base *
+        " **Recorded from a worktree with uncommitted changes**, so the revision" *
+        " named above does not describe the code that ran — and no revision does."
+    sha === nothing || dirty !== nothing ||
+        return base * " (Worktree cleanliness was not recorded.)"
+    base
 end
 
 """
@@ -189,12 +228,78 @@ function load_harness(relpath::AbstractString)
 end
 
 """
+    vega_figure(spec; caption="") -> Markdown.MD
+
+Render a Vega-Lite `spec` (anything `JSON.json` accepts) as a figure, by
+emitting it as a fenced ` ```vega-lite ` block. `setupVegaFigures` in
+`docs/src/.vitepress/theme/vega-figure.ts` finds the rendered block and swaps a
+chart in; the runtimes are CDN tags in `config.mts`.
+
+**A code fence is not a stylistic choice — it is the only construct that
+survives this pipeline.** The obvious shape, an `@eval` block returning a
+`<div data-spec="…">`, cannot work, and both layers that break it break it
+silently:
+
+  * `Markdown.parse` destroys the JSON before anything sees it. `\$schema` is
+    read as inline math and `ns_const` as emphasis, so the text that reaches
+    the AST is already corrupt — measured, not feared.
+  * DocumenterVitepress escapes `<` and `>` in *every* text node
+    (`escape_markdown_text`, `writer.jl`), by design, because Vue would
+    otherwise parse a bare `<` as a tag. A div therefore arrives at the browser
+    as `&lt;div&gt;`.
+
+Raw HTML reaches the page only through `@raw html`, which is a static fence and
+cannot carry a computed value. Fenced code is the one path a generated string
+crosses untouched: markdown does not interpret inside it, and VitePress marks
+code blocks `v-pre`, so Vue does not either.
+
+Figures are DERIVED, never checked in. Build the spec from the rows at
+docs-build time — see [`load_harness`](@ref) — for the same reason a summary
+table is derived: a spec stored beside the rows it plots is a second copy of
+them that nothing forces to agree, and it goes stale in the silent direction,
+because a chart still renders when its numbers are old.
+
+If the runtime is unreachable the block stays a readable JSON dump rather than
+becoming a blank gap, which is the right failure: the figure's data is still
+on the page.
+"""
+function vega_figure(spec; caption::AbstractString = "")
+    parts = Any[Markdown.Code("vega-lite", JSON.json(spec))]
+    isempty(caption) || append!(parts, Markdown.parse("*" * caption * "*").content)
+    Markdown.MD(parts)
+end
+
+"""
     md_table(headers, rows) -> Markdown.MD
 
 Build a markdown table. Cells are passed through `string`, so pre-format
 anything that needs it (see [`num`](@ref)).
+
+**Zero rows is an error, not an empty table.** A headers-only table is valid
+markdown, so it renders as a blank table and the build exits 0 — an artifact
+that still parses but has lost its rows would ship as an empty table with
+nothing anywhere saying so. [`load_results`](@ref) only guards the file being
+*absent*; this guards it being present and empty.
+
+Measured before this check existed: emptying `rows` in one artifact and
+rebuilding took the build down only because a *derivation* called `median` on
+an empty array two sections further down. The three tables above it rendered
+blank and reported nothing. The catch was incidental to what the harness
+happened to compute, which is not a guarantee.
+
+If an empty result is meaningful somewhere, branch on `isempty` in the `@eval`
+block and emit prose saying so — the derived blocks in `adaptive-centering.md`
+do exactly that, and prose is the honest rendering of "there is nothing here".
 """
 function md_table(headers::AbstractVector, rows::AbstractVector)
+    isempty(rows) && error("""
+        md_table was given zero rows (headers: $(join(string.(headers), ", "))).
+
+        This is refused rather than rendered, because a headers-only table is
+        valid markdown: the page would show a blank table and the build would
+        succeed. If the underlying artifact can legitimately be empty, branch on
+        `isempty` in the @eval block and emit prose instead of a table.
+        """)
     io = IOBuffer()
     println(io, "| ", join(string.(headers), " | "), " |")
     println(io, "|", join(fill("---", length(headers)), "|"), "|")

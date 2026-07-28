@@ -107,20 +107,32 @@ the funnel is the model it was looking at.
 parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
+!!! note "Every number on this page was measured at `36256d3`"
+    Adaptation behaviour is not fixed across commits — these same figures were
+    materially different a few commits earlier. If you are on a different tip,
+    re-run rather than assume.
+
 The reparametrization is re-fitted only at warm-up windows that **restart**, and
 a window restarts only while the marginal-scale condition number is at or above
 `variance_cond_target` (default `2.0`). In the run above, windows 1 and 2 restart
-(condition number `2.08`, then `3.44`) and windows 3 and 4 do not (`1.0`) — so
-all five centerings are already at `0.0` by the end of the *first* window, and
-the remaining windows sample at the parametrization that was found. Shortening
-the run does not change that here: at `n_draws=200`, and even at `100`, this
-model still restarts on windows 1 and 2 and still lands on `0.0`.
+(condition number `2.08`, then `3.44`) and windows 3 and 4 do not (`1.0`), so all
+five centerings are already at `0.0` by the end of the *first* window and the
+remaining windows sample at the parametrization that was found.
 
-Do not read that timing as a guarantee. It is a property of this funnel, not of
-the method — on a model whose condition number starts below the target, no
-window restarts and the centerings never move at all. If you are checking that
-your spec is wired up correctly, watch the boundaries rather than assuming a
-re-fit happened:
+### How long a run does adaptation need?
+
+**On this model, not a long one.** Re-running the example unchanged at
+`n_draws=200`, and again at `n_draws=100`, gives the same two restarting windows
+and the same final `[0.0, 0.0, 0.0, 0.0, 0.0]`. So the centerings here are settled
+well inside a run short enough to use as a smoke test — you do not have to budget
+a long run just to find out whether your spec does anything.
+
+Do not read that as a guarantee about the method. It is a property of this
+funnel: on a model whose condition number starts below `variance_cond_target`, no
+window restarts and the centerings never move at all, however long you sample.
+What generalizes is the *mechanism*, not the window count — so if you are
+checking that your spec is wired up correctly, watch the boundaries rather than
+assuming a re-fit happened:
 
 ```julia
 adaptive_warmup_mcmc(rng, rp; n_draws=1000, progress=nothing,

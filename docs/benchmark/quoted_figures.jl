@@ -48,6 +48,39 @@
 #             not care how many times the quantity is mentioned, only that the
 #             mentions agree with the artifact and with each other.
 #
+# PRECISION: COMPARE AT THE RENDERING, NOT AT THE FLOAT. Every check here
+# formats the computed value the way the prose formats it and compares text. That
+# is deliberate in both directions, and the tempting "compare the numbers
+# properly" refactor is a regression.
+#
+# Comparing finer than the prose reddens pages that are CORRECT AS WRITTEN, and a
+# checker that does that gets deleted rather than fixed. Shipped here once: an
+# earlier version encoded the percent-vs-`x` switch as a threshold at 3x, so
+# `eight_schools` under ForwardDiff -- 3.325, correctly written `+232%` -- went
+# red on a healthy page. Hence `both(r)`, which accepts either rendering.
+#
+# The property this buys is worth stating, because it looks like a weakness. A
+# reviewer asked whether the `18x tax` check (which encodes a DENOMINATOR -- see
+# `capture_boxing boxed wrapper tax vs bare` below) quietly loses power as the
+# de-boxing work shrinks the wrapper overhead toward zero, since the two rival
+# denominators converge there. It does not, and the reason is general: below the
+# resolution of the rendering, the two denominators produce the SAME TEXT, so
+# whichever the author intended there is no wrong number on the page to catch.
+# The defect and the detector are defined on the same quantity -- what is
+# written -- so they cannot come apart.
+#
+# Measured on the live artifact so the band is not a guess. `boxed/const` renders
+# `18x` against `bare`; against `unboxed/const` it also renders `18x` for
+# `unboxed` in `(25330.0, 26777.5]` ns -- overhead in `(-2.06%, +3.54%]`. Today
+# `unboxed = 28823.7` (11% overhead) renders `16x`, well outside, which is why
+# re-injecting the original `16x tax` defect goes red. Note the band is
+# TWO-SIDED and the collapse is at LOW overhead: below `25330.0` the wrapper
+# would be measuring faster than the bare gradient and the two separate again at
+# `19x` vs `18x`. That lower edge is unreachable in the current artifact -- every
+# `unboxed/const` round spans `27667-42965` ns against `bare = 25863`, none
+# faster than bare -- but write the interval, not the half-line: a one-sided
+# `overhead below 3.5%` is the form that later reads as wrong.
+#
 # Run after any regeneration, and before landing a prose edit that touches a
 # number. Exit 0 = every checked figure agrees.
 include(joinpath(@__DIR__, "artifact_currency.jl"))

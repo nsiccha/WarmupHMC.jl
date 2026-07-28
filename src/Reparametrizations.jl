@@ -36,8 +36,10 @@ coordinate selector. Returning `nothing` instead delegates that one pair to
 direct scoring; the choice is per pair, so a plan may score only the pairs it
 has an opinion about.
 
-`synchronize!(ir)` runs after construction, after every winner commit, and when
-a checkpoint source is restored — the points at which `ir` may have changed
+`synchronize!(ir)` runs DURING construction — inside `ReparametrizedProblem`'s
+inner constructor, ahead of `new`, so the problem does not exist yet and `ir` is
+all a plan can reach — then after every winner commit, and when a checkpoint
+source is restored. Those are the points at which `ir` may have changed
 underneath a plan holding derived state. The default `identity` is correct for
 a stateless plan.
 
@@ -227,9 +229,10 @@ A plan supplies `prepare`, `score` and `synchronize!`. `prepare(ir, position,
 gradient)` runs once per online evidence observation and returns a transient
 frame; `score(frame, pair_number, idx, value, candidate)` returns `(ljac,
 position, gradient)`, or `nothing` to fall through to the existing direct
-scoring. `synchronize!(ir)` runs after construction, after a winner is
-committed, and after a checkpoint restore — before anything transports or
-evaluates the reparametrization.
+scoring. `synchronize!(ir)` runs during construction (inside the inner
+constructor, before the problem itself exists), after a winner is committed, and
+after a checkpoint restore — before anything transports or evaluates the
+reparametrization.
 
 The score is a **fixed-frame proxy**: the frame is held fixed while a candidate
 is evaluated, so it does not model every coordinate moving at once. That is a
@@ -834,6 +837,32 @@ end
 
 _uses_online_candidate_scoring(::DirectCandidateScoring) = false
 _uses_online_candidate_scoring(::CandidateScoringPlan) = true
+
+# `recorder.mode` is the DECLARED evidence mode; this returns the EFFECTIVE one.
+# A custom scoring plan reads `:linear_pool` as online all-good-leaf evidence and
+# never replays the retained linear pool, so the two disagree in exactly one
+# case: a plan is attached AND the declared mode is `:linear_pool`.
+#
+# The remap is silent, which is what makes it worth a note here rather than at
+# each caller. It matters most for CHECKPOINTS. A payload records the declared
+# mode (`nonlinear_recorder.mode`) and the plan marker
+# (`custom_candidate_scoring`) as two separate keys and never the effective
+# mode, so a consumer that reads `mode` alone can be off by this remap.
+#
+# The two keys ARE sufficient to recover it: `_uses_online_candidate_scoring`
+# and `_has_custom_candidate_scoring` are the same predicate spelled twice, so a
+# consumer re-applies the rule below and needs nothing else.
+#
+# An `effective_nonlinear_evidence` key is deliberately NOT stored. It would be
+# a derived value sitting beside both of its own inputs, which nothing forces to
+# agree — and it fails in the silent direction: change this rule and every older
+# checkpoint carries a value computed by the previous one, indistinguishable
+# from a current one. The inputs are the data; this is a function of them.
+#
+# `clustered_warmup_mcmc` does no nonlinear recording at all (zero occurrences),
+# so its payload carries no recorder and has no mode to describe; its
+# `custom_candidate_scoring` key serves the restore-time plan-mismatch check
+# alone.
 function _effective_nonlinear_evidence(recorder::NonlinearRecorder, lpdf)
     plan = candidate_scoring_plan(lpdf)
     recorder.mode === :linear_pool && _uses_online_candidate_scoring(plan) ?

@@ -659,6 +659,12 @@ reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(
 # The three `dropped_*` keys are ADDITIVE — `checkpoint_schema_version` does NOT
 # move for them, so existing readers are unaffected and new readers use
 # `get(payload, key, default)`.
+#
+# `nonlinear_recorder.mode` and `custom_candidate_scoring` are both DECLARED
+# state. The EFFECTIVE evidence mode is a function of the two rather than a
+# stored key, because a plan silently reads `:linear_pool` as online
+# all-good-leaf evidence — see `_effective_nonlinear_evidence` in
+# `Reparametrizations.jl` for the rule and for why storing it is the wrong move.
 checkpoint_payload(state::AWMState) = (;
     schema_version=checkpoint_schema_version(),
     sampler=:adaptive,

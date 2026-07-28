@@ -212,12 +212,17 @@ the outputs shown are what they returned. If a field is renamed, a kwarg
 dropped, or `resume=true` stops working, the build fails and this page cannot
 be published saying otherwise.
 
-**Not executed.** The reparametrization block under
-[Nonlinear Reparametrizations](@ref) is a plain fence — it needs an AD backend
-(`Enzyme`), which the docs environment deliberately does not carry, and it
-refers to a `my_problem` you supply. It is illustration, not a transcript. The
-end-to-end version that *is* complete lives on
-[Nonlinear reparametrization](@ref); it is likewise not executed here.
+**Not executed.** Everything else is a plain fence. The reparametrization block
+under [Nonlinear Reparametrizations](@ref) is the one on this page: it needs an
+AD backend (`Enzyme`), which the docs environment deliberately does not carry,
+and it refers to a `my_problem` you supply. It is illustration, not a
+transcript.
+
+Which of the longer examples run and which do not is listed in one place — the
+table under [Runnable examples](@ref) — rather than being restated here. A
+second copy of that list is an enumeration nobody updates: adding a page adds a
+row to a table you can see, and adds nothing to a paragraph you have to
+remember.
 
 The distinction matters because an unexecuted example makes exactly the same
 visual claim as an executed one while nothing checks it. This manual had no

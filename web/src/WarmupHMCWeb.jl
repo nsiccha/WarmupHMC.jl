@@ -278,7 +278,11 @@ end
 
 @dynamicstruct struct WhmcAppData
 
-    __cache_path__ = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
+    __cache_path__ = get(
+        ENV,
+        "WHMC_CACHE_DIR",
+        joinpath(dirname(dirname(@__DIR__)), "web", "cache"),
+    )
 
     pdb = PosteriorDB.database()
 
@@ -436,7 +440,7 @@ end
             elseif (@cache_status value) == :unstarted
                 h.section(
                     h.p(h.strong("Reparam: "),
-                        h.a("Run"; hx_post="/posteriors/$name/result/reparam/run",
+                        h.a("Run"; hx_post=__parent__/"result/reparam/run",
                             hx_target="closest div", hx_swap="outerHTML")))
             else
                 centering_info = !isempty(centering) ?
@@ -456,7 +460,7 @@ end
             m      = getproperty(__parent__, method)
             status = @cache_status m.value
             label  = m.label
-            run_url = "/posteriors/$name/result/$method/run"
+            run_url = __self__/"run"
 
             ess_vals      = MCMCDiagnosticTools.ess(reshape(m.draws', (:, 1, dimension)))
             median_ess    = median(ess_vals)
@@ -600,7 +604,7 @@ end
         # `@cache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
-                h.h4(static_recording ? name : h.a(name; href="/posteriors/$name")),
+                h.h4(static_recording ? name : h.a(name; href=__self__)),
                 h.ul(
                     [let r = result(method); s = r.status
                         h.li(
@@ -612,7 +616,7 @@ end
                      end for method in methods]...,
                 ),
                 static_recording ? h.span() :
-                    h.p(h.a("View detail →"; href="/posteriors/$name")),
+                    h.p(h.a("View detail →"; href=__self__)),
             )
         end
     end
@@ -764,7 +768,7 @@ const APPDATA = WhmcAppData()
     @include posteriors(name::Symbol) = begin
         @get index() = h.div(
             htmxo_breadcrumb([
-                ("Table", "/", "/"),
+                ("Table", string(__parent__), string(__parent__)),
                 (name, nothing, nothing),
             ]),
             __appdata__.posterior(name).detail_content,

@@ -1,0 +1,49 @@
+# The test environment, matching the stack HTMX / StanBlocks / AlgebraOfVega use.
+#
+# Deliberately has no `name`/`uuid`: `TestItemRunner.run_tests` reads the `name`
+# out of the Project.toml at its SCAN ROOT and emits `using <name>` into every
+# test item. A named test environment would therefore make every item try to
+# `using WarmupHMCTests`, which is not a loadable package. Every item declares
+# `using WarmupHMC` itself instead — see `runtests.jl`.
+#
+# Before this file existed the suite ran under `--project=.` — the PACKAGE
+# environment — which is why `ad_backend.jl` had to `Base.require` ForwardDiff by
+# UUID: ForwardDiff is not a direct dependency of WarmupHMC (it arrives
+# transitively via Pathfinder), so a plain `using ForwardDiff` failed. Listing it
+# here removes that whole workaround.
+#
+# `Enzyme` is a test dependency and NOT a package dependency, deliberately.
+# WarmupHMC is backend-agnostic: `ReparametrizedProblem`'s `ad_backend` defaults
+# to `nothing` and the caller supplies the backend. The items that need Enzyme
+# are tagged `:enzyme` and run in a single CI job; the nine-row matrix passes
+# `--skip-tag=enzyme`, so it never loads or precompiles Enzyme. This is the same
+# arrangement StanBlocks uses for its `:bridgestan` items.
+#
+# `Treebars` is unregistered and WarmupHMC needs it, so CI dev's it by path from
+# a `--branch dev` clone — `Treebars.round2`, which `src/progress.jl` adds a
+# method to at load time, does not exist on `origin/main`.
+#
+# Neither `DynamicHMC` nor `Pathfinder` is listed: the suite reaches DynamicHMC
+# only through `WarmupHMC.DynamicHMC` (a re-export, so it needs no direct entry),
+# and mentions Pathfinder only in comments.
+#
+# No `[compat]` here, matching `StanBlocks.jl/test/Project.toml`. In particular
+# do NOT add an upper bound on Enzyme: one `:enzyme` item asserts that a bare
+# `AutoEnzyme()` still THROWS, and it exists precisely to catch the release that
+# changes that. A bound would stop this environment ever seeing it.
+
+[deps]
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+InverseFunctions = "3587e190-3f89-42d0-90ee-14403ec27112"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LogDensityProblems = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
+OnlineStatsBase = "925886fa-5bf2-5e8e-b522-a9147a512338"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
+Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
+WarmupHMC = "60658175-6863-4866-a322-ab51a11c0cfe"

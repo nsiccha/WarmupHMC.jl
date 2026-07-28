@@ -14,6 +14,41 @@ build, so nothing on this page is a second copy of a number, and if the rows go
 missing or change shape the docs build fails rather than rendering a stale
 table.
 
+## A BRM random-intercept example
+
+[BayesianRegressionModels.jl](https://github.com/JuliaBayes/BayesianRegressionModels.jl)
+can discover its ordinary random-effect blocks and build WarmupHMC's custom
+candidate scorer for you. This complete example uses the scalar `(1 | subject)`
+case. It has one centering control per subject and no Cholesky coordinates; the
+same entry point also covers ordinary correlated `(1 + x | subject)` and
+cross-formula `(… | ID | subject)` blocks.
+
+```@eval
+import Markdown
+example = read(joinpath(@__DIR__, "..", "examples", "brm_adaptive_centering.jl"), String)
+Markdown.parse("```julia\n" * example * "\n```")
+```
+
+`adaptive_centering_problem` starts in the parametrisation the compiled BRM
+model uses: the default `SBBRMI` emission is the non-centred `c=0` endpoint,
+while `SBBRMI(...; centered_groups=[:subject])` starts at `c=1`. Either may
+adapt to an intermediate value. The candidate score is a source-invariant
+fixed-frame proxy; applying the winners, including the Jacobian and
+hyperparameter gradients, remains an exact coordinate change of the same BRM
+model.
+
+The final readback is specific to a single-chain call, which fits the supplied
+wrapper in place. A multi-chain call deep-copies the wrapper so every chain can
+learn its own centerings. On resume, reconstruct the same
+`adaptive_centering_problem`: checkpoints deliberately refuse a custom-scoring
+plan/no-plan mismatch. Stratified `gr(subject, by=stratum)` blocks are not part
+of this first contract and raise rather than being silently left fixed.
+
+The docs build renders the checked-in script above verbatim but does not execute
+it: BRM, BridgeStan and Enzyme are deliberately outside the lightweight docs
+environment. The script itself is the verification target, so the rendered
+example and the code that is run cannot drift apart.
+
 ## What is being compared
 
 ```@eval

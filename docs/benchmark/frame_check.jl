@@ -64,13 +64,17 @@ println()
 const OUT_DIR = env_dir("WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
 mkpath(OUT_DIR)
 already_model_frame = score(sa) < score(sc)
+# `git_provenance()` BEFORE the `open` — see the trap documented on it in
+# `common.jl`. `open(path, "w")` truncates immediately, so a provenance call
+# inside this block would see this very file as an uncommitted change.
+const PROV = git_provenance()
 open(joinpath(OUT_DIR, "frame_check.json"), "w") do io
     JSON.print(io, Dict(
         "note" => "Whether nonlinear_adapt=false returns draws in the model frame " *
                   "(sampler back-transforms) or the source frame (harness must). " *
                   "common.jl assumes the former from b109210 onward.",
         "julia" => string(VERSION),
-        git_provenance()...,
+        PROV...,
         "seed" => SEED, "n_draws" => NDRAWS, "dimension" => dim,
         "mean_plain" => mp, "sd_plain" => sp,
         "mean_as_returned" => ma, "sd_as_returned" => sa,

@@ -173,22 +173,58 @@ prints nothing immediately before the `open` and ` M <path>` from inside it.
 
 Three properties make this worth a section rather than a line:
 
-* It fails toward a strong FALSE claim. `docs/tables.jl:provenance` renders the
-  flag as "**Recorded from a worktree with uncommitted changes**, so the
-  revision named above does not describe the code that ran — and no revision
-  does" — printed over a measurement that was clean.
+* It fails toward a strong FALSE claim. `docs/tables.jl:provenance` turns the
+  flag into a sentence telling the reader the revision named beside it is not
+  the code that ran — printed over a measurement that was clean. Read that
+  function for what it renders rather than trusting a quotation here; it now
+  branches on `src_dirty`, and the wording moved when it did.
 * It is invisible until the second run. The first write creates an UNTRACKED
   file, which `--untracked-files=no` deliberately ignores, so a new harness
   looks correct and starts lying only once its artifact is committed.
-* `worktree_dirty` is the one flag `code_identical.jl` structurally cannot
-  cross-check, which is the whole argument for rendering it — so nothing
-  downstream can catch a wrong value.
+* Nothing that RECOMPUTES can see it. `code_identical.jl` needs two revisions
+  and a dirty tree is not one; `quoted_figures.jl` never reads a provenance
+  flag; `artifact_currency.jl` asks about `src/` only.
 
 Bind it to a local first (`const PROV = git_provenance()`) and splat that.
-`run_reparam_benchmark.jl` and `nonlinear_weighting_run.jl` already did;
-`annotation_sweep.jl`, `capture_boxing.jl` and `typical_positions.jl` did not
-and were fixed on 2026-07-28. Their checked-in artifacts read `false` only
-because each was generated onto a path that was still untracked at the time.
+
+# The bug has a signature, and it fired once
+
+It dirties the results path and can never dirty `src/`, so it produces the
+pair `worktree_dirty = true, src_dirty = false` and no other. That does not
+prove the bug fired — an unrelated edit outside `src/` gives the same pair —
+but it bounds the damage unconditionally: the recorded SHA does describe the
+package source that ran. `docs/tables.jl:provenance` reads both flags and
+narrows the caption accordingly.
+
+`results/prep_cost.json` is the only artifact in the repo carrying that pair,
+and there the bug is not merely possible: the file was already tracked at its
+own recorded `089c122`, and `open(path, "w")` truncates before the block runs,
+so at that instant it provably differed from HEAD. Whether anything ELSE in
+that tree also differed is not recoverable.
+
+An earlier version of this docstring said the other artifacts from
+then-unfixed harnesses read `false` "only because each was generated onto a
+path that was still untracked at the time". That is wrong as an account of the
+repo. Every one of `capture_boxing.json`, `annotation_sweep.json`,
+`typical_positions.json`, `frame_check.json` and `backend_replication.json`
+WAS tracked at its own recorded SHA, and the mechanism is deterministic once
+the output path is tracked — measured in a throwaway clone: `worktree_dirty`
+is `false` immediately before the `open` and `true` from inside it, `src_dirty`
+`false` throughout. So those runs did not write to a tracked path in the tree
+they measured. `env_dir("WHMC_BENCH_OUT", ...)` is what permits that, and the
+artifacts were brought in afterwards. The three genuinely-dirty artifacts
+(`enzyme-7556a15`, `forwarddiff-7556a15`, `enzyme-b5c7dee`) predate `src_dirty`
+entirely, so nothing narrows those.
+
+# Do not keep a list of which harnesses are fixed
+
+The list this docstring used to carry is exactly the thing that goes stale on
+the commit that needed it — a new harness is added, the census is not updated,
+and the census now reads as a clean bill of health for a file nobody checked.
+`docs/benchmark/provenance_ordering.jl` parses every harness under
+`docs/benchmark/` and `bench/` and goes red on any provenance call inside a
+write-open block, which is the same question asked of the tree that exists
+rather than of the tree someone remembered. It runs in `artifact-currency.yml`.
 """
 function git_provenance()
     sha = try

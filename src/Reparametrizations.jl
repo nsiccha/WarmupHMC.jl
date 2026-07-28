@@ -266,13 +266,16 @@ ir = IndexedReparametrization(
 `pairs` is mutated IN PLACE by warm-up: at every restarting window each entry is
 replaced by one carrying the newly fitted `source` centering. Two consequences:
 
-* **One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)`
-  hands the SAME object to every chain, so a shared `IndexedReparametrization`
-  has all chains adapting — and, under the default `parallel=true`, concurrently
-  writing — one shared set of centerings. Pass a vector of independently built
-  problems instead: `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])`.
-  (`cooperative_warmup_mcmc` and `clustered_warmup_mcmc` `deepcopy` per chain and
-  are not affected.)
+* **One reparametrized problem per chain.** Every multi-chain sampler gives chain
+  `i` its own `deepcopy` of the `lpdf` you pass, so no two chains ever write the
+  same `IndexedReparametrization` and the object you built is not mutated. (Of the
+  three, `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc` are the ones that
+  adapt a reparametrization at all; `clustered_warmup_mcmc` has no hooks for it
+  and does not accept `nonlinear_adapt`.) `adaptive_warmup_mcmc`'s
+  `lpdfs::AbstractArray` method is used exactly as given, so
+  `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])` is the explicit
+  spelling of the default and `fill(lpdf, length(rngs))` is how you deliberately
+  opt back into sharing one.
 * **The order of `pairs` is load-bearing across a checkpoint/resume.** A
   checkpoint stores only the fitted `source` centerings, as a bare positional
   list; on resume they are zipped back onto the freshly supplied problem's

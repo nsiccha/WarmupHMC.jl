@@ -124,6 +124,22 @@ itself to satisfy this function. If the file has a `config` object, provenance i
 read from there — the preferred shape, since a single copy of `warmuphmc_sha`
 cannot disagree with a duplicate of itself. Otherwise, or for any field `config`
 omits, it falls back to the top level, which is the older flat shape.
+
+**The SHA this renders is provenance, not currency.** It says which revision was
+measured, which stays true forever; it says nothing about whether that revision
+still describes the sampler. Those come apart silently and in the reassuring
+direction — the caption keeps naming a real commit, the table keeps rendering,
+and the build stays green while every number on the page describes code that no
+longer exists.
+
+Do not try to close that here. `makedocs` has no history to consult, and on CI
+the checkout is depth 1, so an artifact's base SHA does not even resolve — a
+currency check wired into the docs build would be red for the wrong reason on
+every run. The question is answered out of band, by
+`docs/benchmark/artifact_currency.jl`, which walks every tracked artifact and
+asks `code_identical.jl` whether `src/` at the recorded SHA still defines the
+same methods as `src/` at a given revision. Run it after anything lands in
+`src/`; nothing on this side can notice for you.
 """
 function provenance(d::AbstractDict; harness::AbstractString)
     cfg = get(d, "config", nothing)

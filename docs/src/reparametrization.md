@@ -387,24 +387,41 @@ parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
 !!! note "Provenance of the figures above"
-    They were produced by the example exactly as written, first at `ba6b4f0` and
-    re-verified unchanged at `b2ff221`. The re-run matters: `aac6489` in between
-    made the joint halo transport exact, which is the kind of change that *can*
-    move adaptation behaviour, and these figures are only worth printing if
-    somebody checked rather than assumed.
+    They were produced by the example exactly as written, first at `ba6b4f0`,
+    re-verified unchanged at `b2ff221`, and re-verified unchanged again at
+    `2760400`. Each re-run earns its cost only because `src/` genuinely moved in
+    between: `aac6489` made the joint halo transport exact, and `4eb08c7` added
+    online candidate scoring, rewriting both `Reparametrizations.jl` and
+    `adaptive_warmup_mcmc.jl` — the two files this example calls. Those are the
+    kind of change that *can* move adaptation behaviour, and these figures are
+    only worth printing if somebody checked rather than assumed.
 
     The same run was also executed under
     `AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse), function_annotation=Enzyme.Const)`
     — the spelling this page used to require — and under
     `AutoEnzyme(; function_annotation=Enzyme.Duplicated)`, as controls rather
     than recommendations. All three produce a **byte-identical** `6 × 1000`
-    draw matrix and the same `[0.0, 0.0, 0.0, 0.0, 0.0]`. What a gradient
-    *costs* is what the backend choice decides; what it *returns* here is
-    backend-independent.
+    draw matrix and the same `[0.0, 0.0, 0.0, 0.0, 0.0]` — re-checked at
+    `2760400` by comparing the draw matrices directly, not just their shapes.
+    What a gradient *costs* is what the backend choice decides; what it
+    *returns* here is backend-independent.
 
-    Adaptation behaviour is *not* fixed across commits, however: these same figures
-    were materially different a few commits earlier. If you are on a different tip,
-    re-run rather than assume.
+    Adaptation behaviour is *not* fixed across commits, however: these same
+    figures were materially different a few commits earlier. So read the chain
+    above as a record of revisions somebody checked, **not as a currency
+    claim** — a plain `julia` fence is not executed by the docs build, so these
+    numbers ship unchanged whether or not they still reproduce.
+
+    You do not have to re-run blindly to find out. Ask whether the code this
+    example calls has moved since the last revision named above:
+
+        julia --project=docs docs/benchmark/code_identical.jl <that revision> HEAD
+
+    It names the files that differ and exits non-zero when any do. A clean
+    answer is not proof the figures still reproduce — a dependency can move too
+    — but a dirty one tells you *which* part of the sampler changed, and that is
+    the cheap question to ask first. `docs/benchmark/artifact_currency.jl` asks
+    it for every checked-in measurement behind the other pages at once.
 
 The reparametrization is re-fitted only at warm-up windows that **restart**, and
 a window restarts only while the marginal-scale condition number is at or above

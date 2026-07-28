@@ -83,16 +83,24 @@ eight_schools_rp() = ReparametrizedProblem(
         n_adapted = length(adapted)
         println("  adaptation fired on $n_adapted/$(length(rows)) seeds")
 
-        # Non-vacuity: if nothing adapted, nothing below means anything.
-        @test n_adapted >= 3
+        # EVERY seed must adapt. This was `>= 3` while the halo regression was
+        # live: `variance_cond` is computed over the halo columns, so a starved
+        # pool made the restart decision — the gate `find_reparametrization!`
+        # sits behind — noisy, and seeds 3 and 4 never restarted on any window.
+        # `095efb0` restored the recording rate and all six now fire. Keep this
+        # at `== length(rows)`: a drop back to intermittent firing is the exact
+        # symptom that regression produced, and it is invisible in the medians.
+        @test n_adapted == length(rows)
 
         @testset "adapted runs recover the known marginal" begin
             for r in adapted
                 # Truth is sd(v) = 3 exactly. A centered funnel cannot reach the
                 # neck and reports a value biased LOW; this is the check that the
                 # reparametrization actually fixed the geometry.
-                @test 2.5 < r.sd < 3.6
+                @test 2.6 < r.sd < 3.5
                 @test abs(r.mean) < 0.6
+                # Measured 0 on all six seeds; the bound is headroom for
+                # platform/BLAS variation, not a claim that a few are expected.
                 @test r.div <= 5
                 # It should have moved toward non-centered, which is the right
                 # answer for a funnel with no data.

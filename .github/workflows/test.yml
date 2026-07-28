@@ -1,0 +1,66 @@
+name: Run tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    types: [opened, edited]
+
+permissions:
+  actions: write        # let julia-actions/cache evict its own caches
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['lts', '1', 'pre']
+        julia-arch: [x64]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git for private repos
+        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+          arch: ${{ matrix.julia-arch }}
+      - uses: julia-actions/cache@v2
+      - name: Dev unregistered dependencies
+        # `--branch dev` is load-bearing, exactly as in Docs.yml: `Treebars.round2`
+        # — which `src/progress.jl` adds a method to at load time — exists on
+        # `origin/dev` but NOT on `origin/main`, so a default-branch clone fails
+        # at precompile with `UndefVarError: round2` before any test runs.
+        #
+        # The explicit `Pkg.develop` is needed on every matrix row, not just as a
+        # pin: `[sources]` is honoured from Julia 1.11 only, so on `lts` (1.10)
+        # Treebars would otherwise resolve as "expected to be registered".
+        # Batched (§ the one-resolve rule) even at length 1, for when it grows.
+        run: |
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          julia --project=. -e 'using Pkg; Pkg.develop([
+            PackageSpec(path="Treebars.jl"),
+          ]); Pkg.instantiate()'
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: Run tests
+        # NOT `julia-actions/julia-runtest@v1`: this package's suite lives at
+        # `web/src/test/runtests.jl`, not the `test/runtests.jl` the action and
+        # `Pkg.test` assume. Running against `--project=.` rather than the test
+        # target is deliberate and sufficient — the suite needs neither
+        # TestModules nor Documenter, and it needs `DifferentiationInterface`
+        # (a `[weakdeps]` entry) and `ForwardDiff` (transitive, via Pathfinder)
+        # to be in the manifest, which they are only in the package env.
+        # `web/src/test/ad_backend.jl` loads both by UUID and aborts loudly if
+        # either is missing or if `DifferentiationInterfaceExt` did not
+        # activate, so a broken AD setup fails the job instead of silently
+        # skipping every reparametrization testset.
+        run: julia --project=. -e 'include("web/src/test/runtests.jl")'

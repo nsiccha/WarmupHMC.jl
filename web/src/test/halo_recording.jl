@@ -1,14 +1,15 @@
 using WarmupHMC, Test, Random, LinearAlgebra, LogDensityProblems
 using WarmupHMC: RecordingPosterior2, LimitedRecorder2, record_leaf!,
-                 finalize_leaf_recording!, reset!
+                 finalize_leaf_recording!, record!, reset!
 
 include(joinpath(@__DIR__, "targets.jl"))
 
 # Guards for the HALO RECORDING RATE.
 #
-# `halo_position` / `halo_gradient` are a single shared pool, written only by
-# `_store_leaf!` (`src/WrappedLogDensityProblems.jl`) and read by BOTH adaptation
-# consumers at a window restart (`src/adaptive_warmup_mcmc.jl`):
+# `halo_position` / `halo_gradient` are a single shared pool, written by
+# `record!` during the NUTS traversal (`src/WrappedLogDensityProblems.jl`) and
+# read by BOTH adaptation consumers at a window restart
+# (`src/adaptive_warmup_mcmc.jl`):
 #
 #   * `find_reparametrization!`      — the nonlinear centering `argmin`
 #   * `argmin(map(update_loss!, …))` — the linear metric selection
@@ -21,38 +22,54 @@ include(joinpath(@__DIR__, "targets.jl"))
 # HISTORY. `34ce034` (2026-07-19) replaced the recorder's `thin` mechanism —
 # `thin = n_evaluations ÷ recording_target`, recomputed per window so that ONE
 # window filled the entire `recording_target`-slot ring — with one
-# proposal-weighted leaf per transition. The exact-proposal-weight change was
+# proposal-weighted leaf per transition, collapsing the pool to ~1 state per
+# TRANSITION regardless of tree depth. The exact-proposal-weight change was
 # right; the rate collapse rode along uncaught because no test looked at the
-# pool size. `todo 1fqvovq` on the parent queue carries the source fix
-# (retain all leaves with their exact weights).
+# pool size. Restored by `095efb0`, landed as `c8fed88` (2026-07-28); the two
+# assertions this file was written to fail now pass and are plain `@test`.
 #
-# The two `@test_broken` assertions below are the regression, stated as a
-# contract. They are deliberately NOT pinning current behaviour: when the fix
-# lands, `@test_broken` reports `Unbroken` — a FAILURE — which forces whoever
-# lands it to promote them to `@test`. That handshake is the point.
+# NOTE ON THE WRITE PATH. `finalize_leaf_recording!` computes the exact marginal
+# proposal weights but deliberately does NOT write the halo — `record!` does,
+# once per leaf, reservoir-sampled one state per `thin` leaf evaluations. A
+# harness that drives `record_leaf!` + `finalize_leaf_recording!` and then reads
+# `halo_position` measures nothing; that is what this file did before the fix
+# landed, and it read as 0 rather than as an error.
 
 @testset "halo recording rate" begin
 
     # --- Unit level: what ONE trajectory contributes -------------------------
     # Drives the recorder directly with a synthetic NUTS leaf set, so the
     # measurement is exact and free of sampler nondeterminism.
-    _recorder_for(dim, target) = RecordingPosterior2(
-        DiagGaussian(ones(dim)); rng=Xoshiro(1), recorder=LimitedRecorder2(target),
+    _recorder_for(dim, target, thin=1) = RecordingPosterior2(
+        DiagGaussian(ones(dim)); rng=Xoshiro(1), recorder=LimitedRecorder2(target, thin),
     )
 
-    # Record one full depth-`depth` trajectory and return how many halo columns
-    # it contributed. `dH[1]` is the initial state; a valid tree of depth
-    # `depth` supplies `2^depth` leaves in total.
-    function states_from_one_trajectory(depth; dim=3, target=100_000)
-        p = _recorder_for(dim, target)
-        rng = Xoshiro(20260728 + depth)
+    # `record!` reads only `z.Q.q` / `z.Q.∇ℓq`, so a plain NamedTuple stands in
+    # for the DynamicHMC phase point and this stays independent of its internals.
+    _leaf(q, g) = (; Q = (; q, ∇ℓq = g))
+
+    # Feed `n` leaves of one trajectory through both the weight bookkeeping and
+    # the halo writer, exactly as `DynamicHMC.leaf` does, and return how many
+    # halo columns they contributed. `dH = -0.5` for every non-initial leaf, so
+    # all of them clear the `dH > log(1e-2)` acceptance filter and the count is
+    # deterministic rather than a draw.
+    function feed_leaves!(p, n; dim=3, seed=20260728)
+        rng = Xoshiro(seed)
         before = size(p.halo_position, 2)
-        for i in 1:(1 << depth)
-            record_leaf!(p.leaves, randn(rng, dim), randn(rng, dim),
-                         i == 1 ? 0.0 : -abs(randn(rng)))
+        for i in 1:n
+            q, g = randn(rng, dim), randn(rng, dim)
+            dH = i == 1 ? 0.0 : -0.5
+            record_leaf!(p.leaves, q, g, dH)
+            record!(p, _leaf(q, g); is_initial = i == 1, dH)
         end
-        finalize_leaf_recording!(p, depth)
         size(p.halo_position, 2) - before
+    end
+
+    function states_from_one_trajectory(depth; dim=3, target=100_000, thin=1)
+        p = _recorder_for(dim, target, thin)
+        n = feed_leaves!(p, 1 << depth; dim, seed=20260728 + depth)
+        finalize_leaf_recording!(p, depth)
+        n
     end
 
     depths = [1, 3, 5, 7]
@@ -63,7 +80,7 @@ include(joinpath(@__DIR__, "targets.jl"))
     end
 
     @testset "a trajectory never contributes more states than it has leaves" begin
-        # Holds before and after the fix — an upper bound, not a rate pin.
+        # An upper bound, not a rate pin — held before the fix too.
         for (d, n) in zip(depths, contributed)
             @test 1 <= n <= (1 << d)
         end
@@ -71,14 +88,40 @@ include(joinpath(@__DIR__, "targets.jl"))
 
     @testset "deeper trajectories contribute more states" begin
         # THE CONTRACT. A depth-7 trajectory visits 128 leaves and costs 127
-        # gradient evaluations; a depth-1 trajectory visits 2 and costs 1. A
-        # recorder that keeps one leaf per TRANSITION returns 1 for both, so the
-        # halo's sample size is set by the transition count and is independent of
-        # the work actually done — which is the regression.
+        # gradient evaluations; a depth-1 trajectory visits 2 and costs 1. The
+        # recorder this file was written against kept one leaf per TRANSITION and
+        # returned 1 for both, so the halo's sample size was set by the
+        # transition count and was independent of the work actually done.
         #
         # Stated as strict growth rather than `== 2^depth` so it stays correct
         # under either fix semantics (all leaves, or only positive-weight ones).
-        @test_broken last(contributed) > first(contributed)
+        @test last(contributed) > first(contributed)
+        # At `thin=1` every accepted leaf is retained, so the count is exactly
+        # the leaf count less the initial state. This is the rate itself, pinned.
+        for (d, n) in zip(depths, contributed)
+            @test n == (1 << d) - 1
+        end
+    end
+
+    @testset "`thin` sets the rate: one state per `thin` leaf evaluations" begin
+        # The mechanism `34ce034` deleted and `095efb0` restored. Warm-up sets
+        # `thin = n_evaluations ÷ recording_target` and recomputes it when the
+        # window budget doubles, which is what makes one window fill the ring.
+        # Within each block of `thin` leaves the recorder reservoir-samples, so
+        # WHICH state lands is random but HOW MANY is not: exactly one per
+        # complete block.
+        for thin in (1, 2, 4, 8)
+            p = _recorder_for(3, 100_000, thin)
+            n = feed_leaves!(p, 128; seed=99)
+            # One state per complete block — except the block holding the initial
+            # state, which has no acceptance statistic and so is never written.
+            # At `thin >= 2` that block still contains `thin-1` writable leaves;
+            # at `thin == 1` the initial state has the block to itself and the
+            # count is one short.
+            expected = 128 ÷ thin - (thin == 1)
+            println("    thin=$thin over 128 leaves → $n states (expected $expected)")
+            @test n == expected
+        end
     end
 
     # --- Integration level: what ONE WINDOW contributes ----------------------
@@ -134,11 +177,11 @@ include(joinpath(@__DIR__, "targets.jl"))
             println("    first fillable window: $(w.outer) — spent $(w.window_evals) gradient " *
                     "evaluations for a $(w.target)-slot ring, filled $(w.halo)")
             # The ring has `target` slots and the window spent `window_evals >=
-            # target` gradient evaluations. Under the original `thin`-based
-            # recorder the pool would hold exactly `target` states. Under
-            # one-leaf-per-transition it holds one per transition, which is
-            # `window_evals / (states per trajectory)` — a fraction of the ring.
-            @test_broken w.halo == w.target
+            # target` gradient evaluations, so the `thin`-based recorder fills it
+            # exactly. Under one-leaf-per-transition it held one state per
+            # transition — `window_evals / (states per trajectory)`, a fraction
+            # of the ring — which is the regression this pins against.
+            @test w.halo == w.target
         end
     end
 
@@ -146,16 +189,15 @@ include(joinpath(@__DIR__, "targets.jl"))
         for w in observable
             @test w.halo <= w.target
         end
+        # 20 trajectories × 4 leaves = 80 writes into an 8-slot ring: the ring
+        # must wrap by overwriting, never grow past `target`.
         p = _recorder_for(3, 8)
-        rng = Xoshiro(5)
-        for _ in 1:20
+        for t in 1:20
             reset!(p.leaves)
-            for i in 1:4
-                record_leaf!(p.leaves, randn(rng, 3), randn(rng, 3), i == 1 ? 0.0 : -abs(randn(rng)))
-            end
+            feed_leaves!(p, 4; seed=5 + t)
             finalize_leaf_recording!(p, 2)
         end
-        @test size(p.halo_position, 2) <= 8
+        @test size(p.halo_position, 2) == 8
         @test size(p.halo_position, 2) == size(p.halo_gradient, 2)
         reset!(p)
         @test size(p.halo_position, 2) == 0

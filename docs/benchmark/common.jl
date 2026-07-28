@@ -349,36 +349,60 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    gradient_overhead(problem, spec; n, seed)
+    gradient_overhead(problem, spec; n, rounds, seed)
 
 Per-call cost of `logdensity_and_gradient` on the bare problem, on the wrapper
 with an exact no-op transform (source == target), and on the wrapper with a live
 transform (source at the opposite endpoint). Isolates the transform's cost on
 the gradient hot path from the sampling dynamics that would otherwise mask it.
-"""
-function gradient_overhead(problem, spec; n::Int = 2000, seed::Int = 1)
-    dim = LogDensityProblems.dimension(problem)
-    rng = Xoshiro(seed)
-    xs = [randn(rng, dim) for _ in 1:n]
 
+Reported as the **median over `rounds` rounds**, with the variant order rotated
+each round, and the per-round values kept so the spread is visible rather than
+inferred. One shot per variant in a fixed order is not enough on a shared host:
+this benchmark runs on a machine other agents also use, and a single pass
+produced `seeds` no-op at 2.60x bare against live at 1.27x — the *identity*
+transform apparently costing twice what the real one does. That ordering is
+impossible, so it was measuring CPU contention, and nothing in a single-shot
+number says which of the three variants absorbed it.
+"""
+function gradient_overhead(problem, spec; n::Int = 2000, rounds::Int = 7, seed::Int = 1)
+    dim = LogDensityProblems.dimension(problem)
+
+    # Built once: construction is not what is being timed, and rebuilding per
+    # round would charge DI preparation to whichever round it landed in.
     bare = problem
     noop = ReparametrizedProblem(with_source(spec, target_cs(spec)[1]), problem, AD_BACKEND)
     live = ReparametrizedProblem(with_source(spec, opposite_c(spec)), problem, AD_BACKEND)
+    variants = ("bare" => bare, "noop" => noop, "live" => live)
 
-    time_it(p) = begin
+    time_it(p, xs) = begin
         LogDensityProblems.logdensity_and_gradient(p, xs[1])          # warm the JIT
         acc = 0.0
         t = @elapsed for x in xs
             v, g = LogDensityProblems.logdensity_and_gradient(p, x)
             acc += isfinite(v) ? 0.0 : 1.0
         end
-        (ns_per_call = 1e9 * t / n, n_nonfinite = acc)
+        (ns_per_call = 1e9 * t / length(xs), n_nonfinite = acc)
     end
 
-    b, nn, lv = time_it(bare), time_it(noop), time_it(live)
-    (; n_calls = n, dim,
-     bare_ns = b.ns_per_call, noop_ns = nn.ns_per_call, live_ns = lv.ns_per_call,
-     noop_ratio = nn.ns_per_call / b.ns_per_call,
-     live_ratio = lv.ns_per_call / b.ns_per_call,
-     nonfinite = (bare = b.n_nonfinite, noop = nn.n_nonfinite, live = lv.n_nonfinite))
+    samples = Dict(k => Float64[] for (k, _) in variants)
+    nonfinite = Dict(k => 0.0 for (k, _) in variants)
+    for r in 1:rounds
+        xs = [randn(Xoshiro(1000seed + 17r + i), dim) for i in 1:n]
+        for (k, p) in circshift(collect(variants), r)   # rotate: no fixed warm slot
+            got = time_it(p, xs)
+            push!(samples[k], got.ns_per_call)
+            nonfinite[k] += got.n_nonfinite
+        end
+    end
+
+    med(k) = median(samples[k])
+    (; n_calls = n, rounds, dim,
+     bare_ns = med("bare"), noop_ns = med("noop"), live_ns = med("live"),
+     noop_ratio = med("noop") / med("bare"),
+     live_ratio = med("live") / med("bare"),
+     bare_ns_rounds = samples["bare"], noop_ns_rounds = samples["noop"],
+     live_ns_rounds = samples["live"],
+     nonfinite = (bare = nonfinite["bare"], noop = nonfinite["noop"],
+                  live = nonfinite["live"]))
 end

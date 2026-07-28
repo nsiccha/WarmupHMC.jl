@@ -223,6 +223,7 @@ verdict can be checked against that list rather than against a global maximum.
 | `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
 | `compare.jl` | before/after diff across two results dirs |
 | `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl`, `frame_check.jl` | probes (above) |
+| `code_identical.jl` | do two revisions of `src/` define the same methods? — docstring-blind, exits 1 on a real change; how `RESULTS.md` justifies not re-running for the tip |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `results/*.json` | backend-probe outputs, not tied to a sampling run |

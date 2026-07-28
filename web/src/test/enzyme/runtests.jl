@@ -116,10 +116,9 @@ end
     # --- site 2: the joint halo transport (added by `dbde8d2`) --------------
     #
     # `transport_objective` is a SECOND `value_and_gradient` call site on the
-    # same user-supplied backend, and Enzyme cannot statically prove it. A plain
-    # `Const` — which is correct and sufficient for site 1 — throws here, and
-    # only at the first restarting warm-up window, so a user following the
-    # docstring hits it partway into a run rather than at setup.
+    # same user-supplied backend. Keep the plain-`Const` path here because this
+    # site used to require runtime activity and failed only at the first
+    # restarting warm-up window.
     @testset "find_reparametrization! — the joint transport site" begin
         function run_transport(be)
             rp = ReparametrizedProblem(spec(fill(1.0, K)), Funnel(K), be)
@@ -131,14 +130,7 @@ end
             end
         end
 
-        # The regression. Promote this to a plain `@test` if `transport_objective`
-        # is ever made statically provable — that is the better fix and would let
-        # users pass a backend without the `mode=` incantation.
-        @test_broken try
-            run_transport(CONST_ONLY); true
-        catch
-            false
-        end
+        @test run_transport(CONST_ONLY) < 1e-10
 
         for (name, be) in (("Const+set_runtime_activity", RUNTIME_ACTIVITY),
                            ("Duplicated", DUPLICATED))

@@ -381,46 +381,19 @@ end
     end
 
     @testset "coupled `loc`: a reparametrized coordinate as another block's loc" begin
-        # The one cross-coordinate shape the joint pass does NOT handle: a
-        # coordinate that is simultaneously a transform target and another
-        # block's `loc` argument. The testset directly above is the uncoupled
-        # control — coordinate 2 is the shared `loc` but is not in `pairs`, and
-        # there the joint pass is exact. Here it is both.
-        #
-        # This measures the SHIPPED seam, `find_reparametrization!`, and not the
-        # marginal `optimize!` search it wraps. That distinction is load-bearing:
-        # while this testset called `optimize!` it reported the marginal number,
-        # stayed Broken for a right-looking reason, and could not see that
-        # `ba6b4f01` made the coupled case WORSE. Measured on `ba6b4f01` — same
-        # harness, same seed, the seam being the only difference:
-        #
-        #   start          marginal (`optimize!`)     joint (`find_reparametrization!`)
-        #   c = 1 (all)    pos 1.4e-14 (exact)   ->   pos 1.9e+02   grad 5.6e+03
-        #   c = 0.5 (all)  pos 1.1e+02           ->   pos 4.2e+02   grad 1.0e+03
-        #
-        # Read the first row: from a fully-centered start — where every shipped
-        # spec begins — the marginal search was exact and the joint pass breaks
-        # it. The comment that used to stand here called that regime "correct,
-        # measured exact to 1.4e-14" and on that basis predicted this pin would
-        # promote on the joint fix. It did the opposite. Both regimes are broken
-        # now, so the old first-window/later-window split describes nothing.
-        #
-        # LATENT, not a live bug: every spec shipped in this repo is uncoupled
-        # (the `args` coordinates are disjoint from the `idx` set in all nine
-        # families), so nothing reaches this today. But `accel_gp` reads `x[46]`
-        # with its `idx` starting at 47 — one off-by-one away — and after
-        # `ba6b4f01` that off-by-one costs the FIRST window rather than the
-        # second.
-        #
-        # All four pins below are `@test_broken` deliberately. Any of them
-        # promoting is the signal that the coupled composition got fixed; the
-        # position pair and the gradient pair can move independently.
+        # Coordinate 2 is both a transform target and the `loc` argument for
+        # later blocks. Inverting the whole indexed transform by merely swapping
+        # every block's source and target evaluates those accessors at the model
+        # point, not at the source point being reconstructed. The shipping seam
+        # must instead recover dependencies in pair order.
         k = 4
+        loc_accessor(i) = x -> iszero(i) ? zero(eltype(x)) : x[i]
+        log_scale = x -> x[1] / 2
         coupled_ir(cs) = IndexedReparametrization(vcat(
             [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(cs[1]),
-                                    0.0, x -> x[1] / 2)],
+                                    loc_accessor(0), log_scale)],
             [(i + 2) => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(c),
-                                          x -> x[2], x -> x[1] / 2)
+                                          loc_accessor(2), log_scale)
              for (i, c) in enumerate(cs[2:end])]))
         coupled_problem(cs) =
             ReparametrizedProblem(coupled_ir(cs), NestedFunnel(k), AutoForwardDiff())
@@ -442,6 +415,8 @@ end
                 G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
             end
             X0 = copy(X)
+            roundtrip_error = maximum(abs,
+                inverse(ir_old)(ir_old(X0[:, 1])[2])[2] .- X0[:, 1])
             pg = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, X[:, 1]; strict=false)
             find_reparametrization!(rp, X, G, pg)
             moved = maximum(abs, view(X, 2, :) .- view(X0, 2, :))
@@ -452,24 +427,41 @@ end
                 maximum(abs, G[:, j] .-
                         LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2])
             end
-            (; perr, gerr, moved)
+            (; perr, gerr, moved, roundtrip_error)
         end
 
         centered = coupled_transport_error(fill(1.0, k + 1))
         println("  coupled, c_old == c_target: joint θ-position error = $(centered.perr), ",
                 "gradient error = $(centered.gerr) (loc coordinate moved by $(centered.moved))")
-        # Not vacuous: the `loc` coordinate really does move underneath the θ
-        # blocks. This one passed as `@test` while the seam was `optimize!`.
         @test centered.moved > 1.0
-        @test_broken centered.perr < 1e-10
-        @test_broken centered.gerr < 1e-8
+        @test centered.roundtrip_error < 1e-10
+        @test centered.perr < 1e-10
+        @test centered.gerr < 1e-8
 
         shifted = coupled_transport_error(fill(0.5, k + 1))
         println("  coupled, c_old != c_target: joint θ-position error = $(shifted.perr), ",
                 "gradient error = $(shifted.gerr) (loc coordinate moved by $(shifted.moved))")
         @test shifted.moved > 1.0
-        @test_broken shifted.perr < 1e-10
-        @test_broken shifted.gerr < 1e-8
+        @test shifted.roundtrip_error < 1e-10
+        @test shifted.perr < 1e-10
+        @test shifted.gerr < 1e-8
+    end
+
+    @testset "heterogeneous pair storage fails at construction" begin
+        mixed = vcat(
+            [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0),
+                                    0.0, x -> x[1] / 2)],
+            [3 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0),
+                                    x -> x[2], x -> x[1] / 2)],
+        )
+        err = try
+            IndexedReparametrization(mixed)
+            nothing
+        catch caught
+            caught
+        end
+        @test err isa ArgumentError
+        @test occursin("concrete element type", sprint(showerror, err))
     end
 
     @testset "find_reparametrization! is a no-op for a plain lpdf" begin

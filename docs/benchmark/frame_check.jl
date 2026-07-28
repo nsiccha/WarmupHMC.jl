@@ -70,7 +70,7 @@ open(joinpath(OUT_DIR, "frame_check.json"), "w") do io
                   "(sampler back-transforms) or the source frame (harness must). " *
                   "common.jl assumes the former from b109210 onward.",
         "julia" => string(VERSION),
-        "warmuphmc_sha" => readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`),
+        git_provenance()...,
         "seed" => SEED, "n_draws" => NDRAWS, "dimension" => dim,
         "mean_plain" => mp, "sd_plain" => sp,
         "mean_as_returned" => ma, "sd_as_returned" => sa,

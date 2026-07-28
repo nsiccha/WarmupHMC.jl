@@ -44,6 +44,7 @@
       19,
       20
     ],
+    "src_dirty": false,
     "study": "nonlinear online trajectory weighting: leaf policy x metric policy",
     "targets": {
       "eight_schools": {
@@ -76,8 +77,8 @@
         "spec": "native_spec(\"radon_mn-radon_partially_pooled_centered\", dim, jdata)"
       }
     },
-    "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16",
-    "worktree_dirty": true
+    "warmuphmc_sha": "ef3a6af786d8721033f272ea25266d733bd8b4ce",
+    "worktree_dirty": false
   },
   "rows": [
     {

@@ -118,7 +118,7 @@ open(joinpath(OUT_DIR, "backend_replication.json"), "w") do io
                   "Rounds are interleaved and rotated so drift is not charged to one backend.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
         "rounds" => ROUNDS, "n_calls" => NCALLS,
-        "warmuphmc_sha" => readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`),
+        git_provenance()...,
         "rows" => rows), 2)
 end
 println("\nwrote results/backend_replication.json")

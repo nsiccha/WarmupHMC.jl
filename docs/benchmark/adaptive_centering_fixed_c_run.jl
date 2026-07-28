@@ -301,6 +301,28 @@ function ace_git_sha()
     end
 end
 
+"""Was the tree dirty when this ran? `paths` narrows the question to a subtree.
+
+`artifact_currency.jl` gates on the `src/`-scoped answer, because that is what
+its `code_identical.jl` comparison is about: a dirty `docs/` cannot change what
+sampler ran, but a dirty `src/` means the recorded SHA does not name the code
+that ran — and unlike staleness, that is not dischargeable by any later check,
+because there is no revision to point one at.
+
+`missing` (JSON `null`) rather than `false` when git is unreachable: not knowing
+is not the same as knowing it was clean. `--untracked-files=no` because this
+harness writes its results into the repo.
+
+Duplicated from `git_provenance()` in common.jl, which this runner does not
+include. Keep the two in lockstep."""
+function ace_dirty(paths...)
+    try
+        !isempty(readchomp(`git -C $(normpath(joinpath(@__DIR__, "..", ".."))) status --porcelain --untracked-files=no $(paths)`))
+    catch
+        missing
+    end
+end
+
 const ACE_N_SEEDS = parse(Int, get(ENV, "ACE_SEEDS", "8"))
 const ACE_N_DRAWS = parse(Int, get(ENV, "ACE_DRAWS", "1000"))
 const ACE_N_EVALUATIONS = parse(Int, get(ENV, "ACE_EVALUATIONS", "1000"))
@@ -350,6 +372,8 @@ end
 
 config = Dict(
     "warmuphmc_sha" => ace_git_sha(),
+    "worktree_dirty" => ace_dirty(),
+    "src_dirty" => ace_dirty("--", "src"),
     "julia" => string(VERSION),
     "blas_threads" => BLAS.get_num_threads(),
     "host" => get(ENV, "KB_HOST", "unknown"),

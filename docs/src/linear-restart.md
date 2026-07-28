@@ -72,7 +72,7 @@ md_table(
     ["target", "comparison", "test ÷ baseline", "ESS ratio [min, Q1, median, Q3, max]",
      "ESS wins", "accuracy metric", "error ratio median",
      "accuracy wins", "restart decisions differ", "ESS ratio when changed"],
-    [["`" * r["target"] * "`", r["comparison"],
+    [["`" * r["target"] * "`", "`" * r["comparison"] * "`",
       "`" * r["arm"] * "` ÷ `" * r["baseline_arm"] * "`",
       "[" * join(num.([r["ess_efficiency_ratio_min"],
                         r["ess_efficiency_ratio_q1"],

@@ -147,6 +147,28 @@ Markdown.parse(isempty(short) ?
     "read that median as describing the chains that finished.*")
 ```
 
+The medians above compress each arm to one number. The per-chain values behind
+them are what the boxes show, so an arm whose median looks competitive but whose
+spread straddles another's is visible as such rather than having to be inferred
+from the `range` column:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("adaptive_centering_fixed_c.jl")
+load_harness("plots.jl")
+d = load_results("adaptive_centering_fixed_c/rows.json")
+vega_figure(ace_bulk_ess_spec(d);
+    caption = "Per-chain minimum-coordinate bulk ESS per thousand gradient " *
+              "evaluations, by arm, faceted by family. Log scale, shared " *
+              "across facets. Boxes span min to max. Built from the same " *
+              "chain rows as the table above, at build time.")
+```
+
+The scale is logarithmic, so equal vertical distances are equal *ratios*, not
+equal differences. The spec refuses zero, negative, missing and non-numeric
+values rather than plotting them, because a log axis drops those silently and a
+chain that failed would leave no mark on the figure at all.
+
 Pooled across chains, with the sampler diagnostics that decide whether any of it
 is admissible:
 
@@ -210,6 +232,30 @@ Markdown.parse(isempty(ks) ?
     "**The predeclared rule**\n\n" *
     join(["- **$(replace(k, "_" => " ")):** $(mr[k])" for k in ks], "\n"))
 ```
+
+Every paired seed is drawn below against that rule, rather than only the median
+and the count that the table reports. This is the view in which "the median sits
+below `0.8` but too few individual seeds do for the rule to fire" stops being a
+sentence to take on trust:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("adaptive_centering_fixed_c.jl")
+load_harness("plots.jl")
+d = load_results("adaptive_centering_fixed_c/rows.json")
+vega_figure(ace_proxy_ratio_spec(d);
+    caption = "Per-seed ratio of the strict-online invariant proxy to the " *
+              "exact-score reference, on minimum-coordinate bulk ESS per " *
+              "thousand gradient evaluations, faceted by family. The `1.0` " *
+              "line is parity; the `0.8` line is the threshold the artifact " *
+              "predeclares; the third line is the family median.")
+```
+
+Read it against the boundary the section above sets out: a ratio is a distance
+from a reference that is exact by construction of the target, not a score in a
+tuning contest. The `0.8` line is the artifact's own predeclared threshold and
+is drawn from the same `materiality_rule` rendered above — it is not a level
+this page chose.
 
 ## What the rows conclude
 

@@ -32,13 +32,26 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Install dependencies
         run: |
-          git clone https://github.com/nsiccha/TestModules.jl.git
+          git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
+          git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
+          git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
+          git clone --branch dev https://github.com/nsiccha/TestModules.jl.git
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          julia --project=web -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="DynamicObjects.jl"),
+            PackageSpec(path="HTMX.jl"),
+            PackageSpec(path="HTMXObjects.jl"),
+            PackageSpec(path="TestModules.jl"),
+            PackageSpec(path="Treebars.jl"),
+          ]); Pkg.instantiate()'
           julia --project=docs -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="TestModules.jl"),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
+      - name: Record WarmupHMCWeb for the docs
+        run: julia --project=web docs/record_gallery.jl
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

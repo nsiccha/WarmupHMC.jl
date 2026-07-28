@@ -66,12 +66,15 @@ resolve develops them; nothing in this benchmark uses them directly.
   reported alongside, and the results table leads with it for that reason.
 - **Chaotic, not systematic**: `plain` and `fixed_centered` are mathematically
   the same sampler — the wrapper's transform is an exact identity when source
-  and target centerings agree. They still diverge on Stan targets, because the
-  wrapper adds an AD-computed correction term that is zero only up to rounding,
-  and NUTS amplifies a 1e-16 gradient difference into a different trajectory.
-  On the analytic funnel, where the correction is exactly zero, the two arms
-  agree to the last gradient evaluation — that agreement is the check that the
-  no-op wrapper really is a no-op.
+  and target centerings agree. They agree to the last gradient evaluation on
+  every seed for `seeds_data` and the funnel, and diverge on eight_schools and
+  both radon models. The predictor is whether the spec's **location** is a
+  constant: it is for those two targets and a closure over the position vector
+  for the rest, and reconstructing `loc + exp(s)·((x − loc)/exp(s))` is the
+  identity only up to rounding once `loc` moves with the position. NUTS then
+  amplifies a 1e-16 gradient difference into a different trajectory. The exact
+  agreement where the arithmetic permits it is the check that the no-op wrapper
+  really is a no-op; elsewhere the two arms stay within seed noise.
 
 ## Layout
 

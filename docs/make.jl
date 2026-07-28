@@ -16,12 +16,17 @@ makedocs(
         devbranch = "dev",
     ),
     pages = [
-        "Home"      => "index.md",
-        "Gallery"   => "gallery.md",
-        "API"       => "api.md",
+        "Home"            => "index.md",
+        "Reparametrization" => "reparametrization.md",
+        "Gallery"         => "gallery.md",
+        "API"             => "api.md",
     ],
-    checkdocs = :none,
-    warnonly = true,
+    # Every docstring on an exported name must appear in the manual, and every
+    # warning is an error. `api.md` carries the exported surface explicitly plus
+    # an `@autodocs Public = false` block for the internals the exported
+    # docstrings cross-reference.
+    checkdocs = :exports,
+    warnonly = false,
 )
 
 # Ensure a root index.html redirect exists for when no stable version is deployed

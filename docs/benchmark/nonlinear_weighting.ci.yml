@@ -1,0 +1,181 @@
+# READY-TO-MOVE WORKFLOW TEMPLATE — copy to `.github/workflows/` to activate.
+#
+# It sits here, not in `.github/workflows/`, because activating a workflow is
+# the repo owner's call, not this benchmark's. GitHub only reads
+# `.github/workflows/*.yml`, so this file is inert where it is. Move it, do not
+# copy-and-diverge.
+#
+# WHAT IT DOES, AND WHAT IT DELIBERATELY DOES NOT
+#
+# Two jobs, with different natures:
+#
+#   `derive` — DETERMINISTIC, and a real gate. It runs the derivation over the
+#     rows already committed to the repo. Pure arithmetic over a fixed file, so
+#     it is legitimately allowed to fail the build: if it goes red, either the
+#     derivation broke or the artifact did.
+#
+#   `smoke`  — NOISY, and NOT a gate on numbers. It re-runs the measurement
+#     driver in a tiny configuration and uploads its raw rows as an artifact.
+#     It fails only when a run actually fails — never because a policy came out
+#     behind. A benchmark that goes red on an unfavourable result teaches
+#     everyone to stop reading it, and these rows are noisy by nature: the
+#     hosted runner is shared, unpinned in CPU model, and nothing here asserts
+#     byte-identity with the committed rows.
+#
+# So CI proves the driver, the schema and the artifact upload still work. THE
+# NUMBERS WORTH QUOTING DO NOT COME FROM HERE. They come from a deliberate
+# quiet-host run with its SHA and config recorded in the artifact — see
+# `README.md` and the `config` block of `results/nonlinear_weighting/rows.json`.
+#
+# The one non-obvious assertion is in `smoke`: it runs the derivation over the
+# FRESHLY GENERATED rows as well. That asserts nothing about the values, but it
+# does catch the failure this pair is most exposed to — the driver's schema and
+# the derivation's expectations drifting apart, which no amount of re-deriving
+# the committed rows can detect.
+#
+# THE INSTANTIATE STEP IS COPIED VERBATIM from `test.yml`'s `linear-evidence`
+# job — same environment, same four clones, same branch pins. KEEP THE TWO IN
+# STEP; two workflows resolving one environment differently is a difference that
+# shows up as an unreproducible benchmark, not as a red build.
+#
+# Why it is four clones and not `Pkg.instantiate()`:
+#
+#   * Three of the four are UNREGISTERED, so no resolve can find them, and one
+#     (HTMXObjects) is PRIVATE — hence the PAT rewrite. `[sources]` is honoured
+#     from Julia 1.11 only, and no `Manifest.toml` is committed anywhere in this
+#     repo (they are all gitignored), so nothing else supplies them to a runner.
+#   * The branch pins are not decoration: several default branches are stale.
+#     `--branch dev` on Treebars is the one that fails loudest — `Treebars.round2`,
+#     which WarmupHMC's `src/progress.jl` adds a method to AT LOAD TIME, exists on
+#     `origin/dev` and NOT on `origin/main`, so a default-branch clone dies at
+#     precompile with `UndefVarError: round2` before a single line of this
+#     benchmark runs. `test.yml` and `Docs.yml` both already carry it.
+#
+# Note that HTMX, HTMXObjects and DynamicObjects are in `[deps]` because the
+# canonical resolve develops them; no file in `docs/benchmark/` imports one. They
+# are cloned here only because the environment declares them.
+
+name: Nonlinear weighting benchmark
+
+on:
+  workflow_dispatch:
+  # Path-scoped: this is minutes of sampling, and nothing outside these files
+  # can change its outcome.
+  push:
+    branches: [main, dev]
+    paths:
+      - 'docs/benchmark/nonlinear_weighting*.jl'
+      - 'docs/benchmark/nonlinear_weighting.ci.yml'
+      - 'docs/benchmark/common.jl'
+      - 'docs/benchmark/Project.toml'
+      - 'docs/benchmark/results/nonlinear_weighting/**'
+      - 'src/**'
+  pull_request:
+    paths:
+      - 'docs/benchmark/nonlinear_weighting*.jl'
+      - 'docs/benchmark/nonlinear_weighting.ci.yml'
+      - 'docs/benchmark/common.jl'
+      - 'docs/benchmark/Project.toml'
+      - 'docs/benchmark/results/nonlinear_weighting/**'
+      - 'src/**'
+
+permissions:
+  actions: write        # let julia-actions/cache evict its own caches
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  # The committed artifact still derives. Seconds, no unregistered dependency,
+  # no sampler — `nonlinear_weighting.jl` is definitions-only and depends on
+  # JSON plus three stdlibs, which is exactly what lets this job be this cheap.
+  derive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - name: Derive every table and the conclusion from the committed rows
+        run: |
+          julia -e '
+            using Pkg; Pkg.activate(; temp = true); Pkg.add("JSON")
+            include("docs/benchmark/nonlinear_weighting.jl")
+            doc = nw_load(); rows = doc["rows"]
+            isempty(rows) && error("no rows in the artifact")
+            for f in (nw_aggregate_table, nw_paired_table,
+                      nw_paired_median_table, nw_discrimination_table)
+                println(f(rows))
+            end
+            println(nw_conclusion(rows))
+            # The config block is what makes the numbers attributable. A row set
+            # that has lost it is not a result, so treat that as a failure.
+            for k in ("warmuphmc_sha", "seeds", "targets", "resolved_sampler_defaults")
+                haskey(doc["config"], k) || error("config is missing `$k`")
+            end
+          '
+
+  # Re-measure a tiny slice. NOISE IS EXPECTED HERE — see the header.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure git for private repos
+        # HTMXObjects is private; this supplies read access to the clone below.
+        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - name: Instantiate the benchmark environment
+        # VERBATIM from `test.yml`'s `linear-evidence` job — keep in step. The
+        # branch pins and the private clone are explained in the header.
+        # Batched into one `Pkg.develop` so the resolver sees every path at once.
+        run: |
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
+          git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
+          git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
+          julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="Treebars.jl"),
+            PackageSpec(path="DynamicObjects.jl"),
+            PackageSpec(path="HTMX.jl"),
+            PackageSpec(path="HTMXObjects.jl"),
+          ]); Pkg.instantiate()'
+      - name: Run the smoke configuration
+        # The two ANALYTIC targets only. `radon_mn-radon_partially_pooled_centered`
+        # is deliberately excluded: it needs posteriordb plus a BridgeStan model
+        # compile, which is minutes of C++ before any sampling starts, and it is
+        # the dimension-88 target — it would make this the slowest job in the
+        # repo to prove exactly what the two cheap targets already prove.
+        env:
+          WHMC_NW_TARGETS: funnel,eight_schools
+          WHMC_NW_SEEDS: '1:2'
+          WHMC_NW_DRAWS: '200'
+          WHMC_NW_OUT: ci-rows
+        run: julia --project=docs/benchmark docs/benchmark/nonlinear_weighting_run.jl
+      - name: Derive from the fresh rows
+        # Schema drift check, not a numeric one. Every value below is whatever
+        # the runner produced; the assertion is only that the derivation can
+        # still consume rows the driver has just written.
+        run: |
+          julia --project=docs/benchmark -e '
+            include("docs/benchmark/nonlinear_weighting.jl")
+            doc = nw_load("ci-rows/rows.json"); rows = doc["rows"]
+            length(rows) == 16 || error("expected 16 smoke rows, got $(length(rows))")
+            println(nw_aggregate_table(rows))
+            println(nw_discrimination_table(rows))
+            println(nw_conclusion(rows))
+          '
+      - name: Upload the raw rows
+        # RAW ROWS, not a pass/fail verdict — the point of this job. Anyone
+        # comparing a CI run with the committed study downloads this and derives
+        # from it themselves.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nonlinear-weighting-ci-rows
+          path: ci-rows/rows.json

@@ -526,7 +526,9 @@ returning them, so nothing downstream has to know a reparametrization happened.
     figures were materially different a few commits earlier. So read the chain
     above as a record of revisions somebody checked, **not as a currency
     claim** — a plain `julia` fence is not executed by the docs build, so these
-    numbers ship unchanged whether or not they still reproduce.
+    numbers ship unchanged whether or not they still reproduce. ([Runnable
+    examples](@ref) is where which examples run and which do not is tracked;
+    this one is listed there as not executed.)
 
     You do not have to re-run blindly to find out. Ask whether the code this
     example calls has moved since the last revision named above:

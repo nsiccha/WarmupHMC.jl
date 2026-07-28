@@ -44,6 +44,34 @@ WHMC_BENCH_SEEDS=2 WHMC_BENCH_DRAWS=200 \
   julia --project=docs/benchmark docs/benchmark/run_reparam_benchmark.jl
 ```
 
+## Before you land a regeneration
+
+Rewriting these result files is the one move that has taken the docs build red.
+The pages read them **by key**, so a probe whose output schema drifted shows
+nothing at all until its output is regenerated — and then every page that reads
+it fails at once. Build the docs before landing:
+
+```bash
+julia --project=docs docs/make.jl
+```
+
+That reads the checked-in JSON, so it catches a page whose keys no longer match
+what you just wrote. About a minute, no probe run needed.
+
+It happened exactly this way: `655218e` changed `capture_boxing.jl` to emit
+`boxed/*` + `unboxed/*` instead of `shipped/*` + `deboxed/*`; nothing surfaced
+until `176a061` regenerated the results 2 h 12 m later, and the build died on
+three `KeyError`s in a page whose owner had touched neither the probe nor the
+schema.
+
+The complementary direction — a probe whose keys drift while the checked-in copy
+sits unchanged — is covered by `.github/workflows/probe-schema.yml`, which
+regenerates the three probes the pages read into a temporary directory and
+builds against exactly those. That job triggers on GitHub events, so it fires
+when the desktop publishes rather than when work lands: a batch-time net, not a
+landing gate. The `make.jl` run above is the landing-time half, and neither
+substitutes for the other.
+
 ## Environment
 
 `Project.toml` is checked in; `Manifest.toml` is not (the repository gitignores

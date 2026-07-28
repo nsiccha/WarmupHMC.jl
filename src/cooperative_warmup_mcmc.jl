@@ -716,6 +716,7 @@ cooperative_checkpoint_payload(chain::CooperativeChain) = (;
     chain.dropped_posterior_position, chain.dropped_posterior_gradient,
     chain.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(chain.lpdf),
+    custom_candidate_scoring=_has_custom_candidate_scoring(chain.lpdf),
 )
 
 # Per-chain checkpoint paths. `chain_<i>/` reuses the adaptive layout, and the

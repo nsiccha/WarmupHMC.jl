@@ -4,8 +4,76 @@
 maybecall(f::Function, args...; kwargs...) = f(args...; kwargs...)
 maybecall(x, args...; kwargs...) = x
 
+struct DirectCandidateScoring end
+const DIRECT_CANDIDATE_SCORING = DirectCandidateScoring()
+
 """
-    ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing)
+    CandidateScoringPlan(prepare, score; synchronize! = identity)
+
+A pluggable strategy for scoring reparametrization candidates from online
+evidence, attached with
+`ReparametrizedProblem(ir, problem, backend; scoring_plan = plan)`.
+
+Every `ReparametrizedProblem` has a plan — the public `nothing` default resolves
+to an internal direct-scoring plan. Passing one therefore replaces a strategy
+rather than enabling one. Declining a pair is not the same as having no plan:
+`score` returning `nothing` restores the direct scoring formula for that pair,
+but attaching any custom plan already determines the evidence source, so a plan
+that declines every pair is still not equivalent to the default.
+
+# Callbacks
+
+`prepare(ir, position, gradient)` runs once per online evidence observation and
+returns a transient frame. The frame is opaque to WarmupHMC and is passed
+unchanged to every `score` call arising from that observation, so it is where
+work shared across candidates belongs rather than being repeated per pair.
+
+`score(frame, pair_number, idx, reparametrization, candidate)` returns
+`(ljac, position, gradient)` for `candidate`, where `ljac` is the log-Jacobian
+term in `logdensity(rp, x) == ljac + logdensity(problem, y)`. `pair_number` is
+the pair's one-based position in `ir.pairs`; `idx` is that pair's source-vector
+coordinate selector. Returning `nothing` instead delegates that one pair to
+direct scoring; the choice is per pair, so a plan may score only the pairs it
+has an opinion about.
+
+`synchronize!(ir)` runs after construction, after every winner commit, and when
+a checkpoint source is restored — the points at which `ir` may have changed
+underneath a plan holding derived state. The default `identity` is correct for
+a stateless plan.
+
+# Evidence source
+
+A custom plan interprets `nonlinear_evidence=:linear_pool` as online
+all-good-leaf evidence; it never replays the retained linear pool.
+
+# Checkpoints
+
+Checkpoint payloads are `Serialization`-based and deliberately exclude the
+log-density and the scoring plan, so a plan does not survive a checkpoint. The
+marker is compared on restore and a mismatch is an error in either direction:
+restoring a plan-recorded run without attaching one, and restoring a
+default-recorded run with a plan attached, both fail loudly rather than falling
+back. A silent fallback would resume a different problem than the one recorded
+while looking like a successful restore.
+
+See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
+[Adaptive centering at fixed `c`](@ref) for a measured comparison of a
+strict-online scoring proxy against an exact-score reference.
+"""
+struct CandidateScoringPlan{P,S,Y}
+    prepare::P
+    score::S
+    synchronize!::Y
+end
+CandidateScoringPlan(prepare, score; synchronize! = identity) =
+    CandidateScoringPlan(prepare, score, synchronize!)
+
+_synchronize_scoring!(::DirectCandidateScoring, ir) = ir
+_synchronize_scoring!(plan::CandidateScoringPlan, ir) =
+    (plan.synchronize!(ir); ir)
+
+"""
+    ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing; scoring_plan=nothing)
 
 Wrap a `LogDensityProblems`-compatible `problem` in a nonlinear reparametrization
 that warm-up is allowed to ADAPT.
@@ -148,6 +216,35 @@ is not a backend, so `logdensity` keeps working on that object and the first
 `logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
 Construction itself never complains.
 
+# Candidate scoring
+
+`scoring_plan` attaches a [`CandidateScoringPlan`](@ref), which replaces how a
+candidate reparametrization is scored during warm-up. The default is `nothing`
+and takes the original path — not an equivalent one, the same one — so attaching
+no plan cannot move a result.
+
+A plan supplies `prepare`, `score` and `synchronize!`. `prepare(ir, position,
+gradient)` runs once per online evidence observation and returns a transient
+frame; `score(frame, pair_number, idx, value, candidate)` returns `(ljac,
+position, gradient)`, or `nothing` to fall through to the existing direct
+scoring. `synchronize!(ir)` runs after construction, after a winner is
+committed, and after a checkpoint restore — before anything transports or
+evaluates the reparametrization.
+
+The score is a **fixed-frame proxy**: the frame is held fixed while a candidate
+is evaluated, so it does not model every coordinate moving at once. That is a
+deliberate approximation, not an oversight, and it is the reason a plan is opt-in
+rather than the default.
+
+!!! warning "A plan does not survive a checkpoint — re-attach it on restore"
+    A plan is three functions, and checkpoint payloads deliberately exclude the
+    supplied log-density problem, so the plan is not serialized with them. What a
+    checkpoint records is *that* a non-default plan was in force. Restore then
+    fails loudly if that marker and the supplied plan disagree in either
+    direction, rather than falling back to the default. The failure is deliberate:
+    a resumed run that quietly scored differently from the run it resumed would
+    diverge with nothing in the output saying so.
+
 # Example
 
 ```julia
@@ -173,15 +270,30 @@ reparametrizer's source frame either way.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
 """
-struct ReparametrizedProblem{R,P,B}
+struct ReparametrizedProblem{R,P,B,S}
     reparametrizer::R
     problem::P
     ad_backend::B
+    scoring_plan::S
+    function ReparametrizedProblem(r::R, p::P, b::B, scoring::S) where {R,P,B,S}
+        _synchronize_scoring!(scoring, r)
+        new{R,P,B,S}(r, p, b, scoring)
+    end
 end
-ReparametrizedProblem(r, p) = ReparametrizedProblem(r, p, nothing)
+_resolve_candidate_scoring(::Nothing) = DIRECT_CANDIDATE_SCORING
+_resolve_candidate_scoring(plan::CandidateScoringPlan) = plan
+ReparametrizedProblem(r, p, b; scoring_plan=nothing) =
+    ReparametrizedProblem(r, p, b, _resolve_candidate_scoring(scoring_plan))
+ReparametrizedProblem(r, p; scoring_plan=nothing) =
+    ReparametrizedProblem(r, p, nothing; scoring_plan)
 reparametrizer(p::ReparametrizedProblem) = p.reparametrizer
 reparametrizer(p::WrappedLogDensityProblem) = reparametrizer(parent(p))
 reparametrizer(::Any) = IndexedReparametrization([])
+candidate_scoring_plan(p::ReparametrizedProblem) = p.scoring_plan
+candidate_scoring_plan(p::WrappedLogDensityProblem) = candidate_scoring_plan(parent(p))
+candidate_scoring_plan(::Any) = DIRECT_CANDIDATE_SCORING
+_has_custom_candidate_scoring(p) = candidate_scoring_plan(p) isa CandidateScoringPlan
+_synchronize_scoring!(p) = _synchronize_scoring!(candidate_scoring_plan(p), reparametrizer(p))
 LogDensityProblems.capabilities(::Type{<:ReparametrizedProblem{R,P}}) where {R,P} = LogDensityProblems.capabilities(P)
 LogDensityProblems.dimension(p::ReparametrizedProblem) = LogDensityProblems.dimension(p.problem)
 LogDensityProblems.logdensity(p::ReparametrizedProblem, x::AbstractVector) = begin
@@ -320,8 +432,12 @@ parametrization and let warm-up move it from there.
 
 `args` are the extra arguments the centerings need — for [`PartiallyCentered`](@ref)
 exactly two, the location and the log-scale, in that order. Each is either a
-constant or a callable applied to the whole parameter vector, so `x -> x[9]`
-reads the location off coordinate 9 and `0.` pins it to zero.
+constant or a `Function` applied to the whole parameter vector, so `x -> x[9]`
+reads the location off coordinate 9 and `0.` pins it to zero. A callable struct
+must subtype `Function`; an otherwise-callable object is treated as a constant by
+the accessor contract. That mismatch is silent at construction: the struct
+itself becomes the argument value, so any symptom appears later inside the
+centering or gradient evaluation.
 
 The callables are applied to the sampler's SOURCE-coordinate vector as it was on
 entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no
@@ -617,9 +733,12 @@ OnlineReparametrizer((;pairs)::IndexedReparametrization; kwargs...) = OnlineRepa
     idx => OnlineReparametrizer(value; kwargs...)
     for (idx, value) in pairs
 ])
-function OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer,
-                              position::AbstractVector, gradient::AbstractVector;
-                              weight::Real=1, count::Bool=true)
+function _fit_candidate_scoring!(::DirectCandidateScoring,
+                                 ir::IndexedReparametrization,
+                                 ors::OnlineReparametrizer,
+                                 position::AbstractVector,
+                                 gradient::AbstractVector;
+                                 weight::Real=1, count::Bool=true)
     for ((idx, value), (stored_idx, or)) in zip(ir.pairs, ors.pairs)
         idx == stored_idx || throw(ArgumentError(
             "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
@@ -631,6 +750,41 @@ function OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparamet
         )
     end
     ir
+end
+
+function _fit_candidate_scoring!(plan::CandidateScoringPlan,
+                                 ir::IndexedReparametrization,
+                                 ors::OnlineReparametrizer,
+                                 position::AbstractVector,
+                                 gradient::AbstractVector;
+                                 weight::Real=1, count::Bool=true)
+    frame = plan.prepare(ir, position, gradient)
+    for (pair_number, ((idx, value), (stored_idx, or))) in
+        enumerate(zip(ir.pairs, ors.pairs))
+        idx == stored_idx || throw(ArgumentError(
+            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+        ))
+        for (candidate, accumulator) in or.pairs
+            observation = plan.score(frame, pair_number, idx, value, candidate)
+            if isnothing(observation)
+                observation = reparam(
+                    candidate,
+                    reparam_rargs(value, position[idx], gradient[idx], position)...,
+                )
+            end
+            OnlineStatsBase.fit!(accumulator, observation; weight, count)
+        end
+    end
+    ir
+end
+
+function OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer,
+                              position::AbstractVector, gradient::AbstractVector;
+                              weight::Real=1, count::Bool=true,
+                              scoring_plan=DIRECT_CANDIDATE_SCORING)
+    _fit_candidate_scoring!(
+        scoring_plan, ir, ors, position, gradient; weight, count,
+    )
 end
 
 function optimize!(ir::IndexedReparametrization, ors::OnlineReparametrizer;
@@ -678,6 +832,14 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
     )
 end
 
+_uses_online_candidate_scoring(::DirectCandidateScoring) = false
+_uses_online_candidate_scoring(::CandidateScoringPlan) = true
+function _effective_nonlinear_evidence(recorder::NonlinearRecorder, lpdf)
+    plan = candidate_scoring_plan(lpdf)
+    recorder.mode === :linear_pool && _uses_online_candidate_scoring(plan) ?
+        :all_good_leaves : recorder.mode
+end
+
 function _trajectory_weight(weighting, stepsize)
     weighting === :unit && return 1.0
     weighting === :stepsize && return stepsize
@@ -685,7 +847,8 @@ function _trajectory_weight(weighting, stepsize)
 end
 
 function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
-    recorder.mode === :linear_pool && return recorder
+    mode = _effective_nonlinear_evidence(recorder, lpdf)
+    mode === :linear_pool && return recorder
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return recorder
     trajectory_weight = _trajectory_weight(recorder.trajectory_weighting, stepsize)
@@ -693,7 +856,7 @@ function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
 
     recorded = false
     for i in eachindex(leaves.dH)
-        leaf_weight = if recorder.mode === :all_good_leaves
+        leaf_weight = if mode === :all_good_leaves
             i != 1 && leaves.dH[i] > recorder.good_leaf_threshold ? 1.0 : 0.0
         else
             leaves.weights[i]
@@ -707,6 +870,7 @@ function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
             @view(leaves.gradient[:, i]);
             weight,
             count=false,
+            scoring_plan=candidate_scoring_plan(lpdf),
         )
         recorded = true
     end
@@ -799,6 +963,7 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, halo_position, halo_gradient)
+    _synchronize_scoring!(lpdf)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              halo_position, halo_gradient)
     DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
@@ -807,7 +972,8 @@ end
 function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
                                   halo_position, halo_gradient,
                                   position_and_gradient)
-    recorder.mode === :linear_pool && return find_reparametrization!(
+    _effective_nonlinear_evidence(recorder, lpdf) === :linear_pool &&
+        return find_reparametrization!(
         lpdf, halo_position, halo_gradient, position_and_gradient,
     )
     ir = reparametrizer(lpdf)
@@ -816,6 +982,7 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, recorder.online)
+    _synchronize_scoring!(lpdf)
     _jointly_transport_halo!(
         lpdf, old_ir, old_position, old_gradient, halo_position, halo_gradient,
     )

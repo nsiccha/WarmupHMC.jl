@@ -21,7 +21,8 @@ using Serialization: serialize, deserialize
 using DifferentiationInterface: value_and_gradient
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
-    ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization
+    ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
+    CandidateScoringPlan
 
 include("kwarg_validation.jl")
 include("MatrixExpressions.jl")

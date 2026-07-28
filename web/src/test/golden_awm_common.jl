@@ -119,6 +119,7 @@ function golden_report()
     # silently went red and stayed there. These are the keys a consumer that
     # renders a running fit actually reads.
     cpkeys = (:schema_version, :sampler, :dimension, :rng, :reparam_sources,
+              :custom_candidate_scoring,
               :position_and_gradient, :posterior_position, :halo_position,
               :dropped_posterior_position, :n_divergent_samples, :n_samples,
               :outer_counter, :stepsize)
@@ -126,7 +127,8 @@ function golden_report()
         fs = filter(f -> endswith(f, ".jls"), readdir(d))
         !isempty(fs) && all(fs) do f
             p = deserialize(joinpath(d, f))
-            p isa NamedTuple && all(k -> haskey(p, k), cpkeys) && p.sampler === :adaptive
+            p isa NamedTuple && all(k -> haskey(p, k), cpkeys) &&
+                p.sampler === :adaptive && p.custom_candidate_scoring === false
         end
     end
 

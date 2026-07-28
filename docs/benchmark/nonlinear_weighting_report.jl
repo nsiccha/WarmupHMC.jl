@@ -14,6 +14,13 @@
 include(joinpath(@__DIR__, "nonlinear_weighting.jl"))
 
 const ROWS_PATH = length(ARGS) >= 1 ? ARGS[1] : NW_ROWS_PATH
+# Blank is refused, not defaulted -- see `env_dir` in common.jl for why. Inlined
+# rather than shared because this script is deliberately dependency-light: the
+# docs build loads its derivation, and pulling in common.jl would drag
+# BridgeStan and PosteriorDB into `makedocs`.
+if haskey(ENV, "WHMC_BENCH_OUT") && isempty(strip(ENV["WHMC_BENCH_OUT"]))
+    error("WHMC_BENCH_OUT is set but blank; unset it or give it a real path.")
+end
 const OUT = get(ENV, "WHMC_BENCH_OUT", dirname(ROWS_PATH))
 
 art = nw_load(ROWS_PATH)

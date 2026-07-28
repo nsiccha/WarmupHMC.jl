@@ -1,0 +1,41 @@
+# Environment for the cross-sampler comparison (`bench/sampler_comparison.jl`).
+#
+# WHY THIS IS NOT `docs/benchmark/Project.toml`
+#
+# This benchmark needs `AdvancedHMC` — a large dependency that pulls its own
+# sampler stack — which that environment does not carry. No `Manifest.toml` is
+# tracked in this repository (`docs/.gitignore` and the root one both ignore
+# them), so every consumer of `docs/benchmark/` re-resolves it from its
+# `Project.toml`; widening that file therefore moves the environment under the
+# checked-in results in `docs/benchmark/results/` for everyone, for the sake of
+# a script that does not measure the thing those results are about. A separate
+# environment costs one more `Pkg.instantiate` and buys that isolation.
+#
+# It does reuse `docs/benchmark/common.jl` (targets, `stan_problem`,
+# `ess_per_coordinate`, `constrained`, `git_provenance`) rather than forking it,
+# so both benchmarks measure ESS the same way. That is a real coupling: a new
+# `using` in that file must be added to the deps below or this environment stops
+# loading. It is the cheaper of the two failure modes — it fails loudly, whereas
+# two drifting copies of an ESS calculation fail silently.
+[deps]
+AdvancedHMC = "0bf59076-c3b1-5ca4-86bd-e02cd72cde3d"
+BridgeStan = "c88b6f0a-829e-4b0b-94b7-f06ab5908f5a"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LogDensityProblems = "6fdf6af0-433a-55f7-b3ed-c6c6e0b8df7c"
+MCMCDiagnosticTools = "be115224-59cd-429b-ad48-344e309966f0"
+PosteriorDB = "1c4bc282-d2f5-44f9-b6d1-8c4424a23ad4"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+StanLogDensityProblems = "a545de4d-8dba-46db-9d34-4e41d3f07807"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
+WarmupHMC = "60658175-6863-4866-a322-ab51a11c0cfe"
+
+[sources.WarmupHMC]
+path = ".."

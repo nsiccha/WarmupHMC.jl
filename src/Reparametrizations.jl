@@ -53,42 +53,51 @@ backend object only works once you load the AD package behind it — `AutoEnzyme
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
 A reverse-mode backend is the reasonable default here — but that follows from an
-operation count, and the measured wall-clock does not follow the operation count.
-The objective differentiated here is scalar in the *full* parameter vector, so
-forward mode costs `ceil(n / chunksize)` sweeps of the transform per gradient
-while reverse mode costs one.
+operation count, and an operation count is not wall-clock. The objective
+differentiated here is scalar in the *full* parameter vector, so forward mode
+costs `ceil(n / chunksize)` sweeps of the transform per gradient while reverse
+mode costs one.
 
-!!! warning "That argument does not predict wall-clock, and gets the direction wrong"
-    It is tempting to conclude that the gap widens with dimension — exactly
-    where reparametrization is worth doing. **Measured, it narrows and then
-    reverses.** Enzyme with `Const` divided by ForwardDiff, per wrapped
-    gradient (below 1.0 = Enzyme faster), across five processes with the
-    backend order rotated per round:
+!!! warning "That argument is an operation count, and how it scales here is untested"
+    It is tempting to conclude that the gap widens with dimension — exactly where
+    reparametrization is worth doing. That has **not** been measured. Enzyme with
+    `Const` divided by ForwardDiff, per wrapped gradient (below 1.0 = Enzyme
+    faster), across five processes with the backend order rotated per round:
 
     | target | `d` | Enzyme ÷ ForwardDiff |
     |---|---|---|
-    | `funnel`                   | 10 | 0.35–0.42× |
-    | `eight_schools`            | 10 | 0.44–0.92× |
-    | `seeds`                    | 26 | 2.31–5.42× |
-    | `radon_variable_intercept` | 89 | 1.21–1.39× |
-    | `radon_partially_pooled`   | 88 | 1.25–1.52× |
+    | `funnel`        | 10 | 0.35–0.42× |
+    | `eight_schools` | 10 | 0.44–0.92× |
 
-    Reverse mode wins on the two *smallest* targets and loses on the three
-    larger ones. Sampling is unaffected either way — ESS per 1000 gradients,
-    gradient counts, the fitted `c` and stuck-adaptation counts are identical
-    across backends; the backend sets the cost of a gradient, not how many are
-    needed.
+    Those are the only two rows this table can carry. The larger targets —
+    `seeds`, `radon_partially_pooled`, `radon_variable_intercept` — were measured
+    against reparametrization specs whose accessor closures captured a `Core.Box`
+    (fixed in `f639bb1`; see `_index_getter` in
+    `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly correlated
+    with the apparent backend ranking — five for five, every boxed spec a spec
+    where Enzyme lost — so those numbers measure the defect, not the backend and
+    not dimension. De-boxed, `radon_partially_pooled` reverses to **2.85× in
+    Enzyme's favour**, the same target where it had measured 1.25–1.52× slower.
 
-    So: pick the backend by measuring your own target, not by dimension. Neither
-    mode is the universally correct default, and this docstring previously
-    claimed one was.
+    Since exactly the larger models were the boxed ones, nothing measured here
+    separates dimension from the boxing. **Reverse mode wins on every clean
+    measurement to date**; whether that advantage grows, holds or shrinks with
+    dimension is an open question awaiting a re-run on the fixed specs.
 
-    Measured at `b5c7dee`, 184 runs per backend, results checked in at
-    `068cdeb`. Two known artifacts: DifferentiationInterface re-prepares on
-    every call (10–16% of the call at `d ≈ 88`, and equal under both backends —
-    reusing a prep object measured neutral-to-worse), and running a sampler
-    before timing warms the ForwardDiff path enough to make a naive
-    microbenchmark ~2× kinder to it.
+    Sampling is unaffected either way — ESS per 1000 gradients, gradient counts,
+    the fitted `c` and stuck-adaptation counts are identical across backends; the
+    backend sets the cost of a gradient, not how many are needed.
+
+    So: pick the backend by measuring your own target. This docstring has twice
+    claimed a universal default and been wrong both times, most recently by
+    publishing the boxing artifact as a property of the backend.
+
+    Measured at `b5c7dee` — which predates `f639bb1` — 184 runs per backend,
+    results checked in at `068cdeb`. Two known artifacts beyond the boxing:
+    DifferentiationInterface re-prepares on every call (10–16% of the call at
+    `d ≈ 88`, and equal under both backends — reusing a prep object measured
+    neutral-to-worse), and running a sampler before timing warms the ForwardDiff
+    path enough to make a naive microbenchmark ~2× kinder to it.
 
 !!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
     A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
@@ -113,23 +122,26 @@ while reverse mode costs one.
 
     | target | `d` | `Duplicated` ÷ `Const` |
     |---|---|---|
-    | `funnel`                   | 10 | 11.3–13.6× |
-    | `eight_schools`            | 10 | 3.8–4.9×   |
-    | `seeds`                    | 26 | 0.96–1.16× |
-    | `radon_variable_intercept` | 89 | 1.01–1.05× |
-    | `radon_partially_pooled`   | 88 | 1.02–1.06× |
+    | `funnel`        | 10 | 11.3–13.6× |
+    | `eight_schools` | 10 | 3.8–4.9×   |
 
-    The shadow copy is a roughly **fixed per-call cost** — about 5 µs at `d = 10`,
-    about 33 µs at `d ≈ 88` — so it dominates when the gradient is otherwise
-    cheap and disappears when it is not. The funnel is the extreme case, not a
-    representative one; funnel measurements at different `c` have landed anywhere
-    from ~10× to ~22×, which is why no single number belongs here.
+    The funnel is the extreme case, not a representative one; funnel measurements
+    at different `c` have landed anywhere from ~10× to ~22×, which is why no
+    single number belongs here.
+
+    The larger targets measured ≈1.0× — but on the boxed specs described in the
+    previous warning, where the boxing dominated the call. That says the boxing
+    cost more than the shadow copy, **not** that the shadow copy is cheap at high
+    dimension. Do not read those rows as "`Const` only helps on small targets":
+    that framing was inferred from them and does not survive the fix.
 
     None of that changes the recommendation. `Const` is the right annotation on
     **correctness** grounds everywhere — `g_y` is frozen by construction — and it
-    is never slower. It is merely not always dramatically faster.
+    is never slower. How much faster is target-dependent and, above `d = 10`,
+    currently unmeasured.
 
-    Measured at `b5c7dee`, 184 runs per backend, results checked in at `068cdeb`.
+    Measured at `b5c7dee` — which predates `f639bb1` — 184 runs per backend,
+    results checked in at `068cdeb`.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which

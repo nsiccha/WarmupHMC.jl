@@ -45,10 +45,12 @@ To get any reparametrization you must supply, yourself:
 On that last point: WarmupHMC differentiates a scalar objective in the *full*
 parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
 reverse mode exists for — its cost is one pass regardless of dimension, while
-forward mode costs one pass per input. That is an argument about operation
-counts, and it is worth knowing that **the measured wall-clock does not follow
-it**: reverse mode wins on small targets here and loses on larger ones, in the
-opposite direction to what the counting argument suggests. The table is in the
+forward mode costs one pass per input. That is an argument about **operation
+counts**, not wall-clock. Reverse mode does win on every clean measurement taken
+here, but only the two smallest targets have one: the larger targets were timed
+against reparametrization specs carrying a closure-capture defect that dominated
+the gradient, so how the advantage scales with dimension is currently untested.
+The table, and what happened to the rows that used to sit under it, are in the
 [`ReparametrizedProblem`](@ref) docstring. Reverse mode is a reasonable default
 and what the examples below use; if the gradient is your bottleneck, measure
 both on your own model rather than reasoning from dimension.
@@ -83,10 +85,10 @@ you fill in.
     **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
     the same answer, but it allocates a shadow copy of the closure on every
     call. That hint diagnoses the problem; it is not the fix. How much the
-    shadow copy costs depends strongly on the target — from ~11× per gradient on
-    a 10-dimensional funnel down to nothing measurable on the radon models;
-    [`ReparametrizedProblem`](@ref) carries the measured table. `Const` is the
-    right annotation regardless, because it is the *correct* one.
+    shadow copy costs depends strongly on the target — ~11× per gradient on a
+    10-dimensional funnel, ~4× on eight schools, and unmeasured above that;
+    [`ReparametrizedProblem`](@ref) carries the table and the caveat. `Const` is
+    the right annotation regardless, because it is the *correct* one.
 
 !!! note "`set_runtime_activity` used to be required as well — it no longer is"
     There is a *second* call site on your backend: the joint halo transport

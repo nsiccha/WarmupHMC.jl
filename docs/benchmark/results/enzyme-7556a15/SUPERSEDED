@@ -1,0 +1,13 @@
+base 7556a15, DIRTY worktree — superseded by results/enzyme-d68d680/
+Recorded `worktree_dirty: true`, so the SHA above does not describe the code that
+ran and no revision does. That cannot be discharged after the fact: there is no
+revision to point code_identical.jl at. It was re-run clean rather than argued
+about, and this pair is KEPT as the evidence for what the re-run found — every
+one of the 184 runs is bit-identical to results/enzyme-d68d680/ in every field
+except wall-clock. The dirty tree made no difference here, which was only
+knowable BY re-running.
+Also kept as the worked example of a second defect: this directory was
+originally named `enzyme-c7c6d7c`, for canonical at the time, while the JSON
+inside recorded `7556a15`. artifact_currency.jl reads the field and was never
+fooled; the author was, by his own directory name. Renamed to match what it
+records. A directory name is a label, not provenance.

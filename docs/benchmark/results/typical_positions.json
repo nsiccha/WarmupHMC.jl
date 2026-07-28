@@ -6,109 +6,109 @@
   "rows": [
     {
       "c_source": 0.0,
-      "const_over_fd_randn": 0.5868072251614574,
-      "const_over_fd_typical": 0.5885567881549127,
+      "const_over_fd_randn": 0.5886643251484398,
+      "const_over_fd_typical": 0.6060594696989386,
       "dim": 10,
       "n_positions": 1000,
       "randn": {
-        "bare": 472.673,
-        "const": 894.526,
-        "dup": 4652.543,
-        "fd": 1524.395
+        "bare": 470.149,
+        "const": 903.877,
+        "dup": 4760.551,
+        "fd": 1535.471
       },
       "rounds": 5,
       "target": "eight_schools-eight_schools_centered",
       "typical": {
-        "bare": 490.738,
-        "const": 879.594,
-        "dup": 6627.59,
-        "fd": 1494.493
+        "bare": 928.512,
+        "const": 1632.323,
+        "dup": 9020.83,
+        "fd": 2693.338
       }
     },
     {
       "c_source": 0.0,
-      "const_over_fd_randn": 0.4595295956336369,
-      "const_over_fd_typical": 0.4716836664885134,
+      "const_over_fd_randn": 0.42577665343421084,
+      "const_over_fd_typical": 0.46732314192248775,
       "dim": 88,
       "n_positions": 1000,
       "randn": {
-        "bare": 26137.262,
-        "const": 28373.54,
-        "dup": 66736.78,
-        "fd": 61744.75
+        "bare": 27065.688,
+        "const": 28178.845,
+        "dup": 59760.557,
+        "fd": 66182.222
       },
       "rounds": 5,
       "target": "radon_mn-radon_partially_pooled_centered",
       "typical": {
-        "bare": 26929.847,
-        "const": 28578.503,
-        "dup": 59395.746,
-        "fd": 60588.282
+        "bare": 27245.427,
+        "const": 29304.579,
+        "dup": 55218.248,
+        "fd": 62707.314
       }
     },
     {
       "c_source": 0.0,
-      "const_over_fd_randn": 0.6184235927380698,
-      "const_over_fd_typical": 0.5502959795540391,
+      "const_over_fd_randn": 0.6905663942736203,
+      "const_over_fd_typical": 0.6356254540957228,
       "dim": 89,
       "n_positions": 1000,
       "randn": {
-        "bare": 44558.954,
-        "const": 46168.396,
-        "dup": 77816.707,
-        "fd": 74654.972
+        "bare": 44663.238,
+        "const": 48926.002,
+        "dup": 75406.394,
+        "fd": 70849.092
       },
       "rounds": 5,
       "target": "radon_mn-radon_variable_intercept_centered",
       "typical": {
-        "bare": 44140.526,
-        "const": 46044.084,
-        "dup": 80370.071,
-        "fd": 83671.489
+        "bare": 49271.78,
+        "const": 44481.778,
+        "dup": 81054.049,
+        "fd": 69981.115
       }
     },
     {
       "c_source": 0.0,
-      "const_over_fd_randn": 0.6386834830502741,
-      "const_over_fd_typical": 0.5596949801607362,
+      "const_over_fd_randn": 0.5799261887166679,
+      "const_over_fd_typical": 0.5054693070477659,
       "dim": 26,
       "n_positions": 1000,
       "randn": {
-        "bare": 2977.14,
-        "const": 4257.337,
-        "dup": 15327.389,
-        "fd": 6665.801
+        "bare": 2745.48,
+        "const": 3401.085,
+        "dup": 10760.722,
+        "fd": 5864.686
       },
       "rounds": 5,
       "target": "seeds_data-seeds_centered_model",
       "typical": {
-        "bare": 2621.73,
-        "const": 3244.038,
-        "dup": 9987.197,
-        "fd": 5796.082
+        "bare": 2659.401,
+        "const": 3265.958,
+        "dup": 10498.24,
+        "fd": 6461.239
       }
     },
     {
       "c_source": 0.0,
-      "const_over_fd_randn": 0.7004477116957772,
-      "const_over_fd_typical": 0.3752719709274472,
+      "const_over_fd_randn": 0.4250798773564237,
+      "const_over_fd_typical": 0.3790987281316042,
       "dim": 10,
       "n_positions": 1000,
       "randn": {
-        "bare": 85.118,
-        "const": 684.315,
-        "dup": 4419.15,
-        "fd": 976.968
+        "bare": 57.349,
+        "const": 382.228,
+        "dup": 4789.981,
+        "fd": 899.191
       },
       "rounds": 5,
       "target": "funnel",
       "typical": {
-        "bare": 43.82,
-        "const": 321.154,
-        "dup": 4426.521,
-        "fd": 855.79
+        "bare": 49.318,
+        "const": 334.011,
+        "dup": 6503.027,
+        "fd": 881.066
       }
     }
   ],
-  "warmuphmc_sha": "c4e4670e8548491e7dcc5725171c56368b31b2c4"
+  "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16"
 }

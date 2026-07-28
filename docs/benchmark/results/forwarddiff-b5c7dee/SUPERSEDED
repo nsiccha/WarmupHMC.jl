@@ -1,3 +1,5 @@
-base b5c7dee, the BOXED-spec base — superseded by results/forwarddiff-5637fcf/
+base b5c7dee, the BOXED-spec base — superseded by results/forwarddiff-d68d680/
 The ForwardDiff half of the boxed-spec pair; see results/enzyme-b5c7dee/SUPERSEDED
-for why it is kept and why differing from the tip is the point.
+for why it is kept, why differing from the tip is the point, and for the two
+disclosures that marker previously omitted (b5c7dee is contained by zero refs,
+and the run records worktree_dirty = true).

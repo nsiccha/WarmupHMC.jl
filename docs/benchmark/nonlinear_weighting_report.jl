@@ -23,15 +23,32 @@ const ROWS_PATH = length(ARGS) >= 1 ? ARGS[1] : NW_ROWS_PATH
 #
 #     grep -rl 'is set but blank' docs/
 #
-# and NOT by grepping a variable name: the rule spans three of those
-# (`WHMC_BENCH_OUT`, `WHMC_LINEAR_BENCH_OUT`, `WHMC_NW_OUT`), so any one of them
-# finds a subset. The error string is the thing every site shares.
+# and NOT by grepping a variable name: the rule governs several of them, in
+# different files, so any one name finds a subset. The error string is the
+# thing every site shares.
 #
-# Deliberately not a count. A "keep the N sites in sync" note is a census in
-# prose, and a census in prose has no gate: this comment replaced one that said
-# FOUR, which replaced `results_dir`'s "keep the two in lockstep", and each was
-# invalidated by a landing in a file its author did not own -- with no merge
-# conflict possible, because the sites are in different files by design.
+# The other question -- which sites could VIOLATE the rule, i.e. an output path
+# with no guard -- needs a different search, and the only reliable one is every
+# environment read, filtered by hand:
+#
+#     grep -rn 'ENV\|env_dir(' --include='*.jl' docs/
+#
+# Both halves are load-bearing. `annotation_sweep.jl` and `frame_check.jl`
+# contain no literal `ENV` at all -- they reach the environment only through
+# `env_dir` -- so the obvious `ENV` sweep misses them. And do not narrow the
+# names to `WHMC_[A-Z_]*OUT`: that anchor is keyed to a naming convention, and
+# it is how `ACE_OUT` in `adaptive_centering_fixed_c_run.jl` was reported clean
+# while genuinely unguarded. Two dozen matches are nothing to read by eye, and
+# reading them cannot miss a convention it does not know about.
+#
+# Deliberately not a count -- and deliberately not a list of the variables
+# either. A "keep the N sites in sync" note is a census in prose, and a census
+# in prose has no gate: this comment replaced one that said FOUR, which
+# replaced `results_dir`'s "keep the two in lockstep", and each was invalidated
+# by a landing in a file its author did not own -- with no merge conflict
+# possible, because the sites are in different files by design. The three
+# variable names spelled out here until `ACE_OUT` landed were that same census
+# wearing different clothes.
 if haskey(ENV, "WHMC_BENCH_OUT") && isempty(strip(ENV["WHMC_BENCH_OUT"]))
     error("WHMC_BENCH_OUT is set but blank; unset it or give it a real path.")
 end

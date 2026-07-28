@@ -1,0 +1,15 @@
+base 5637fcf — replaced by results/enzyme-d68d680/, AND 5637fcf is on no ref
+Two separate facts, both load-bearing, because a reason line that said only the
+first would hide the defect that made this a question.
+REPLACED: results/enzyme-d68d680/ measures the same matrix at a base whose src/
+is code-identical to this one, from a clean worktree. The two are bit-identical
+across all 184 runs in every field except wall-clock, so nothing measurable is
+lost. RESULTS.md's tables were generated from THIS file and are now generated
+from the d68d680 pair; keeping this one is what makes that regeneration
+checkable rather than a silent whole-file replacement.
+ON NO REF: `git for-each-ref --contains 5637fcf` returns nothing. The commit is
+present in this repository as an object and reachable from no branch or tag, so
+it resolves here, resolves in no fresh clone, and `git gc` may drop it. Its
+provenance is therefore not independently verifiable by anyone else -- which is
+why it was replaced rather than merely re-pointed. Note that `fetch-depth: 0`
+does NOT recover it; no fetch depth reaches a commit that is on no ref.

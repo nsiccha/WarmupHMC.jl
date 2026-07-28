@@ -1,58 +1,106 @@
 # Measured: adaptive reparametrization vs the fixed centering endpoints
 
-**Measured on WarmupHMC `5637fcf`.** 8 pinned seeds per arm, `n_draws` floor
-1000, Julia 1.10.11, single-threaded BLAS, on `strato2`. 184 runs per backend,
-0 failed.
+**Measured on WarmupHMC `d68d680`, from a clean worktree.** 8 pinned seeds per
+arm, `n_draws` floor 1000, Julia 1.10.11, single-threaded BLAS, on `strato2`.
+184 runs per backend, 0 failed.
 
-`5637fcf` is not the tip this landed on, and by now it is a long way behind it,
-so the gap is **checked** rather than stated. `docs/benchmark/code_identical.jl`
-parses every file under `src/` at two revisions, strips docstrings and line
-numbers, and compares the resulting ASTs:
+That base is the one the artifacts **record**, not the one this sentence claims.
+Each `runs.json` carries `warmuphmc_sha` and `worktree_dirty`, and the result
+directories are named for the recorded SHA so that the path and the provenance
+cannot drift apart. They had: an earlier revision of this pair was named for
+canonical `c7c6d7c` while recording `7556a15` with `worktree_dirty: true`.
+`artifact_currency.jl` was never fooled, because it reads the field rather than
+the path — but the author was, by his own directory name. **A directory name is
+a label; only the recorded field is provenance.**
 
-    julia docs/benchmark/code_identical.jl 5637fcf <tip>
+`worktree_dirty` is the field with no recourse. A recorded SHA can be checked
+against any later tip; an uncommitted tree cannot be checked against anything,
+because there is no revision to name. It fails in the reassuring direction — the
+SHA beside it looks like full provenance — so it is re-measured rather than
+explained. Both arms below were re-run from a clean tree for exactly that reason,
+and the discarded dirty pair turned out to agree with them **bit-for-bit on all
+184 runs** in every field except wall-clock. That is the evidence the flag itself
+could not supply, and it is why the flag is worth honouring rather than arguing
+past: the agreement was only knowable by re-running.
 
-Against `04b6da9`, canonical when this paragraph was written, that reports
-**CODE-IDENTICAL across all 12 files** — the three commits that touched
-`src/Reparametrizations.jl` since the base (`fb5af1d`, `62ba171`, `dd50818`) are
-docstring edits, and the sampler defines the same methods with the same bodies.
-The gradient path cannot have moved, which is why the tables were not re-run for
-the tip. That SHA will be stale by the time you read it: **re-run the script
-against the tip you have.** What justifies these tables is the script's verdict,
-not this sentence.
+`d68d680` will fall behind the tip, so the gap is **checked** rather than stated.
+`docs/benchmark/code_identical.jl` parses every file under `src/` at two
+revisions, strips docstrings and line numbers, and compares the resulting ASTs:
+
+    julia docs/benchmark/code_identical.jl d68d680 <tip>
+
+Against `3597dbc`, canonical when this paragraph was written, that reports
+**CODE-IDENTICAL across all 12 files**. The two commits that touched `src/` in
+between (`1d1bd41`, `879b92c`) add 68 lines and delete 8 across four files, and
+every one of those lines is a comment or a docstring — including one that
+*corrects a stated behaviour* ("`synchronize!` runs after construction" →
+"during construction, ahead of `new`"). The sampler defines the same methods with
+the same bodies, so the gradient path cannot have moved, which is why the tables
+were not re-run for the tip. That SHA will be stale by the time you read it:
+**re-run the script against the tip you have.** What justifies these tables is
+the script's verdict, not this sentence.
+
+Run it *before* deciding a matrix is stale, not after. A `git diff --stat`
+showing `+68 −8` under `src/` is indistinguishable from a real change to the
+sampler, and re-measuring on that basis costs a full matrix to learn that nothing
+moved.
 
 The same question asked of every artifact at once is
 `docs/benchmark/artifact_currency.jl`, which reads each checked-in result's own
-recorded `warmuphmc_sha` and holds it to the tip. It reports **12 live artifacts
-current** and 8 superseded (the boxed-spec base and the halo-regression
-before/after pair, each carrying a `SUPERSEDED` file saying why it is kept).
-That is the statement worth having: not "this document's base is fine" but
-"nothing checked in has quietly gone stale".
+recorded `warmuphmc_sha` and holds it to the tip:
 
-Reading `git diff` was the old check and it is the weak one here: those three
-commits produce a 121-line diff in a file whose docstrings are long enough to
-bury a one-line code change, and an all-prose diff looks exactly like a
-mostly-prose diff. The script exits 1 when code really does differ — verified on
-`b0a1c4f~1..b0a1c4f`, a real change to the same file — so it is a check that has
-been observed to fail, not just to pass.
+    julia docs/benchmark/artifact_currency.jl
 
-Outside `src/`, `web/src/WarmupHMCWeb.jl` gains 304 lines and deletes 4, all of
-them route markup for the docs pages. Nothing under
+Deliberately not a tally of how many pass. The set of artifacts changes as runs
+are added and retired, by authors who never read this paragraph, so any count
+written here is a census that goes stale silently — while the script's own output
+is correct by construction. The statement worth having is not "this document's
+base is fine" but "nothing checked in has quietly gone stale", and the script is
+the only thing that can say it.
+
+Reading `git diff` was the old check and it is the weak one here: those two
+commits produce a 138-line diff under `src/` — the 76 changed lines above plus
+context — in files whose docstrings are long enough to bury a one-line code
+change, and an all-prose diff looks exactly like
+a mostly-prose diff. One of them even edits a sentence *describing when a
+function runs* — the kind of hunk that reads as behaviour at a glance. The
+script exits 1 when code really does differ — verified on `b0a1c4f~1..b0a1c4f`,
+a real change to the same file — so it is a check that has been observed to
+fail, not just to pass.
+
+Outside `src/`, the same span adds 293 lines and deletes 12, all of it docs
+infrastructure: `docs/src/.vitepress/` gains a Vega figure component and
+`docs/tables.jl` gains rendering helpers. Nothing under
 `web/src/posteriordb_reparametrizations.jl` — the spec table these numbers
 differentiate — moved at all.
 
 This base was measured **twice, under both AD backends**, changing nothing else:
-`results/enzyme-5637fcf/` (the default, `AutoEnzyme(; function_annotation =
-Enzyme.Const)`) and `results/forwarddiff-5637fcf/` (`AutoForwardDiff()`). The
+`results/enzyme-d68d680/` (the default, `AutoEnzyme(; function_annotation =
+Enzyme.Const)`) and `results/forwarddiff-d68d680/` (`AutoForwardDiff()`). The
 runs were sequential, never concurrent, because the wall-clock comparison is the
 point and two concurrent runs would contend for CPU. `summarize.jl` regenerates
 every table below from those records; `compare.jl` regenerates the backend diff.
 
-Superseded runs are kept: `results/enzyme-b5c7dee/` and
-`results/forwarddiff-b5c7dee/` (the **boxed-spec** base — see below),
-`results/after/` (base `c8fed88`, ForwardDiff) and `results/before/` (base
-`05aed41`, which carried the halo-recording regression `34ce034`). The
-before/after comparison is a measured result of its own and is reported in
+Superseded runs are kept: `results/enzyme-5637fcf/` and
+`results/forwarddiff-5637fcf/` (the previous live pair, replaced by the one
+above), `results/enzyme-7556a15/` and `results/forwarddiff-7556a15/` (the
+dirty-worktree run this pair replaced, kept as the evidence that the dirty tree
+changed nothing), `results/enzyme-b5c7dee/` and `results/forwarddiff-b5c7dee/` (the
+**boxed-spec** base — see below), `results/after/` (base `c8fed88`, ForwardDiff)
+and `results/before/` (base `05aed41`, which carried the halo-recording
+regression `34ce034`). The before/after comparison is a measured result of its
+own and is reported in
 [Effect of the halo-recording regression](#effect-of-the-halo-recording-regression).
+
+Two of those bases — `5637fcf` and `b5c7dee` — are **present in this repository
+as objects and contained by zero refs.** They resolve here and in no fresh clone,
+and `git gc` may drop them at any time. That is why each of those four
+directories carries a `SUPERSEDED` file recording the unreachability alongside
+the supersession: the numbers are kept, but their provenance is not
+independently checkable and the marker says so rather than implying otherwise.
+It is also why `fetch-depth: 0` is necessary but not sufficient for any CI job
+that runs `artifact_currency.jl` — no fetch depth recovers a commit that is on
+no ref, and the script distinguishes the two cases in its own output.
 
 > **The `Core.Box` capture defect is FIXED, and fixing it changed the
 > headline.** Every earlier revision of this document was measured against
@@ -65,7 +113,7 @@ before/after comparison is a measured result of its own and is reported in
 > The consequence is not cosmetic. On the boxed base, adaptive reparametrization
 > was a **wall-clock loss** on those three targets (0.16–0.44× the plain
 > sampler's ESS/sec). On this base it is a **win on all five** under Enzyme
-> (1.11–17.0×). The two targets whose specs were never boxed — `funnel` and
+> (1.6–19.3×). The two targets whose specs were never boxed — `funnel` and
 > `eight_schools` — did not move. That the three that changed are exactly the
 > three that were boxed, and the two that did not are exactly the two that were
 > not, is the causal evidence; nothing else in the table separates them.
@@ -128,24 +176,57 @@ gradient, on all five targets. This is the claim that previously failed:
 | target | adaptive vs plain, Enzyme/Const | | ForwardDiff |
 |---|---|---|---|
 | | boxed base `b5c7dee` | **this base** | this base |
-| funnel (synthetic) | 17.9× faster | **17.0× faster** | 16.5× faster |
-| eight_schools centered | 21.0× faster | **16.2× faster** | 15.6× faster |
-| radon partially_pooled | 3.5× **slower** | **2.0× faster** | 1.7× faster |
-| radon variable_intercept | 2.3× **slower** | **1.8× faster** | 1.6× faster |
-| seeds centered | 6.1× **slower** | **1.1× faster** | 1.1× **slower** |
+| funnel (synthetic) | 17.9× faster | **19.3× faster** | 19.1× faster |
+| eight_schools centered | 21.0× faster | **18.9× faster** | 15.0× faster |
+| radon partially_pooled | 3.5× **slower** | **2.1× faster** | 1.6× faster |
+| radon variable_intercept | 2.3× **slower** | **2.0× faster** | 1.5× faster |
+| seeds centered | 6.1× **slower** | **1.6× faster** | 1.1× faster |
 
 (min ESS/sec, median over 8 seeds, sequential runs.)
 
 Three losses became wins. The three that moved are precisely the three whose
 specs were boxed; `funnel` and `eight_schools` were never boxed and stayed in
-the 16–18× band. Their small drift is run-to-run variation on a shared host plus
-the sampler changes between the two bases, and it is not attributed to the fix.
+the high band.
 
-**`seeds` is the honest edge case.** It clears parity under Enzyme by 11% and
-still *loses* by 11% under ForwardDiff — the one target where the backend choice
-decides the sign of the answer rather than the size. It is also the smallest
-margin here, close enough to the noise floor that it should be read as "roughly
-break-even under Enzyme", not as a win.
+**How much of that last digit is real: measured, not estimated.** The same matrix
+was run on two bases, `5637fcf` (run A) and `d68d680` (run B), whose `src/` is
+code-identical. The two runs are **bit-identical on all 184 runs in every field
+except wall-clock** — same trajectories, same gradient counts, same learned `c`,
+under both backends. So ratios computed from them differ only by machine
+conditions, which makes the spread between them a direct read of the noise floor
+on this column:
+
+| target | Enzyme | | ForwardDiff | |
+|---|---|---|---|---|
+| | run A | run B | run A | run B |
+| funnel | 17.0× | 19.3× | 16.5× | 19.1× |
+| eight_schools centered | 16.2× | 18.9× | 15.6× | 15.0× |
+| radon partially_pooled | 2.0× | 2.1× | 1.7× | 1.6× |
+| radon variable_intercept | 1.8× | 2.0× | 1.6× | 1.5× |
+| seeds centered | 1.1× | 1.6× | 0.9× | 1.1× |
+
+Ten cells, identical trajectories, **1.7% to 47% apart** — and `seeds` under
+ForwardDiff **changes sign**, from a 11% loss to a 10% win. Nothing about the
+method changed between those two columns; only the machine did.
+
+Read the consequences in the strong direction, not the flattering one:
+
+- **The large ratios are robust.** `funnel` and `eight_schools` are 15–19× on
+  every run and every backend. A 2-point wobble on a 19× win changes nothing.
+- **`seeds` is not a result.** Its four measurements span 0.9× to 1.6× and
+  straddle parity. The earlier revision of this page reported it as "1.1× faster
+  under Enzyme, 1.1× slower under ForwardDiff" and read that as the backend
+  deciding the sign — **that reading was wrong.** The sign is decided by run-to-run
+  noise, and the backend split was noise wearing a pattern. It is break-even; the
+  honest entry is "no measured difference".
+- **Both radon models survive, barely.** 1.5–2.1× across four measurements, never
+  crossing parity. A real win, whose *size* is not resolved beyond "about double".
+
+The per-gradient columns carry none of this uncertainty — they are bit-identical
+across all four runs, because they are counts rather than clocks. **Where a
+per-gradient number and a wall-clock number disagree here, trust the
+per-gradient one**, and treat ESS/sec as the coarse confirmation that the
+per-gradient win is not being eaten by transform overhead.
 
 So the claim the package can now support:
 
@@ -153,22 +234,23 @@ So the claim the package can now support:
 > exceeds the best fixed parametrization's sampling efficiency per gradient
 > evaluation on all five targets, and beats every fixed option on the three where
 > no fixed option is good — without being told to. Under Enzyme that converts
-> into wall-clock on all five, from break-even on `seeds` to 17× on the funnel.
+> into wall-clock on all five, from break-even on `seeds` to 19× on the funnel.
 
 **The overhead is still not the transform's arithmetic.** A wrapper configured
 as an exact identity costs the same as a live one, under both backends and on
-every target — on this base, Enzyme ×1.13 no-op vs ×1.17 live on
-`radon_partially_pooled`, ×1.04 vs ×1.04 on `radon_variable_intercept`. What
+every target — on this base, Enzyme ×1.12 no-op vs ×1.14 live on
+`radon_partially_pooled`, ×1.08 vs ×1.10 on `radon_variable_intercept`. What
 remains is the cost of carrying the AD re-differentiation of
-`ljac_(x_) + dot(g_y, y_)` at all. Under Enzyme that is now **+4% of a gradient
-on `radon_variable_intercept`, +17% on `radon_partially_pooled` and +22% on
+`ljac_(x_) + dot(g_y, y_)` at all. Under Enzyme that is now **+10% of a gradient
+on `radon_variable_intercept`, +14% on `radon_partially_pooled` and +17% on
 `seeds`** — small enough to be paid out of the sampling gain, which is exactly
-what the wall-clock table above shows. It is +84% on `eight_schools` and 7.7× on
-the funnel, but those are the two targets whose *bare* gradient costs 500 ns and
-45 ns, where a roughly fixed per-call AD cost has to dominate; both still come
-out 16–17× ahead overall because the sampling gain there is enormous. Under
-ForwardDiff the same overheads are +71%, +104% and +118% — the backend choice is
-most of what makes this affordable.
+what the wall-clock table above shows. It is +89% on `eight_schools` and 8.2× on
+the funnel, but those are the two targets whose *bare* gradient costs 450 ns and
+43 ns, where a roughly fixed per-call AD cost has to dominate; both still come
+out ~19× ahead overall because the sampling gain there is enormous. Under
+ForwardDiff the same three overheads are +56%, +123% and +109%, and the two small
+targets go to +232% and 15.4× — the backend choice is most of what makes this
+affordable.
 
 ## Which AD backend
 
@@ -185,11 +267,11 @@ large `d`.
 
 | target | `d` | Enzyme/Const ÷ ForwardDiff | |
 |---|---|---|---|
-| `radon_partially_pooled` | 88 | **0.34–0.61×** | Enzyme 1.6–2.9× faster |
-| `radon_variable_intercept` | 89 | **0.55–0.62×** | Enzyme 1.6–1.8× faster |
-| `seeds` | 26 | **0.56–0.64×** | Enzyme 1.6–1.8× faster |
-| `eight_schools` | 10 | **0.33–0.64×** | Enzyme 1.6–3.0× faster |
-| `funnel` | 10 | **0.29–0.70×** | Enzyme 1.4–3.4× faster |
+| `radon_partially_pooled` | 88 | **0.40–0.53×** | Enzyme 1.9–2.5× faster |
+| `radon_variable_intercept` | 89 | **0.55–0.69×** | Enzyme 1.4–1.8× faster |
+| `seeds` | 26 | **0.33–0.59×** | Enzyme 1.7–3.0× faster |
+| `eight_schools` | 10 | **0.13–0.66×** | Enzyme 1.5–7.6× faster |
+| `funnel` | 10 | **0.36–0.43×** | Enzyme 2.4–2.8× faster |
 
 Every range spans **four independent harnesses**, each writing its own JSON:
 `replicate_backends.jl` (7 rounds × 1000 calls, backend order rotated per round,
@@ -207,12 +289,12 @@ that story, and it is kept because it is also the reason to distrust a backend
 number measured through a spec you have not inspected.
 
 **What is still not established is the second half of the prediction — that the
-gap should widen with `d`.** It does not, visibly: the widest margins are on
-`funnel` and `eight_schools` at `d = 10`, the narrowest on `radon_variable_intercept`
-at `d = 89`. But the spread *within* a single target across harnesses (0.34 to
-0.61 on `radon_partially_pooled`) is as large as the spread *between* targets, so
-these five points cannot resolve a scaling law either way. The direction
-replicates; the slope does not.
+gap should widen with `d`.** It does not, visibly: the widest margin is on
+`eight_schools` at `d = 10`, the narrowest on `radon_variable_intercept` at
+`d = 89`. But the spread *within* a single target across harnesses is as large as
+the spread *between* targets — `eight_schools` alone spans 0.13 to 0.66, which
+covers the entire between-target range on its own — so these five points cannot
+resolve a scaling law either way. The direction replicates; the slope does not.
 
 ### Why the earlier numbers said the opposite: a defect in the spec table
 
@@ -427,7 +509,27 @@ silently return the *initial* `c` instead.
 > row, are like-for-like across backends; the `fixed_noncentered` rows are not
 > and are never used as a cross-backend wall-clock comparison.
 
-<!-- tables generated by docs/benchmark/summarize.jl from results/enzyme-5637fcf/runs.json -->
+<!-- The TABLES below were generated by docs/benchmark/summarize.jl from
+     results/enzyme-d68d680/runs.json. The PROSE between them was not, and no
+     generator can reproduce it: hand-written analysis, cautions, corrected
+     target descriptions and integer formatting.
+
+     So do NOT regenerate this section by replacing it with summarize.jl output.
+     Measured 2026-07-28: the generator emits 113 lines, this block is ~494 --
+     a wholesale paste silently deletes ~380 lines of interpretation and looks
+     in the diff like an ordinary re-measurement.
+
+     To update after a re-run, diff generator output against generator output,
+     never against this file:
+
+         summarize.jl <old>/runs.json > /tmp/old.md
+         summarize.jl <new>/runs.json > /tmp/new.md
+         diff /tmp/old.md /tmp/new.md
+
+     then apply those cells here by hand. On the d68d680 re-measurement that
+     diff was ESS/sec and gradient-overhead only -- every other column is a
+     count, not a clock, and was bit-identical. -->
+
 
 ### `eight_schools-eight_schools_centered`
 
@@ -435,11 +537,11 @@ silently return the *initial* `c` instead.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 51.1 <sub>25.2–86.3</sub> | 297.2 <sub>70.2–1215.7</sub> | 1.55 | 33320 | 4.5 | — |
-| fixed c = centered | 46.8 <sub>8.8–102.8</sub> | 403.0 <sub>48.4–768.8</sub> | 2.15 | 22504 | 8.0 | 1.0 |
-| **adaptive** (starts centered) | 577.5 <sub>214.3–759.1</sub> | 4826.9 <sub>1590.0–8635.0</sub> | 52.58 | 10574 | 0.0 | 0.0 |
-| fixed c = noncentered | 498.0 <sub>384.3–609.6</sub> | 8862.9 <sub>2472.0–19394.4</sub> | 46.73 | 9846 | 0.0 | 0.0 |
-| hand-written noncentered model | 569.9 <sub>345.5–627.4</sub> | 10763.2 <sub>1686.1–28474.3</sub> | 51.56 | 9482 | 0.0 | — |
+| plain (no wrapper) | 51.1 <sub>25.2–86.3</sub> | 281.9 <sub>72.3–890.8</sub> | 1.55 | 33320 | 4.5 | — |
+| fixed c = centered | 46.8 <sub>8.8–102.8</sub> | 406.1 <sub>48.9–630.5</sub> | 2.15 | 22504 | 8.0 | 1.0 |
+| **adaptive** (starts centered) | 577.5 <sub>214.3–759.1</sub> | 5316.6 <sub>1766.0–10326.9</sub> | 52.58 | 10574 | 0.0 | 0.0 |
+| fixed c = noncentered | 498.0 <sub>384.3–609.6</sub> | 12790.9 <sub>2705.6–17930.5</sub> | 46.73 | 9846 | 0.0 | 0.0 |
+| hand-written noncentered model | 569.9 <sub>345.5–627.4</sub> | 14367.2 <sub>2284.4–21767.5</sub> | 51.56 | 9482 | 0.0 | — |
 
 Min ESS over the 10 constrained parameters all arms share:
 
@@ -476,11 +578,11 @@ This is also the target where the pre-fix run over-stated the method: on
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 189.9 <sub>100.1–255.9</sub> | 389.4 <sub>206.4–492.3</sub> | 14.12 | 14971 | 0.0 | — |
-| fixed c = centered | 209.4 <sub>134.6–300.9</sub> | 375.5 <sub>325.5–449.1</sub> | 14.91 | 14828 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 603.9 <sub>455.9–1092.7</sub> | 765.1 <sub>612.2–1109.7</sub> | 68.08 | 8701 | 0.0 | 0.4 |
-| fixed c = noncentered | 364.3 <sub>193.4–428.1</sub> | 544.9 <sub>354.8–626.9</sub> | 22.07 | 15858 | 0.0 | 0.0 |
-| hand-written noncentered model | 314.4 <sub>178.5–439.6</sub> | 491.3 <sub>383.0–693.5</sub> | 18.52 | 16456 | 0.0 | — |
+| plain (no wrapper) | 189.9 <sub>100.1–255.9</sub> | 390.0 <sub>213.3–459.5</sub> | 14.12 | 14971 | 0.0 | — |
+| fixed c = centered | 209.4 <sub>134.6–300.9</sub> | 367.6 <sub>309.5–464.1</sub> | 14.91 | 14828 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 603.9 <sub>455.9–1092.7</sub> | 811.2 <sub>638.7–1138.1</sub> | 68.08 | 8701 | 0.0 | 0.4 |
+| fixed c = noncentered | 364.3 <sub>193.4–428.1</sub> | 557.5 <sub>391.1–633.7</sub> | 22.07 | 15858 | 0.0 | 0.0 |
+| hand-written noncentered model | 314.4 <sub>178.5–439.6</sub> | 505.5 <sub>375.8–746.3</sub> | 18.52 | 16456 | 0.0 | — |
 
 Min ESS over the 88 constrained parameters all arms share:
 
@@ -536,11 +638,11 @@ answer.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 273.7 <sub>173.6–408.5</sub> | 358.1 <sub>233.9–504.8</sub> | 19.37 | 14960 | 0.0 | — |
-| fixed c = centered | 339.7 <sub>208.5–445.1</sub> | 391.0 <sub>298.8–472.3</sub> | 22.65 | 15016 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 760.4 <sub>483.0–935.7</sub> | 634.4 <sub>517.8–900.4</sub> | 62.61 | 10408 | 0.0 | 0.5 |
-| fixed c = noncentered | 403.6 <sub>188.9–452.9</sub> | 410.9 <sub>216.1–486.0</sub> | 24.46 | 16274 | 0.0 | 0.0 |
-| hand-written noncentered model | 287.0 <sub>220.2–444.0</sub> | 409.3 <sub>280.0–523.7</sub> | 21.36 | 15837 | 0.0 | — |
+| plain (no wrapper) | 273.7 <sub>173.6–408.5</sub> | 356.6 <sub>214.9–496.6</sub> | 19.37 | 14960 | 0.0 | — |
+| fixed c = centered | 339.7 <sub>208.5–445.1</sub> | 395.9 <sub>331.1–491.3</sub> | 22.65 | 15016 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 760.4 <sub>483.0–935.7</sub> | 714.9 <sub>558.5–950.1</sub> | 62.61 | 10408 | 0.0 | 0.5 |
+| fixed c = noncentered | 403.6 <sub>188.9–452.9</sub> | 431.1 <sub>201.6–459.3</sub> | 24.46 | 16274 | 0.0 | 0.0 |
+| hand-written noncentered model | 287.0 <sub>220.2–444.0</sub> | 368.4 <sub>256.3–486.9</sub> | 21.36 | 15837 | 0.0 | — |
 
 Min ESS over the 89 constrained parameters all arms share:
 
@@ -567,10 +669,10 @@ identical across backends.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 101.7 <sub>88.3–161.0</sub> | 854.9 <sub>633.6–1399.0</sub> | 8.40 | 13068 | 0.0 | — |
-| fixed c = centered | 101.7 <sub>88.3–161.0</sub> | 721.4 <sub>576.4–1242.3</sub> | 8.40 | 13068 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 228.5 <sub>130.8–344.3</sub> | 947.4 <sub>426.5–2180.2</sub> | 16.92 | 11770 | 0.0 | 0.3 |
-| fixed c = noncentered | 206.4 <sub>172.2–262.9</sub> | 1829.7 <sub>711.6–2559.8</sub> | 11.28 | 17274 | 0.0 | 0.0 |
+| plain (no wrapper) | 101.7 <sub>88.3–161.0</sub> | 689.7 <sub>239.9–1114.8</sub> | 8.40 | 13068 | 0.0 | — |
+| fixed c = centered | 101.7 <sub>88.3–161.0</sub> | 831.0 <sub>592.5–1215.5</sub> | 8.40 | 13068 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 228.5 <sub>130.8–344.3</sub> | 1124.1 <sub>788.8–2268.7</sub> | 16.92 | 11770 | 0.0 | 0.3 |
+| fixed c = noncentered | 206.4 <sub>172.2–262.9</sub> | 1762.4 <sub>691.4–2482.1</sub> | 11.28 | 17274 | 0.0 | 0.0 |
 
 Min ESS over the 47 constrained parameters all arms share:
 
@@ -605,10 +707,10 @@ never as a headline.*
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 31.7 <sub>19.6–56.4</sub> | 777.6 <sub>245.1–1639.0</sub> | 1.53 | 26799 | 0.5 | — |
-| fixed c = centered | 31.7 <sub>19.6–56.4</sub> | 661.1 <sub>193.6–1278.0</sub> | 1.53 | 26799 | 0.5 | 1.0 |
-| **adaptive** (starts centered) | 758.5 <sub>578.3–943.2</sub> | 13237.9 <sub>10497.0–16799.5</sub> | 93.17 | 8082 | 0.0 | 0.0 |
-| fixed c = noncentered | 829.9 <sub>718.3–1017.9</sub> | 47397.6 <sub>38545.7–68584.7</sub> | 107.05 | 7963 | 0.0 | 0.0 |
+| plain (no wrapper) | 31.7 <sub>19.6–56.4</sub> | 690.3 <sub>235.2–1596.8</sub> | 1.53 | 26799 | 0.5 | — |
+| fixed c = centered | 31.7 <sub>19.6–56.4</sub> | 549.5 <sub>200.1–1141.8</sub> | 1.53 | 26799 | 0.5 | 1.0 |
+| **adaptive** (starts centered) | 758.5 <sub>578.3–943.2</sub> | 13302.1 <sub>10398.0–18236.2</sub> | 93.17 | 8082 | 0.0 | 0.0 |
+| fixed c = noncentered | 829.9 <sub>718.3–1017.9</sub> | 41974.2 <sub>27911.3–71395.5</sub> | 107.05 | 7963 | 0.0 | 0.0 |
 
 The one target where a fixed endpoint beats adaptive on gradient efficiency: 93.2
 vs 107.1 per 1000 gradients. That is the expected and correct result — noncentered
@@ -685,12 +787,12 @@ calls at random positions**, same base, both backends:
 | `eight_schools` | 512 | 2782 | ×5.43 | 500 | 920 | **×1.84** |
 | `funnel` | 51 | 856 | ×16.88 | 45 | 343 | **×7.69** |
 
-(`bare` is given for each run separately; the two agree to 2–7% except on the
-funnel, where a 45 ns call is at the resolution floor and they differ by 13%.)
+(`bare` is given for each run separately; the two agree to 2–8% except on the
+funnel, where a 43 ns call is at the resolution floor and they differ by 20%.)
 
 **The multiple tracks how expensive the underlying density is, not `d`.** The
-two most expensive densities carry the wrapper for +4% and +17%; the funnel,
-whose bare gradient is 45 ns of analytic arithmetic, pays 7.7×. This is what a
+two most expensive densities carry the wrapper for +10% and +14%; the funnel,
+whose bare gradient is 43 ns of analytic arithmetic, pays 8.2×. This is what a
 roughly fixed per-call AD cost looks like divided by a varying denominator, and
 it is why the funnel is reported as a bound rather than as a headline.
 
@@ -887,7 +989,7 @@ which would each have silently corrupted the fixed-parametrization arms:
   3. **Its provenance line points at a superseded measurement, and one of its
      SHAs is unreachable.** It reads "Measured at `b5c7dee` … results checked in
      at `068cdeb`", both of which predate the de-boxing; this revision measures
-     `5637fcf`/`c4e4670`. Separately, it names the de-boxing commit as
+     `d68d680`. Separately, it names the de-boxing commit as
      `f639bb1` — the orphaned **pre-rebase** copy of the same change that landed
      as **`e9bcfd0`**. The distinction is the useful part: `f639bb1` is
      reachable from **no ref**, so it resolves in the worktree that did the
@@ -896,6 +998,16 @@ which would each have silently corrupted the fixed-parametrization arms:
      therefore not evidence a SHA is citable; `git merge-base --is-ancestor
      <sha> <ref>`, or a resolve in a fresh clone, is. Same failure shape as a
      `git fetch` with no remote configured exiting 0.
+
+     **This document then did the same thing with its own base.** `5637fcf`, the
+     SHA the header stood on for every revision until this one, is in exactly the
+     state described above: present here, contained by zero refs, unresolvable in
+     any fresh clone. It was recorded because it resolved when it was checked —
+     the identical mistake, made while this bullet sat further down the same
+     page explaining it. Diagnosing a failure mode in someone else's citation
+     does not inoculate you against it in your own; only running the check does,
+     which is why `artifact_currency.jl` now asks `git for-each-ref --contains`
+     rather than trusting `rev-parse`.
 
   4. **Its DI-preparation figure inverted, though its conclusion held.** It
      records prep as "10–16% of the call at `d ≈ 88`, and equal under both

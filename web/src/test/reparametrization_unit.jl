@@ -274,11 +274,23 @@ end
     end
 
     @testset "gradient transport is diagonal-only: the log-scale row goes stale" begin
-        # Known rough edge (established, not fixed here): `optimize!` rewrites
-        # only the rows it reparametrizes. Row 1 carries the log-scale that every
-        # transform reads, so its gradient picks up a chain-rule term that is
-        # never applied. The linear metric `argmin` then fits that row on stale
-        # values.
+        # `optimize!` rewrites only the rows it reparametrizes. Row 1 carries the
+        # log-scale that every transform reads, so its gradient picks up a
+        # chain-rule term that is never applied.
+        #
+        # READ THE ASSERTION CAREFULLY — the marginal-only transport DURING the
+        # nonlinear search is INTENTIONAL and settled by the user (three times,
+        # most recently in brief `2026-07-28T11-44-32-365-zwhy0n`). Nothing here
+        # asks `optimize!` to transport jointly, and no test in this file should.
+        #
+        # What the `@test_broken` pins is the seam AFTER the search: the settled
+        # architecture is marginal while searching, then ONE joint pos+grad
+        # transport once the nonlinear stage settles, BEFORE the linear stage
+        # reads the pool. That joint transport does not exist yet, so today the
+        # linear metric `argmin` at `adaptive_warmup_mcmc.jl:390` fits row 1 on
+        # stale values. When it lands, this promotes to a pass — which is exactly
+        # the signal wanted, and why it stays `@test_broken` rather than being
+        # deleted as intended behaviour.
         rng = Xoshiro(11)
         rp = funnel_problem([1.0, 1.0, 1.0])
         ir = reparametrizer(rp)
@@ -327,10 +339,13 @@ end
     end
 
     @testset "the stale rows change the metric the sampler picks" begin
-        # Severity of the row-1 staleness above: `adaptive_warmup_mcmc.jl:390`
-        # runs the linear-metric `argmin` over the SAME halo two lines after
-        # `:388` mutates it, and every `update_loss!` reads every gradient row.
-        # So the stale row is not merely cosmetic — it is priced into the metric.
+        # What the missing joint transport COSTS, in the units the sampler cares
+        # about. `adaptive_warmup_mcmc.jl:390` runs the linear-metric `argmin`
+        # over the SAME halo two lines after `:388` mutates it, and every
+        # `update_loss!` reads every gradient row — so today the linear stage
+        # reads the pool at precisely the point the settled design says a joint
+        # transport should already have run. The stale row is not cosmetic; it is
+        # priced into the metric the sampler then uses.
         #
         # The reference value here is exact, not measured. `update_loss!` for a
         # `Diagonal` sets `t[i,i] = sqrt(std(pᵢ)/std(gᵢ))`; the funnel fits to
@@ -375,10 +390,12 @@ end
     end
 
     @testset "staleness hits `loc` rows too, not just the log-scale row" begin
-        # Same defect, wider blast radius than the testset above suggests: any
-        # coordinate that appears only inside an `args` closure misses its
+        # Wider blast radius than the testset above suggests: the rows the joint
+        # transport will have to cover are not just the log-scale row. ANY
+        # coordinate appearing only inside an `args` closure misses its
         # chain-rule term. Here coordinate 2 is the shared `loc` of four blocks
         # and is NOT itself reparametrized, so `optimize!` never writes it back.
+        # Same seam and same intentional-until-then status as above.
         rng = Xoshiro(4242)
         k = 4
         ir_of(cs) = IndexedReparametrization([
@@ -437,6 +454,13 @@ end
         # is uncoupled (the `args` coordinates are disjoint from the `idx` set),
         # so nothing hits this today — but `accel_gp` reads `x[46]` with its
         # `idx` starting at 47, which is one off-by-one away.
+        #
+        # Note this is POSITION invariance, not the gradient staleness above, and
+        # it is NOT covered by "marginal during the search is intentional": an
+        # uncoupled spec transports its positions exactly (7e-15, asserted above)
+        # under the very same marginal transport. What breaks here is specifically
+        # the CROSS-coordinate case — which is what "joint" means — so it should
+        # promote on the same fix.
         k = 4
         coupled_ir(cs) = IndexedReparametrization(vcat(
             [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(cs[1]),

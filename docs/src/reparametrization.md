@@ -344,28 +344,37 @@ crossed = [r["target"] for r in t["rows"]
               (Float64(r["const_over_fd_typical"]) - 1) < 0]
 Markdown.parse(isempty(crossed) ?
     "No row crosses `1×`, so which backend is ahead is not an artefact of the " *
-    "sampling distribution — only the size of the gap is." :
+    "sampling distribution. Whether the *size* of the gap moves with it is a " *
+    "separate question, and one the medians alone cannot answer — see below." :
     "**$(length(crossed)) row(s) cross `1×`** — " *
     join("`" .* crossed .* "`", ", ") * " — so on those targets which backend " *
     "is ahead depends on where the gradient is taken.")
 ```
 
 A single cross-target number for "how much faster" would therefore be the wrong
-thing to quote from this page. Where a gradient is taken is part of what a
-gradient benchmark measures.
+thing to quote from this page: the per-target ratios differ far too much for one
+figure to stand in for them. That a gradient benchmark's answer *can* depend on
+where the gradient is taken is a real methodological hazard, and it is why the
+second column exists at all — but whether it does so measurably on these targets
+is settled below rather than asserted here.
 
 !!! warning "The per-target `shift` column is not a result"
     Read the shifts as *unresolved*, not as small findings — and the harness now
     carries the evidence for that rather than leaving it as a caution. Each cell
     in the two ratio columns is a median over `rounds` repeats, and **those
     repeats are stored raw** beside it, under `samples` in
-    `typical_positions.json`. Three statistics computed from them agree that no
-    single target's shift is separable from repeat-to-repeat variation: the
-    per-round shift ranges all straddle zero, the two columns' ranges overlap on
-    every target, and median-to-median across two independent runs of identical
-    code moves by as much as 71%.
+    `typical_positions.json`. What they support is computed below rather than
+    summarised here. Note what five repeats can and cannot settle: whether two
+    ranges overlap, yes — how *likely* a difference is, no. Nothing here should
+    be read as a significance claim.
 
-    That is not a hypothetical worry about clocks in general. A companion
+    One thing the repeats cannot check at all is drift of the medians between
+    runs. Re-running the identical harness against identical code moved
+    `funnel`'s typical-position ratio from `0.379×` to `0.649×`, about 71% — a
+    comparison **between two runs**, so it cannot be derived from the single file
+    checked in here and is recorded as prose on purpose.
+
+    That is not a hypothetical worry about clocks in general either. A companion
     end-to-end measurement timed two **code-identical** revisions with
     **bit-identical** trajectories — no ESS, gradient count or final centering
     moved — and its wall-clock ratios still differed by up to tens of percent,
@@ -374,31 +383,42 @@ gradient benchmark measures.
     treat it as a reason for caution about *small* clock differences here, not
     as a measured error bar for this table.
 
-**What survives regardless is whatever has margin**, and how much margin there
-is depends on the numbers rather than on this sentence, so it is computed from
-them:
+**Two different questions hang on this table** — which backend is ahead, and
+whether the per-target shifts mean anything — and they have different answers.
+An earlier version of this page decided both with one margin heuristic, which
+could only ever move them together; the stored repeats answer each on its own
+terms, so they are now asked separately:
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 t = load_results("typical_positions.json")
-margin(r) = 100 * min(abs(Float64(r["const_over_fd_randn"]) - 1),
-                      abs(Float64(r["const_over_fd_typical"]) - 1))
-shift(r) = 100 * abs(Float64(r["const_over_fd_typical"]) /
-                     Float64(r["const_over_fd_randn"]) - 1)
-mm, ms = minimum(margin, t["rows"]), maximum(shift, t["rows"])
-Markdown.parse(
-    "*The smallest distance from `1×` anywhere in the table is " *
-    "$(num(mm; sig = 2))%, while the largest shift between the two columns is " *
-    "$(num(ms; sig = 2))%. " *
-    (mm > 2 * ms ?
-     "The first is the larger by more than a factor of two, which is why the " *
-     "statement about which backend is ahead can rest on these numbers while " *
-     "the individual shifts cannot." :
-     "**Those are now comparable, so the sign statement above no longer has " *
-     "margin over the individual shifts. The per-round spread is checked in " *
-     "under `samples`, and it says the shifts are not separable — so the " *
-     "shifts are what to discount here, not the sign.**") * "*")
+ratios(r, k) = Float64.(r[k]["samples"]["const"]) ./ Float64.(r[k]["samples"]["fd"])
+both(r) = vcat(ratios(r, "typical"), ratios(r, "randn"))
+all_r = reduce(vcat, both(r) for r in t["rows"])
+n, below = length(all_r), count(<(1), all_r)
+overlaps(r) = (a = extrema(ratios(r, "typical")); b = extrema(ratios(r, "randn"));
+               a[1] <= b[2] && b[1] <= a[2])
+sep = [String(r["target"]) for r in t["rows"] if !overlaps(r)]
+Markdown.parse("*" *
+    (below == n ?
+     "Every one of the $(n) individual per-round ratios is below `1×`, the " *
+     "closest to parity being $(num(maximum(all_r); sig = 3))× — so which " *
+     "backend is ahead does not rest on the medians at all, since no single " *
+     "repeat crosses over." :
+     below == 0 ?
+     "**Every one of the $(n) per-round ratios is above `1×`**, so the direction " *
+     "stated above is backwards." :
+     "**$(n - below) of the $(n) per-round ratios fall" *
+     (n - below == 1 ? "s" : "") * " on the other side of `1×`**, so which " *
+     "backend is ahead is not settled by these repeats.") * " " *
+    (isempty(sep) ?
+     "The two columns' round ranges overlap on every target, so **not one of the " *
+     "shifts is separable** from repeat-to-repeat variation — the large ones " *
+     "included." :
+     "The round ranges fail to overlap on " * join("`" .* sep .* "`", ", ") *
+     ", so $(length(sep)) of $(length(t["rows"])) shifts are separable from " *
+     "repeat-to-repeat variation; the rest are not.") * "*")
 ```
 
 A gradient *count* elsewhere in this manual carries weight these timings do not:

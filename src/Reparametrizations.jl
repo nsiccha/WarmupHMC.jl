@@ -47,23 +47,27 @@ the transform, per gradient evaluation. The transform is therefore on the
 gradient hot path, and the accessor closures in each
 [`Reparametrization`](@ref) run under AD.
 
-`ad_backend` is a DifferentiationInterface.jl backend. `AutoForwardDiff()` is
-what this project actually uses and the only one reachable from the shipped
-environment; the objective is scalar in the full parameter vector, so for a
-high-dimensional problem a reverse-mode backend such as `AutoMooncake()` will
-scale better, at the cost of adding that dependency yourself.
+`ad_backend` is a DifferentiationInterface.jl backend. DifferentiationInterface
+is a hard dependency of WarmupHMC, so the *interface* is always there, but a
+backend object only works once you load the AD package behind it — `AutoEnzyme()`
+needs `using Enzyme`, `AutoMooncake()` needs `using Mooncake`.
+
+Prefer a reverse-mode backend. The objective differentiated here is scalar in the
+*full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the
+transform per gradient while reverse mode costs one, and the gap opens up exactly
+where reparametrization is worth doing — high-dimensional hierarchical models.
+`AutoEnzyme()` is what this project benchmarks against.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
 is not a backend, so `logdensity` keeps working on that object and the first
 `logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
-Construction itself never complains. If DifferentiationInterface is not loaded
-at all, the error says so by name instead.
+Construction itself never complains.
 
 # Example
 
 ```julia
-using WarmupHMC, DifferentiationInterface, ForwardDiff
+using WarmupHMC, DifferentiationInterface, Enzyme
 
 # Coordinates 2:11 are the group effects; their location is fixed at 0 and their
 # log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
@@ -72,7 +76,7 @@ ir = IndexedReparametrization([
                            0., x -> x[1] / 2)
     for i in 2:11
 ])
-rp = ReparametrizedProblem(ir, my_problem, AutoForwardDiff())
+rp = ReparametrizedProblem(ir, my_problem, AutoEnzyme())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -104,16 +108,46 @@ end
 """
     WarmupHMC._logdensity_and_gradient_reparam(p::ReparametrizedProblem, x)
 
-The gradient of a [`ReparametrizedProblem`](@ref). Implemented by the
-`DifferentiationInterfaceExt` extension, which is loaded as soon as
-DifferentiationInterface.jl is; the method below is the fallback that says so.
+The gradient of a [`ReparametrizedProblem`](@ref); see that docstring for the
+user-facing contract.
 
-Split out as its own function purely so the AD dependency stays weak: the
-reparametrization machinery itself is plain Julia and needs no AD, only the
-gradient does.
+Differentiate ONLY through the reparametrization transform (pure Julia) and reuse
+the inner problem's own `logdensity_and_gradient` — which may be an FFI call
+(BridgeStan) that no Julia AD backend could differentiate through anyway.
+
+    L(x)   = ljac(x) + ld(y(x))
+    ∂L/∂x  = ∂ljac/∂x + (∂y/∂x)' ∂ld/∂y
+
+`∂ld/∂y` comes from the inner problem; the rest comes from AD over the transform.
+The trick is that the whole right-hand side is the gradient of the SCALAR
+`x -> ljac(x) + dot(g_y, y(x))` with `g_y` frozen at its value at the current `y`
+— one reverse pass, not a full Jacobian. Freezing `g_y` is exactly what makes
+that identity hold: it is a constant of the differentiation, not a function of
+`x_`.
+
+Because the objective is built by applying the block's own `args` closures to the
+AD-traced `x_` (see [`Reparametrization`](@ref) and `reparam_rargs`), a location
+or log-scale that depends on other parameters is differentiated through as well —
+the chain-rule term through `∂args/∂x` is picked up automatically, and no
+accessor has to be told about it. A closure that captures a value instead of
+reading it from `x_` is a genuine constant and contributes nothing, which is the
+intended meaning of a fixed centering.
+
+Cost per gradient evaluation: one inner `logdensity_and_gradient`, one extra
+forward evaluation of the transform, and one AD pass over it. This is the
+gradient hot path, so the accessor closures inside each `Reparametrization` have
+to be AD-friendly.
 """
-_logdensity_and_gradient_reparam(p::ReparametrizedProblem, x) =
-    error("ReparametrizedProblem requires DifferentiationInterface to compute gradients. Load DifferentiationInterface and pass an AD backend to ReparametrizedProblem.")
+function _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x::AbstractVector)
+    ljac, y = p.reparametrizer(x)
+    ld, g_y = LogDensityProblems.logdensity_and_gradient(p.problem, y)
+    function reparam_objective(x_)
+        ljac_, y_ = p.reparametrizer(x_)
+        ljac_ + dot(g_y, y_)
+    end
+    _, g_x = value_and_gradient(reparam_objective, p.ad_backend, x)
+    ljac + ld, g_x
+end
 
 # --- Abstract reparametrization interface ---
 

@@ -7,8 +7,8 @@ using WarmupHMC: IndexedReparametrization, Reparametrization, PartiallyCentered,
 include(joinpath(@__DIR__, "ad_backend.jl"))
 include(joinpath(@__DIR__, "targets.jl"))
 
-# Unit / property guards for `src/Reparametrizations.jl` and the
-# `DifferentiationInterfaceExt` gradient path.
+# Unit / property guards for `src/Reparametrizations.jl` and its
+# DifferentiationInterface-backed gradient path.
 #
 # These assert INVARIANTS rather than values, so they survive any legitimate
 # change to what the adaptation happens to choose.
@@ -129,7 +129,7 @@ funnel_problem(sources) =
         @test restore_reparam_sources!(Funnel(4), []) isa Funnel
     end
 
-    @testset "ReparametrizedProblem gradient path (DifferentiationInterfaceExt)" begin
+    @testset "ReparametrizedProblem gradient path (DifferentiationInterface)" begin
         rng = Xoshiro(7)
         for sources in ([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], [0.3, 0.7, 0.5])
             rp = funnel_problem(sources)

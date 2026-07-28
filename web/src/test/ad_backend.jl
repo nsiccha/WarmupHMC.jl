@@ -1,21 +1,22 @@
 # Shared loader for the AD stack the reparametrization tests need.
 #
-# `ReparametrizedProblem` computes gradients through `WarmupHMC`'s
-# `DifferentiationInterfaceExt` extension, which only exists once
-# DifferentiationInterface is loaded; the backend itself (`AutoForwardDiff`)
-# additionally needs ForwardDiff in-session. Neither is a dependency of
-# `WarmupHMC` proper — DifferentiationInterface is a `[weakdeps]` entry and
-# ForwardDiff arrives transitively via Pathfinder — so a plain
-# `using ForwardDiff` fails under `--project=.`, which is how this suite is
-# actually run:
+# `ReparametrizedProblem` computes gradients through DifferentiationInterface,
+# which IS a direct dependency of WarmupHMC. The *backend* is not: these tests
+# pin `AutoForwardDiff`, which needs ForwardDiff in-session, and ForwardDiff
+# arrives only transitively (via Pathfinder), so a plain `using ForwardDiff`
+# fails under `--project=.`, which is how this suite is actually run:
 #
 #     ERROR: ArgumentError: Package ForwardDiff not found in current path.
 #
 # That is why `golden_awm.jl` could not be included from `runtests.jl` as
-# written. Loading by UUID goes through the same machinery as `using` (so the
-# extension is triggered normally) but resolves against the *manifest* rather
-# than the project's direct dependencies, which works under both `--project=.`
-# and `Pkg.test()`.
+# written. Loading by UUID goes through the same machinery as `using` but
+# resolves against the *manifest* rather than the project's direct dependencies,
+# which works under both `--project=.` and `Pkg.test()`.
+#
+# ForwardDiff is the backend the FROZEN GOLDEN BASELINES were recorded against,
+# which is the only reason it is pinned here — it is not a recommendation. New
+# code should use a reverse-mode backend (`AutoEnzyme()`); see the
+# `ReparametrizedProblem` docstring.
 #
 # It is deliberately NOT tolerant: a missing backend must abort the suite, not
 # quietly skip the tests that need it. A reparametrization suite that silently
@@ -34,9 +35,7 @@ catch err
         $(sprint(showerror, err))
 
     `$name` should be reachable through the resolved manifest. Re-resolve this
-    worktree (see the repo's canonical resolve) and try again. Do NOT `Pkg.add`
-    DifferentiationInterface into this project — it is a `[weakdeps]` entry and
-    promoting it deletes the `[weakdeps]` section, orphaning `[extensions]`.
+    worktree (see the repo's canonical resolve) and try again.
     """)
 end
 
@@ -44,12 +43,15 @@ const ForwardDiff = _require_pkg("ForwardDiff", "f6369f11-7733-5829-9624-2563aa7
 const DifferentiationInterface = _require_pkg("DifferentiationInterface", "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63")
 const AutoForwardDiff = DifferentiationInterface.AutoForwardDiff
 
-# Loading DifferentiationInterface must actually have triggered the extension;
-# without it every `ReparametrizedProblem` gradient throws, and a test that only
-# ever exercised `logdensity` would not notice.
-isnothing(Base.get_extension(WarmupHMC, :DifferentiationInterfaceExt)) && error(
-    "DifferentiationInterface is loaded but WarmupHMC's DifferentiationInterfaceExt " *
-    "did not activate — ReparametrizedProblem gradients would error."
+# The gradient method must exist. It used to live in a package extension, so this
+# guarded against the extension failing to activate; now that
+# DifferentiationInterface is a direct dependency, that failure mode is a
+# precompile error instead — but the method can still go missing by accident, and
+# a suite that only ever exercised `logdensity` would not notice.
+hasmethod(WarmupHMC._logdensity_and_gradient_reparam,
+          Tuple{WarmupHMC.ReparametrizedProblem, Vector{Float64}}) || error(
+    "WarmupHMC._logdensity_and_gradient_reparam has no method for " *
+    "(ReparametrizedProblem, Vector{Float64}) — ReparametrizedProblem gradients would error."
 )
 
 const TEST_AD_LOADED = true

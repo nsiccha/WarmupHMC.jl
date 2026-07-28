@@ -1,0 +1,6 @@
+base 05aed41, ForwardDiff — carries the halo-recording regression 34ce034
+This run and results/after/ are the two halves of one measured comparison: the
+effect of the halo-recording regression, reported in RESULTS.md under "Effect of
+the halo-recording regression". They are kept BECAUSE they differ from the tip —
+that difference is the result. Neither records a warmuphmc_sha; both predate the
+run manifest, so the base is recorded here instead of in the JSON.

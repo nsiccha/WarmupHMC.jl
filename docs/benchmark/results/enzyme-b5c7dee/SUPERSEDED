@@ -1,0 +1,7 @@
+base b5c7dee, the BOXED-spec base — superseded by results/enzyme-5637fcf/
+Measured before the Core.Box capture defect was repaired in
+web/src/posteriordb_reparametrizations.jl: the per-pair closures on
+radon_partially_pooled, radon_variable_intercept and seeds captured a Core.Box,
+so these numbers measure the box, not the backend. Kept as the evidence that the
+fix changed the headline (a wall-clock loss on those three targets became a win
+on all five). It is SUPPOSED to differ from the tip.

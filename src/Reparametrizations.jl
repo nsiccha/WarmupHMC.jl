@@ -52,10 +52,43 @@ is a hard dependency of WarmupHMC, so the *interface* is always there, but a
 backend object only works once you load the AD package behind it — `AutoEnzyme`
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
-Prefer a reverse-mode backend. The objective differentiated here is scalar in the
-*full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the
-transform per gradient while reverse mode costs one, and the gap opens up exactly
-where reparametrization is worth doing — high-dimensional hierarchical models.
+A reverse-mode backend is the reasonable default here — but that follows from an
+operation count, and the measured wall-clock does not follow the operation count.
+The objective differentiated here is scalar in the *full* parameter vector, so
+forward mode costs `ceil(n / chunksize)` sweeps of the transform per gradient
+while reverse mode costs one.
+
+!!! warning "That argument does not predict wall-clock, and gets the direction wrong"
+    It is tempting to conclude that the gap widens with dimension — exactly
+    where reparametrization is worth doing. **Measured, it narrows and then
+    reverses.** Enzyme with `Const` divided by ForwardDiff, per wrapped
+    gradient (below 1.0 = Enzyme faster), across five processes with the
+    backend order rotated per round:
+
+    | target | `d` | Enzyme ÷ ForwardDiff |
+    |---|---|---|
+    | `funnel`                   | 10 | 0.35–0.42× |
+    | `eight_schools`            | 10 | 0.44–0.92× |
+    | `seeds`                    | 26 | 2.31–5.42× |
+    | `radon_variable_intercept` | 89 | 1.21–1.39× |
+    | `radon_partially_pooled`   | 88 | 1.25–1.52× |
+
+    Reverse mode wins on the two *smallest* targets and loses on the three
+    larger ones. Sampling is unaffected either way — ESS per 1000 gradients,
+    gradient counts, the fitted `c` and stuck-adaptation counts are identical
+    across backends; the backend sets the cost of a gradient, not how many are
+    needed.
+
+    So: pick the backend by measuring your own target, not by dimension. Neither
+    mode is the universally correct default, and this docstring previously
+    claimed one was.
+
+    Measured at `b5c7dee`, 184 runs per backend, results checked in at
+    `068cdeb`. Two known artifacts: DifferentiationInterface re-prepares on
+    every call (10–16% of the call at `d ≈ 88`, and equal under both backends —
+    reusing a prep object measured neutral-to-worse), and running a sampler
+    before timing warms the ForwardDiff path enough to make a naive
+    microbenchmark ~2× kinder to it.
 
 !!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
     A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
@@ -70,12 +103,33 @@ where reparametrization is worth doing — high-dimensional hierarchical models.
     is with respect to the *parameter vector*, never with respect to the problem.
 
     Enzyme's own error text suggests `function_annotation = Enzyme.Duplicated`.
-    **Do not take that hint.** It is correct — it agrees with `Const` to machine
-    precision — but it allocates and propagates a shadow copy of the closure on
-    every call, which measured **22× slower** than `Const` on an 11-dimensional
-    funnel (8556 ns vs 387 ns per gradient) and turned the wrapper into a
-    pessimization against forward mode in the benchmark harness. The hint
-    diagnoses the problem; it is not the fix.
+    **Do not take that hint.** It is correct — it agrees with `Const` to ≤9.1e-13
+    — but it allocates and propagates a shadow copy of the closure on every call.
+    The hint diagnoses the problem; it is not the fix.
+
+    How much that costs is **target-dependent**, and earlier revisions of this
+    docstring published a single ratio that does not generalize. `Duplicated`
+    divided by `Const`, per wrapped gradient:
+
+    | target | `d` | `Duplicated` ÷ `Const` |
+    |---|---|---|
+    | `funnel`                   | 10 | 11.3–13.6× |
+    | `eight_schools`            | 10 | 3.8–4.9×   |
+    | `seeds`                    | 26 | 0.96–1.16× |
+    | `radon_variable_intercept` | 89 | 1.01–1.05× |
+    | `radon_partially_pooled`   | 88 | 1.02–1.06× |
+
+    The shadow copy is a roughly **fixed per-call cost** — about 5 µs at `d = 10`,
+    about 33 µs at `d ≈ 88` — so it dominates when the gradient is otherwise
+    cheap and disappears when it is not. The funnel is the extreme case, not a
+    representative one; funnel measurements at different `c` have landed anywhere
+    from ~10× to ~22×, which is why no single number belongs here.
+
+    None of that changes the recommendation. `Const` is the right annotation on
+    **correctness** grounds everywhere — `g_y` is frozen by construction — and it
+    is never slower. It is merely not always dramatically faster.
+
+    Measured at `b5c7dee`, 184 runs per backend, results checked in at `068cdeb`.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
@@ -101,7 +155,10 @@ result = adaptive_warmup_mcmc(rng, rp)
 ```
 
 Returned draws are in the wrapped problem's own parametrization: warm-up applies
-the fitted transform to `posterior_position` before returning.
+the transform to `posterior_position` before returning. This holds under
+`nonlinear_adapt=false` too — that flag gates whether the centering is *fitted*,
+never which frame the result is reported in, since the sampler works in the
+reparametrizer's source frame either way.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
 """

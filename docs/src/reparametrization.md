@@ -39,13 +39,19 @@ To get any reparametrization you must supply, yourself:
   parameter;
 * for each, a **location** and a **log-scale**, either as constants or as
   closures over the whole parameter vector;
-* a **reverse-mode AD backend**, used for the transform's own Jacobian.
+* an **AD backend**, used for the transform's own Jacobian. This page uses
+  Enzyme, spelled as in the warning below.
 
 On that last point: WarmupHMC differentiates a scalar objective in the *full*
 parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
 reverse mode exists for — its cost is one pass regardless of dimension, while
-forward mode costs one pass per input. Use Enzyme, spelled as in the warning
-below, or another reverse-mode DifferentiationInterface backend.
+forward mode costs one pass per input. That is an argument about operation
+counts, and it is worth knowing that **the measured wall-clock does not follow
+it**: reverse mode wins on small targets here and loses on larger ones, in the
+opposite direction to what the counting argument suggests. The table is in the
+[`ReparametrizedProblem`](@ref) docstring. Reverse mode is a reasonable default
+and what the examples below use; if the gradient is your bottleneck, measure
+both on your own model rather than reasoning from dimension.
 
 **The interface ships; the backend is yours to bring.**
 `DifferentiationInterface` is a hard dependency of WarmupHMC, so
@@ -79,9 +85,12 @@ you fill in.
     data. `Const` states what is already true here: `g_y` is frozen by
     construction — a constant of the differentiation, not a function of `x`.
     **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
-    the same answer, but [`ReparametrizedProblem`](@ref) records it as **22×
-    slower** per gradient on an 11-dimensional funnel. That hint diagnoses the
-    problem; it is not the fix.
+    the same answer, but it allocates a shadow copy of the closure on every
+    call. That hint diagnoses the problem; it is not the fix. How much the
+    shadow copy costs depends strongly on the target — from ~11× per gradient on
+    a 10-dimensional funnel down to nothing measurable on the radon models;
+    [`ReparametrizedProblem`](@ref) carries the measured table. `Const` is the
+    right annotation regardless, because it is the *correct* one.
 
     **`set_runtime_activity`** — without it, the run gets past construction and
     past the first gradient, and then dies at the **first restarting window**:

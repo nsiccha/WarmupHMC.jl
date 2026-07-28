@@ -49,10 +49,12 @@ all-good-leaf evidence; it never replays the retained linear pool.
 # Checkpoints
 
 Checkpoint payloads are `Serialization`-based and deliberately exclude the
-log-density and the scoring plan, so a plan does not survive a checkpoint. If a
-run recorded a non-default plan, restoring it without attaching one is an error,
-not a silent fall back to direct scoring: the fallback would resume a different
-problem than the one recorded while looking like a successful restore.
+log-density and the scoring plan, so a plan does not survive a checkpoint. The
+marker is compared on restore and a mismatch is an error in either direction:
+restoring a plan-recorded run without attaching one, and restoring a
+default-recorded run with a plan attached, both fail loudly rather than falling
+back. A silent fallback would resume a different problem than the one recorded
+while looking like a successful restore.
 
 See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
 [Adaptive centering at fixed `c`](@ref) for a measured comparison of a

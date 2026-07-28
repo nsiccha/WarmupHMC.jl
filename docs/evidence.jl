@@ -68,20 +68,36 @@ end
 
 evidence_path(key) = joinpath(results_dir(), replace(String(key), '~' => '/') * ".json")
 
-"Split a parsed results file into scalar provenance and named row tables."
+"""
+    evidence_split(d) -> (provenance, tables)
+
+Split a parsed results file into scalar provenance and named row tables.
+
+An OBJECT-valued field is flattened into provenance rather than shown as one
+mashed `k=v k=v` cell. That is how a harness carrying its metadata under
+`config` — the shape `provenance` in `tables.jl` now prefers, since one copy of
+`warmuphmc_sha` cannot disagree with a duplicate of itself — renders the same as
+the older flat shape. The nested entry wins on a name collision, matching
+`tables.jl`. Stated as a rule about objects rather than about `config`, so it
+holds for whatever the next harness calls its grouping.
+"""
 function evidence_split(d)
     d isa AbstractVector && return (Pair{String,Any}[], ["rows" => d])
     tables = Pair{String,Any}[]
     scalars = Pair{String,Any}[]
+    nested = Pair{String,Any}[]
     for k in sort(collect(keys(d)))
         v = d[k]
         if v isa AbstractVector && !isempty(v) && all(x -> x isa AbstractDict, v)
             push!(tables, k => v)
+        elseif v isa AbstractDict
+            append!(nested, [string(nk) => v[nk] for nk in sort(collect(keys(v)))])
         else
             push!(scalars, k => v)
         end
     end
-    (scalars, tables)
+    nested_names = Set(first.(nested))
+    (vcat(nested, [p for p in scalars if !(first(p) in nested_names)]), tables)
 end
 
 # Provenance fields worth reading first; anything else follows alphabetically.
@@ -118,6 +134,20 @@ function evidence_columns(rows)
 end
 
 _md(s::AbstractString) = Markdown.parse(s)
+
+"""
+    esc_md(s) -> String
+
+Escape markdown inline syntax in text that is INTERPOLATED into a string this
+file then parses — file keys and column names, which come from filenames and
+JSON keys and so are not under this file's control.
+
+`_probe_config` renders as *probe*config without this: two underscores in one
+word are emphasis. Every key checked in today happens to carry exactly one, which
+is why it does not currently show. The escape is consumed by the parser, so the
+rendered text and the anchor VitePress derives from it are unchanged.
+"""
+esc_md(s) = replace(string(s), r"([\\`*_\[\]{}<>])" => s"\\\1")
 _join_md(parts) = Markdown.MD(reduce(vcat, (p.content for p in parts); init = Any[]))
 
 """
@@ -136,10 +166,10 @@ route that serves the rows instead.
 function md_evidence(key::AbstractString; max_rows::Int = 40)
     d = load_results(replace(String(key), '~' => '/') * ".json")
     scalars, tables = evidence_split(d)
-    parts = Any[_md("## $(key)\n")]
+    parts = Any[_md("## $(esc_md(key))\n")]
 
     isempty(scalars) ||
-        push!(parts, _md(join(["- **$(k)**: $(evidence_cell(v))" for (k, v) in
+        push!(parts, _md(join(["- **$(esc_md(k))**: $(evidence_cell(v))" for (k, v) in
                                [p for n in _evidence_order(first.(scalars),
                                                            EVIDENCE_PROVENANCE_ORDER)
                                 for p in scalars if first(p) == n]], "\n") * "\n"))
@@ -158,7 +188,7 @@ function md_evidence(key::AbstractString; max_rows::Int = 40)
         # in the page outline as siblings of `linear_restart` itself, reading as
         # two more results files. A bold label says the same thing and cannot
         # lie about the structure.
-        length(tables) == 1 || push!(parts, _md("**$(name)**\n"))
+        length(tables) == 1 || push!(parts, _md("**$(esc_md(name))**\n"))
         if length(rows) > max_rows
             push!(parts, _md("""
                 !!! note "$(length(rows)) rows — not inlined"
@@ -171,7 +201,7 @@ function md_evidence(key::AbstractString; max_rows::Int = 40)
                 """))
         else
             cols = evidence_columns(rows)
-            push!(parts, md_table(cols,
+            push!(parts, md_table(esc_md.(cols),
                 [[evidence_cell(get(row, c, nothing)) for c in cols] for row in rows]))
         end
     end

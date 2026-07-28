@@ -252,6 +252,7 @@ verdict can be checked against that list rather than against a global maximum.
 | `compare.jl` | before/after diff across two results dirs |
 | `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl`, `frame_check.jl` | probes (above) |
 | `code_identical.jl` | do two revisions of `src/` define the same methods? — docstring-blind, exits 1 on a real change; how `RESULTS.md` justifies not re-running for the tip |
+| `artifact_currency.jl` | the same question asked of **every** checked-in artifact at once: read each one's `warmuphmc_sha` and compare that revision's `src/` with the tip. Green = every live measurement still describes the current sampler; red names the artifact to re-measure |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `results/*.json` | backend-probe outputs, not tied to a sampling run |
@@ -327,6 +328,15 @@ A directory measured before `e9bcfd0` is not comparable with one measured after
 it on `radon_partially_pooled`, `radon_variable_intercept` or `seeds`: the
 gradient cost changed by 4.6–15.6× on those three. `funnel` and `eight_schools`
 are comparable across the whole table.
+
+**The four superseded directories each carry a `SUPERSEDED` file** whose first
+line says why it is kept. That is not decoration: `artifact_currency.jl` (below)
+holds every *live* artifact to being code-current with the tip, and these four
+are supposed to differ from it — the difference is what they measure. The marker
+lives inside the run's own directory rather than in a central list, because a
+list is a second copy of this table and drifts from it. `results/before` and
+`results/after` predate the run manifest and record no `warmuphmc_sha` at all,
+so their markers carry the base SHA that until now existed only in this prose.
 
 ## Prior art
 

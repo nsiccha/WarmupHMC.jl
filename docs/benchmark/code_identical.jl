@@ -98,4 +98,8 @@ function main(args)
     return 1
 end
 
-exit(main(ARGS))
+# Guarded so `artifact_currency.jl` can `include` this for `code_repr` /
+# `src_files` without the include itself calling `exit`.
+if abspath(PROGRAM_FILE) == @__FILE__
+    exit(main(ARGS))
+end

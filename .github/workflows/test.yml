@@ -71,16 +71,22 @@ jobs:
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
       - name: Run tests
-        # NOT `julia-actions/julia-runtest@v1`: this package's suite lives at
-        # `web/src/test/runtests.jl`, not the `test/runtests.jl` the action and
-        # `Pkg.test` assume. (`test/` IS a symlink to it, but git checks symlinks
-        # out as plain text files on Windows unless core.symlinks is on, so the
-        # real path is the portable one.)
+        # NOT `julia-actions/julia-runtest@v1`: this web/integration suite lives
+        # at `web/src/test/runtests.jl`, alongside the package-level suite now
+        # rooted at `test/runtests.jl`; invoke the web suite by its real path.
         #
         # `--skip-tag=enzyme` is what keeps Enzyme out of all nine rows; the job
         # below runs those items once. Skipping a tag is a no-op if no item
         # carries it, so this stays correct if the Enzyme items are ever removed.
         run: julia --project=web/src/test -e 'include("web/src/test/runtests.jl")' -- --skip-tag=enzyme
+      # The package-level 1.0 suite uses a modern `test/Project.toml` alongside
+      # the existing web suite. Reuse the Treebars checkout from the preceding
+      # step and develop both local packages into that environment in one
+      # resolve; Julia 1.10 ignores `[sources]`.
+      - name: Instantiate the package test environment
+        run: julia --project=test -e 'using Pkg; Pkg.develop([PackageSpec(path=pwd()), PackageSpec(path="Treebars.jl")]); Pkg.instantiate(); Pkg.precompile()'
+      - name: Run package tests
+        run: julia --project=test -e 'include("test/runtests.jl")'
 
   # Reverse-mode (Enzyme) coverage — ONE job, deliberately outside the matrix
   # above.

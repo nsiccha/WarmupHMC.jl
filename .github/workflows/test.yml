@@ -174,8 +174,6 @@ jobs:
             .nonlinear_adapt == false and
             .n_seeds == 2 and
             (.runs | length) == 30 and
-            (.summary | length) == 15 and
-            (.comparisons | length) == 18 and
             all(.runs[]; .ok == true and .divergences == 0) and
             any(.runs[]; .target == "correlated_gaussian" and .adaptive_reflections > 0) and
             any(.runs[]; .target == "diag_fallback_probe" and .arm != "halo_unit" and .linear_metric_fallbacks > 0)

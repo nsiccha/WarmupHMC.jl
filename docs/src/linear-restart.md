@@ -38,6 +38,8 @@ therefore fails the docs build instead of leaving stale figures on this page.
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 d = load_results("linear_restart.json")
+load_harness("linear_restart_summary.jl")
+s = linear_restart_summary(d)
 md_table(
     ["target", "policy", "restarts", "min ESS/1k gradients",
      "metric", "reflections", "fallbacks"],
@@ -45,7 +47,7 @@ md_table(
       num(r["restarts_median"]), num(r["min_ess_per_kgrad_median"]),
       "`" * r["active_transformations"] * "`",
       num(r["adaptive_reflections_median"]),
-      num(r["linear_metric_fallbacks_median"])] for r in d["summary"]])
+      num(r["linear_metric_fallbacks_median"])] for r in s])
 ```
 
 ```@eval
@@ -63,24 +65,29 @@ arm winning.
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 d = load_results("linear_restart.json")
+load_harness("linear_restart_summary.jl")
+c = linear_restart_comparisons(d)
 md_table(
-    ["target", "comparison", "test ÷ baseline", "ESS ratio", "ESS wins",
-     "accuracy metric", "error ratio", "accuracy wins", "restart count differs"],
+    ["target", "comparison", "test ÷ baseline", "ESS ratio median",
+     "ESS ratio min–max", "ESS wins", "accuracy metric", "error ratio median",
+     "accuracy wins", "restart decisions differ", "ESS ratio when changed"],
     [["`" * r["target"] * "`", r["comparison"],
       "`" * r["arm"] * "` ÷ `" * r["baseline_arm"] * "`",
       num(r["ess_efficiency_ratio_median"]),
+      num(r["ess_efficiency_ratio_min"]) * "–" * num(r["ess_efficiency_ratio_max"]),
       "$(r["ess_efficiency_wins"])/$(r["n_pairs"])",
       "`" * r["accuracy_metric"] * "`",
       num(r["accuracy_error_ratio_median"]),
       "$(r["accuracy_wins"])/$(r["n_pairs"])",
-      num(r["restart_count_differs"])] for r in d["comparisons"]])
+      "$(r["restart_count_differs"])/$(r["n_pairs"])",
+      num(r["changed_ess_efficiency_ratio_median"])] for r in c])
 ```
 
 ## Recorded experiment
 
-The view below is a static recording of the WarmupHMC web app's generic
-benchmark renderer. Its tables are generated directly from the checked-in JSON;
-the prose above does not carry a second copy of the numbers.
+When the docs build records the WarmupHMC web app, the view below loads its
+generic benchmark renderer. Its tables are generated directly from the
+checked-in JSON; the prose above does not carry a second copy of the numbers.
 
 ```@raw html
 <div class="htmxo-embed-fullwidth">
@@ -93,9 +100,9 @@ the prose above does not carry a second copy of the numbers.
 The JSON contains the per-policy medians, paired comparisons, all individual
 runs, and the exact WarmupHMC revision and runtime provenance. Wall time is
 host-specific; the portable efficiency measure is minimum ESS per thousand
-gradient evaluations. The
-[raw per-seed JSON](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/docs/benchmark/results/linear_restart.json)
-remains available even when the recorded app view is not being served.
+gradient evaluations. The checked `docs/benchmark/results/linear_restart.json`
+retains the full per-seed rows even when the recorded app view is not being
+served.
 
 ## Reproduce it
 

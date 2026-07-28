@@ -50,7 +50,7 @@ gradient hot path, and the accessor closures in each
 `ad_backend` is a DifferentiationInterface.jl backend. DifferentiationInterface
 is a hard dependency of WarmupHMC, so the *interface* is always there, but a
 backend object only works once you load the AD package behind it — `AutoEnzyme()`
-needs `using Enzyme`, `AutoMooncake()` needs `using Mooncake`.
+needs `using Enzyme`. Constructing the backend object alone is not enough.
 
 Prefer a reverse-mode backend. The objective differentiated here is scalar in the
 *full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the

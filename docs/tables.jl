@@ -56,8 +56,7 @@ would drag the whole measurement stack into `makedocs`.
 
 This is not the only such copy. `env_dir` serves every generator that can
 afford `common.jl`, and the scripts that cannot afford it inline their own
-guard, each documenting its own reason. Change the rule and you must change all
-of them, so find them with:
+guard. Change the rule and you must change all of them, so find them with:
 
     grep -rl 'is set but blank' docs/
 

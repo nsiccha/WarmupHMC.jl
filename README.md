@@ -43,6 +43,16 @@ The result is a NamedTuple, with its `posterior_position` field containing the p
 
 Results should come in faster than with "standard" methods, and should often be better.
 
+## Stability
+
+Semantic versioning covers the exported names above, the keywords
+`adaptive_warmup_mcmc` accepts, and the field names of the `NamedTuple` it
+returns. It deliberately does **not** cover the numbers: draws, step sizes and
+the adaptation path change whenever the sampler improves, so a minor release
+may return different draws for the same seed. The full statement is
+[What semver covers](https://nsiccha.github.io/WarmupHMC.jl/dev/api#What-semver-covers)
+in the API reference, and `test/public_api.jl` enforces it.
+
 ## See also
 
 - [DynamicHMC.jl](https://github.com/tpapp/DynamicHMC.jl) — the underlying HMC implementation

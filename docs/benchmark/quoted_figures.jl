@@ -145,11 +145,28 @@ end
 # has already carried one reversed verdict built from exactly that -- so the
 # prose asserts the sign separately, from the rounds, and an assertion about 70
 # numbers is worth strictly more than five summaries only while it still counts
-# them correctly. Pairing is by index and that is not arbitrary: `gradient_overhead`
-# times all three variants on the same `xs` within a round, rotating the order, so
-# round r's live and bare are adjacent in time on identical inputs. Comparing
-# across rounds instead would discard the pairing the harness deliberately builds
-# and widen every spread for no reason.
+# them correctly.
+#
+# PAIRING IS PER TIMING LOOP, NOT PER HARNESS. Index-pairing is correct here and
+# it is not arbitrary: `gradient_overhead` binds one `xs` per round and times all
+# three variants on it back-to-back with the order rotated, so round r's live and
+# bare are adjacent in time on identical inputs. Comparing across rounds instead
+# would discard that and widen every spread for nothing.
+#
+# The tempting generalisation from this -- "that harness pairs, this one does
+# not" -- is WRONG, and it is worth stating because I drew it and told a peer so.
+# `typical_positions.jl` pairs by the same construction (it binds `xs` OUTSIDE
+# the round loop, then `circshift(BACKENDS, r)` within it), so index-pairing is
+# right there too. What actually decides it is the loop: figures timed inside one
+# loop over shared inputs pair; figures from two SEPARATE loops do not, however
+# similar they look. In `typical_positions` that boundary falls between the
+# `typical` and `randn` position sets -- different loop iterations, different
+# inputs, so round i of one is not co-timed with round i of the other, and those
+# two columns must be compared by overlapping ranges rather than by dividing
+# across them.
+#
+# None of this is recoverable from the JSON: the artifacts record round ORDER but
+# not co-timing. Read the harness, not the file.
 paired_above = paired_total = 0
 for be in ("enzyme", "forwarddiff")
     go = live_json("docs/benchmark/results/$be-$DRIVER_SHA/gradient_overhead.json")

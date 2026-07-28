@@ -47,9 +47,13 @@ That sentence used to stand on its own. It is now measured: `bench/sampler_compa
 runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and
 [WarmupHMC vs other samplers](https://nsiccha.github.io/WarmupHMC.jl/dev/sampler-comparison)
 renders the result — verdict included — from the checked-in JSON at build time.
-Read that page for what "faster" does and does not mean here: the lead is in
-**gradient evaluations**, which is the portable number, and wall-clock is a
-closer thing.
+Read that page for what "faster" does and does not mean here. The lead is in
+**gradient evaluations** — the portable number, and the one that reproduces:
+re-running identical seeds returns bit-identical counts, so that verdict does
+not move. Wall-clock is a different story, and the page says so out of its own
+rows rather than in a caveat: its verdict changes between repeats of the *same*
+seeds, because the timing noise is wider than the band used to call a winner.
+Nothing here measures whether the draws are correct.
 
 ## Stability
 

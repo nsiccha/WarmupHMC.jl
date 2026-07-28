@@ -19,12 +19,19 @@ const ROWS_PATH = length(ARGS) >= 1 ? ARGS[1] : NW_ROWS_PATH
 # docs build loads its derivation, and pulling in common.jl would drag
 # BridgeStan and PosteriorDB into `makedocs`.
 #
-# FOUR sites implement this one rule, not two. `docs/tables.jl`'s `results_dir`
-# says "keep the two in lockstep" and names only `common.jl`; the other two are
-# here and in `run_linear_restart_benchmark.jl` (which guards
-# `WHMC_LINEAR_BENCH_OUT`, a different variable under the same rule). A lockstep
-# search anchored on that sentence finds neither. If the rule ever changes,
-# change all four: common.jl, tables.jl, this file, run_linear_restart_benchmark.jl.
+# To change the rule, change every site that implements it. Find them with
+#
+#     grep -rl 'is set but blank' docs/
+#
+# and NOT by grepping a variable name: the rule spans three of those
+# (`WHMC_BENCH_OUT`, `WHMC_LINEAR_BENCH_OUT`, `WHMC_NW_OUT`), so any one of them
+# finds a subset. The error string is the thing every site shares.
+#
+# Deliberately not a count. A "keep the N sites in sync" note is a census in
+# prose, and a census in prose has no gate: this comment replaced one that said
+# FOUR, which replaced `results_dir`'s "keep the two in lockstep", and each was
+# invalidated by a landing in a file its author did not own -- with no merge
+# conflict possible, because the sites are in different files by design.
 if haskey(ENV, "WHMC_BENCH_OUT") && isempty(strip(ENV["WHMC_BENCH_OUT"]))
     error("WHMC_BENCH_OUT is set but blank; unset it or give it a real path.")
 end

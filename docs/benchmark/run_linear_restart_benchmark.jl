@@ -34,12 +34,18 @@ const N_EVALUATIONS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_EVALS", "1000"))
 # rather than the default, and `joinpath("", f)` is relative, so the run writes
 # its JSON into the current directory without saying so.
 #
-# FOUR sites implement this one rule: common.jl (`env_dir`), docs/tables.jl
-# (`results_dir`), nonlinear_weighting_report.jl, and here. `results_dir`'s
-# docstring says "keep the two in lockstep" and names only common.jl, so a
-# search anchored on it misses the two inlined ones -- this being the easiest
-# to miss, since it guards a DIFFERENT variable (`WHMC_LINEAR_BENCH_OUT`) under
-# the same rule and does not match a grep for `WHMC_BENCH_OUT`.
+# To change the rule, change every site that implements it:
+#
+#     grep -rl 'is set but blank' docs/
+#
+# This file is the one a variable-name search misses. The rule spans three
+# variables -- `WHMC_BENCH_OUT`, `WHMC_NW_OUT` (both via `env_dir`) and
+# `WHMC_LINEAR_BENCH_OUT` here -- so a grep for any one of them silently returns
+# a subset. The error string is what every site has in common; anchor on that.
+#
+# Deliberately no count. Every "keep the N sites in sync" note written for this
+# rule has been wrong within the hour, because the sites live in different files
+# by design and a landing in one cannot conflict with the note in another.
 if haskey(ENV, "WHMC_LINEAR_BENCH_OUT") && isempty(strip(ENV["WHMC_LINEAR_BENCH_OUT"]))
     error("WHMC_LINEAR_BENCH_OUT is set but blank; unset it or give it a real path.")
 end

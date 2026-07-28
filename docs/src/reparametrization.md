@@ -171,9 +171,16 @@ against a de-boxed rebuild, and had to warn that the boxed rows measured the
 defect rather than the backend, with dimension perfectly confounded because
 every boxed spec was also one of the larger models. The shipped specs no longer
 capture a `Core.Box`. The A/B therefore builds **both** controls locally and
-asserts each reproduces the shipped spec's gradients bit-for-bit, so what it
-measures is what de-boxing recovered — and the harness doubles as a regression
-guard, failing if any shipped closure starts boxing again:
+compares each against the shipped spec's own gradients, so what it measures is
+what de-boxing recovered rather than how the shipped spec happens to be written.
+
+Two checks in that harness have different strengths, and the difference matters
+when reading the table below. The boxing sweep is a hard guard: it exits
+non-zero and names the offenders if any shipped closure captures a `Core.Box`.
+The control-identity check only warns, and the harness writes its JSON and exits
+zero either way — so controls could drift and leave a table that is no longer an
+A/B, with nothing failing. That claim is therefore derived below from the
+recorded differences rather than stated here:
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -193,13 +200,20 @@ Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 b = load_results("capture_boxing.json")
 ds = Float64.([b["ab_max_grad_diff_boxed"], b["ab_max_grad_diff_unboxed"]])
-agree = all(iszero, ds) ? "bit-identical to the shipped spec's" :
-        "within $(num(maximum(ds); sig = 2)) of the shipped spec's"
+agree = all(iszero, ds) ?
+    "Both controls' gradients are bit-identical to the shipped spec's, so the " *
+    "difference above is pure overhead" :
+    "**The controls differ from the shipped spec by up to " *
+    "$(num(maximum(ds); sig = 2)), so the table above is not an A/B**"
+ncap = length(b["captures"])
+ntgt = length(unique(c["target"] for c in b["captures"]))
 guard = isempty(b["boxed_specs"]) ?
-    "No shipped spec captures a `Core.Box`" :
-    "**$(length(b["boxed_specs"])) shipped spec(s) still capture a `Core.Box`**"
+    "None of the $(ncap) closure arguments probed across $(ntgt) targets " *
+    "captures a `Core.Box`" :
+    "**$(length(b["boxed_specs"])) of $(ncap) probed closure arguments still " *
+    "capture a `Core.Box`**"
 Markdown.parse("*" * provenance(b; harness = "capture_boxing.jl") *
-               " Both controls' gradients are $(agree). $(guard).*")
+               " $(agree). $(guard).*")
 ```
 
 The ranking inverts between the two controls. Whether reverse mode's advantage

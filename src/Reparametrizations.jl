@@ -7,26 +7,73 @@ maybecall(x, args...; kwargs...) = x
 """
     ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing)
 
-Wrap a `LogDensityProblems`-compatible `problem` with a nonlinear reparametrization.
-The `reparametrizer` (typically an [`IndexedReparametrization`](@ref)) transforms the
-parameter vector before evaluating the log density, adding the log-Jacobian correction.
+Wrap a `LogDensityProblems`-compatible `problem` in a nonlinear reparametrization
+that warm-up is allowed to ADAPT.
 
-Gradients are computed by differentiating only through the reparametrization transform
-(using `ad_backend`, e.g. `AutoMooncake()` from DifferentiationInterface.jl), while
-reusing the inner problem's native gradient. This allows use with FFI-based backends
-like BridgeStan.
+`reparametrizer` is an [`IndexedReparametrization`](@ref). The sampler works in
+its *source* coordinates; `logdensity` maps a source-coordinate position `x` into
+the coordinates `problem` is written in and adds the log-Jacobian:
+
+```julia
+ljac, y = reparametrizer(x)
+logdensity(rp, x) == ljac + logdensity(problem, y)
+```
+
+`dimension` and `capabilities` are forwarded to `problem` unchanged.
+
+!!! warning "Nothing happens unless you build the reparametrization yourself"
+    An empty [`IndexedReparametrization`](@ref) is a no-op — and an empty one is
+    exactly what every other problem reports, since
+    `WarmupHMC.reparametrizer(::Any) = IndexedReparametrization([])`. So
+    `nonlinear_adapt=true` (the default on every sampler) changes nothing at all
+    on a plain log-density problem. There is no automatic detection of
+    hierarchical structure: you supply the coordinate indices and the
+    location/log-scale accessors, or nothing is reparametrized.
+
+# Gradients
+
+`logdensity_and_gradient` differentiates only through the reparametrization and
+reuses `problem`'s own gradient, so an inner problem with a native gradient (a
+BridgeStan model, say) keeps providing the expensive part. Writing
+`L(x) = ljac(x) + ld(y(x))`,
+
+```
+∂L/∂x = ∂ljac/∂x + (∂y/∂x)' * ∂ld/∂y
+```
+
+is obtained by AD-ing the scalar `x -> ljac(x) + dot(g_y, y(x))` with `g_y` held
+fixed at the inner gradient — one call to the inner problem plus one AD pass over
+the transform, per gradient evaluation. The transform is therefore on the
+gradient hot path, and the accessor closures in each
+[`Reparametrization`](@ref) run under AD.
+
+`ad_backend` is a DifferentiationInterface.jl backend — `AutoMooncake()`,
+`AutoForwardDiff()`, and so on; the objective is scalar in the full parameter
+vector, so a reverse-mode backend scales better with dimension. It is required
+in practice: the two-argument constructor stores `nothing`, which is not a
+backend, and the gradient call then fails. If DifferentiationInterface is not
+loaded at all, the error says so by name.
 
 # Example
+
 ```julia
 using WarmupHMC, DifferentiationInterface, Mooncake
+
+# Coordinates 2:11 are the group effects; their location is fixed at 0 and their
+# log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
 ir = IndexedReparametrization([
     i => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0),
-        x -> x[loc_idx], x -> x[scale_idx])
-    for i in param_indices
+                           0., x -> x[1] / 2)
+    for i in 2:11
 ])
 rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
+
+Returned draws are in the wrapped problem's own parametrization: warm-up applies
+the fitted transform to `posterior_position` before returning.
+
+See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
 """
 struct ReparametrizedProblem{R,P,B}
     reparametrizer::R
@@ -48,7 +95,17 @@ LogDensityProblems.logdensity_and_gradient(p::ReparametrizedProblem, x::Abstract
     # The inner problem (e.g. BridgeStan) provides its own gradients via FFI.
     _logdensity_and_gradient_reparam(p, x)
 end
-# Fallback — overridden by DifferentiationInterfaceExt
+"""
+    WarmupHMC._logdensity_and_gradient_reparam(p::ReparametrizedProblem, x)
+
+The gradient of a [`ReparametrizedProblem`](@ref). Implemented by the
+`DifferentiationInterfaceExt` extension, which is loaded as soon as
+DifferentiationInterface.jl is; the method below is the fallback that says so.
+
+Split out as its own function purely so the AD dependency stays weak: the
+reparametrization machinery itself is plain Julia and needs no AD, only the
+gradient does.
+"""
 _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x) =
     error("ReparametrizedProblem requires DifferentiationInterface to compute gradients. Load DifferentiationInterface and pass an AD backend to ReparametrizedProblem.")
 
@@ -65,18 +122,44 @@ end
 """
     PartiallyCentered(c)
 
-Centering parameter for hierarchical reparametrization, where `c ∈ [0, 1]`.
-`c = 0` is fully non-centered, `c = 1` is fully centered.
+One coordinate's centering, `c ∈ [0, 1]`: `c = 1` is fully centered, `c = 0`
+fully non-centered, and anything in between is a partial centering.
 
-For a parameter `x` with location `loc` and log-scale `log_scale`, the transform from
-`PartiallyCentered(source)` to `PartiallyCentered(target)` is:
+For a coordinate with location `loc` and log-scale `log_scale`, mapping a value
+`x` from `PartiallyCentered(source)` to `PartiallyCentered(target)` is
 
-    y = target * loc + (x - source * loc) * exp(log_scale * (target - source))
+    y    = target * loc + (x - source * loc) * exp(log_scale * (target - source))
+    ljac = log_scale * (target - source)
 
-with log-Jacobian `log_scale * (target - source)`.
+so `source == target` is the identity, and `source = 1, target = 0` is exactly
+the textbook non-centering — subtract the location, divide by the scale.
 
-During warmup, the optimizer tries multiple candidate centering values and picks
-the one minimizing a correlation-based loss.
+Use `Float64` centerings (`PartiallyCentered(1.0)`, not `PartiallyCentered(1)`):
+warm-up writes the fitted value back into the same `pairs` vector it read, and an
+`Int`-parameterized element cannot hold a `Float64` centering.
+
+# How the value gets chosen
+
+At each warm-up window that restarts, every reparametrized coordinate is scored
+against a fixed grid of 11 candidate centerings, `range(0, 1, 11)`. Each
+candidate accumulates the correlation between the candidate-coordinate position
+and its gradient over the recorded halo states, and the candidate minimizing that
+correlation becomes the coordinate's new `source`. A perfectly conditioned
+coordinate has position and gradient exactly anti-correlated, so the minimum is
+the most standard-normal-looking candidate. Coordinates that saw 2 or fewer halo
+states keep the centering they had.
+
+The grid is deliberate, not an approximation of a continuous search. Centering is
+a bounded one-dimensional quantity, so the candidate set can be *enumerated*; and
+because it is enumerable, all candidates can be scored in a single pass over the
+halo with online accumulators — every state is visited once, per coordinate,
+regardless of how many candidates there are, and nothing has to be stored or
+re-visited for an inner optimization loop. Resolution finer than `0.1` is not
+what decides how the sampler behaves here. The grid size is fixed; no sampler
+keyword exposes it.
+
+See [`Reparametrization`](@ref) for the object that pairs a `target` with an
+adapted `source`.
 """
 struct PartiallyCentered{C}
     c::C
@@ -94,18 +177,39 @@ end
 """
     Reparametrization(target, source, args...)
 
-Maps between two [`PartiallyCentered`](@ref) parametrizations. The `args` are either
-constant values or functions `x -> x[i]` that extract the location and log-scale
-from the full parameter vector.
+One coordinate's rule: map that coordinate's value from `source` coordinates into
+`target` coordinates. Both are [`PartiallyCentered`](@ref).
+
+* `target` is the parametrization the wrapped problem is written in. It is FIXED
+  — warm-up never touches it.
+* `source` is the parametrization the sampler works in. Warm-up REPLACES it at
+  every restarting window (see [`PartiallyCentered`](@ref)).
+
+Construct both with the same centering to start the sampler in the model's own
+parametrization and let warm-up move it from there.
+
+`args` are the extra arguments the centerings need — for [`PartiallyCentered`](@ref)
+exactly two, the location and the log-scale, in that order. Each is either a
+constant or a callable applied to the whole parameter vector, so `x -> x[9]`
+reads the location off coordinate 9 and `0.` pins it to zero.
+
+The callables are applied to the sampler's SOURCE-coordinate vector as it was on
+entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no
+coordinate's rule ever observes another coordinate's transformed value. They also
+run under AD on every gradient evaluation (see [`ReparametrizedProblem`](@ref)),
+so keep them cheap and type-generic — index, arithmetic, `exp`/`log`, not
+`Float64`-annotated code or anything that mutates.
+
+`InverseFunctions.inverse` returns the same rule with `target` and `source`
+swapped.
 
 # Example
 ```julia
-# Reparametrize dimensions 1:8, with location at x[9] and log-scale at x[10]
+# Eight schools: the group effects have their location at coordinate 9 and their
+# log-scale at coordinate 10. This is the rule for ONE group effect — see
+# `IndexedReparametrization` for attaching it to coordinates 1:8.
 Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0), x -> x[9], x -> x[10])
 ```
-
-During adaptation, the `source` centering is updated to minimize a loss function
-while `target` stays fixed.
 """
 struct Reparametrization{T,S,A}
     target::T
@@ -122,15 +226,25 @@ reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi
 """
     IndexedReparametrization(pairs)
 
-Maps dimension indices to [`Reparametrization`](@ref) objects. This is the main container
-passed to [`ReparametrizedProblem`](@ref).
+The container [`ReparametrizedProblem`](@ref) takes: a vector of
+`idx => Reparametrization(...)` pairs. Coordinates not listed pass through
+unchanged, and the log-Jacobians of the listed ones are summed.
 
-`pairs` is a vector of `idx => Reparametrization(...)` entries. Dimensions not listed
-are passed through unchanged.
+`idx` is a single, RAW index into the unconstrained parameter vector — one pair
+per scalar coordinate, not per model parameter. Mapping "the 8 group effects" or
+"`sigma`" onto integer positions is the caller's job, and it is the part that
+actually costs effort in practice; `web/src/posteriordb_reparametrizations.jl`
+in this repo does it for a handful of PosteriorDB models and is worth copying
+from.
+
+An empty `IndexedReparametrization` is a no-op. That is the default for every
+problem the sampler does not recognise, so an empty one silently samples exactly
+as if there were no reparametrization at all.
 
 # Example
 ```julia
-# Eight schools: reparametrize dims 1:8 with shared location (dim 9) and scale (dim 10)
+# Eight schools: coordinates 1:8 are the group effects, sharing a location at
+# coordinate 9 and a log-scale at coordinate 10.
 ir = IndexedReparametrization(
     1:8 .=> Ref(Reparametrization(
         PartiallyCentered(1.0), PartiallyCentered(1.0),
@@ -138,6 +252,29 @@ ir = IndexedReparametrization(
     ))
 )
 ```
+
+# Mutation, ordering and checkpoints
+
+`pairs` is mutated IN PLACE by warm-up: at every restarting window each entry is
+replaced by one carrying the newly fitted `source` centering. Two consequences:
+
+* **One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)`
+  hands the SAME object to every chain, so a shared `IndexedReparametrization`
+  has all chains adapting — and, under the default `parallel=true`, concurrently
+  writing — one shared set of centerings. Pass a vector of independently built
+  problems instead: `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])`.
+  (`cooperative_warmup_mcmc` and `clustered_warmup_mcmc` `deepcopy` per chain and
+  are not affected.)
+* **The order of `pairs` is load-bearing across a checkpoint/resume.** A
+  checkpoint stores only the fitted `source` centerings, as a bare positional
+  list; on resume they are zipped back onto the freshly supplied problem's
+  `pairs` *by position*, and the stored indices are not consulted. If the
+  rebuilt problem enumerates its coordinates in a different order — a
+  `Dict`-driven build, a data-dependent sort — every centering silently lands on
+  the wrong coordinate. A different *length* is not caught gracefully either: it
+  throws `DimensionMismatch`, or, when the overlap collapses to one entry,
+  silently overwrites every pair with that one. Build `pairs` deterministically,
+  in the same order and with the same length, on both sides of a resume.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P

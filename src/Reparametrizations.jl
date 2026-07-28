@@ -340,9 +340,25 @@ replaced by one carrying the newly fitted `source` centering. Two consequences:
   throws `DimensionMismatch`, or, when the overlap collapses to one entry,
   silently overwrites every pair with that one. Build `pairs` deterministically,
   in the same order and with the same length, on both sides of a resume.
+  Order also defines accessor dependencies during inversion: if one transformed
+  coordinate is read by another block's `loc` or `log_scale`, put the provider
+  first so its source coordinate is recovered before the dependent block.
+* **The vector element type must retain every accessor's concrete type.** Julia
+  widens a vector that mixes constants and differently typed closures, and AD
+  then fails late inside warm-up. Construction rejects that shape immediately.
+  Use a single concretely typed callable representation for accessors stored in
+  one vector.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P
+    function IndexedReparametrization(pairs::P) where {P}
+        isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
+            "IndexedReparametrization pairs must have a concrete element type; " *
+            "avoid mixing constants and differently typed accessor closures in one vector " *
+            "(got eltype $(eltype(pairs)), first element type $(typeof(first(pairs))))",
+        ))
+        new{P}(pairs)
+    end
 end
 with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) = begin
     ljac = 0.
@@ -352,9 +368,40 @@ with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, 
     end
     ljac, y
 end
-InverseFunctions.inverse((;pairs)::IndexedReparametrization) = IndexedReparametrization([
-    idx => inverse(value) for (idx, value) in pairs
-])
+
+struct InverseIndexedReparametrization{I} <: AbstractReparametrization
+    forward::I
+end
+InverseFunctions.inverse(ir::IndexedReparametrization) = InverseIndexedReparametrization(ir)
+InverseFunctions.inverse(ir::InverseIndexedReparametrization) = ir.forward
+
+# Recover the source coordinates of an indexed transform from a point in its
+# target coordinates. Each accessor is evaluated on the source point being
+# reconstructed. That distinction is essential when a transformed coordinate
+# is itself another block's location or scale.
+#
+# `pairs` order is the dependency order: a block may read an earlier recovered
+# coordinate. This is the same deterministic, load-bearing order already used
+# by `optimize!` and checkpoint restoration.
+function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
+                                           ir::IndexedReparametrization,
+                                           target::AbstractVector)
+    source .= target
+    ljac = zero(eltype(target))
+    for (idx, value) in ir.pairs
+        ljac_i, source_i = reparam(inverse(value), target[idx], source)
+        source[idx] = source_i
+        ljac += ljac_i
+    end
+    ljac, source
+end
+_inverse_with_logabsdet_jacobian(ir::IndexedReparametrization,
+                                 target::AbstractVector) =
+    _inverse_with_logabsdet_jacobian!(copy(target), ir, target)
+with_logabsdet_jacobian!(source::AbstractVector,
+                         (;forward)::InverseIndexedReparametrization,
+                         target::AbstractVector) =
+    _inverse_with_logabsdet_jacobian!(source, forward, target)
 
 # --- Online reparametrization loss tracking ---
 
@@ -441,6 +488,19 @@ _reparametrization_ad_backend(p::ReparametrizedProblem) = p.ad_backend
 _reparametrization_ad_backend(p::WrappedLogDensityProblem) =
     _reparametrization_ad_backend(parent(p))
 
+struct ReparametrizationTransportObjective{N,O,G}
+    new_ir::N
+    old_ir::O
+    old_gradient::G
+end
+
+function (objective::ReparametrizationTransportObjective)(new_position)
+    ljac_new, model_position = objective.new_ir(new_position)
+    ljac_old, old_position =
+        _inverse_with_logabsdet_jacobian(objective.old_ir, model_position)
+    ljac_new + ljac_old + dot(objective.old_gradient, old_position)
+end
+
 """
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              position, gradient)
@@ -467,20 +527,16 @@ never evaluated.
 function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                                   position, gradient)
     new_ir = reparametrizer(lpdf)
-    old_to_new = inverse(new_ir)
-    new_to_old = inverse(old_ir)
     backend = _reparametrization_ad_backend(lpdf)
     columns = zip(eachcol(old_position), eachcol(old_gradient),
                   eachcol(position), eachcol(gradient))
     for (x_old, g_old, x_new, g_new) in columns
         _, y = old_ir(x_old)
-        _, transported_position = old_to_new(y)
+        _, transported_position = _inverse_with_logabsdet_jacobian(new_ir, y)
         x_new .= transported_position
-        function transport_objective(x_)
-            ljac_new, y = new_ir(x_)
-            ljac_old, x_old = new_to_old(y)
-            ljac_new + ljac_old + dot(g_old, x_old)
-        end
+        transport_objective = ReparametrizationTransportObjective(
+            new_ir, old_ir, collect(g_old),
+        )
         _, transported_gradient = value_and_gradient(transport_objective, backend, x_new)
         g_new .= transported_gradient
     end

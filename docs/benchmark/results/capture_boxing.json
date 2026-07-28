@@ -1,14 +1,17 @@
 {
-  "ab_max_grad_diff": 0.0,
+  "ab_max_grad_diff_boxed": 0.0,
+  "ab_max_grad_diff_unboxed": 0.0,
   "ab_target": "radon_mn-radon_partially_pooled_centered",
-  "bare_ns_median": 26028.293,
+  "bare_ns_median": 27430.907,
   "blas_threads": 1,
+  "boxed_specs": [],
   "captures": [
     {
       "arg": 1,
       "boxed": false,
       "captures": "()",
       "dim": 10,
+      "source": "posteriordb",
       "target": "eight_schools-eight_schools_centered"
     },
     {
@@ -16,41 +19,47 @@
       "boxed": false,
       "captures": "()",
       "dim": 10,
+      "source": "posteriordb",
       "target": "eight_schools-eight_schools_centered"
     },
     {
       "arg": 1,
-      "boxed": true,
-      "captures": "(Core.Box,)",
+      "boxed": false,
+      "captures": "(Int64,)",
       "dim": 88,
+      "source": "posteriordb",
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "arg": 2,
-      "boxed": true,
-      "captures": "(Core.Box,)",
+      "boxed": false,
+      "captures": "(Int64,)",
       "dim": 88,
+      "source": "posteriordb",
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "arg": 1,
-      "boxed": true,
-      "captures": "(Core.Box,)",
+      "boxed": false,
+      "captures": "(Int64,)",
       "dim": 89,
+      "source": "posteriordb",
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "arg": 2,
-      "boxed": true,
-      "captures": "(Core.Box,)",
+      "boxed": false,
+      "captures": "(Int64,)",
       "dim": 89,
+      "source": "posteriordb",
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "arg": 2,
-      "boxed": true,
-      "captures": "(Core.Box,)",
+      "boxed": false,
+      "captures": "(Int64,)",
       "dim": 26,
+      "source": "posteriordb",
       "target": "seeds_data-seeds_centered_model"
     },
     {
@@ -58,42 +67,164 @@
       "boxed": false,
       "captures": "()",
       "dim": 10,
+      "source": "benchmark",
+      "target": "funnel (benchmark-local)"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "source": "synthetic",
       "target": "funnel"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "source": "synthetic",
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "source": "synthetic",
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 26,
+      "source": "synthetic",
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 88,
+      "source": "synthetic",
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 88,
+      "source": "synthetic",
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 89,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 89,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 89,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_slope_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 89,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_slope_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 90,
+      "source": "synthetic",
+      "target": "radon_mn-radon_hierarchical_intercept_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 90,
+      "source": "synthetic",
+      "target": "radon_mn-radon_hierarchical_intercept_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 175,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_intercept_slope_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64,)",
+      "dim": 175,
+      "source": "synthetic",
+      "target": "radon_mn-radon_variable_intercept_slope_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "(Int64, Int64, Vector{Float64})",
+      "dim": 100,
+      "source": "synthetic",
+      "target": "accel_gp-accel_gp"
     }
   ],
   "julia": "1.10.11",
   "n_calls": 1000,
-  "note": "Which posteriordb specs capture a Core.Box, and what it costs on the gradient path. The A/B rebuilds one spec with unboxed captures and asserts bit-identical gradients, so the delta is pure overhead.",
+  "note": "Which posteriordb specs capture a Core.Box, and what it costs on the gradient path. The A/B builds both a boxed and an unboxed control locally and asserts their gradients are bit-identical to the shipped spec's, so the delta is pure overhead and the measurement is independent of how the shipped table is written.",
   "rounds": 5,
+  "shipped_spec_is_boxed": false,
   "timings_ns": {
-    "deboxed/const": [
-      28303.513,
-      33954.129,
-      29401.338,
-      29857.437,
-      27561.98
+    "boxed/const": [
+      464704.584,
+      460688.851,
+      429263.039,
+      444685.225,
+      430282.306
     ],
-    "deboxed/fd": [
-      70117.547,
-      96006.109,
-      75774.163,
-      77658.292,
-      75292.838
+    "boxed/fd": [
+      407434.703,
+      339162.929,
+      334656.781,
+      353228.382,
+      329605.008
     ],
-    "shipped/const": [
-      440225.0,
-      441732.95,
-      446507.588,
-      491256.803,
-      433387.334
+    "unboxed/const": [
+      28880.138,
+      28536.434,
+      28324.131,
+      28446.12,
+      28702.724
     ],
-    "shipped/fd": [
-      358934.346,
-      380652.332,
-      366010.839,
-      374705.678,
-      324955.171
+    "unboxed/fd": [
+      82532.475,
+      54925.164,
+      72872.895,
+      83363.252,
+      71264.884
     ]
   },
-  "warmuphmc_sha": "068cdeb761c8253af116dd058341b15af94acb3c"
+  "warmuphmc_sha": "c4e4670e8548491e7dcc5725171c56368b31b2c4"
 }

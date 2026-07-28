@@ -37,16 +37,9 @@ Pathfinder = "0.9"
 TSVD = "0.4"
 julia = "1.9"
 
-[extras]
-Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-TestModules = "63c02187-99fd-4e5c-aaf0-4d6bfebc181c"
-
-[sources.TestModules]
-url = "https://github.com/nsiccha/TestModules.jl"
-
+# Test dependencies live in test/Project.toml (the modern layout); the legacy
+# [extras]/[targets] pair — which pinned the unregistered TestModules — was
+# dropped for the 1.0 test suite.
 [sources.Treebars]
 url = "https://github.com/nsiccha/Treebars.jl"
-
-[targets]
-test = ["Documenter", "Test", "TestModules"]
+rev = "dev"

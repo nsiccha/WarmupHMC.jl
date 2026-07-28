@@ -45,6 +45,15 @@ export default defineConfig({
     // carry HX-Request: true automatically, so the WHMC routes return
     // bare body fragments that drop directly into the docs page.
     ['script', {src: 'https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js'}],
+    // Vega runtime — for figures emitted by `vega_figure` in docs/tables.jl.
+    // Versions match AlgebraOfVega's `vega_cdn_urls()`, which is the same
+    // triple the web app loads; keep them in step so a spec that renders in
+    // the app renders here. A page with no figure pays three cached 404-free
+    // script tags and nothing else — the embed script is per-figure and only
+    // the pages that emit one carry it.
+    ['script', {src: 'https://cdn.jsdelivr.net/npm/vega@5'}],
+    ['script', {src: 'https://cdn.jsdelivr.net/npm/vega-lite@5'}],
+    ['script', {src: 'https://cdn.jsdelivr.net/npm/vega-embed@6'}],
     // Map HTMXObjects' --htmxo-* theme variables to VitePress's
     // brand/state tokens so embedded gallery components match the docs
     // theme automatically. HTMXO defaults remain as fallback.

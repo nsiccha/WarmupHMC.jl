@@ -189,6 +189,48 @@ function load_harness(relpath::AbstractString)
 end
 
 """
+    vega_figure(spec; caption="") -> Markdown.MD
+
+Render a Vega-Lite `spec` (anything `JSON.json` accepts) as a figure, by
+emitting it as a fenced ` ```vega-lite ` block. `setupVegaFigures` in
+`docs/src/.vitepress/theme/vega-figure.ts` finds the rendered block and swaps a
+chart in; the runtimes are CDN tags in `config.mts`.
+
+**A code fence is not a stylistic choice — it is the only construct that
+survives this pipeline.** The obvious shape, an `@eval` block returning a
+`<div data-spec="…">`, cannot work, and both layers that break it break it
+silently:
+
+  * `Markdown.parse` destroys the JSON before anything sees it. `\$schema` is
+    read as inline math and `ns_const` as emphasis, so the text that reaches
+    the AST is already corrupt — measured, not feared.
+  * DocumenterVitepress escapes `<` and `>` in *every* text node
+    (`escape_markdown_text`, `writer.jl`), by design, because Vue would
+    otherwise parse a bare `<` as a tag. A div therefore arrives at the browser
+    as `&lt;div&gt;`.
+
+Raw HTML reaches the page only through `@raw html`, which is a static fence and
+cannot carry a computed value. Fenced code is the one path a generated string
+crosses untouched: markdown does not interpret inside it, and VitePress marks
+code blocks `v-pre`, so Vue does not either.
+
+Figures are DERIVED, never checked in. Build the spec from the rows at
+docs-build time — see [`load_harness`](@ref) — for the same reason a summary
+table is derived: a spec stored beside the rows it plots is a second copy of
+them that nothing forces to agree, and it goes stale in the silent direction,
+because a chart still renders when its numbers are old.
+
+If the runtime is unreachable the block stays a readable JSON dump rather than
+becoming a blank gap, which is the right failure: the figure's data is still
+on the page.
+"""
+function vega_figure(spec; caption::AbstractString = "")
+    parts = Any[Markdown.Code("vega-lite", JSON.json(spec))]
+    isempty(caption) || append!(parts, Markdown.parse("*" * caption * "*").content)
+    Markdown.MD(parts)
+end
+
+"""
     md_table(headers, rows) -> Markdown.MD
 
 Build a markdown table. Cells are passed through `string`, so pre-format

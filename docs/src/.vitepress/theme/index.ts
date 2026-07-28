@@ -21,6 +21,10 @@ import { enhanceAppWithTabs } from 'vitepress-plugin-tabs/client'
 // — edit upstream and re-run make.jl.
 import { setupHtmxoEmbed } from './htmxo-embed'
 
+// Vega-Lite figures emitted by `vega_figure` in docs/tables.jl. Written for
+// this repo — not synced from anywhere, so edit it in place.
+import { setupVegaFigures } from './vega-figure'
+
 import '@nolebase/vitepress-plugin-enhanced-readabilities/client/style.css'
 import './style.css' // You could setup your own, or else a default will be copied.
 import './docstrings.css' // You could setup your own, or else a default will be copied.
@@ -47,6 +51,12 @@ export const Theme: ThemeConfig = {
     // prefix to `/live-whmc` (matches the Vite proxy in config.mts and
     // the committed recordings under public/live-whmc/).
     setupHtmxoEmbed(router, { proxyPrefix: '/live-whmc' });
+    // Vega-Lite figure wiring: swaps each ```vega-lite fence for a rendered
+    // chart. Must be CALLED, not merely imported — Rollup tree-shakes an
+    // unused import, and the build stays green while the figure silently
+    // stays a JSON code block. Checked by grepping the built theme chunk for
+    // the selector string, not by the build exiting 0.
+    setupVegaFigures(router);
   }
 }
 export default Theme

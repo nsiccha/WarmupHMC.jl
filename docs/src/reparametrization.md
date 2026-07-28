@@ -165,6 +165,21 @@ below `1×` throughout, but it must not be read as a trend in `d`: the two
 matters more than how large it is. A dimension trend, if there is one, is
 visible only within a target.
 
+That last point is easier to see than to say. The same column, plotted against
+`d` — every point below the dashed parity line, and the vertical spread at a
+single `d` as large as the spread across all of them:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("plots.jl")
+vega_figure(
+    backend_ratio_spec(load_results("annotation_sweep.json")["rows"]);
+    caption = "Below 1× is Enzyme reverse mode winning. Colour is the target, " *
+              "shape is the source-scale c; hover a point for its absolute " *
+              "ns/grad. Same rows as the table above — the figure is built " *
+              "from that JSON at docs-build time, not stored beside it.")
+```
+
 That reading is different from the one this page used to carry, and the reason
 is in the `spec` column. Earlier revisions compared a boxed *shipped* spec
 against a de-boxed rebuild, and had to warn that the boxed rows measured the

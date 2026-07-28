@@ -7,92 +7,92 @@
       "c_source": 0.0,
       "dim": 10,
       "max_grad_diff": 0.0,
-      "ns_const": 941.3955,
-      "ns_duplicated": 5969.8785,
-      "ns_forwarddiff": 1774.201,
+      "ns_const": 1112.4455,
+      "ns_duplicated": 9933.94,
+      "ns_forwarddiff": 1735.66,
       "target": "eight_schools-eight_schools_centered"
     },
     {
       "c_source": 0.5,
       "dim": 10,
       "max_grad_diff": 8.881784197001252e-16,
-      "ns_const": 860.3485,
-      "ns_duplicated": 4838.6905,
-      "ns_forwarddiff": 1499.352,
+      "ns_const": 1684.74,
+      "ns_duplicated": 7576.241,
+      "ns_forwarddiff": 3620.957,
       "target": "eight_schools-eight_schools_centered"
     },
     {
       "c_source": 0.0,
       "dim": 88,
       "max_grad_diff": 2.2737367544323206e-13,
-      "ns_const": 448636.328,
-      "ns_duplicated": 481872.5145,
-      "ns_forwarddiff": 352265.7165,
+      "ns_const": 33688.47,
+      "ns_duplicated": 71972.272,
+      "ns_forwarddiff": 98100.637,
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "c_source": 0.5,
       "dim": 88,
       "max_grad_diff": 6.821210263296962e-13,
-      "ns_const": 428629.921,
-      "ns_duplicated": 456790.69,
-      "ns_forwarddiff": 321515.485,
+      "ns_const": 38127.005,
+      "ns_duplicated": 80691.8355,
+      "ns_forwarddiff": 92108.347,
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "c_source": 0.0,
       "dim": 89,
       "max_grad_diff": 1.1368683772161603e-13,
-      "ns_const": 474486.5695,
-      "ns_duplicated": 536286.967,
-      "ns_forwarddiff": 373613.457,
+      "ns_const": 59706.0225,
+      "ns_duplicated": 97189.5045,
+      "ns_forwarddiff": 98019.74,
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "c_source": 0.5,
       "dim": 89,
       "max_grad_diff": 1.7053025658242404e-13,
-      "ns_const": 464102.713,
-      "ns_duplicated": 497067.9895,
-      "ns_forwarddiff": 377523.9905,
+      "ns_const": 53048.014,
+      "ns_duplicated": 105255.071,
+      "ns_forwarddiff": 91859.6135,
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "c_source": 0.0,
       "dim": 26,
       "max_grad_diff": 3.410605131648481e-13,
-      "ns_const": 105068.139,
-      "ns_duplicated": 112829.417,
-      "ns_forwarddiff": 24425.0065,
+      "ns_const": 3999.715,
+      "ns_duplicated": 13038.0395,
+      "ns_forwarddiff": 6264.556,
       "target": "seeds_data-seeds_centered_model"
     },
     {
       "c_source": 0.5,
       "dim": 26,
       "max_grad_diff": 5.684341886080802e-14,
-      "ns_const": 96135.667,
-      "ns_duplicated": 115626.442,
-      "ns_forwarddiff": 34076.4825,
+      "ns_const": 3979.5975,
+      "ns_duplicated": 13854.426,
+      "ns_forwarddiff": 6303.61,
       "target": "seeds_data-seeds_centered_model"
     },
     {
       "c_source": 0.0,
       "dim": 10,
       "max_grad_diff": 8.881784197001252e-16,
-      "ns_const": 366.7365,
-      "ns_duplicated": 5537.2955,
-      "ns_forwarddiff": 999.0305,
+      "ns_const": 335.318,
+      "ns_duplicated": 5393.964,
+      "ns_forwarddiff": 1172.0775,
       "target": "funnel"
     },
     {
       "c_source": 0.5,
       "dim": 10,
       "max_grad_diff": 4.440892098500626e-16,
-      "ns_const": 569.3165,
-      "ns_duplicated": 5839.313,
-      "ns_forwarddiff": 1192.473,
+      "ns_const": 415.038,
+      "ns_duplicated": 5258.773,
+      "ns_forwarddiff": 1320.0515,
       "target": "funnel"
     }
   ],
-  "warmuphmc_sha": "b5c7dee628dd1b67f0172e54529b5a924cf792f7"
+  "warmuphmc_sha": "c4e4670e8548491e7dcc5725171c56368b31b2c4"
 }

@@ -63,19 +63,21 @@ A bare `Pkg.instantiate()` does **not** work here: `WarmupHMC` depends on
 `Treebars`, which is unregistered, and the published copy is behind the local
 one.
 
-`HTMX`, `HTMXObjects` and `DynamicObjects` appear in `[deps]` because the
-canonical resolve develops them; nothing in this benchmark uses them directly.
-The GitHub Actions evidence job develops those packages from their explicitly
-named active branches before instantiating this environment.
+`HTMX`, `HTMXObjects` and `DynamicObjects` used to appear in `[deps]` because
+the canonical resolve develops them, though no file here imports one. They were
+**pruned**, and the reason is worth stating: `HTMXObjects` is a PRIVATE repo, so
+declaring it made every workflow that touches this environment depend on a
+`secrets.PAT_TOKEN` in order to run a measurement. App rendering lives in
+`web/`, which is a different environment and keeps them.
 
-**Every workflow that instantiates this environment needs that same four-clone
-step** — `test.yml`'s `linear-evidence` job and `nonlinear_weighting.ci.yml`
-both carry it verbatim, so keep them in step. A runner has no `Manifest.toml`
-to fall back on (the repository gitignores every one), and three of the four
-packages are unregistered, so nothing else supplies them. `--branch dev` on the
-Treebars clone is the one that fails loudest if dropped: `Treebars.round2`,
-which WarmupHMC's `src/progress.jl` adds a method to at load time, does not
-exist on `origin/main`, so a default-branch clone dies at precompile with
+**Every workflow that instantiates this environment needs the same one-clone
+step** — `test.yml`'s `linear-evidence` job and
+`.github/workflows/nonlinear-weighting.yml` both carry it, so keep them in step.
+A runner has no `Manifest.toml` to fall back on (the repository gitignores every
+one) and `Treebars` is unregistered, so nothing else supplies it. `--branch dev`
+on that clone fails loudest if dropped: `Treebars.round2`, which WarmupHMC's
+`src/progress.jl` adds a method to at load time, does not exist on
+`origin/main`, so a default-branch clone dies at precompile with
 `UndefVarError: round2` before any benchmark code runs.
 
 **AD backend.** The harness selects the backend for `ReparametrizedProblem` in
@@ -222,7 +224,6 @@ verdict can be checked against that list rather than against a global maximum.
 | `nonlinear_weighting.jl` | the trajectory-weighting study's derivation — definitions only, see below |
 | `nonlinear_weighting_run.jl` | that study's measurement driver |
 | `nonlinear_weighting_report.jl` | prints its tables, writes a derived summary |
-| `nonlinear_weighting.ci.yml` | ready-to-move GitHub Actions workflow for it |
 | `results/nonlinear_weighting/rows.json` | its rows — the only stored fact of that study |
 
 ## The nonlinear trajectory-weighting study
@@ -270,11 +271,10 @@ WHMC_NW_TARGETS=funnel,eight_schools WHMC_NW_SEEDS=1:2 WHMC_NW_DRAWS=200 \
 julia --project=docs/benchmark docs/benchmark/nonlinear_weighting_report.jl /tmp/nw/rows.json
 ```
 
-That slice is also the CI smoke configuration. `nonlinear_weighting.ci.yml` is
-inert where it sits — GitHub reads only `.github/workflows/` — and is meant to
-be moved there rather than copied. Its `derive` job is a real gate (pure
-arithmetic over the committed rows); its `smoke` job uploads raw rows and
-asserts nothing about their values, because a benchmark that goes red on an
+That slice is also the CI smoke configuration, and it is live:
+`.github/workflows/nonlinear-weighting.yml` runs it. Its `derive` job is a real
+gate (pure arithmetic over the committed rows); its `smoke` job uploads raw rows
+and asserts nothing about their values, because a benchmark that goes red on an
 unfavourable result teaches everyone to stop reading it.
 
 Result directories, newest base last:

@@ -1,4 +1,5 @@
-# Does every checked-in measurement still describe the CURRENT sampler?
+# Does every checked-in measurement still describe the CURRENT sampler --
+# and does RESULTS.md still quote those measurements correctly?
 #
 # WHY THIS EXISTS, AND WHY IT IS SEPARATE FROM EVERY OTHER JOB
 #
@@ -54,12 +55,34 @@
 # at once. Omitting `src/**` would leave the job firing only on the side that is
 # not the cause.
 #
-# NO JULIA ENVIRONMENT
+# NO HEAVY JULIA ENVIRONMENT
 #
-# The script shells out to `git` and includes `code_identical.jl`; it needs no
-# package environment, no `instantiate`, no BridgeStan, and no Treebars clone.
-# That is why this is its own small job rather than a step bolted onto a heavy
-# one — it costs a checkout and a Julia startup.
+# `artifact_currency.jl` shells out to `git` and includes `code_identical.jl`; it
+# needs no package environment, no `instantiate`, no BridgeStan, and no Treebars
+# clone. That is why this is its own small job rather than a step bolted onto a
+# heavy one — it costs a checkout and a Julia startup.
+#
+# `quoted_figures.jl` (the second check, below) needs JSON, and gets it from a
+# TEMP environment holding that one package. Instantiating `docs/benchmark/` to
+# reach the same import would drag in BridgeStan, Enzyme and PosteriorDB and
+# turn a seconds-long job into a heavy one, which is the property this whole
+# file is arranged around. Keep any future check here to that standard: if it
+# cannot run without instantiating a sampler environment, it belongs in another
+# workflow, not this one.
+#
+# THE SECOND CHECK ANSWERS A DIFFERENT QUESTION
+#
+# Currency asks whether the JSON still describes today's sampler. `RESULTS.md`
+# quoting that JSON correctly is independent — both can be true while the other
+# is false — and it has NO other seam anywhere in the repo: `RESULTS.md` is not
+# in `make.jl`'s `pages`, carries no `@eval`/`@example` fence, and is therefore
+# never executed by the docs build. Every figure in it is a static census that
+# only a human can correct. Three defects came out of that gap in a single day
+# (a hand-copied band, a reversed funnel verdict with a rationalisation already
+# attached, and one bare-gradient figure quoted two different ways fifteen lines
+# apart). `RESULTS.md` is a path trigger above for exactly this reason: a
+# prose-only edit is the commit that most needs this job and the one that would
+# otherwise never fire it.
 
 name: Artifact currency
 
@@ -71,6 +94,8 @@ on:
       - 'docs/benchmark/results/**'
       - 'docs/benchmark/artifact_currency.jl'
       - 'docs/benchmark/code_identical.jl'
+      - 'docs/benchmark/quoted_figures.jl'
+      - 'docs/benchmark/RESULTS.md'
       - '.github/workflows/artifact-currency.yml'
   push:
     branches: [main, dev]
@@ -79,6 +104,8 @@ on:
       - 'docs/benchmark/results/**'
       - 'docs/benchmark/artifact_currency.jl'
       - 'docs/benchmark/code_identical.jl'
+      - 'docs/benchmark/quoted_figures.jl'
+      - 'docs/benchmark/RESULTS.md'
       - '.github/workflows/artifact-currency.yml'
 
 concurrency:
@@ -87,7 +114,7 @@ concurrency:
 
 jobs:
   currency:
-    name: Every checked-in measurement still describes the current sampler
+    name: Measurements are current, and RESULTS.md quotes them correctly
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -117,9 +144,53 @@ jobs:
       - name: Are the checked-in measurements current?
         run: julia --startup-file=no docs/benchmark/artifact_currency.jl
 
+      # The neighbouring question, and a genuinely different one: the step above
+      # asks whether the JSON still describes today's sampler, this one asks
+      # whether RESULTS.md still quotes the JSON correctly. Both can be true
+      # while the other is false, and the second has no other seam anywhere --
+      # RESULTS.md is not in `make.jl`'s `pages`, has no `@eval` fence, and is
+      # therefore never executed by the docs build.
+      #
+      # Own temp environment on purpose. `artifact_currency.jl` is deliberately
+      # dependency-free so this job costs a checkout and a Julia startup;
+      # `quoted_figures.jl` needs JSON, and instantiating `docs/benchmark/`
+      # (BridgeStan, Enzyme, PosteriorDB, WarmupHMC) to get it would turn a
+      # seconds-long job into a heavy one. A temp env with the one dependency
+      # keeps that property.
+      - name: Do the figures quoted in RESULTS.md still match those artifacts?
+        run: |
+          julia --startup-file=no -e '
+            using Pkg
+            Pkg.activate(; temp = true)
+            Pkg.add(["JSON", "Statistics"]; io = devnull)
+            include("docs/benchmark/quoted_figures.jl")
+            exit(main_figures())'
+
       - name: What a failure here means
         if: failure()
         run: |
+          echo "TWO different checks run in this job. Read which step went red."
+          echo
+          echo "=== 'Do the figures quoted in RESULTS.md still match' ==="
+          echo "A number in RESULTS.md disagrees with the artifact it was read"
+          echo "from. The log names the figure, what the prose says, and what the"
+          echo "JSON says. Two causes, and they need opposite fixes:"
+          echo
+          echo "  prose is stale   -> the artifact was regenerated and the prose"
+          echo "                      was not. Retype the number, but re-read the"
+          echo "                      surrounding ARGUMENT first: a figure that"
+          echo "                      moved may have moved a conclusion, and a"
+          echo "                      reversed verdict with an explanation still"
+          echo "                      attached to it reads as already-investigated."
+          echo "  figure reworded  -> a ':pattern' check found no match at all."
+          echo "                      The quantity it guarded is now unchecked."
+          echo "                      Update the regex in quoted_figures.jl; do"
+          echo "                      not delete the check to go green."
+          echo
+          echo "Never 'fix' this by editing the JSON to match the prose. That"
+          echo "asserts a measurement nobody made."
+          echo
+          echo "=== 'Are the checked-in measurements current' ==="
           echo "An artifact under docs/benchmark/results/ no longer describes the"
           echo "sampler at this tip, or its recorded base cannot be resolved. The"
           echo "log names each one and which of the two it is."

@@ -139,6 +139,10 @@ particular AD implementation — which one you use is your choice.
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end example, how the
 centering is fitted, and the constraints that bite (coordinate order across a resume,
 what a checkpoint does and does not store, and the cost on the gradient hot path).
+If the model comes from BayesianRegressionModels.jl, use
+[A BRM random-intercept example](@ref) instead: BRM discovers the random-effect
+coordinates and constructs the candidate-scoring plan, so you do not write an
+`IndexedReparametrization` by hand.
 
 ## Checkpoints, Callbacks and Resume
 

@@ -18,6 +18,7 @@ The examples that you *can* run are, smallest first:
 | Sample a 3-D Gaussian, read the draws back | [Quickstart](@ref) | **yes** |
 | Checkpoint a run and resume it | [Checkpoints, Callbacks and Resume](@ref) | **yes** |
 | Fit a nonlinear reparametrization on Neal's funnel | [A complete worked example](@ref) | no — needs an AD backend the docs environment does not carry |
+| Adapt a BRM scalar random-intercept model | [A BRM random-intercept example](@ref) | no — needs BRM, BridgeStan and Enzyme |
 
 "Executed at build time" means the outputs on those pages are what the code
 returned during this build, and that a change breaking the example fails the

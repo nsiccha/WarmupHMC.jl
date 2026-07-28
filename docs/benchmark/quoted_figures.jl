@@ -27,23 +27,39 @@
 # file where nothing can tell it has stopped being true. So the check stops being
 # a reading pass.
 #
-# There is a SECOND shape, and defect 3 is really an instance of it: figures that
-# are individually correct and wrong in RELATION to one another. `27431` and
-# `25863` were each a real measurement; what was false was presenting both as the
-# same run's bare gradient. It recurred as a `16x tax` beside an `11% overhead` --
-# both computable, different denominators, neither wrong on its own.
+# There is a SECOND shape, and it is NOT what defect 3 was: figures that are
+# individually correct and wrong only in RELATION to one another. The `16x tax`
+# beside the `11% overhead` is the clean example -- one artifact, one moment, two
+# denominators, neither figure stale, only the relation false.
 #
-# Deriving a figure does not close this shape, and that is the part worth
-# internalising: A COMPUTED NUMBER VOUCHES FOR ITSELF AND FOR NOTHING AROUND IT.
-# The operator, the units, the direction of the comparison and the label beside
-# it are all hand-written text, and the correct value is precisely what stops a
-# reviewer re-reading them. Generating the number moves the risk rather than
-# removing it. (Paid for twice: once by the `16x`, and once by a line in this
-# file's own history whose bound was computed and whose `>` was typed.)
+# THE TEST THAT SEPARATES THEM: WERE BOTH FIGURES CORRECT AT THE SAME TIME?
 #
-# So the checks that earn their place here are the ones that pin a RELATIONSHIP --
-# `:pattern`, where every mention of one quantity must agree, and encoding the
-# denominator a sentence intends -- not one more independently-derived figure.
+#   `16x` / `11%`  -- yes. Same artifact, same instant. Shape 2.
+#   `27431`/`25863` -- no. `176a061` measured `bare_ns_median = 27430.907`, so
+#                      `27431 ns` was right when typed; `2f39099` re-measured to
+#                      `25862.969` and updated ONE of the two mentions (its diff
+#                      shows line 353 change and line 338 left alone). At the
+#                      moment of the defect `27431` described a run that no
+#                      longer existed. That is shape 1 verbatim.
+#
+# The distinction decides which check you need, which is why it is worth the
+# paragraph:
+#
+#   shape 1 -> `:pattern`. Deriving DOES close it, provided the check requires
+#              every mention to AGREE rather than one to be PRESENT: a
+#              containment check passes happily on a document carrying both
+#              `27431` and `25863`.
+#   shape 2 -> encode the denominator the sentence intends. Deriving each figure
+#              independently CANNOT close it, because each one already checks out.
+#
+# That second row is where the general lesson lives: A COMPUTED NUMBER VOUCHES
+# FOR ITSELF AND FOR NOTHING AROUND IT. The operator, the units, the direction of
+# the comparison and the label beside it are all hand-written, and the correct
+# value is precisely what stops a reviewer re-reading them -- so deriving the
+# figure moves the risk rather than removing it. (Paid for twice: the `16x`, and
+# a line in this file's own history whose bound was computed and whose `>` was
+# typed.) It does not extend to shape 1, and an earlier revision of this comment
+# claimed it did -- crediting `:pattern` to the shape it does not fix.
 #
 # WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT. It checks figures that are
 # MECHANICALLY DERIVABLE from a live artifact. It does not check prose judgements
@@ -107,6 +123,7 @@ import JSON
 import Statistics: median
 
 const RESULTS_MD = joinpath(REPO, "docs", "benchmark", "RESULTS.md")
+const RESULTS_DIR = joinpath(REPO, RESULTS)
 
 # The one live driver pair. Kept in step with `backend_bands.jl`'s DRIVER_SHA
 # deliberately: two scripts naming two different "live" drivers would let a
@@ -147,6 +164,39 @@ checks = NamedTuple[]
 # -- the first version of this file did exactly that.
 literal(label, ss...) = push!(checks, (kind = :literal, label = label, want = collect(ss)))
 pattern(label, re, s) = push!(checks, (kind = :pattern, label = label, re = re, want = s))
+
+# A THIRD KIND, whose falsifier is not a number moving but A FILE APPEARING.
+#
+# `absence(label, claim, token)` guards a sentence that says the evidence does
+# NOT contain something -- "was not measured", "no numbers yet". Every check
+# above recomputes a figure from an artifact and so is blind to this class by
+# construction: when such a sentence goes false, no figure anywhere changes.
+# What changes is that a results file starts existing.
+#
+# This is the exact dual of the blindness recorded in `artifact_currency.jl`'s
+# neighbourhood -- an enumerator cannot detect a file's ABSENCE, because "what
+# should exist" is not information it has. But it detects PRESENCE perfectly,
+# and a claim of absence is falsified by a presence. So the direction that is
+# hopeless for one is the cheap one here: scan `results/` for the token and go
+# red if the prose still denies it.
+#
+# Measured on this repo before writing it: a phrase-level lint for the tells
+# ("not in yet", "remains untested") returns ~80% false positives on the real
+# corpus -- it matches "not inlined", "not inferred from timings", "does not
+# invalidate" -- so it would redden correct prose, which is how a checker gets
+# deleted. Hence one explicit binding per claim, and only two claims repo-wide.
+# That is a census and it will need adding to; it is worth it at this size, and
+# an unmatched claim is reported rather than skipped so a reword cannot silently
+# unbind it.
+function absence(label, claim, token)
+    hits = String[]
+    for (root, _, files) in walkdir(RESULTS_DIR), f in files
+        endswith(f, ".json") || continue
+        occursin(token, read(joinpath(root, f), String)) &&
+            push!(hits, relpath(joinpath(root, f), REPO))
+    end
+    push!(checks, (kind = :absence, label = label, want = claim, evidence = hits))
+end
 
 "Both renderings of a ratio, so a check accepts whichever the prose chose."
 both(r) = (string("+", round(Int, 100 * (r - 1)), "%"), string(round(r, digits = 1), "×"))
@@ -267,6 +317,18 @@ let pc = live_json("docs/benchmark/results/prep_cost.json")
             us(row("radon_mn-radon_partially_pooled_centered", "fd")["prepped_ns"]))
 end
 
+# ------------------------------------------------------------- absence claims
+#
+# The limitations section states what the evidence does NOT cover. Those
+# sentences are the ones a NEW measurement falsifies, and nothing else in this
+# file can see that happen. Live instance of the class, on a neighbouring page:
+# `reparametrization.md` said "Those numbers are not in yet", true when written
+# at `df35a1c` (07:57) and false from `b95f872` (14:28), when the fixed-c
+# comparison artifact landed. Six hours, a green build throughout, and it was
+# found by a reader following a link -- not by any check.
+absence("limitation: cooperative_warmup_mcmc unmeasured",
+        "`cooperative_warmup_mcmc` was not measured", "cooperative_warmup_mcmc")
+
 # ------------------------------------------------------------------------- run
 function main_figures()
     isfile(RESULTS_MD) || (println("FAILED: $RESULTS_MD is missing."); return 1)
@@ -289,6 +351,24 @@ function main_figures()
             println(rpad(c.label, 52), ok ? "ok    " : "WRONG ", "expected ", shown,
                     ok ? " (found `$(c.want[hit])`)" : "")
             ok || push!(bad, "$(c.label): RESULTS.md contains neither of $shown")
+        elseif c.kind === :absence
+            # Two ways to be wrong, and they need opposite fixes. The claim can
+            # have gone FALSE (a results file now carries the thing the prose
+            # denies), or it can have been reworded out of existence, which
+            # leaves it unguarded exactly as a reworded :pattern does.
+            stated = occursin(c.want, text) || occursin(c.want, flat)
+            if !stated
+                println(rpad(c.label, 52), "WRONG ", "claim not found: `", c.want, "`")
+                push!(bad, "$(c.label): RESULTS.md no longer contains `$(c.want)` — " *
+                           "the absence claim was reworded or removed, so it is now unchecked")
+            elseif !isempty(c.evidence)
+                println(rpad(c.label, 52), "WRONG ", "claim is now FALSE — evidence in ",
+                        join(c.evidence, ", "))
+                push!(bad, "$(c.label): RESULTS.md still says `$(c.want)`, but " *
+                           join(c.evidence, ", ") * " now contains it")
+            else
+                println(rpad(c.label, 52), "ok    ", "still true: `", c.want, "`")
+            end
         else
             ms = collect(eachmatch(c.re, text))
             if isempty(ms)

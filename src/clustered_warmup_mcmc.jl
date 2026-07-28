@@ -414,8 +414,21 @@ end
 # Deliberately the SAME layout and payload contract as `cooperative_warmup_mcmc`
 # (`checkpoint_schema_version`, whose policy is explicitly "shared by ALL
 # samplers"), so one consumer read path serves every sampler that checkpoints:
-# per-chain `chain_<i>/cp_window_<n>.jls` + `cp_latest.jls`, plus the two
-# write-once JSON files at the `checkpoint_dir` root.
+# per-chain `chain_<i>/cp_window_<n>.jls` + `cp_latest.jls`, plus the write-once
+# JSON files at the `checkpoint_dir` root.
+#
+# **No count of those JSON files is given here on purpose.** The set is defined
+# in another file as much as in this one, so a third file added to the
+# cooperative sampler would falsify a number written here without its author
+# ever opening this file. A census in prose cannot fail — it silently returns a
+# subset. Ask instead:
+#
+#     grep -rn '_write_json(' src/
+#
+# `_write_json` is the single writer every write-once root JSON goes through, so
+# a site cannot exist without matching it. The filenames are the wrong anchor
+# for the same reason: a third file is by definition named something the pattern
+# does not already know.
 #
 # `chain_index` is the chain's position in the `chains` vector. The cooperative
 # scheduler needs a STORED index because it installs chains in completion order;

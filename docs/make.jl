@@ -8,9 +8,28 @@ using Documenter, DocumenterVitepress, WarmupHMC
 # changing as a side effect of every docs build. Re-sync it manually when
 # HTMXObjects ships a new embed runtime.
 
+# WHY `repo` IS SET EXPLICITLY, AND NOT LEFT TO ORIGIN
+#
+# Documenter resolves the repository from the checkout's `origin` remote when
+# `repo` is unset. The `repo` on `MarkdownVitepress` below does NOT satisfy that
+# — it configures the Vitepress theme, not `makedocs` — so a checkout with no
+# `origin` failed before rendering anything:
+#
+#     ArgumentError: Unable to automatically determine remote for main repo.
+#     > `repo` is not set, and the Git repository has invalid origin.
+#
+# That is not a corner case here: the KB-managed implementation worktrees agents
+# work in are credential-free and have ZERO configured remotes, so on those the
+# docs build could not run AT ALL. The visible cost was an agent verifying a
+# docs change by running the `@eval` fences by hand instead, because the real
+# build was believed unavailable on that host — a strictly weaker check that
+# cannot see `@example` blocks, `@ref` resolution or `checkdocs` (2026-07-28,
+# `WarmupHMC:reparam-bench`). Setting it here makes `julia --project=docs
+# docs/make.jl` work in any checkout, remote or not.
 makedocs(
     sitename = "WarmupHMC.jl",
     modules  = [WarmupHMC],
+    repo     = Documenter.Remotes.GitHub("nsiccha", "WarmupHMC.jl"),
     format   = DocumenterVitepress.MarkdownVitepress(
         repo = "github.com/nsiccha/WarmupHMC.jl",
         devurl = "dev",

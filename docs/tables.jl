@@ -48,15 +48,23 @@ end
 One sentence naming what produced the numbers, built from the result file's own
 metadata rather than from prose. A result file that records no `warmuphmc_sha`
 says so instead of silently rendering an unattributed table.
+
+Two artifact shapes are supported, because a harness should not have to repeat
+itself to satisfy this function. If the file has a `config` object, provenance is
+read from there — the preferred shape, since a single copy of `warmuphmc_sha`
+cannot disagree with a duplicate of itself. Otherwise, or for any field `config`
+omits, it falls back to the top level, which is the older flat shape.
 """
 function provenance(d::AbstractDict; harness::AbstractString)
-    sha = get(d, "warmuphmc_sha", nothing)
+    cfg = get(d, "config", nothing)
+    field(k) = cfg isa AbstractDict ? get(cfg, k, get(d, k, nothing)) : get(d, k, nothing)
+    sha = field("warmuphmc_sha")
     where_ = sha === nothing ? "an **unrecorded** WarmupHMC revision" :
              "WarmupHMC `$(first(string(sha), 7))`"
     bits = ["Measured on $(where_)"]
-    jl = get(d, "julia", nothing)
+    jl = field("julia")
     jl === nothing || push!(bits, "Julia $(jl)")
-    bt = get(d, "blas_threads", nothing)
+    bt = field("blas_threads")
     bt === nothing || push!(bits, "$(bt) BLAS thread$(bt == 1 ? "" : "s")")
     string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
 end

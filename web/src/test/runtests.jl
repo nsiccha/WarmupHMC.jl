@@ -5,11 +5,11 @@ using Test, WarmupHMC, Random, LinearAlgebra
 # comparison in this suite is verified under this pin.
 BLAS.set_num_threads(1)
 
-# ForwardDiff / DifferentiationInterface are not direct dependencies of
-# WarmupHMC — DifferentiationInterface is a `[weakdeps]` entry and ForwardDiff
-# arrives transitively via Pathfinder — so a plain `using` fails under
-# `--project=.`. `ad_backend.jl` loads them by UUID, and aborts loudly rather
-# than letting the reparametrization testsets silently skip.
+# ForwardDiff is not a direct dependency of WarmupHMC — it arrives transitively
+# via Pathfinder — so a plain `using` fails under `--project=.`. `ad_backend.jl`
+# loads it by UUID, and aborts loudly rather than letting the reparametrization
+# testsets silently skip. It is pinned there only because the golden baselines
+# were recorded against it; new code should use a reverse-mode backend.
 include("ad_backend.jl")
 
 @testset "module loads" begin

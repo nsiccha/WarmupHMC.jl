@@ -55,17 +55,20 @@ one.
 `HTMX`, `HTMXObjects` and `DynamicObjects` appear in `[deps]` because the
 resolve develops them; nothing in this benchmark uses them directly.
 
-**AD backend — under review.** The harness passes `AutoForwardDiff()` to
-`ReparametrizedProblem` at three sites (`common.jl:234`, `:309`, `:310`),
-matching the shipped consumer. That is forward mode over an objective that is
-scalar in `d` inputs, which the package's own docstring
-(`src/Reparametrizations.jl:50-51`) notes is the case reverse mode handles
-better — and the standing instruction is DifferentiationInterface with
-**Enzyme**, never Mooncake or ForwardDiff. The backend already arrives as an
-ADTypes object through DI, so changing it here is one argument in three places;
-doing it *consistently* is a WarmupHMC-wide change, not a benchmark-local one.
-Until that lands, every overhead and wall-clock number in `RESULTS.md` is
-ForwardDiff-specific — the per-gradient results are not.
+**AD backend.** The harness selects the backend for `ReparametrizedProblem` in
+one place and it is settable per run:
+
+| variable | default | meaning |
+|---|---|---|
+| `WHMC_BENCH_AD` | `enzyme` | `enzyme` or `forwarddiff` — the DI backend the wrapper differentiates with |
+
+Reverse mode is the rule (`AutoEnzyme()`); ForwardDiff is retained *only* so the
+two can be compared on one base, which is what `results/` documents. The
+objective is scalar in `d` inputs with the inner gradient held fixed, so forward
+mode costs `ceil(d / chunksize)` sweeps of the transform per gradient where
+reverse mode costs one — the `ReparametrizedProblem` docstring prescribes reverse
+mode for exactly this reason. Note the backend package must be loaded for the
+ADTypes object to work: `AutoEnzyme()` needs `using Enzyme`.
 
 ## What is reproducible, and what is not
 

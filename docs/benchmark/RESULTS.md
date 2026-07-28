@@ -88,12 +88,13 @@ the sampler may do with the partial-centering parameter `c`
 
 All arms use `AutoForwardDiff()`, matching the shipped consumer at
 `web/src/WarmupHMCWeb.jl:148` — so the overhead figures are what a user pays
-today. **They are not a property of the method, and they are probably the wrong
-backend.** `src/Reparametrizations.jl:50-51` says so itself: the differentiated
-objective `x -> ljac(x) + dot(g_y, y(x))` is *scalar in the full parameter
-vector* with the inner gradient `g_y` held fixed, "so a reverse-mode backend
-scales better with dimension". Forward mode pays roughly `d/chunk` passes over
-the transform where reverse mode pays one — and the worst overhead measured here
+today. **They are not a property of the method, and they are the wrong backend.**
+`src/Reparametrizations.jl`'s `ReparametrizedProblem` docstring says so outright:
+the differentiated objective `x -> ljac(x) + dot(g_y, y(x))` is *scalar in the
+full parameter vector* with the inner gradient `g_y` held fixed, so "forward mode
+costs `ceil(n / chunksize)` sweeps of the transform per gradient while reverse
+mode costs one, and the gap opens up exactly where reparametrization is worth
+doing — high-dimensional hierarchical models." The worst overhead measured here
 (×12.4–13.4) is on the two `d ≈ 88` radon models, which are also the two largest
 wall-clock losses. Every ×N in this document should be read as
 *ForwardDiff-specific and unmeasured under reverse mode*; see
@@ -321,9 +322,9 @@ like-for-like AD comparison.
 **But the AD machinery here is forward mode, and this objective is the textbook
 reverse-mode shape.** `x -> ljac_(x_) + dot(g_y, y_)` has one scalar output and
 `d` inputs, with the inner gradient `g_y` frozen — so `AutoForwardDiff()` sweeps
-roughly `d/chunk` tangent passes over the transform where a reverse-mode backend
-needs one. The package's own docstring says as much
-(`src/Reparametrizations.jl:50-51`). The table is consistent with that being a
+`ceil(d / chunksize)` tangent passes over the transform where a reverse-mode
+backend needs one. The `ReparametrizedProblem` docstring says as much. The table
+is consistent with that being a
 large part of the cost — the ×12.4–13.4 row is `d = 88` — though not proof of
 it: `radon_variable_intercept` is `d = 89` and only ×5.0, so dimension is not the
 sole driver and the constant per-call overhead matters too (the funnel's ×15.0
@@ -392,8 +393,23 @@ which would each have silently corrupted the fixed-parametrization arms:
   path"), and the standing instruction is to use DifferentiationInterface with
   **Enzyme**, never Mooncake or ForwardDiff. The backend already arrives through
   DI — `ReparametrizedProblem`'s third argument is an ADTypes object — so the
-  switch is one constructor argument in three places here; what it is *not* is a
-  benchmark-local change, because the shipped consumer, `golden_awm.jl:72`, and
-  the `Reparametrizations.jl` docstring example (which advertises
-  `AutoMooncake()`) all set it too. Re-measuring the ×N table and the wall-clock
-  verdict under Enzyme is the single highest-value follow-up in this document.
+  switch is one constructor argument in three places here. Re-measuring the ×N
+  table and the wall-clock verdict under Enzyme is the single highest-value
+  follow-up in this document.
+
+  **Upstream has already moved, and this benchmark's base has not.** These runs
+  are on `c8fed88`; as of `dev` `2f4c857` the docstring has been rewritten to
+  *prescribe* reverse mode ("forward mode costs `ceil(n / chunksize)` sweeps of
+  the transform per gradient while reverse mode costs one"), its worked example
+  now uses `AutoEnzyme()`, and DifferentiationInterface has become a hard
+  dependency (`53f82ea`). `AutoForwardDiff()` in `web/src/test/` is a deliberate
+  frozen-baseline harness pin, documented at the point of use in
+  `web/src/test/ad_backend.jl` — not a recommendation, and not a site to change.
+  The one place still selecting forward mode for real work is the shipped
+  consumer, `web/src/WarmupHMCWeb.jl:148`.
+
+  One consequence to fix before it propagates: that same docstring now asserts
+  "`AutoEnzyme()` is what this project benchmarks against." **It is not.** This
+  is the benchmark, and every arm in it ran `AutoForwardDiff()`. Either the
+  sentence or this document has to change, and the honest order is to re-measure
+  first.

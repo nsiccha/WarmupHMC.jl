@@ -29,6 +29,53 @@ In particular, step-size weighting is not a general improvement. Treat
 `:all_good_leaves` and `:nuts_weighted` as configurable policies to benchmark on
 the target at hand.
 
+## Median summary
+
+This table is generated during the documentation build from
+`docs/benchmark/results/linear_restart.json`. A missing file or changed schema
+therefore fails the docs build instead of leaving stale figures on this page.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+d = load_results("linear_restart.json")
+md_table(
+    ["target", "policy", "restarts", "min ESS/1k gradients",
+     "metric", "reflections", "fallbacks"],
+    [["`" * r["target"] * "`", "`" * r["arm"] * "`",
+      num(r["restarts_median"]), num(r["min_ess_per_kgrad_median"]),
+      "`" * r["active_transformations"] * "`",
+      num(r["adaptive_reflections_median"]),
+      num(r["linear_metric_fallbacks_median"])] for r in d["summary"]])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+Markdown.parse("*" * provenance(load_results("linear_restart.json");
+                                harness = "run_linear_restart_benchmark.jl") * "*")
+```
+
+Paired ratios below are test arm ÷ baseline. Larger is better for ESS
+efficiency; smaller is better for the accuracy-error column. The win columns
+count strict seed-level improvements, so exact ties remain visible as neither
+arm winning.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+d = load_results("linear_restart.json")
+md_table(
+    ["target", "comparison", "test ÷ baseline", "ESS ratio", "ESS wins",
+     "accuracy metric", "error ratio", "accuracy wins", "restart count differs"],
+    [["`" * r["target"] * "`", r["comparison"],
+      "`" * r["arm"] * "` ÷ `" * r["baseline_arm"] * "`",
+      num(r["ess_efficiency_ratio_median"]),
+      "$(r["ess_efficiency_wins"])/$(r["n_pairs"])",
+      "`" * r["accuracy_metric"] * "`",
+      num(r["accuracy_error_ratio_median"]),
+      "$(r["accuracy_wins"])/$(r["n_pairs"])",
+      num(r["restart_count_differs"])] for r in d["comparisons"]])
+```
+
 ## Recorded experiment
 
 The view below is a static recording of the WarmupHMC web app's generic
@@ -46,7 +93,9 @@ the prose above does not carry a second copy of the numbers.
 The JSON contains the per-policy medians, paired comparisons, all individual
 runs, and the exact WarmupHMC revision and runtime provenance. Wall time is
 host-specific; the portable efficiency measure is minimum ESS per thousand
-gradient evaluations.
+gradient evaluations. The
+[raw per-seed JSON](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/docs/benchmark/results/linear_restart.json)
+remains available even when the recorded app view is not being served.
 
 ## Reproduce it
 

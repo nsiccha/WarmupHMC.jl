@@ -108,9 +108,25 @@ jobs:
         # `Pkg.develop` rather than `[sources]`: the package under test is the
         # checkout itself, and this has to work on the same Julia versions the
         # matrix uses.
+        #
+        # Treebars MUST be cloned and dev'd explicitly here, for the same reason
+        # the matrix job does it — and it is easy to conclude otherwise from a
+        # local run. On a developer box this step resolves fine without the
+        # clone, because Pkg finds a Treebars checkout already on disk. A GitHub
+        # runner has neither that checkout nor a root `Manifest.toml` (it is
+        # gitignored), and WarmupHMC's `[sources]` is not consulted for a *dev'd
+        # dependency* of this environment — only for an active project. So
+        # without these lines the step resolves Treebars as "expected to be
+        # registered" on a clean runner.
+        #
+        # `--branch dev` is the same load-bearing detail as the matrix job:
+        # `Treebars.round2`, which `src/progress.jl` adds a method to at load
+        # time, exists on `origin/dev` and NOT on `origin/main`.
         run: |
-          julia --project=web/src/test/enzyme -e 'using Pkg;
-            Pkg.develop(PackageSpec(path=pwd()));
-            Pkg.instantiate()'
+          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          julia --project=web/src/test/enzyme -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="Treebars.jl"),
+          ]); Pkg.instantiate()'
       - name: Run Enzyme tests
         run: julia --project=web/src/test/enzyme web/src/test/enzyme/runtests.jl

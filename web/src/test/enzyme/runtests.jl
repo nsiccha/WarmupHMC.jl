@@ -66,6 +66,38 @@ end
 
 @testset "Enzyme reverse-mode" begin
 
+    # --- site 0: the documented landmine ------------------------------------
+    #
+    # A BARE `AutoEnzyme()` throws on any `ReparametrizedProblem` — the
+    # differentiated objective closes over the reparametrizer and the frozen
+    # `g_y`, which Enzyme cannot prove read-only.
+    #
+    # This is pinned FIRST because it is the one assertion here that can go stale
+    # in the REASSURING direction. Every other test in this file fails loudly if
+    # the behaviour it describes changes. This one would simply start passing for
+    # the wrong reason: if a future Enzyme or DifferentiationInterface release
+    # makes that closure provably read-only, the bare form begins working and the
+    # `!!! warning` in the `ReparametrizedProblem` docstring becomes a false
+    # claim in the public manual with nothing to catch it. When this test fails,
+    # the fix is to update that docstring — not to delete this.
+    @testset "a bare `AutoEnzyme()` still throws" begin
+        x = 0.5 .* randn(Xoshiro(1), K + 1)
+        rp = ReparametrizedProblem(spec(fill(0.5, K)), Funnel(K), AutoEnzyme())
+        err = try
+            LogDensityProblems.logdensity_and_gradient(rp, x)
+            nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        # Not merely "something threw": that would let an unrelated MethodError
+        # from a version bump keep this green while testing nothing at all. Pin
+        # that it threw for the readonly/annotation reason the docstring names.
+        msg = err === nothing ? "" : sprint(showerror, err)
+        println("  site 0  bare AutoEnzyme() threw: ", nameof(typeof(err)))
+        @test occursin("function_annotation", msg) || occursin("readonly", msg)
+    end
+
     # --- site 1: the gradient hot path (`reparam_objective`) ----------------
     @testset "logdensity_and_gradient — every Enzyme variant, vs finite differences" begin
         x = 0.5 .* randn(Xoshiro(1), K + 1)

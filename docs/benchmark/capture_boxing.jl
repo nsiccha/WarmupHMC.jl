@@ -80,31 +80,74 @@ isboxed(f) = any(T -> T === Core.Box, fieldtypes(typeof(f)))
 
 captures = []
 boxed_specs = String[]
-println("How each shipped spec's closures capture the index they read:\n")
-@printf("%-42s %-6s %-24s %s\n", "target", "arg", "closure type", "captures")
+
+# Every closure in the spec, not just the first pair's. Different pairs of one spec
+# can in principle capture differently -- `accel_gp` builds a distinct closure per
+# index -- and a guard that samples pair 1 would not see it.
+function scan!(label, dim, spec, source)
+    isnothing(spec) && return
+    seen = Set{Tuple{Int,String}}()
+    for (_, r) in spec.pairs, (j, a) in enumerate(r.args)
+        a isa Function || continue
+        ft = fieldtypes(typeof(a))
+        key = (j, string(ft))
+        key in seen && continue                # one row per distinct capture shape
+        push!(seen, key)
+        boxed = isboxed(a)
+        boxed && push!(boxed_specs, "$label arg $j")
+        @printf("%-46s %-4d %-22s %s%s\n", first(label, 46), j,
+                first(string(typeof(a)), 22), ft, boxed ? "   <-- BOXED" : "")
+        push!(captures, Dict("target" => label, "dim" => dim, "arg" => j,
+                             "captures" => string(ft), "boxed" => boxed,
+                             "source" => source))
+    end
+end
+
+# (a) The specs the benchmark actually samples, built from real posteriordb data.
+println("How each shipped spec's closures capture the index they read.\n")
+println("(a) specs the benchmark samples, real posteriordb data:\n")
+@printf("%-46s %-4s %-22s %s\n", "target", "arg", "closure type", "captures")
 println(repeat("-", 100))
 for t in TARGETS
     _, dim, jdata = stan_problem(t.name)
-    spec = native_spec(t.name, dim, jdata)
-    isnothing(spec) && continue
-    for (j, a) in enumerate(spec.pairs[1].second.args)
-        a isa Function || continue
-        ft = fieldtypes(typeof(a))
-        boxed = isboxed(a)
-        boxed && push!(boxed_specs, "$(t.name) arg $j")
-        @printf("%-42s %-6d %-24s %s%s\n", first(t.name, 42), j,
-                first(string(typeof(a)), 24), ft, boxed ? "   <-- BOXED" : "")
-        push!(captures, Dict("target" => t.name, "dim" => dim, "arg" => j,
-                             "captures" => string(ft), "boxed" => boxed))
-    end
+    scan!(t.name, dim, native_spec(t.name, dim, jdata), "posteriordb")
 end
-let f = Funnel(9), a = funnel_spec(f, 1.0).pairs[1].second.args[2]
-    ft = fieldtypes(typeof(a))
-    isboxed(a) && push!(boxed_specs, "funnel arg 2")
-    @printf("%-42s %-6d %-24s %s%s\n", "funnel (benchmark-local)", 2,
-            first(string(typeof(a)), 24), ft, isboxed(a) ? "   <-- BOXED" : "")
-    push!(captures, Dict("target" => "funnel", "dim" => LogDensityProblems.dimension(f),
-                         "arg" => 2, "captures" => string(ft), "boxed" => isboxed(a)))
+let f = Funnel(9)
+    scan!("funnel (benchmark-local)", LogDensityProblems.dimension(f),
+          funnel_spec(f, 1.0), "benchmark")
+end
+
+# (b) Every remaining branch of the spec table. Whether a closure captures a
+# `Core.Box` is decided by which branch of `reparametrization()` is taken and by
+# nothing else -- not by the values in the data -- so synthetic `stan_jdata` reaches
+# the four specs the benchmark never samples without compiling four Stan models for
+# them. Those four are exactly the ones no timing here could ever have caught:
+# `radon_variable_slope` and `radon_hierarchical_intercept` were boxed and nothing
+# in this benchmark would have said so.
+const SYNTH_JDATA = Dict{String,Any}(
+    "I" => 21, "J" => 85,
+    "slambda_1" => collect(1.0:64.0), "slambda_sigma_1" => collect(1.0:64.0))
+
+const SPEC_SHAPES = [
+    ("funnel", 10),
+    ("eight_schools-eight_schools_centered", 10),
+    ("seeds_data-seeds_centered_model", 26),
+    ("radon_mn-radon_partially_pooled_centered", 88),
+    ("radon_mn-radon_variable_intercept_centered", 89),
+    ("radon_mn-radon_variable_slope_centered", 89),
+    ("radon_mn-radon_hierarchical_intercept_centered", 90),
+    ("radon_mn-radon_variable_intercept_slope_centered", 175),
+    ("accel_gp-accel_gp", 100),
+]
+
+println("\n(b) every branch of the spec table, synthetic data:\n")
+@printf("%-46s %-4s %-22s %s\n", "branch", "arg", "closure type", "captures")
+println(repeat("-", 100))
+for (name, dim) in SPEC_SHAPES
+    spec = reparametrization(name, dim, SYNTH_JDATA)
+    isempty(spec.pairs) && error("`$name` matched no branch of reparametrization() " *
+                                 "-- the guard is not covering what it claims to.")
+    scan!(name, dim, spec, "synthetic")
 end
 
 # ---------------------------------------------------------------------------

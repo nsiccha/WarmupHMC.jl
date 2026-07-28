@@ -161,6 +161,34 @@ so a bare `--porcelain` counts the previous run's untracked output directory and
 reports every run after the first as dirty — by construction, with the tracked
 source byte-identical. That fires exactly when two runs are being compared,
 which is the one time the flag has to mean anything.
+
+# CALL THIS BEFORE OPENING THE OUTPUT FILE, NEVER INSIDE THE WRITE BLOCK
+
+The natural way to write a result is `open(path, "w") do io; JSON.print(io,
+Dict(..., git_provenance()..., ...)); end`, and it is wrong. `open(path, "w")`
+truncates at open, so once `path` is TRACKED the provenance call inside that
+block sees its own half-written output and records `worktree_dirty = true`.
+Measured directly: `git status --porcelain --untracked-files=no -- <path>`
+prints nothing immediately before the `open` and ` M <path>` from inside it.
+
+Three properties make this worth a section rather than a line:
+
+* It fails toward a strong FALSE claim. `docs/tables.jl:provenance` renders the
+  flag as "**Recorded from a worktree with uncommitted changes**, so the
+  revision named above does not describe the code that ran — and no revision
+  does" — printed over a measurement that was clean.
+* It is invisible until the second run. The first write creates an UNTRACKED
+  file, which `--untracked-files=no` deliberately ignores, so a new harness
+  looks correct and starts lying only once its artifact is committed.
+* `worktree_dirty` is the one flag `code_identical.jl` structurally cannot
+  cross-check, which is the whole argument for rendering it — so nothing
+  downstream can catch a wrong value.
+
+Bind it to a local first (`const PROV = git_provenance()`) and splat that.
+`run_reparam_benchmark.jl` and `nonlinear_weighting_run.jl` already did;
+`annotation_sweep.jl`, `capture_boxing.jl` and `typical_positions.jl` did not
+and were fixed on 2026-07-28. Their checked-in artifacts read `false` only
+because each was generated onto a path that was still untracked at the time.
 """
 function git_provenance()
     sha = try

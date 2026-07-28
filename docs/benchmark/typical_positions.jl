@@ -132,13 +132,17 @@ let f = Funnel(9), dim = LogDensityProblems.dimension(Funnel(9))
     compare_positions("funnel", f, funnel_spec(f, 1.0), dim)
 end
 
+# `git_provenance()` BEFORE the `open` — see the trap documented on it in
+# `common.jl`. `open(path, "w")` truncates immediately, so a provenance call
+# inside this block would see this very file as an uncommitted change.
+const PROV = git_provenance()
 open(joinpath(OUT_DIR, "typical_positions.json"), "w") do io
     JSON.print(io, Dict(
         "note" => "Per-gradient backend cost at sampler-visited (source-frame) positions " *
                   "vs randn(dim). Reconciles the microbenchmark with the end-to-end runs.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
         "rounds" => ROUNDS,
-        git_provenance()...,
+        PROV...,
         "rows" => rows), 2)
 end
 println("\nwrote results/typical_positions.json")

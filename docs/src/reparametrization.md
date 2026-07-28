@@ -14,8 +14,17 @@ non-centered — and re-fitting `c` at warm-up window boundaries.
 
 !!! warning "This page makes no claim about sampling efficiency"
     Nothing here says the reparametrization is faster, cheaper or better-mixing
-    than not using it. Those numbers are not in yet. What is documented below is
-    what the machinery *does*.
+    than not using it. What is documented below is what the machinery *does*.
+
+    Efficiency is measured on other pages, each under limits those pages state,
+    so this one links rather than summarising — a verdict copied to here would
+    be a second copy that only one of the two updates.
+    [Adaptive centering at fixed `c`](@ref) scores fixed centerings, including
+    the fully centered and whitened non-centered endpoints, by minimum-coordinate
+    ESS per thousand gradient evaluations; note its `c` is fixed rather than
+    adapted, and its targets are constructed. [WarmupHMC vs other samplers](@ref)
+    compares whole samplers at their defaults, where — as that page says — no
+    reparametrization is fitted in any arm.
 
 ## It does nothing until you build it
 

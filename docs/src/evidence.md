@@ -22,7 +22,11 @@ Two things to know before citing a row:
     computed from these same rows by the benchmark's own code.
 
 Nothing on this page is typed by hand. Adding a results file adds a section
-here; deleting one fails the documentation build.
+here. Deletion is caught only where a page *names* the file: removing one that
+prose cites fails the documentation build, while removing one that only this
+page lists takes its section away silently and the build stays green. So this
+appendix is a faithful view of what is checked in — not a guarantee that
+everything once checked in is still there.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "evidence.jl"))

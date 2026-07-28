@@ -37,6 +37,26 @@
 # cost — a formatting change wants making twice — and the compensating property
 # is that neither renderer can invent a number: both read the same JSON, and
 # `make.jl` fails the build if a file is missing or malformed.
+#
+# WHAT DELETION DOES, AND WHY THERE IS NO MANIFEST
+# ------------------------------------------------
+# A file this page merely LISTS can be deleted with a green build — its section
+# just stops appearing. `WarmupHMC:reparam-docs` established that by experiment
+# (moved `prep_cost.json` aside, rebuilt, `makedocs` succeeded and the rendered
+# page contained no `prep_cost`), against a sentence on `evidence.md` that
+# claimed the opposite. The sentence was the fix; the gap is deliberate.
+#
+# The alternative was a checked-in manifest of expected filenames, diffed
+# against `results_dir()`. It was declined for the reason stated at the top of
+# this file: a manifest is a SECOND place the set of results files is written
+# down, and it would drift from the directory exactly as a hard-coded column
+# list drifts from a driver's schema. It would also fight a documented property
+# of this directory — superseded runs are kept beside current ones on purpose,
+# so the set is meant to change.
+#
+# The gate that does exist is citation: `tables.jl` NAMES the file it reads, so
+# deleting anything a prose page quotes fails the build. Uncited files are, by
+# construction, evidence no page depends on.
 
 Base.include(Base.@__MODULE__, joinpath(@__DIR__, "tables.jl"))
 
@@ -69,17 +89,43 @@ end
 evidence_path(key) = joinpath(results_dir(), replace(String(key), '~' => '/') * ".json")
 
 """
+    evidence_is_series(v) -> Bool
+
+Whether an object-valued field is a set of measurement SERIES rather than
+metadata: every one of its values is a non-empty numeric array.
+
+The obvious discriminator — "all its values are scalars" — is wrong here, and
+checking rather than assuming is what showed it. `capture_boxing.json`'s
+`timings_ns` holds four named arrays of raw A/B timings, and rendering those as
+provenance presented measurement data as metadata. But `nonlinear_weighting`'s
+`config` ALSO holds non-scalars (`seeds` is an array, `targets` and
+`resolved_sampler_defaults` are objects), so a scalars-only rule would have
+thrown the genuine metadata block out of provenance to fix the cosmetic case.
+
+Requiring EVERY value to be a numeric array separates them cleanly: `config` is
+a mix of strings, arrays and objects and stays provenance; `timings_ns` is
+uniformly numeric arrays and becomes a table. Still a rule about shape, not
+about either name.
+"""
+_evidence_numeric_vector(x) =
+    x isa AbstractVector && !isempty(x) && all(y -> y isa Real && !(y isa Bool), x)
+evidence_is_series(v::AbstractDict) =
+    !isempty(v) && all(_evidence_numeric_vector, values(v))
+evidence_is_series(_) = false
+
+"""
     evidence_split(d) -> (provenance, tables)
 
 Split a parsed results file into scalar provenance and named row tables.
 
 An OBJECT-valued field is flattened into provenance rather than shown as one
-mashed `k=v k=v` cell. That is how a harness carrying its metadata under
-`config` — the shape `provenance` in `tables.jl` now prefers, since one copy of
-`warmuphmc_sha` cannot disagree with a duplicate of itself — renders the same as
-the older flat shape. The nested entry wins on a name collision, matching
-`tables.jl`. Stated as a rule about objects rather than about `config`, so it
-holds for whatever the next harness calls its grouping.
+mashed `k=v k=v` cell — unless `evidence_is_series` says it is measurement data,
+in which case it becomes a table. That is how a harness carrying its metadata
+under `config` — the shape `provenance` in `tables.jl` now prefers, since one
+copy of `warmuphmc_sha` cannot disagree with a duplicate of itself — renders the
+same as the older flat shape. The nested entry wins on a name collision,
+matching `tables.jl`. Stated as a rule about objects rather than about `config`,
+so it holds for whatever the next harness calls its grouping.
 """
 function evidence_split(d)
     d isa AbstractVector && return (Pair{String,Any}[], ["rows" => d])
@@ -90,6 +136,13 @@ function evidence_split(d)
         v = d[k]
         if v isa AbstractVector && !isempty(v) && all(x -> x isa AbstractDict, v)
             push!(tables, k => v)
+        elseif evidence_is_series(v)
+            # One row per series. Two columns and no invented third: the array
+            # index is almost certainly a round number here, but this file does
+            # not know that, and a column header asserting it would be this
+            # renderer claiming to understand a driver's schema.
+            push!(tables, k => [Dict("series" => nk, "values" => v[nk])
+                                for nk in sort(collect(keys(v)))])
         elseif v isa AbstractDict
             append!(nested, [string(nk) => v[nk] for nk in sort(collect(keys(v)))])
         else
@@ -104,7 +157,8 @@ end
 const EVIDENCE_PROVENANCE_ORDER =
     ["warmuphmc_sha", "julia", "host", "blas_threads", "n_seeds", "n_calls",
      "rounds", "n_draws_floor", "note"]
-const EVIDENCE_COLUMN_ORDER = ["target", "dim", "arm", "seed", "backend", "source"]
+const EVIDENCE_COLUMN_ORDER =
+    ["series", "target", "dim", "arm", "seed", "backend", "source"]
 
 _evidence_order(names, priority) = vcat(
     [n for n in priority if n in names],

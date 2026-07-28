@@ -40,4 +40,5 @@ end
     end
     include("readme.jl")
     include("compat.jl")
+    include("public_api.jl")
 end

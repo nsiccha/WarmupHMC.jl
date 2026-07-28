@@ -808,13 +808,20 @@ which would each have silently corrupted the fixed-parametrization arms:
      closures captured a `Core.Box`". They were re-measured on the de-boxed
      specs for this revision; the five-row table is § *Which AD backend*, and
      `results/backend_replication.json` is the harness the docstring's own rows
-     come from. Its two current bands (`funnel` 0.31–0.67×, `eight_schools`
-     0.43–0.66×, widened by `62ba171` after `WarmupHMC:reparam-docs` found the
-     narrower predecessors were not re-derivable from anything checked in) are
-     an honest floor over the whole `results/` directory, not a measurement —
-     they span four harnesses at once. From the single harness the table names,
-     over 14 rounds each (7 per centering), the per-round `min`–`max` and the
-     median of the per-round ratios are:
+     come from. Its two current bands — `funnel` 0.31–0.67×, `eight_schools`
+     0.43–0.66× — were widened by `62ba171` after `WarmupHMC:reparam-docs` found
+     the narrower predecessors were not re-derivable from anything checked in.
+     That widening was honest against the files it was computed from, and it
+     landed **four minutes before** the regeneration in `176a061` moved those
+     files underneath it: recomputed across all five checked-in sources, `funnel`
+     is 0.137–0.713× and `eight_schools` 0.331–0.641×, so `eight_schools`' upper
+     bound of 0.66 now exceeds every value in every file and its lower bound of
+     0.43 excludes real ones. **A band derived from checked-in JSON is only a
+     floor until someone regenerates the JSON** — which is the same coupling that
+     broke `docs/src/reparametrization.md` in the same window, and the reason
+     this table should be generated rather than hand-copied. From the single
+     harness the docstring names, over 14 rounds each (7 per centering), the
+     per-round `min`–`max` and the median of the per-round ratios are:
 
      | target | `d` | per-round min–max | median |
      |---|---|---|---|

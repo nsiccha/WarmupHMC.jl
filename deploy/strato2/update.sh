@@ -103,8 +103,11 @@ for _ in $(seq 1 "${WHMC_HEALTH_TRIES:-90}"); do
         journalctl -u "${unit}" -n 80 --no-pager >&2 || true
         exit 1
     fi
-    if curl -fsS --max-time 10 "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
-        echo "healthy at ${resolved}: http://127.0.0.1:${port}/ served 200"
+    # `/` renders every PosteriorDB row and can legitimately exceed ten seconds
+    # on a cold cache. The structure route exercises the live app/router without
+    # turning a bounded health check into a repeated cancellation of that render.
+    if curl -fsS --max-time 10 "http://127.0.0.1:${port}/structure?plain=1" >/dev/null 2>&1; then
+        echo "healthy at ${resolved}: structure route served 200 on 127.0.0.1:${port}"
         exit 0
     fi
     sleep 2

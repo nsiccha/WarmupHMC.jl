@@ -58,9 +58,10 @@ Markdown.parse("*" * provenance(load_results("linear_restart.json");
 ```
 
 Paired ratios below are test arm ÷ baseline. Larger is better for ESS
-efficiency; smaller is better for the accuracy-error column. The win columns
-count strict seed-level improvements, so exact ties remain visible as neither
-arm winning.
+efficiency; smaller is better for the accuracy-error column. ESS is shown as a
+five-number summary so a majority of exact ties cannot hide the changed seeds'
+tails. The win columns count strict seed-level improvements, so ties remain
+visible as neither arm winning.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -68,13 +69,16 @@ d = load_results("linear_restart.json")
 load_harness("linear_restart_summary.jl")
 c = linear_restart_comparisons(d)
 md_table(
-    ["target", "comparison", "test ÷ baseline", "ESS ratio median",
-     "ESS ratio min–max", "ESS wins", "accuracy metric", "error ratio median",
+    ["target", "comparison", "test ÷ baseline", "ESS ratio [min, Q1, median, Q3, max]",
+     "ESS wins", "accuracy metric", "error ratio median",
      "accuracy wins", "restart decisions differ", "ESS ratio when changed"],
     [["`" * r["target"] * "`", r["comparison"],
       "`" * r["arm"] * "` ÷ `" * r["baseline_arm"] * "`",
-      num(r["ess_efficiency_ratio_median"]),
-      num(r["ess_efficiency_ratio_min"]) * "–" * num(r["ess_efficiency_ratio_max"]),
+      "[" * join(num.([r["ess_efficiency_ratio_min"],
+                        r["ess_efficiency_ratio_q1"],
+                        r["ess_efficiency_ratio_median"],
+                        r["ess_efficiency_ratio_q3"],
+                        r["ess_efficiency_ratio_max"]]), ", ") * "]",
       "$(r["ess_efficiency_wins"])/$(r["n_pairs"])",
       "`" * r["accuracy_metric"] * "`",
       num(r["accuracy_error_ratio_median"]),

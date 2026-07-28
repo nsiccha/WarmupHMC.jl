@@ -80,6 +80,8 @@ function _linear_ratio_summary(pairs, key; higher_is_better)
         "median" => isempty(values) ? NaN : Statistics.median(values),
         "geomean" => isempty(values) ? NaN : exp(Statistics.mean(log, values)),
         "min" => isempty(values) ? NaN : minimum(values),
+        "q1" => isempty(values) ? NaN : Statistics.quantile(values, 0.25),
+        "q3" => isempty(values) ? NaN : Statistics.quantile(values, 0.75),
         "max" => isempty(values) ? NaN : maximum(values),
         "wins" => count(higher_is_better ? >(1) : <(1), values),
         "n" => length(values),
@@ -113,6 +115,8 @@ function _linear_paired_comparison(rows, target, arm, baseline_arm, comparison)
         "ess_efficiency_ratio_median" => ess["median"],
         "ess_efficiency_ratio_geomean" => ess["geomean"],
         "ess_efficiency_ratio_min" => ess["min"],
+        "ess_efficiency_ratio_q1" => ess["q1"],
+        "ess_efficiency_ratio_q3" => ess["q3"],
         "ess_efficiency_ratio_max" => ess["max"],
         "ess_efficiency_wins" => ess["wins"],
         "gradient_ratio_median" => gradients["median"],
@@ -124,6 +128,8 @@ function _linear_paired_comparison(rows, target, arm, baseline_arm, comparison)
         "restart_count_differs" => length(changed_pairs),
         "changed_ess_efficiency_ratio_median" => changed_ess["median"],
         "changed_ess_efficiency_ratio_min" => changed_ess["min"],
+        "changed_ess_efficiency_ratio_q1" => changed_ess["q1"],
+        "changed_ess_efficiency_ratio_q3" => changed_ess["q3"],
         "changed_ess_efficiency_ratio_max" => changed_ess["max"],
     )
 end

@@ -221,10 +221,10 @@ end
     end
 
     @testset "optimize! transports the halo into the new source coordinates" begin
-        # THE central claim of the adaptation step: after `optimize!`, the halo
-        # matrices must describe the SAME points, re-expressed in the newly
-        # chosen source parametrization — for position AND gradient — because
-        # the linear metric `argmin` immediately refits on them.
+        # The marginal search re-expresses each fitted coordinate as it goes.
+        # Its local gradient update is intentionally only diagonal; the exact
+        # full-vector correction happens once in `find_reparametrization!`,
+        # after every marginal source has been selected.
         rng = Xoshiro(10)
         start_sources = [1.0, 1.0, 1.0]
         rp = funnel_problem(start_sources)
@@ -273,27 +273,15 @@ end
         @test max_err < 1e-8
     end
 
-    @testset "gradient transport is diagonal-only: the log-scale row goes stale" begin
-        # `optimize!` rewrites only the rows it reparametrizes. Row 1 carries the
-        # log-scale that every transform reads, so its gradient picks up a
-        # chain-rule term that is never applied.
-        #
-        # READ THE ASSERTION CAREFULLY — the marginal-only transport DURING the
-        # nonlinear search is INTENTIONAL and settled by the user (three times,
-        # most recently in brief `2026-07-28T11-44-32-365-zwhy0n`). Nothing here
-        # asks `optimize!` to transport jointly, and no test in this file should.
-        #
-        # What the `@test_broken` pins is the seam AFTER the search: the settled
-        # architecture is marginal while searching, then ONE joint pos+grad
-        # transport once the nonlinear stage settles, BEFORE the linear stage
-        # reads the pool. That joint transport does not exist yet, so today the
-        # linear metric `argmin` at `adaptive_warmup_mcmc.jl:390` fits row 1 on
-        # stale values. When it lands, this promotes to a pass — which is exactly
-        # the signal wanted, and why it stays `@test_broken` rather than being
-        # deleted as intended behaviour.
+    @testset "find_reparametrization! jointly transports the full halo" begin
+        # The marginal-only updates inside `optimize!` are intentional. Once all
+        # sources settle, the sampler seam must rematerialize position and
+        # gradient together before the linear metric reads the pool. Row 1 is
+        # the key guard: it is not reparametrized, but controls every block's
+        # log-scale and therefore receives cross-coordinate pullback terms.
         rng = Xoshiro(11)
-        rp = funnel_problem([1.0, 1.0, 1.0])
-        ir = reparametrizer(rp)
+        start_sources = [1.0, 1.0, 1.0]
+        rp = funnel_problem(start_sources)
         n = 400
         X = Matrix{Float64}(undef, 4, n)
         G = Matrix{Float64}(undef, 4, n)
@@ -303,49 +291,33 @@ end
             X[:, j] = x
             G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, x)[2]
         end
-        start_sources = [1.0, 1.0, 1.0]
-        optimize!(ir, X, G)
-        new_sources = [s.c for (_, s) in reparam_sources(rp)]
-        rp_new = funnel_problem(new_sources)
-        err = maximum(1:n) do j
-            g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
-            abs(G[1, j] - g_true[1])
-        end
-        println("  log-scale row (1) max absolute gradient error after transport: $err")
-        @test_broken err < 1e-8
+        X0 = copy(X)
+        ir_old = funnel_ir(start_sources)
+        pg = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, X[:, 1]; strict=false)
+        counted = WarmupHMC.CountingPosterior(rp)
 
-        # Pin the MECHANISM, not the number. Row 1 keeps its old value, so the
-        # shortfall is exactly the chain-rule term that was never applied:
-        #
-        #   G[1,j] - g_true[1,j] = Σᵢ (c_new[i] - c_old[i])/2 · (1 + g_y[i+1]·y[i+1])
-        #
-        # evaluated at the model point `y`, which transport leaves invariant.
-        # Written as an either/or so it SURVIVES the fix: once row 1 is written
-        # back the observed error goes to zero and the first branch carries it.
-        # What it rules out is the state neither branch covers — a row-1 error
-        # of some other size, i.e. a different bug wearing this one's clothes.
-        inner = Funnel(3)
-        resid = maximum(1:n) do j
-            y = ir(X[:, j])[2]
-            gy = LogDensityProblems.logdensity_and_gradient(inner, y)[2]
-            predicted = sum(1:3) do i
-                (new_sources[i] - start_sources[i]) / 2 * (1 + gy[i+1] * y[i+1])
-            end
-            g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
-            abs((G[1, j] - g_true[1]) - predicted)
+        find_reparametrization!(counted, X, G, pg)
+        new_sources = [s.c for (_, s) in reparam_sources(rp)]
+        @test new_sources != start_sources
+
+        max_err = 0.0
+        for j in 1:n
+            @test reparametrizer(rp)(X[:, j])[2] ≈ ir_old(X0[:, j])[2] rtol = 1e-10
+            g_true = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
+            max_err = max(max_err, maximum(abs.(G[:, j] .- g_true)))
+            @test G[:, j] ≈ g_true rtol = 1e-10 atol = 1e-10
         end
-        println("  row 1 vs. closed-form missing chain-rule term: $resid")
-        @test err < 1e-8 || resid < 1e-10 * max(1.0, err)
+        println("  full-vector max absolute gradient-transport error: $max_err")
+
+        # The pool transport itself performs no model evaluations. The sole
+        # counted call is the pre-existing refresh of the live HMC state.
+        @test counted.count[] == 1
     end
 
-    @testset "the stale rows change the metric the sampler picks" begin
-        # What the missing joint transport COSTS, in the units the sampler cares
-        # about. `adaptive_warmup_mcmc.jl:390` runs the linear-metric `argmin`
-        # over the SAME halo two lines after `:388` mutates it, and every
-        # `update_loss!` reads every gradient row — so today the linear stage
-        # reads the pool at precisely the point the settled design says a joint
-        # transport should already have run. The stale row is not cosmetic; it is
-        # priced into the metric the sampler then uses.
+    @testset "joint transport gives the linear stage the exact funnel scale" begin
+        # `adaptive_warmup_mcmc.jl` fits the linear metric immediately after the
+        # joint pass, so this checks the corrected pool in the units the sampler
+        # actually consumes.
         #
         # The reference value here is exact, not measured. `update_loss!` for a
         # `Diagonal` sets `t[i,i] = sqrt(std(pᵢ)/std(gᵢ))`; the funnel fits to
@@ -355,7 +327,6 @@ end
         # between numerator and denominator — so the correct `t[1,1]` is 3.
         rng = Xoshiro(11)
         rp = funnel_problem([1.0, 1.0, 1.0])
-        ir = reparametrizer(rp)
         n = 400
         X = Matrix{Float64}(undef, 4, n)
         G = Matrix{Float64}(undef, 4, n)
@@ -365,37 +336,20 @@ end
             X[:, j] = x
             G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, x)[2]
         end
-        optimize!(ir, X, G)
-        rp_new = funnel_problem([s.c for (_, s) in reparam_sources(rp)])
+        pg = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, X[:, 1]; strict=false)
+        find_reparametrization!(rp, X, G, pg)
+        @test all(iszero(s.c) for (_, s) in reparam_sources(rp))
 
-        # Correct row 1 and nothing else, so the comparison isolates the defect.
-        Gfix = copy(G)
-        for j in 1:n
-            Gfix[1, j] = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2][1]
-        end
-
-        t_stale = Diagonal(ones(4)); WarmupHMC.update_loss!(t_stale, X, G)
-        t_fixed = Diagonal(ones(4)); WarmupHMC.update_loss!(t_fixed, X, Gfix)
-        println("  diagonal t[1,1]: stale = $(t_stale[1,1])  corrected = $(t_fixed[1,1])")
-
-        # With correct gradients the metric recovers the funnel's true marginal
-        # scale. This holds whether or not the defect is fixed — it is a
-        # statement about `update_loss!`, and it is what makes the next
-        # assertion's reference point trustworthy.
-        @test t_fixed[1, 1] ≈ 3.0 rtol = 1e-12
-
-        # The stale row does not merely perturb it: the sampler under-scales the
-        # neck coordinate by roughly half. Promote when row 1 is written back.
-        @test_broken t_stale[1, 1] ≈ 3.0 rtol = 1e-6
+        scale = Diagonal(ones(4))
+        WarmupHMC.update_loss!(scale, X, G)
+        println("  diagonal t[1,1] after joint transport: $(scale[1,1])")
+        @test scale[1, 1] ≈ 3.0 rtol = 1e-12
     end
 
-    @testset "staleness hits `loc` rows too, not just the log-scale row" begin
-        # Wider blast radius than the testset above suggests: the rows the joint
-        # transport will have to cover are not just the log-scale row. ANY
-        # coordinate appearing only inside an `args` closure misses its
-        # chain-rule term. Here coordinate 2 is the shared `loc` of four blocks
-        # and is NOT itself reparametrized, so `optimize!` never writes it back.
-        # Same seam and same intentional-until-then status as above.
+    @testset "joint transport corrects `loc` closure rows too" begin
+        # The full pass must cover more than log-scale rows. Coordinate 2 is the
+        # shared `loc` of four blocks and is not itself reparametrized, so only
+        # the joint pullback supplies its chain-rule term.
         rng = Xoshiro(4242)
         k = 4
         ir_of(cs) = IndexedReparametrization([
@@ -406,7 +360,6 @@ end
         prob_of(cs) = ReparametrizedProblem(ir_of(cs), NestedFunnel(k), AutoForwardDiff())
 
         rp = prob_of(ones(k))
-        ir = reparametrizer(rp)
         n = 400
         X = Matrix{Float64}(undef, k + 2, n)
         G = Matrix{Float64}(undef, k + 2, n)
@@ -415,19 +368,16 @@ end
             X[:, j] = [v; mu; mu .+ s .* randn(rng, k)]
             G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
         end
-        optimize!(ir, X, G)
-        rp_new = prob_of([s.c for (_, s) in reparam_sources(rp)])
+        pg = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, X[:, 1]; strict=false)
+        find_reparametrization!(rp, X, G, pg)
         gerr = [maximum(1:n) do j
-                    g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
+                    g_true = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
                     abs(G[r, j] - g_true[r])
                 end for r in 1:(k + 2)]
         println("  gradient error per row (rows 1,2 are the closure coordinates): ",
                 round.(gerr, sigdigits=4))
 
-        # The reparametrized rows themselves are transported correctly.
-        @test maximum(gerr[3:end]) < 1e-8
-        # The `loc` row is not. Promote both together with the log-scale row.
-        @test_broken gerr[2] < 1e-8
+        @test maximum(gerr) < 1e-8
     end
 
     @testset "coupled `loc`: a reparametrized coordinate as another block's loc" begin
@@ -455,12 +405,11 @@ end
         # so nothing hits this today — but `accel_gp` reads `x[46]` with its
         # `idx` starting at 47, which is one off-by-one away.
         #
-        # Note this is POSITION invariance, not the gradient staleness above, and
-        # it is NOT covered by "marginal during the search is intentional": an
-        # uncoupled spec transports its positions exactly (7e-15, asserted above)
-        # under the very same marginal transport. What breaks here is specifically
-        # the CROSS-coordinate case — which is what "joint" means — so it should
-        # promote on the same fix.
+        # Note this is POSITION invariance, not gradient staleness. The final
+        # rematerialization below fixes every shipped, uncoupled spec. This
+        # deliberately coupled accessor is the unsupported edge: the simple
+        # `inverse(::IndexedReparametrization)` itself is no longer a true inverse
+        # when one transformed coordinate parameterizes another block.
         k = 4
         coupled_ir(cs) = IndexedReparametrization(vcat(
             [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(cs[1]),
@@ -471,8 +420,9 @@ end
         coupled_problem(cs) =
             ReparametrizedProblem(coupled_ir(cs), NestedFunnel(k), AutoForwardDiff())
 
-        # Position invariance: `optimize!` may change the parametrization, but
-        # the MODEL point each column denotes must not move.
+        # Position invariance during the marginal search: `optimize!` may change
+        # the parametrization, but the MODEL point each column denotes must not
+        # move.
         function theta_transport_error(start)
             rng = Xoshiro(4242)
             rp = coupled_problem(start)

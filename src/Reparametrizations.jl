@@ -412,32 +412,115 @@ end
 OnlineStatsBase.nobs((;ljac)::OnlineReparametrizationLoss) = OnlineStatsBase.nobs(ljac)
 OnlineReparametrizationLoss(::AbstractMatrix) = OnlineReparametrizationLoss()
 OnlineReparametrizationLoss(::AbstractMatrix, ::AbstractMatrix) = OnlineReparametrizationLoss()
-OnlineReparametrizationLoss() = OnlineReparametrizationLoss(OnlineStatsBase.Mean(), OnlineStatsBase.CovMatrix())
-OnlineStatsBase.fit!((;ljac, cov)::OnlineReparametrizationLoss, obs) = map(OnlineStatsBase.fit!, (ljac, cov), (obs[1], [obs[2], obs[3]]))
-reparametrization_loss((;ljac, cov)::OnlineReparametrizationLoss; w1=0, w2=1-w1) = (
-    w1 * (-mean(ljac) + .5 * log(Statistics.cov(cov)[1, 1])) + w2 * Statistics.cor(cov)[1, 2]
+OnlineReparametrizationLoss() = OnlineReparametrizationLoss(
+    OnlineStatsBase.Mean(), OnlineStatsBase.CovMatrix(),
 )
-scale_estimate(orl::OnlineReparametrizationLoss) = begin
-    c = Statistics.cov(orl.cov)
-    (c[1,1] / c[2,2])^.25
+function OnlineStatsBase.fit!(loss::OnlineReparametrizationLoss, obs;
+                              weight::Real=1, count::Bool=true)
+    weight == 1 && count || throw(ArgumentError(
+        "weighted updates require WeightedReparametrizationLoss",
+    ))
+    map(OnlineStatsBase.fit!, (loss.ljac, loss.cov), (obs[1], [obs[2], obs[3]]))
 end
+reparametrization_loss((;ljac, cov)::OnlineReparametrizationLoss; w1=0, w2=1-w1) = (
+    w1 * (-mean(ljac) + .5 * log(Statistics.cov(cov)[1, 1])) +
+    w2 * Statistics.cor(cov)[1, 2]
+)
+scale_estimate(loss::OnlineReparametrizationLoss) = begin
+    c = Statistics.cov(loss.cov)
+    (c[1, 1] / c[2, 2])^.25
+end
+
+mutable struct WeightedReparametrizationLoss
+    weight::Float64
+    weight2::Float64
+    mean_ljac::Float64
+    mean_position::Float64
+    mean_gradient::Float64
+    m2_position::Float64
+    m2_gradient::Float64
+    co_position_gradient::Float64
+    groups::Int
+end
+OnlineStatsBase.nobs(loss::WeightedReparametrizationLoss) = loss.groups
+WeightedReparametrizationLoss(::AbstractMatrix) = WeightedReparametrizationLoss()
+WeightedReparametrizationLoss(::AbstractMatrix, ::AbstractMatrix) = WeightedReparametrizationLoss()
+WeightedReparametrizationLoss() = WeightedReparametrizationLoss(
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0,
+)
+
+function OnlineStatsBase.fit!(loss::WeightedReparametrizationLoss, obs;
+                              weight::Real=1, count::Bool=true)
+    weight >= 0 || throw(ArgumentError("nonlinear observation weight must be nonnegative, got $weight"))
+    iszero(weight) && return loss
+    w = Float64(weight)
+    ljac, position, gradient = obs
+    new_weight = loss.weight + w
+    fraction = w / new_weight
+
+    delta_ljac = ljac - loss.mean_ljac
+    delta_position = position - loss.mean_position
+    delta_gradient = gradient - loss.mean_gradient
+    new_mean_position = loss.mean_position + fraction * delta_position
+    new_mean_gradient = loss.mean_gradient + fraction * delta_gradient
+
+    loss.mean_ljac += fraction * delta_ljac
+    loss.mean_position = new_mean_position
+    loss.mean_gradient = new_mean_gradient
+    loss.m2_position += w * delta_position * (position - new_mean_position)
+    loss.m2_gradient += w * delta_gradient * (gradient - new_mean_gradient)
+    loss.co_position_gradient += w * delta_position * (gradient - new_mean_gradient)
+    loss.weight = new_weight
+    loss.weight2 += abs2(w)
+    count && (loss.groups += 1)
+    loss
+end
+
+function reset!(loss::WeightedReparametrizationLoss)
+    loss.weight = 0
+    loss.weight2 = 0
+    loss.mean_ljac = 0
+    loss.mean_position = 0
+    loss.mean_gradient = 0
+    loss.m2_position = 0
+    loss.m2_gradient = 0
+    loss.co_position_gradient = 0
+    loss.groups = 0
+    loss
+end
+
+function reparametrization_loss(loss::WeightedReparametrizationLoss; w1=0, w2=1-w1)
+    covariance_denom = loss.weight - loss.weight2 / loss.weight
+    variance_position = loss.m2_position / covariance_denom
+    correlation = loss.co_position_gradient /
+        sqrt(loss.m2_position * loss.m2_gradient)
+    w1 * (-loss.mean_ljac + .5 * log(variance_position)) + w2 * correlation
+end
+scale_estimate(loss::WeightedReparametrizationLoss) = begin
+    (loss.m2_position / loss.m2_gradient)^.25
+end
+effective_n(loss::WeightedReparametrizationLoss) = loss.weight^2 / loss.weight2
 
 # --- OnlineReparametrizer: fits multiple candidates ---
 
 struct OnlineReparametrizer{P}
     pairs::P
 end
-OnlineStatsBase.fit!((;pairs)::OnlineReparametrizer, args...) = for (candidate, accumulator) in pairs
-    OnlineStatsBase.fit!(accumulator, reparam(candidate, args...))
+OnlineStatsBase.fit!((;pairs)::OnlineReparametrizer, args...; kwargs...) = for (candidate, accumulator) in pairs
+    OnlineStatsBase.fit!(accumulator, reparam(candidate, args...); kwargs...)
 end
 OnlineStatsBase.nobs((;pairs)::OnlineReparametrizer) = length(pairs) == 0 ? 0 : OnlineStatsBase.nobs(pairs[1][2])
 minimizer((;pairs)::OnlineReparametrizer; kwargs...) = argmin(p -> reparametrization_loss(last(p); kwargs...), pairs)
 scale_estimate(or::OnlineReparametrizer; kwargs...) = scale_estimate(last(minimizer(or; kwargs...)))
+reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); nothing)
+_mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
+_mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
 
 reparametrization_candidates(::PartiallyCentered; n=11) = Iterators.map(PartiallyCentered, range(0, 1, n))
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
-OnlineReparametrizer(source::PartiallyCentered, xg...; kwargs...) = OnlineReparametrizer([
-    target => OnlineReparametrizationLoss(xg...)
+OnlineReparametrizer(source::PartiallyCentered, xg...;
+                     accumulator=OnlineReparametrizationLoss, kwargs...) = OnlineReparametrizer([
+    target => accumulator(xg...)
     for target in reparametrization_candidates(source; kwargs...)
 ])
 
@@ -466,6 +549,129 @@ OnlineReparametrizer((;pairs)::IndexedReparametrization; kwargs...) = OnlineRepa
     idx => OnlineReparametrizer(value; kwargs...)
     for (idx, value) in pairs
 ])
+function OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer,
+                              position::AbstractVector, gradient::AbstractVector;
+                              weight::Real=1, count::Bool=true)
+    for ((idx, value), (stored_idx, or)) in zip(ir.pairs, ors.pairs)
+        idx == stored_idx || throw(ArgumentError(
+            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+        ))
+        OnlineStatsBase.fit!(
+            or,
+            reparam_rargs(value, position[idx], gradient[idx], position)...;
+            weight, count,
+        )
+    end
+    ir
+end
+
+function optimize!(ir::IndexedReparametrization, ors::OnlineReparametrizer;
+                   loss_kwargs=(;))
+    ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (stored_idx, or)
+        idx == stored_idx || throw(ArgumentError(
+            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+        ))
+        OnlineStatsBase.nobs(or) > 2 || return idx => value
+        new_source = first(minimizer(or; loss_kwargs...))
+        idx => Reparametrization(value.target, new_source, value.args...)
+    end
+    ir
+end
+
+const NONLINEAR_EVIDENCE_MODES = (:linear_pool, :all_good_leaves, :nuts_weighted)
+const NONLINEAR_TRAJECTORY_WEIGHTINGS = (
+    :unit,
+    :stepsize,
+    :valid_fraction,
+    :stepsize_valid_fraction,
+    :valid_fraction_then_unit,
+    :stepsize_valid_fraction_then_unit,
+)
+
+mutable struct NonlinearRecorder{O,T}
+    mode::Symbol
+    trajectory_weighting::Symbol
+    good_leaf_threshold::T
+    online::O
+end
+
+function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:auto,
+                           good_leaf_threshold=log(1e-2))
+    mode in NONLINEAR_EVIDENCE_MODES || throw(ArgumentError(
+        "unknown nonlinear evidence mode $mode; expected one of $(join(NONLINEAR_EVIDENCE_MODES, ", "))",
+    ))
+    resolved_weighting = if trajectory_weighting === :auto
+        mode === :all_good_leaves ? :stepsize_valid_fraction :
+        mode === :nuts_weighted ? :stepsize_valid_fraction_then_unit : :unit
+    else
+        trajectory_weighting
+    end
+    resolved_weighting in NONLINEAR_TRAJECTORY_WEIGHTINGS || throw(ArgumentError(
+        "unknown nonlinear trajectory weighting $trajectory_weighting; expected :auto or one of " *
+        join(NONLINEAR_TRAJECTORY_WEIGHTINGS, ", "),
+    ))
+    NonlinearRecorder(
+        mode,
+        resolved_weighting,
+        good_leaf_threshold,
+        OnlineReparametrizer(
+            reparametrizer(lpdf); accumulator=WeightedReparametrizationLoss,
+        ),
+    )
+end
+
+function _valid_tree_fraction(tree_stats)
+    iszero(tree_stats.steps) && return 1.0
+    clamp(((1 << tree_stats.depth) - 1) / tree_stats.steps, 0.0, 1.0)
+end
+
+function _trajectory_weight(weighting, stepsize, tree_stats, adapting_stepsize)
+    valid_fraction = _valid_tree_fraction(tree_stats)
+    weighting === :unit && return 1.0
+    weighting === :stepsize && return stepsize
+    weighting === :valid_fraction && return valid_fraction
+    weighting === :stepsize_valid_fraction && return stepsize * valid_fraction
+    weighting === :valid_fraction_then_unit &&
+        return adapting_stepsize ? valid_fraction : 1.0
+    weighting === :stepsize_valid_fraction_then_unit &&
+        return adapting_stepsize ? stepsize * valid_fraction : 1.0
+    throw(ArgumentError("unsupported nonlinear trajectory weighting $weighting"))
+end
+
+function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, tree_stats,
+                           stepsize; adapting_stepsize::Bool)
+    recorder.mode === :linear_pool && return recorder
+    ir = reparametrizer(lpdf)
+    isempty(ir.pairs) && return recorder
+    trajectory_weight = _trajectory_weight(
+        recorder.trajectory_weighting, stepsize, tree_stats, adapting_stepsize,
+    )
+    iszero(trajectory_weight) && return recorder
+
+    recorded = false
+    for i in eachindex(leaves.dH)
+        leaf_weight = if recorder.mode === :all_good_leaves
+            i != 1 && leaves.dH[i] > recorder.good_leaf_threshold ? 1.0 : 0.0
+        else
+            leaves.weights[i]
+        end
+        weight = trajectory_weight * leaf_weight
+        iszero(weight) && continue
+        OnlineStatsBase.fit!(
+            ir,
+            recorder.online,
+            @view(leaves.position[:, i]),
+            @view(leaves.gradient[:, i]);
+            weight,
+            count=false,
+        )
+        recorded = true
+    end
+    recorded && _mark_group!(recorder.online)
+    recorder
+end
+
+reset!(recorder::NonlinearRecorder) = (reset!(recorder.online); recorder)
 OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
     ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (_, or)
         for xgi in zip(eachcol.(xg)...)
@@ -552,6 +758,25 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     optimize!(ir, halo_position, halo_gradient)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              halo_position, halo_gradient)
+    DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
+end
+
+function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
+                                  halo_position, halo_gradient,
+                                  position_and_gradient)
+    recorder.mode === :linear_pool && return find_reparametrization!(
+        lpdf, halo_position, halo_gradient, position_and_gradient,
+    )
+    ir = reparametrizer(lpdf)
+    isempty(ir.pairs) && return position_and_gradient
+    old_ir = IndexedReparametrization(copy(ir.pairs))
+    old_position = copy(halo_position)
+    old_gradient = copy(halo_gradient)
+    optimize!(ir, recorder.online)
+    _jointly_transport_halo!(
+        lpdf, old_ir, old_position, old_gradient, halo_position, halo_gradient,
+    )
+    reset!(recorder)
     DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
 end
 

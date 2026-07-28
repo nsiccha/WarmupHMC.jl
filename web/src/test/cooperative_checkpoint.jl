@@ -24,8 +24,9 @@ _chain(; chain_index=0, dimension=2) = begin
     recording_lpdf = WarmupHMC.RecordingPosterior2(
         lpdf; recorder=WarmupHMC.LimitedRecorder2(10), rng,
     )
+    nonlinear_recorder = WarmupHMC.NonlinearRecorder(lpdf)
     CooperativeChain(
-        rng, chain_index, lpdf, recording_lpdf,
+        rng, chain_index, lpdf, recording_lpdf, nonlinear_recorder,
         nothing, nothing, dimension,        # algorithm, stepsize_adaptation, dimension
         10, 50, 2.0, false, false, 10, typemax(Int),
         (;), (;), (;), UInt64(0),           # scale/energy options, kwargs, start_time

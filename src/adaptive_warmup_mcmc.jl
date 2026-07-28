@@ -112,7 +112,7 @@ mypathfinder(args...;
 # `progress` and `start_time` are runtime handles that are re-supplied rather
 # than restored on resume (the inner problem may wrap a non-serializable native
 # gradient; wall-clock timing is display-only).
-mutable struct AWMState{L,K,A,DA,P,R,RL,SO,EO,VP,VG,POS,PG,SS,MN}
+mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,POS,PG,SS,MN}
     # ── config (set once) ──
     lpdf::L
     n_draws::Int
@@ -131,6 +131,7 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,SO,EO,VP,VG,POS,PG,SS,MN}
     # ── dynamic (mutated during warm-up) ──
     rng::R
     recording_lpdf::RL
+    nonlinear_recorder::NR
     position::POS
     scale_options::SO
     energy_options::EO
@@ -182,7 +183,8 @@ init_state(
     rng, lpdf, progress;
     n_draws, n_evaluations, recording_target, stepsize_adaptation_limit,
     target_acceptance_rate, max_tree_depth, init, monitor_ess,
-    nonlinear_adapt, variance_cond_target, kwargs...
+    nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
+    nonlinear_good_leaf_threshold, variance_cond_target, kwargs...
 ) = begin
     start_time = time_ns()
     # Standard Stepsize Search
@@ -202,6 +204,12 @@ init_state(
         max(1, n_evaluations ÷ recording_target),
     )
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    nonlinear_recorder = NonlinearRecorder(
+        lpdf;
+        mode=nonlinear_evidence,
+        trajectory_weighting=nonlinear_trajectory_weighting,
+        good_leaf_threshold=nonlinear_good_leaf_threshold,
+    )
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     # We currently learn three linear transformation options
@@ -268,7 +276,7 @@ init_state(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target, nonlinear_adapt,
         monitor_ess, recording_target, (; kwargs...), algorithm, stepsize_adaptation, dimension,
         progress, start_time,
-        rng, recording_lpdf, position, scale_options, energy_options, active_transformation,
+        rng, recording_lpdf, nonlinear_recorder, position, scale_options, energy_options, active_transformation,
         kinetic_energy, variance_memory, variance_position, variance_gradient, variance_cond,
         scale_changes, position_and_gradient, stepsize, stepsize_state, n_evaluations,
         total_evaluation_counter, outer_counter, current_transition_counter,
@@ -299,6 +307,14 @@ run_outer_iteration!(state::AWMState) = begin
         reset!(recording_lpdf.leaves)
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
         finalize_leaf_recording!(recording_lpdf, stats.depth)
+        state.nonlinear_adapt && record_nonlinear!(
+            state.nonlinear_recorder,
+            lpdf,
+            recording_lpdf.leaves,
+            stats,
+            state.stepsize;
+            adapting_stepsize=state.current_transition_counter <= state.stepsize_adaptation_limit,
+        )
         state.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(state.steps_per_draw, stats.steps)
@@ -385,7 +401,10 @@ run_outer_iteration!(state::AWMState) = begin
     state.n_samples = 0
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.
-    state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(lpdf, recording_lpdf.halo_position, recording_lpdf.halo_gradient, state.position_and_gradient))
+    state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(
+        lpdf, state.nonlinear_recorder, recording_lpdf.halo_position,
+        recording_lpdf.halo_gradient, state.position_and_gradient,
+    ))
     # Update the new linear transformation to be the one with the minimal estimated transformation loss.
     state.active_transformation = argmin(
         map(L->update_loss!(L, (recording_lpdf.halo_position), (recording_lpdf.halo_gradient); state.kwargs...), state.scale_options)
@@ -492,6 +511,7 @@ checkpoint_payload(state::AWMState) = (;
     posterior_position=state.recording_lpdf.posterior_position,
     posterior_gradient=state.recording_lpdf.posterior_gradient,
     recorder=state.recording_lpdf.recorder,
+    nonlinear_recorder=state.nonlinear_recorder,
     state.rng, state.position, state.scale_options, state.active_transformation,
     state.variance_memory, state.variance_position, state.variance_gradient,
     state.variance_cond, state.scale_changes, state.position_and_gradient, state.stepsize,
@@ -703,6 +723,8 @@ restore_state(p, lpdf, progress;
     n_draws=1000, stepsize_adaptation_limit=50, variance_cond_target=2.,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
+    nonlinear_evidence=nothing, nonlinear_trajectory_weighting=:auto,
+    nonlinear_good_leaf_threshold=nothing,
     kwargs...
 ) = begin
     check_checkpoint_compatible(p, :adaptive, (:adaptive,))
@@ -727,6 +749,26 @@ restore_state(p, lpdf, progress;
         lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
         NUTSLeaves(p.dimension), p.recorder, p.rng,
     )
+    saved_nonlinear_recorder = get(p, :nonlinear_recorder, nothing)
+    restored_mode = something(
+        nonlinear_evidence,
+        isnothing(saved_nonlinear_recorder) ? :linear_pool : saved_nonlinear_recorder.mode,
+    )
+    restored_threshold = something(
+        nonlinear_good_leaf_threshold,
+        isnothing(saved_nonlinear_recorder) ? log(1e-2) : saved_nonlinear_recorder.good_leaf_threshold,
+    )
+    can_reuse_nonlinear = !isnothing(saved_nonlinear_recorder) &&
+        saved_nonlinear_recorder.mode === restored_mode &&
+        (nonlinear_trajectory_weighting === :auto ||
+         saved_nonlinear_recorder.trajectory_weighting === nonlinear_trajectory_weighting) &&
+        saved_nonlinear_recorder.good_leaf_threshold == restored_threshold
+    nonlinear_recorder = can_reuse_nonlinear ? saved_nonlinear_recorder : NonlinearRecorder(
+        lpdf;
+        mode=restored_mode,
+        trajectory_weighting=nonlinear_trajectory_weighting,
+        good_leaf_threshold=restored_threshold,
+    )
     energy_options = map(p.scale_options) do L
         DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
     end
@@ -737,7 +779,7 @@ restore_state(p, lpdf, progress;
         DynamicHMC.NUTS(; max_depth=max_tree_depth),
         DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
         progress, time_ns(),
-        p.rng, recording_lpdf, p.position, p.scale_options, energy_options, p.active_transformation,
+        p.rng, recording_lpdf, nonlinear_recorder, p.position, p.scale_options, energy_options, p.active_transformation,
         kinetic_energy, p.variance_memory, p.variance_position, p.variance_gradient, p.variance_cond,
         p.scale_changes, p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
         p.total_evaluation_counter, p.outer_counter, p.current_transition_counter,
@@ -839,6 +881,21 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
 * `target_acceptance_rate=0.8`, `max_tree_depth=10` — standard NUTS knobs.
 * `nonlinear_adapt=true` — whether to activate the reparametrization
   hooks (no-op when `lpdf` carries no reparametrization).
+* `nonlinear_evidence=:linear_pool` — evidence used to fit the nonlinear
+  reparametrization. The default preserves the existing bounded halo fit.
+  `:all_good_leaves` streams every noninitial leaf whose log Hamiltonian error
+  exceeds `nonlinear_good_leaf_threshold=log(1e-2)`, with equal within-trajectory
+  weight. `:nuts_weighted` streams every leaf with its exact marginal NUTS
+  proposal probability. Neither streaming mode retains leaves after the current
+  trajectory.
+* `nonlinear_trajectory_weighting=:auto` — whole-trajectory reliability factor
+  for a streaming evidence mode. `:auto` uses step size times the valid-tree
+  fraction for `:all_good_leaves`; for `:nuts_weighted` it uses that factor while
+  step size is adapting and unit weight afterwards. Explicit alternatives are
+  `:unit`, `:stepsize`, `:valid_fraction`, `:stepsize_valid_fraction`,
+  `:valid_fraction_then_unit`, and `:stepsize_valid_fraction_then_unit`.
+  These settings change only the nonlinear fit: selection/application remains
+  subordinate to a restart independently requested by the linear criterion.
 * `variance_cond_target=2.0` — restart threshold on the marginal-scale
   condition number.
 * `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
@@ -896,6 +953,11 @@ adaptive_warmup_mcmc(
     description="MCMC",
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
+    # Nonlinear evidence source. `nothing` means `:linear_pool` for a fresh run
+    # and inherits the persisted source on resume.
+    nonlinear_evidence=nothing,
+    nonlinear_trajectory_weighting=:auto,
+    nonlinear_good_leaf_threshold=nothing,
     variance_cond_target=2.,
     # Observational checkpoint callback `(state, stage) -> should_stop`; see
     # `_fire_callback`. Default `nothing` keeps the run byte-identical.
@@ -928,7 +990,13 @@ adaptive_warmup_mcmc(
                 n_draws, n_evaluations, recording_target=something(recording_target, 1000),
                 stepsize_adaptation_limit,
                 target_acceptance_rate, max_tree_depth, init, monitor_ess,
-                nonlinear_adapt, variance_cond_target, kwargs..., pathfinder_kw...
+                nonlinear_adapt,
+                nonlinear_evidence=something(nonlinear_evidence, :linear_pool),
+                nonlinear_trajectory_weighting,
+                nonlinear_good_leaf_threshold=something(
+                    nonlinear_good_leaf_threshold, log(1e-2),
+                ),
+                variance_cond_target, kwargs..., pathfinder_kw...
             )
             _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
             s, _fire_callback(callback, s, :init)
@@ -937,7 +1005,9 @@ adaptive_warmup_mcmc(
                 resumed, lpdf, progress;
                 n_draws, stepsize_adaptation_limit, variance_cond_target,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,
-                max_tree_depth, recording_target, kwargs...
+                max_tree_depth, recording_target, nonlinear_evidence,
+                nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
+                kwargs...
             ), false
         end
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws

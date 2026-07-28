@@ -79,7 +79,8 @@ Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("sampler_comparison_summary.jl")
 import Markdown
 d = load_results("sampler_comparison.json")
-Markdown.parse("**" * comparison_verdict_sentence(d; key = "ess_min_per_grad") * "**")
+Markdown.parse("**" * comparison_verdict_sentence(d; key = "ess_min_per_grad") * "** " *
+               comparison_stability_sentence(d; key = "ess_min_per_grad"))
 ```
 
 ## Effective sample per wall-clock second
@@ -89,6 +90,13 @@ machine-specific, and it does not have to agree with the table above. WarmupHMC
 does strictly more work per gradient evaluation (a Pathfinder initialization,
 several linear transformations fitted in parallel and scored against each
 other), so a lead in gradient count is not automatically a lead in seconds.
+
+**This is the weaker of the two tables, and the artifact says so rather than
+this paragraph asserting it.** Every figure is measured once per (target, arm,
+seed, repeat); the repeats re-run identical seeds, so the draws are
+bit-identical and only the clock moves. That makes the verdict below checkable
+against itself — see the sentence under it, and contrast it with the one under
+the gradient verdict.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -106,7 +114,23 @@ Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("sampler_comparison_summary.jl")
 import Markdown
 d = load_results("sampler_comparison.json")
-Markdown.parse("**" * comparison_verdict_sentence(d; key = "ess_min_per_s") * "**")
+Markdown.parse("**" * comparison_verdict_sentence(d; key = "ess_min_per_s") * "** " *
+               comparison_stability_sentence(d; key = "ess_min_per_s"))
+```
+
+Both verdicts, recounted inside each repeat:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("sampler_comparison_summary.jl")
+d = load_results("sampler_comparison.json")
+wlt(v) = string(v.n_wins, "–", v.n_losses, "–", v.n_ties)
+grad = comparison_verdict_by_repeat(d; key = "ess_min_per_grad")
+secs = comparison_verdict_by_repeat(d; key = "ess_min_per_s")
+md_table(
+    ["repeat", "ESS/gradient (win–loss–tie)", "ESS/second (win–loss–tie)"],
+    [[string(g.repeat), wlt(g), wlt(s)] for (g, s) in zip(grad, secs)],
+)
 ```
 
 ## Arms that failed
@@ -169,5 +193,5 @@ julia --project=bench bench/sampler_comparison.jl
 
 The `Pkg.develop` line is needed because Treebars.jl is not registered and
 Julia 1.10 ignores `[sources]`; the same step appears in `.github/workflows/`.
-Knobs: `WHMC_CMP_SEEDS`, `WHMC_CMP_DRAWS`, `WHMC_CMP_TARGETS` (comma-separated,
+Knobs: `WHMC_CMP_SEEDS`, `WHMC_CMP_DRAWS`, `WHMC_CMP_REPEATS`, `WHMC_CMP_TARGETS` (comma-separated,
 `funnel` included), `WHMC_CMP_OUT`.

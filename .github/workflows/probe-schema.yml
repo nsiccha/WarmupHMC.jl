@@ -7,13 +7,31 @@
 # the consumers are `@eval` blocks in docs/src/*.md, run by docs/make.jl under
 # docs/Project.toml. Two environments, and until this job existed, no CI step ran
 # one of each. So a generator could change its output keys and sit green next to a
-# months-old checked-in JSON for as long as nobody regenerated it.
+# stale checked-in JSON for as long as nobody regenerated it.
 #
 # That is not a hypothetical failure mode. `655218e` changed capture_boxing.jl to
 # emit `boxed/*` + `unboxed/*` instead of `shipped/*` + `deboxed/*`, and to split
-# `ab_max_grad_diff` in two. Nothing surfaced it. When the results were finally
-# regenerated the docs build went red on three KeyErrors at once, in a file whose
-# owner had touched neither side.
+# `ab_max_grad_diff` in two. Nothing surfaced it until the results were
+# regenerated 2 h 12 m later (`176a061`), and then the docs build went red on
+# three KeyErrors at once, in a file whose owner had touched neither side. That
+# interval was luck, not a bound — nothing in CI would have caught it at two
+# hours or at two months, which is the whole reason this job exists.
+#
+# WHEN THIS FIRES — A BATCH-TIME NET, NOT A LANDING GATE
+#
+# The triggers below are GitHub events. Landings go through the KB's merge_impl,
+# which merges into the desktop canonical checkout and does NOT push, so this job
+# does not run at landing time. It runs when the desktop next publishes — on a
+# batch of several landings at once, with the break already some commits old and
+# per-commit attribution gone. Worth having anyway: it is the only thing that
+# catches the generator side changing keys at all.
+#
+# Its landing-time counterpart is cheaper and catches the other direction — run
+# `julia --project=docs docs/make.jl` against the CHECKED-IN results before
+# landing. That catches a page reading a key the current JSON does not have,
+# which is the shape that actually took the build red, and costs about a minute
+# with no probe run. It cannot catch a probe whose keys drifted while its output
+# sat unregenerated; only this job does. Neither substitutes for the other.
 #
 # The shape is WarmupHMC:nonlinear-online's `smoke` job from
 # nonlinear-weighting.yml, applied across the environment split: run the

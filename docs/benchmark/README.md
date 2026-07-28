@@ -44,6 +44,34 @@ WHMC_BENCH_SEEDS=2 WHMC_BENCH_DRAWS=200 \
   julia --project=docs/benchmark docs/benchmark/run_reparam_benchmark.jl
 ```
 
+## Before you land a regeneration
+
+Rewriting these result files is the one move that has taken the docs build red.
+The pages read them **by key**, so a probe whose output schema drifted shows
+nothing at all until its output is regenerated — and then every page that reads
+it fails at once. Build the docs before landing:
+
+```bash
+julia --project=docs docs/make.jl
+```
+
+That reads the checked-in JSON, so it catches a page whose keys no longer match
+what you just wrote. About a minute, no probe run needed.
+
+It happened exactly this way: `655218e` changed `capture_boxing.jl` to emit
+`boxed/*` + `unboxed/*` instead of `shipped/*` + `deboxed/*`; nothing surfaced
+until `176a061` regenerated the results 2 h 12 m later, and the build died on
+three `KeyError`s in a page whose owner had touched neither the probe nor the
+schema.
+
+The complementary direction — a probe whose keys drift while the checked-in copy
+sits unchanged — is covered by `.github/workflows/probe-schema.yml`, which
+regenerates the three probes the pages read into a temporary directory and
+builds against exactly those. That job triggers on GitHub events, so it fires
+when the desktop publishes rather than when work lands: a batch-time net, not a
+landing gate. The `make.jl` run above is the landing-time half, and neither
+substitutes for the other.
+
 ## Environment
 
 `Project.toml` is checked in; `Manifest.toml` is not (the repository gitignores
@@ -223,6 +251,8 @@ verdict can be checked against that list rather than against a global maximum.
 | `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
 | `compare.jl` | before/after diff across two results dirs |
 | `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl`, `frame_check.jl` | probes (above) |
+| `code_identical.jl` | do two revisions of `src/` define the same methods? — docstring-blind, exits 1 on a real change; how `RESULTS.md` justifies not re-running for the tip |
+| `artifact_currency.jl` | the same question asked of **every** checked-in artifact at once: read each one's `warmuphmc_sha` and compare that revision's `src/` with the tip. Green = every live measurement still describes the current sampler; red names the artifact to re-measure |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `results/*.json` | backend-probe outputs, not tied to a sampling run |
@@ -298,6 +328,15 @@ A directory measured before `e9bcfd0` is not comparable with one measured after
 it on `radon_partially_pooled`, `radon_variable_intercept` or `seeds`: the
 gradient cost changed by 4.6–15.6× on those three. `funnel` and `eight_schools`
 are comparable across the whole table.
+
+**The four superseded directories each carry a `SUPERSEDED` file** whose first
+line says why it is kept. That is not decoration: `artifact_currency.jl` (below)
+holds every *live* artifact to being code-current with the tip, and these four
+are supposed to differ from it — the difference is what they measure. The marker
+lives inside the run's own directory rather than in a central list, because a
+list is a second copy of this table and drifts from it. `results/before` and
+`results/after` predate the run manifest and record no `warmuphmc_sha` at all,
+so their markers carry the base SHA that until now existed only in this prose.
 
 ## Prior art
 

@@ -1,0 +1,4 @@
+base c8fed88, ForwardDiff — the repaired half of the halo-regression comparison
+Paired with results/before/ (base 05aed41). See that marker; the pair is the
+measurement, and it is kept precisely because the two bases differ. Predates the
+run manifest, so neither JSON records a warmuphmc_sha.

@@ -39,13 +39,19 @@ To get any reparametrization you must supply, yourself:
   parameter;
 * for each, a **location** and a **log-scale**, either as constants or as
   closures over the whole parameter vector;
-* a **reverse-mode AD backend**, used for the transform's own Jacobian.
+* an **AD backend**, used for the transform's own Jacobian. This page uses
+  Enzyme, spelled as in the warning below.
 
 On that last point: WarmupHMC differentiates a scalar objective in the *full*
 parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
 reverse mode exists for — its cost is one pass regardless of dimension, while
-forward mode costs one pass per input. Use Enzyme, spelled as in the warning
-below, or another reverse-mode DifferentiationInterface backend.
+forward mode costs one pass per input. That is an argument about operation
+counts, and it is worth knowing that **the measured wall-clock does not follow
+it**: reverse mode wins on small targets here and loses on larger ones, in the
+opposite direction to what the counting argument suggests. The table is in the
+[`ReparametrizedProblem`](@ref) docstring. Reverse mode is a reasonable default
+and what the examples below use; if the gradient is your bottleneck, measure
+both on your own model rather than reasoning from dimension.
 
 **The interface ships; the backend is yours to bring.**
 `DifferentiationInterface` is a hard dependency of WarmupHMC, so
@@ -54,16 +60,12 @@ only works once you have loaded the package behind it, and `AutoEnzyme` needs
 `using Enzyme`. Nothing in `src/` ever constructs one: `ad_backend` is a field
 you fill in.
 
-!!! warning "A bare `AutoEnzyme()` does not work — it needs two options, for two different failures"
-    Pass both:
+!!! warning "A bare `AutoEnzyme()` does not work — it needs `function_annotation`"
+    Pass it:
 
     ```julia
-    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
-                 function_annotation=Enzyme.Const)
+    AutoEnzyme(; function_annotation=Enzyme.Const)
     ```
-
-    They guard different call sites and they fail at different moments, so it is
-    worth knowing which is which.
 
     **`function_annotation=Enzyme.Const`** — without it, the run dies on the
     **first gradient**:
@@ -79,21 +81,30 @@ you fill in.
     data. `Const` states what is already true here: `g_y` is frozen by
     construction — a constant of the differentiation, not a function of `x`.
     **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
-    the same answer, but [`ReparametrizedProblem`](@ref) records it as **22×
-    slower** per gradient on an 11-dimensional funnel. That hint diagnoses the
-    problem; it is not the fix.
+    the same answer, but it allocates a shadow copy of the closure on every
+    call. That hint diagnoses the problem; it is not the fix. How much the
+    shadow copy costs depends strongly on the target — from ~11× per gradient on
+    a 10-dimensional funnel down to nothing measurable on the radon models;
+    [`ReparametrizedProblem`](@ref) carries the measured table. `Const` is the
+    right annotation regardless, because it is the *correct* one.
 
-    **`set_runtime_activity`** — without it, the run gets past construction and
-    past the first gradient, and then dies at the **first restarting window**:
+!!! note "`set_runtime_activity` used to be required as well — it no longer is"
+    There is a *second* call site on your backend: the joint halo transport
+    described under [What warm-up actually does](@ref). It ran a closure Enzyme
+    could not statically prove, so a plain `Const` got past construction and past
+    the first gradient and then died at the **first restarting window** with
+    `EnzymeRuntimeActivityError` — partway into a run, rather than at setup.
 
-    ```
-    EnzymeRuntimeActivityError: Detected potential need for runtime activity.
-    ```
+    The objective was made statically provable, so the workaround is no longer
+    needed and this page no longer recommends it. Passing
+    `mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` anyway is harmless — it
+    measured free — so an existing script that carries it does not need editing.
 
-    That is the final joint halo transport described under
-    [What warm-up actually does](@ref), which runs your backend over a *second*
-    closure. Enzyme cannot statically prove that one's activity either, and
-    unlike the first it is not fixable by an annotation at the call site.
+    Mentioned because the failure was in a released state of the docs, and
+    because it is the shape to expect if a future change adds a third call site:
+    a backend that works for hundreds of gradients and then throws is a
+    *coverage* problem, not a user error. `web/src/test/enzyme/` exists to catch
+    exactly that and now pins this site with a plain `Const`.
 
 !!! note "WarmupHMC does not depend on ForwardDiff, and does not want to"
     `Project.toml` has no ForwardDiff entry — not a direct dependency, and there
@@ -148,8 +159,7 @@ ir = IndexedReparametrization([
 ])
 
 rp = ReparametrizedProblem(ir, funnel,
-    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
-                 function_annotation=Enzyme.Const))
+    AutoEnzyme(; function_annotation=Enzyme.Const))
 result = adaptive_warmup_mcmc(Xoshiro(20260728), rp; n_draws=1000, progress=nothing)
 ```
 
@@ -180,11 +190,18 @@ parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
 !!! note "Provenance of the figures above"
-    They were produced by the example exactly as written, at `ba6b4f0`. The same
-    run was also executed under `AutoEnzyme(; function_annotation=Enzyme.Duplicated)`
-    and under `AutoForwardDiff()` — both as controls, not as recommendations. All
-    three return the identical gradient at the first step and the identical
-    `[0.0, 0.0, 0.0, 0.0, 0.0]` and `6 × 1000` at the end. What a gradient
+    They were produced by the example exactly as written, first at `ba6b4f0` and
+    re-verified unchanged at `b2ff221`. The re-run matters: `aac6489` in between
+    made the joint halo transport exact, which is the kind of change that *can*
+    move adaptation behaviour, and these figures are only worth printing if
+    somebody checked rather than assumed.
+
+    The same run was also executed under
+    `AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse), function_annotation=Enzyme.Const)`
+    — the spelling this page used to require — and under
+    `AutoEnzyme(; function_annotation=Enzyme.Duplicated)`, as controls rather
+    than recommendations. All three produce a **byte-identical** `6 × 1000`
+    draw matrix and the same `[0.0, 0.0, 0.0, 0.0, 0.0]`. What a gradient
     *costs* is what the backend choice decides; what it *returns* here is
     backend-independent.
 

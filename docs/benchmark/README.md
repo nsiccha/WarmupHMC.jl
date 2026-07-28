@@ -108,7 +108,13 @@ julia --project=docs/benchmark docs/benchmark/capture_boxing.jl       # ROUNDS, 
 | `prep_cost.jl` | how much of the per-gradient cost is DI preparation, which the hot path redoes on every call | `results/prep_cost.json` |
 | `typical_positions.jl` | whether the verdict depends on evaluating at `randn(d)` rather than where the sampler actually goes | `results/typical_positions.json` |
 | `annotation_sweep.jl` | superseded first pass at `Const` vs `Duplicated`, one shot per configuration; kept because `replicate_backends.jl` was written to check it | `results/annotation_sweep.json` |
-| `capture_boxing.jl` | **why the backend comparison says what it says** — which specs capture a `Core.Box`, read off `fieldtypes`, and an A/B of one spec rebuilt with unboxed captures and bit-identical gradients | `results/capture_boxing.json` |
+| `capture_boxing.jl` | **why the backend comparison says what it says**, and a guard so it cannot say it again — which specs capture a `Core.Box`, read off `fieldtypes`, plus an A/B between a boxed and an unboxed control with gradients bit-identical to the shipped spec's | `results/capture_boxing.json` |
+
+`capture_boxing.jl` is the one probe with an **exit code**: non-zero, naming every
+offending spec, if any shipped closure argument captures a `Core.Box`. Both A/B
+controls are built inside the script rather than taken from the spec table, so the
+cost stays measurable — and the guard stays honest — regardless of how the shipped
+table is currently written.
 
 **Run these in a process that has not just sampled.** Running a full sampler
 first warms the ForwardDiff path enough to make its subsequent microbenchmark

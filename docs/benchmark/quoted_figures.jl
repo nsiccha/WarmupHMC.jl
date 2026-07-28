@@ -27,6 +27,24 @@
 # file where nothing can tell it has stopped being true. So the check stops being
 # a reading pass.
 #
+# There is a SECOND shape, and defect 3 is really an instance of it: figures that
+# are individually correct and wrong in RELATION to one another. `27431` and
+# `25863` were each a real measurement; what was false was presenting both as the
+# same run's bare gradient. It recurred as a `16x tax` beside an `11% overhead` --
+# both computable, different denominators, neither wrong on its own.
+#
+# Deriving a figure does not close this shape, and that is the part worth
+# internalising: A COMPUTED NUMBER VOUCHES FOR ITSELF AND FOR NOTHING AROUND IT.
+# The operator, the units, the direction of the comparison and the label beside
+# it are all hand-written text, and the correct value is precisely what stops a
+# reviewer re-reading them. Generating the number moves the risk rather than
+# removing it. (Paid for twice: once by the `16x`, and once by a line in this
+# file's own history whose bound was computed and whose `>` was typed.)
+#
+# So the checks that earn their place here are the ones that pin a RELATIONSHIP --
+# `:pattern`, where every mention of one quantity must agree, and encoding the
+# denominator a sentence intends -- not one more independently-derived figure.
+#
 # WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT. It checks figures that are
 # MECHANICALLY DERIVABLE from a live artifact. It does not check prose judgements
 # ("small enough to be paid out of the sampling gain"), and it cannot: those are

@@ -32,12 +32,16 @@
 #     NONCENTERED. Same test, plus web/src/posteriordb_reparametrizations.jl
 #     assigning c=1 to every `*_centered` posteriordb model and c=0 to every
 #     `*_noncentered` one.
-#   - `nonlinear_adapt=false` freezes the source centering AND skips the
-#     finalization back-transform, so its draws come back in the SOURCE frame.
-#     Measured (docs/benchmark/README.md records the measurement). The fixed
-#     arms therefore apply `WarmupHMC.reparametrize!` exactly once themselves.
-#     With nonlinear_adapt=true the sampler has already done it and a second
-#     application would corrupt the draws.
+#   - `nonlinear_adapt=false` freezes the source centering but still
+#     back-transforms at finalization, so EVERY arm's draws come back in the
+#     model's own frame and this harness transforms nothing itself. That is true
+#     from `b109210` ("report draws in the model frame even when
+#     nonlinear_adapt=false"); before it, the fixed arms came back in the source
+#     frame and this file compensated with one `reparametrize!`. Re-measured on
+#     this base — a centered funnel sampled through a noncentered source returns
+#     coordinate 1 at mean -0.006, sd 2.934 against the known `Normal(0, 3)`
+#     marginal, and applying `reparametrize!` on top inflates the leg sds to
+#     100-300. If you are pinning an older WarmupHMC, put the compensation back.
 #   - `result.ess` is all zeros unless `monitor_ess=true`; this harness never
 #     reads it and computes ESS from the draws instead.
 #   - `n_draws` is a floor, so every rate is normalized by the actual draw count.
@@ -108,7 +112,7 @@ const AD_BACKEND = bench_ad_backend()
 const AD_BACKEND_NAME = lowercase(get(ENV, "WHMC_BENCH_AD", "enzyme"))
 
 using WarmupHMC: ReparametrizedProblem, IndexedReparametrization, PartiallyCentered,
-                 Reparametrization, reparametrize!
+                 Reparametrization
 using Random, Statistics, Printf
 import MCMCDiagnosticTools
 import JSON
@@ -278,11 +282,10 @@ nanmed(v) = isempty(v) ? NaN : median(v)
 
 Sample `problem` once and return a flat NamedTuple of measurements.
 
-`spec === nothing` means the bare, unwrapped problem. When `adapt` is false the
-sampler neither moves the source centering nor back-transforms at finalization,
-so this function applies `reparametrize!` itself — exactly once — to bring the
-draws into the model's own frame. When `adapt` is true the sampler has already
-done that and a second application would corrupt the draws.
+`spec === nothing` means the bare, unwrapped problem. `adapt` selects whether the
+sampler may move the source centering; it does not affect the frame the draws come
+back in. Every arm's draws are already in the model's own frame, so this function
+applies no transform of its own — see the `nonlinear_adapt` note in the header.
 """
 function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
                  n_draws::Int, model = nothing)
@@ -306,10 +309,6 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
     end
 
     draws = Matrix{Float64}(res.posterior_position)
-    # `nonlinear_adapt=false` leaves the draws in the sampler's frame.
-    if !isnothing(spec) && !adapt && size(draws, 2) > 0
-        reparametrize!(lpdf, draws)
-    end
 
     n = size(draws, 2)
     ess = ess_per_coordinate(draws)

@@ -566,15 +566,24 @@ says the overhead is addressable.
 Two things this benchmark had to get right that are not obvious from the API, and
 which would each have silently corrupted the fixed-parametrization arms:
 
-- **`nonlinear_adapt=false` skips the finalization back-transform.** The flag
-  gates both the reparametrization fit (`adaptive_warmup_mcmc.jl:379`) and the
-  back-transform (`:397`), so a fixed-`c` run returns draws in the *source*
-  frame, not the model's. Every fixed arm here therefore applies
-  `WarmupHMC.reparametrize!` exactly once itself (`common.jl:252`); the adaptive
-  arms must not, because the sampler has already done it. Without that, the
-  fixed-noncentered arm would have been scored on draws that were never mapped
-  back — measurably wrong, and wrong in the direction that would have made
-  adaptive look better.
+- **`nonlinear_adapt=false` used to skip the finalization back-transform, and no
+  longer does.** The flag gated both the reparametrization fit and the
+  back-transform, so a fixed-`c` run returned draws in the *source* frame, not
+  the model's, and every fixed arm here applied `WarmupHMC.reparametrize!`
+  exactly once itself while the adaptive arms did not. Without that compensation
+  the fixed-noncentered arm would have been scored on draws that were never
+  mapped back — wrong in the direction that would have made adaptive look better.
+
+  `b109210` ("report draws in the model frame even when `nonlinear_adapt=false`")
+  inverted this, so from that commit the compensation is what corrupts the arm.
+  It is gone, and the flag now selects only whether the source centering may
+  move. `frame_check.jl` pins the new behaviour: a centered funnel sampled
+  through a noncentered source returns coordinate 1 at mean −0.006, sd 2.934
+  against the known `Normal(0, 3)` marginal, and applying `reparametrize!` on top
+  inflates the leg sds to 100–300. **Numbers in `results/before`, `results/after`,
+  `results/forwarddiff-b5c7dee` and `results/enzyme-b5c7dee` were all measured on
+  bases predating `b109210`, where the compensation was correct.** Anything
+  measured after it must not carry one.
 - **The no-op arm really is a no-op.** `plain` and `fixed c = centered` are
   mathematically the same sampler, and agree to the last gradient evaluation on
   every seed for `seeds_data` (101.7 min ESS, 13068 grads, both arms) and the

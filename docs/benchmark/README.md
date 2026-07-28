@@ -100,6 +100,7 @@ julia --project=docs/benchmark docs/benchmark/replicate_backends.jl   # ROUNDS, 
 julia --project=docs/benchmark docs/benchmark/prep_cost.jl            # NCALLS
 julia --project=docs/benchmark docs/benchmark/typical_positions.jl    # ROUNDS
 julia --project=docs/benchmark docs/benchmark/capture_boxing.jl       # ROUNDS, NCALLS
+julia --project=docs/benchmark docs/benchmark/frame_check.jl
 ```
 
 | script | question | output |
@@ -110,11 +111,20 @@ julia --project=docs/benchmark docs/benchmark/capture_boxing.jl       # ROUNDS, 
 | `annotation_sweep.jl` | superseded first pass at `Const` vs `Duplicated`, one shot per configuration; kept because `replicate_backends.jl` was written to check it | `results/annotation_sweep.json` |
 | `capture_boxing.jl` | **why the backend comparison says what it says**, and a guard so it cannot say it again — which specs capture a `Core.Box`, read off `fieldtypes`, plus an A/B between a boxed and an unboxed control with gradients bit-identical to the shipped spec's | `results/capture_boxing.json` |
 
-`capture_boxing.jl` is the one probe with an **exit code**: non-zero, naming every
-offending spec, if any shipped closure argument captures a `Core.Box`. Both A/B
-controls are built inside the script rather than taken from the spec table, so the
-cost stays measurable — and the guard stays honest — regardless of how the shipped
-table is currently written.
+| `frame_check.jl` | **which frame `nonlinear_adapt=false` returns draws in** — the assumption every fixed-`c` arm's numbers rest on, and one that has already flipped once | `results/frame_check.json` |
+
+`capture_boxing.jl` and `frame_check.jl` are the two probes with an **exit code**:
+non-zero, saying what to do about it, when the property they pin does not hold.
+`capture_boxing.jl` names every shipped spec that captures a `Core.Box`, and builds
+both A/B controls inside the script rather than taking one from the spec table, so
+the cost stays measurable — and the guard stays honest — regardless of how the
+shipped table is currently written. `frame_check.jl` discriminates by a wide margin
+(1.6 against 103.3 in max relative sd deviation), so a pass is not a near miss.
+
+**Run both before trusting a results directory.** Each pins a sampler property the
+harness depends on and cannot detect the loss of from the numbers alone — a
+double-transformed fixed arm and a boxed spec are both perfectly plausible-looking
+rows.
 
 **Run these in a process that has not just sampled.** Running a full sampler
 first warms the ForwardDiff path enough to make its subsequent microbenchmark
@@ -181,7 +191,7 @@ verdict can be checked against that list rather than against a global maximum.
 | `run_reparam_benchmark.jl` | driver — runs everything, writes a results dir, prints the table |
 | `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
 | `compare.jl` | before/after diff across two results dirs |
-| `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl` | backend probes (above) |
+| `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl`, `frame_check.jl` | probes (above) |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `results/*.json` | backend-probe outputs, not tied to a sampling run |

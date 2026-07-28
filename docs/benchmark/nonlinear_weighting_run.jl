@@ -163,17 +163,6 @@ for key in TARGET_KEYS
     end
 end
 
-whmc_sha() = try
-    readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`)
-catch
-    "unknown"
-end
-whmc_dirty() = try
-    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no`))
-catch
-    missing
-end
-
 # Sampler settings the runs did NOT pass, recorded as their RESOLVED VALUES
 # rather than as the word "defaults". "Defaults" names a moving target: it
 # resolves against whatever the sampler shipped on the day, so a config saying
@@ -222,8 +211,9 @@ config = Dict{String,Any}(
     "study" => "nonlinear online trajectory weighting: leaf policy x metric policy",
     "measured_by" => get(ENV, "KB_AGENT_ID", "unknown"),
     "host" => get(ENV, "KB_HOST", "unknown"),
-    "warmuphmc_sha" => whmc_sha(),
-    "worktree_dirty" => whmc_dirty(),
+    # `warmuphmc_sha`, `worktree_dirty` and `src_dirty` are merged in below from
+    # `git_provenance()` (common.jl) rather than spelled out here, so this file
+    # cannot drift into recording the revision without the cleanliness flags.
     "julia" => string(VERSION),
     # READ, not asserted: `common.jl` calls `BLAS.set_num_threads(1)` because a
     # multithreaded BLAS reduces in a nondeterministic order, which changes the
@@ -243,6 +233,8 @@ config = Dict{String,Any}(
                       for k in TARGET_KEYS),
     "note" => "Rows only. Every summary is derived by nonlinear_weighting.jl at " *
               "read time; regenerate the rows with nonlinear_weighting_run.jl.")
+
+merge!(config, git_provenance())
 
 mkpath(OUT)
 open(joinpath(OUT, "rows.json"), "w") do io

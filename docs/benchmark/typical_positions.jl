@@ -118,7 +118,7 @@ open(joinpath(OUT_DIR, "typical_positions.json"), "w") do io
                   "vs randn(dim). Reconciles the microbenchmark with the end-to-end runs.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
         "rounds" => ROUNDS,
-        "warmuphmc_sha" => readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`),
+        git_provenance()...,
         "rows" => rows), 2)
 end
 println("\nwrote results/typical_positions.json")

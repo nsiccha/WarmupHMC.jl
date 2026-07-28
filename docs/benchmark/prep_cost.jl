@@ -116,7 +116,7 @@ open(joinpath(OUT_DIR, "prep_cost.json"), "w") do io
                   "The package calls value_and_gradient with no prep object, so it " *
                   "re-prepares on every gradient evaluation.",
         "julia" => string(VERSION), "n_calls" => N,
-        "warmuphmc_sha" => readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`),
+        git_provenance()...,
         "rows" => rows), 2)
 end
 println("\nwrote results/prep_cost.json")

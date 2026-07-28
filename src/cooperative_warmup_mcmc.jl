@@ -311,7 +311,11 @@ never calls `run_chain!`, so this only matters if you drive a chain by hand.
 run_chain!(chain::CooperativeChain) = begin
     while advance_window!(chain) != :done
     end
-    chain.nonlinear_adapt && reparametrize!(chain.lpdf, chain_draws(chain))
+    # Not gated on `nonlinear_adapt` — see `finalize_warmup!` in
+    # `adaptive_warmup_mcmc.jl`. That flag gates FITTING the centering, never
+    # whether the returned draws are reported in the model's parametrization.
+    # No-op for a plain lpdf (`reparametrizer(::Any)` is empty).
+    reparametrize!(chain.lpdf, chain_draws(chain))
     chain
 end
 
@@ -706,17 +710,25 @@ end
     chain_result(chain) -> NamedTuple
 
 Adaptive-style per-chain result. Maps draws back to the original
-parametrization (when `nonlinear_adapt`), then reports the collected positions/
-gradients plus diagnostics and the per-window `checkpoints` log.
+parametrization, then reports the collected positions/gradients plus
+diagnostics and the per-window `checkpoints` log.
+
+The back-transform is unconditional — `nonlinear_adapt=false` still samples in
+the reparametrizer's source frame, so it still needs the map back. It is a
+no-op when the lpdf carries no reparametrizer.
 
 Terminal finalizer: it reparametrizes the draws in place, so call it exactly
 once per chain and never after [`run_chain!`](@ref) (double reparametrization
-corrupts the draws). The scheduler drives chains with `advance_window!` alone —
+corrupts the draws — and since the back-transform no longer depends on
+`nonlinear_adapt`, that is now true on the `false` path too). The scheduler drives chains with `advance_window!` alone —
 which does not reparametrize — so `_finalize` is the single such call.
 """
 chain_result(chain::CooperativeChain) = begin
     draws = chain_draws(chain)
-    chain.nonlinear_adapt && size(draws, 2) > 0 && reparametrize!(chain.lpdf, draws)
+    # Not gated on `nonlinear_adapt` — see `finalize_warmup!` in
+    # `adaptive_warmup_mcmc.jl`. The `size(draws, 2) > 0` guard stays: it is
+    # about an abandoned chain having no draws, not about adaptation.
+    size(draws, 2) > 0 && reparametrize!(chain.lpdf, draws)
     (;
         # `state.chains` is in install-COMPLETION order, not index order, so
         # `results[i]` is not chain `i`. Carry the identity explicitly.

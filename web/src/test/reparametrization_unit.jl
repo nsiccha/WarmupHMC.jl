@@ -381,35 +381,40 @@ end
     end
 
     @testset "coupled `loc`: a reparametrized coordinate as another block's loc" begin
-        # `optimize!` transports each block with a SINGLE map,
-        # `Reparametrization(new_source, old_source, args...)`, whose `args` are
-        # evaluated once against `first(xgi)` — a column it is concurrently
-        # mutating. When the `loc` coordinate is itself in `pairs` and sorts
-        # first, the θ blocks read it AFTER it moved.
+        # The one cross-coordinate shape the joint pass does NOT handle: a
+        # coordinate that is simultaneously a transform target and another
+        # block's `loc` argument. The testset directly above is the uncoupled
+        # control — coordinate 2 is the shared `loc` but is not in `pairs`, and
+        # there the joint pass is exact. Here it is both.
         #
-        # That shortcut equals the true composition (old map, then inverse new
-        # map) only when one `loc` value serves both halves. Two regimes, and
-        # the difference is not a matter of degree:
+        # This measures the SHIPPED seam, `find_reparametrization!`, and not the
+        # marginal `optimize!` search it wraps. That distinction is load-bearing:
+        # while this testset called `optimize!` it reported the marginal number,
+        # stayed Broken for a right-looking reason, and could not see that
+        # `ba6b4f01` made the coupled case WORSE. Measured on `ba6b4f01` — same
+        # harness, same seed, the seam being the only difference:
         #
-        #   c_old == c_target : the OLD map is the IDENTITY, `loc_old` drops out
-        #                       of the composition entirely, and the mutated read
-        #                       supplies exactly the `loc_new` the new map wants.
-        #                       Correct — measured exact to 1.4e-14.
-        #   c_old != c_target : both `loc_old` and `loc_new` genuinely appear.
-        #                       No single value serves both. Broken by ~1e2.
+        #   start          marginal (`optimize!`)     joint (`find_reparametrization!`)
+        #   c = 1 (all)    pos 1.4e-14 (exact)   ->   pos 1.9e+02   grad 5.6e+03
+        #   c = 0.5 (all)  pos 1.1e+02           ->   pos 4.2e+02   grad 1.0e+03
         #
-        # So this is a SECOND-AND-LATER-window defect: the first adaptation from
-        # a fully-centered start is fine, and it breaks once that window fits a
-        # non-trivial source. Every reparametrization spec shipped in this repo
-        # is uncoupled (the `args` coordinates are disjoint from the `idx` set),
-        # so nothing hits this today — but `accel_gp` reads `x[46]` with its
-        # `idx` starting at 47, which is one off-by-one away.
+        # Read the first row: from a fully-centered start — where every shipped
+        # spec begins — the marginal search was exact and the joint pass breaks
+        # it. The comment that used to stand here called that regime "correct,
+        # measured exact to 1.4e-14" and on that basis predicted this pin would
+        # promote on the joint fix. It did the opposite. Both regimes are broken
+        # now, so the old first-window/later-window split describes nothing.
         #
-        # Note this is POSITION invariance, not gradient staleness. The final
-        # rematerialization below fixes every shipped, uncoupled spec. This
-        # deliberately coupled accessor is the unsupported edge: the simple
-        # `inverse(::IndexedReparametrization)` itself is no longer a true inverse
-        # when one transformed coordinate parameterizes another block.
+        # LATENT, not a live bug: every spec shipped in this repo is uncoupled
+        # (the `args` coordinates are disjoint from the `idx` set in all nine
+        # families), so nothing reaches this today. But `accel_gp` reads `x[46]`
+        # with its `idx` starting at 47 — one off-by-one away — and after
+        # `ba6b4f01` that off-by-one costs the FIRST window rather than the
+        # second.
+        #
+        # All four pins below are `@test_broken` deliberately. Any of them
+        # promoting is the signal that the coupled composition got fixed; the
+        # position pair and the gradient pair can move independently.
         k = 4
         coupled_ir(cs) = IndexedReparametrization(vcat(
             [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(cs[1]),
@@ -420,10 +425,10 @@ end
         coupled_problem(cs) =
             ReparametrizedProblem(coupled_ir(cs), NestedFunnel(k), AutoForwardDiff())
 
-        # Position invariance during the marginal search: `optimize!` may change
-        # the parametrization, but the MODEL point each column denotes must not
-        # move.
-        function theta_transport_error(start)
+        # Both invariants the sampler needs out of the seam: the MODEL point each
+        # column denotes must not move, and the stored gradient must be the one
+        # the target actually returns at the new coordinates.
+        function coupled_transport_error(start)
             rng = Xoshiro(4242)
             rp = coupled_problem(start)
             ir = reparametrizer(rp)
@@ -437,27 +442,34 @@ end
                 G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
             end
             X0 = copy(X)
-            optimize!(ir, X, G)
+            pg = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, X[:, 1]; strict=false)
+            find_reparametrization!(rp, X, G, pg)
             moved = maximum(abs, view(X, 2, :) .- view(X0, 2, :))
-            err = maximum(3:(k + 2)) do r
+            perr = maximum(3:(k + 2)) do r
                 maximum(j -> abs(ir(X[:, j])[2][r] - ir_old(X0[:, j])[2][r]), 1:n)
             end
-            (; err, moved)
+            gerr = maximum(1:n) do j
+                maximum(abs, G[:, j] .-
+                        LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2])
+            end
+            (; perr, gerr, moved)
         end
 
-        centered = theta_transport_error(fill(1.0, k + 1))
-        println("  coupled, c_old == c_target: θ transport error = $(centered.err) ",
-                "(loc coordinate moved by $(centered.moved))")
-        # Not vacuous: the `loc` coordinate really did move underneath the θ
-        # blocks, and they still landed on the same model point.
+        centered = coupled_transport_error(fill(1.0, k + 1))
+        println("  coupled, c_old == c_target: joint θ-position error = $(centered.perr), ",
+                "gradient error = $(centered.gerr) (loc coordinate moved by $(centered.moved))")
+        # Not vacuous: the `loc` coordinate really does move underneath the θ
+        # blocks. This one passed as `@test` while the seam was `optimize!`.
         @test centered.moved > 1.0
-        @test centered.err < 1e-10
+        @test_broken centered.perr < 1e-10
+        @test_broken centered.gerr < 1e-8
 
-        shifted = theta_transport_error(fill(0.5, k + 1))
-        println("  coupled, c_old != c_target: θ transport error = $(shifted.err) ",
-                "(loc coordinate moved by $(shifted.moved))")
+        shifted = coupled_transport_error(fill(0.5, k + 1))
+        println("  coupled, c_old != c_target: joint θ-position error = $(shifted.perr), ",
+                "gradient error = $(shifted.gerr) (loc coordinate moved by $(shifted.moved))")
         @test shifted.moved > 1.0
-        @test_broken shifted.err < 1e-10
+        @test_broken shifted.perr < 1e-10
+        @test_broken shifted.gerr < 1e-8
     end
 
     @testset "find_reparametrization! is a no-op for a plain lpdf" begin

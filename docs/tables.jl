@@ -39,17 +39,37 @@ landed in one owner's file and the breakage surfaced in another's, and
 the new shape in silence, so only the page that NAMED a removed key went red.
 An enumerating consumer cannot fail; a naming one is the whole gate.
 
-**An empty value is treated as unset, deliberately.** `get(ENV, k, default)`
-returns `""` for an exported-but-empty variable, and `joinpath("", "x")` is
-*relative* — so the naive form silently resolves to the process's working
-directory. On the generator side that scatters result files into the repo root;
-here it would be worse, because the consumer would read whatever happened to be
-there and the guard would pass while checking nothing.
+**A blank value is an ERROR, not a fallback.** `get(ENV, k, default)` returns
+`""` for an exported-but-empty variable, and `joinpath("", "x")` is *relative*,
+so the naive form silently resolves to the process's working directory. On the
+generator side that scatters result files into the repo root. Here it is worse
+in a subtler way: falling back to the checked-in results would let a CI guard
+that regenerates into a temp directory build green against the very copies it
+deliberately deleted — passing while checking nothing, which is the exact state
+that guard exists to prevent. Refusing blank closes it independent of step
+order.
+
+Mirrors `env_dir` in `docs/benchmark/common.jl`. Duplicated rather than shared
+on purpose: the docs environment may only depend on what `docs/Project.toml`
+has, and including `common.jl` would drag BridgeStan and PosteriorDB into the
+docs build. Keep the two in lockstep — one variable, one meaning.
 """
 function results_dir()
-    override = get(ENV, "WHMC_BENCH_OUT", "")
-    isempty(override) || return normpath(override)
-    normpath(joinpath(@__DIR__, "benchmark", "results"))
+    haskey(ENV, "WHMC_BENCH_OUT") ||
+        return normpath(joinpath(@__DIR__, "benchmark", "results"))
+    override = ENV["WHMC_BENCH_OUT"]
+    isempty(strip(override)) && error("""
+        WHMC_BENCH_OUT is set but blank.
+
+        A blank value is almost always an unset shell variable that expanded to
+        the empty string. It is refused rather than defaulted, because falling
+        back to the checked-in results would let a guard that regenerates into a
+        temporary directory pass while reading the copies it meant to replace.
+
+        Unset WHMC_BENCH_OUT to read the checked-in results, or give it a real
+        path.
+        """)
+    normpath(override)
 end
 
 """

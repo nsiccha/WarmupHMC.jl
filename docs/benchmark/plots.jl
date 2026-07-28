@@ -243,6 +243,7 @@ the solid rule is the family median derived by Vega-Lite.
 """
 function ace_proxy_ratio_spec(d; height::Int = 260)
     values = ace_ratio_plot_rows(d)
+    idx = sort!(unique(v["seed_index"] for v in values))
     ratios = [v["ratio"] for v in values]
     lo = min(0.8, minimum(ratios))
     hi = max(1.0, maximum(ratios))
@@ -290,7 +291,7 @@ function ace_proxy_ratio_spec(d; height::Int = 260)
                         "x" => Dict(
                             "field" => "seed_index", "type" => "quantitative",
                             "title" => "paired seed", "axis" => Dict(
-                                "values" => collect(1:16), "format" => "d",
+                                "values" => idx, "format" => "d",
                                 "labelOverlap" => true,
                             ),
                         ),

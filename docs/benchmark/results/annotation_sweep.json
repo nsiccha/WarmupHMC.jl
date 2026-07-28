@@ -7,92 +7,92 @@
       "c_source": 0.0,
       "dim": 10,
       "max_grad_diff": 0.0,
-      "ns_const": 1112.4455,
-      "ns_duplicated": 9933.94,
-      "ns_forwarddiff": 1735.66,
+      "ns_const": 901.2945,
+      "ns_duplicated": 4640.9985,
+      "ns_forwarddiff": 6857.5385,
       "target": "eight_schools-eight_schools_centered"
     },
     {
       "c_source": 0.5,
       "dim": 10,
       "max_grad_diff": 8.881784197001252e-16,
-      "ns_const": 1684.74,
-      "ns_duplicated": 7576.241,
-      "ns_forwarddiff": 3620.957,
+      "ns_const": 818.0295,
+      "ns_duplicated": 4408.9585,
+      "ns_forwarddiff": 1452.836,
       "target": "eight_schools-eight_schools_centered"
     },
     {
       "c_source": 0.0,
       "dim": 88,
       "max_grad_diff": 2.2737367544323206e-13,
-      "ns_const": 33688.47,
-      "ns_duplicated": 71972.272,
-      "ns_forwarddiff": 98100.637,
+      "ns_const": 30007.689,
+      "ns_duplicated": 63405.91,
+      "ns_forwarddiff": 62211.2305,
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "c_source": 0.5,
       "dim": 88,
       "max_grad_diff": 6.821210263296962e-13,
-      "ns_const": 38127.005,
-      "ns_duplicated": 80691.8355,
-      "ns_forwarddiff": 92108.347,
+      "ns_const": 27611.015,
+      "ns_duplicated": 61291.976,
+      "ns_forwarddiff": 59836.5565,
       "target": "radon_mn-radon_partially_pooled_centered"
     },
     {
       "c_source": 0.0,
       "dim": 89,
       "max_grad_diff": 1.1368683772161603e-13,
-      "ns_const": 59706.0225,
-      "ns_duplicated": 97189.5045,
-      "ns_forwarddiff": 98019.74,
+      "ns_const": 44857.5485,
+      "ns_duplicated": 81797.5605,
+      "ns_forwarddiff": 81692.901,
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "c_source": 0.5,
       "dim": 89,
       "max_grad_diff": 1.7053025658242404e-13,
-      "ns_const": 53048.014,
-      "ns_duplicated": 105255.071,
-      "ns_forwarddiff": 91859.6135,
+      "ns_const": 46868.0745,
+      "ns_duplicated": 74275.364,
+      "ns_forwarddiff": 79268.7585,
       "target": "radon_mn-radon_variable_intercept_centered"
     },
     {
       "c_source": 0.0,
       "dim": 26,
       "max_grad_diff": 3.410605131648481e-13,
-      "ns_const": 3999.715,
-      "ns_duplicated": 13038.0395,
-      "ns_forwarddiff": 6264.556,
+      "ns_const": 3588.885,
+      "ns_duplicated": 16066.2635,
+      "ns_forwarddiff": 6267.6495,
       "target": "seeds_data-seeds_centered_model"
     },
     {
       "c_source": 0.5,
       "dim": 26,
       "max_grad_diff": 5.684341886080802e-14,
-      "ns_const": 3979.5975,
-      "ns_duplicated": 13854.426,
-      "ns_forwarddiff": 6303.61,
+      "ns_const": 3477.216,
+      "ns_duplicated": 10682.255,
+      "ns_forwarddiff": 10386.6165,
       "target": "seeds_data-seeds_centered_model"
     },
     {
       "c_source": 0.0,
       "dim": 10,
       "max_grad_diff": 8.881784197001252e-16,
-      "ns_const": 335.318,
-      "ns_duplicated": 5393.964,
-      "ns_forwarddiff": 1172.0775,
+      "ns_const": 332.259,
+      "ns_duplicated": 13973.6595,
+      "ns_forwarddiff": 871.318,
       "target": "funnel"
     },
     {
       "c_source": 0.5,
       "dim": 10,
       "max_grad_diff": 4.440892098500626e-16,
-      "ns_const": 415.038,
-      "ns_duplicated": 5258.773,
-      "ns_forwarddiff": 1320.0515,
+      "ns_const": 337.481,
+      "ns_duplicated": 4233.5605,
+      "ns_forwarddiff": 899.662,
       "target": "funnel"
     }
   ],
-  "warmuphmc_sha": "c4e4670e8548491e7dcc5725171c56368b31b2c4"
+  "warmuphmc_sha": "7556a15255de68b7fd5c178056621d1f39d3db16"
 }

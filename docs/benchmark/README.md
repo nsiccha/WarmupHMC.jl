@@ -88,30 +88,36 @@ one place and it is settable per run:
 | `WHMC_BENCH_AD` | `enzyme` | `enzyme` or `forwarddiff` — the DI backend the wrapper differentiates with |
 
 Reverse mode is the rule; ForwardDiff is retained *only* so the two can be
-compared on one base, which is what `results/enzyme-b5c7dee` and
-`results/forwarddiff-b5c7dee` document. Note the backend package must be loaded
+compared on one base, which is what `results/enzyme-5637fcf` and
+`results/forwarddiff-5637fcf` document. Note the backend package must be loaded
 for the ADTypes object to work: `AutoEnzyme()` needs `using Enzyme`.
 
-Two things about that default are easy to get wrong:
+Three things about that default are easy to get wrong:
 
 - **It must be `AutoEnzyme(; function_annotation = Enzyme.Const)`.** A bare
   `AutoEnzyme()` raises `EnzymeMutabilityException` here, because the
   differentiated objective is a closure capturing the reparametrizer and the
   frozen inner gradient. Enzyme's own error text suggests `Duplicated`, which is
-  correct but costs up to 13× more on small targets.
-- **Enzyme/`Const` loses on three of five targets here — because of a defect in
-  the spec table, not because of reverse mode.** `reparametrization()` in
-  `web/src/posteriordb_reparametrizations.jl` closes over indices assigned in
-  several branches of one long `if`/`elseif`, so Julia captures a `Core.Box`
+  correct but costs 1.6–16× more per gradient (`results/annotation_sweep.json`).
+- **Enzyme/`Const` is faster on all five targets — but every measurement of that
+  taken before `e9bcfd0` said the opposite, and said it because of a defect in
+  the spec table.** `reparametrization()` in
+  `web/src/posteriordb_reparametrizations.jl` closed over indices assigned in
+  several branches of one long `if`/`elseif`, so Julia captured a `Core.Box`
   instead of an `Int` on `radon_partially_pooled`, `radon_variable_intercept`
-  and `seeds`. That costs ForwardDiff ~4.8× and Enzyme ~15× per wrapped
-  gradient, which is enough to invert which backend looks faster (1.21× slower
+  and `seeds`. That cost ForwardDiff 4.65× and Enzyme 15.58× per wrapped
+  gradient, which was enough to invert which backend looked faster (1.31× slower
   → 0.39×, i.e. 2.6× faster, on de-boxed `radon_partially_pooled`, with
   bit-identical gradients). `funnel` and `eight_schools` close over literals and
-  are unaffected — they are the only two rows that currently say anything about
-  the backend, and both favour Enzyme. Run `capture_boxing.jl` (below) before
-  drawing any backend conclusion, and treat the `d`-scaling question as **open**:
-  dimension and boxing are perfectly confounded across these five targets.
+  never moved. `capture_boxing.jl` is now a **guard** that re-derives every
+  branch of the shipped table and fails if any of them boxes again; run it
+  before drawing any backend conclusion.
+- **The `d`-scaling question is still open, for a different reason.** Dimension
+  and boxing are no longer confounded, but across the de-boxed five the
+  within-target spread across harnesses is as wide as the between-target spread
+  — so these five points support the *direction* (reverse mode wins, 35 of 35
+  comparisons) and cannot resolve the *slope*. Do not read a trend in `d` out of
+  them in either direction; see `RESULTS.md` § *Which AD backend*.
 
 ### Backend probes
 
@@ -283,8 +289,15 @@ Result directories, newest base last:
 |---|---|---|---|
 | `results/before` | `05aed41` | ForwardDiff | carried the halo-recording regression `34ce034` |
 | `results/after` | `c8fed88` | ForwardDiff | the fix; reproduced exactly by `forwarddiff-b5c7dee` |
-| `results/forwarddiff-b5c7dee` | `b5c7dee` | ForwardDiff | backend comparison baseline |
-| `results/enzyme-b5c7dee` | `b5c7dee` | Enzyme/`Const` | **current default** |
+| `results/forwarddiff-b5c7dee` | `b5c7dee` | ForwardDiff | **boxed specs** — superseded, kept as the before side of `e9bcfd0` |
+| `results/enzyme-b5c7dee` | `b5c7dee` | Enzyme/`Const` | **boxed specs** — superseded, ditto |
+| `results/forwarddiff-5637fcf` | `5637fcf` | ForwardDiff | backend comparison baseline, de-boxed |
+| `results/enzyme-5637fcf` | `5637fcf` | Enzyme/`Const` | **current default**, de-boxed — every table in `RESULTS.md` |
+
+A directory measured before `e9bcfd0` is not comparable with one measured after
+it on `radon_partially_pooled`, `radon_variable_intercept` or `seeds`: the
+gradient cost changed by 4.6–15.6× on those three. `funnel` and `eight_schools`
+are comparable across the whole table.
 
 ## Prior art
 

@@ -53,7 +53,7 @@ Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("sampler_comparison_summary.jl")
 d = load_results("sampler_comparison.json")
 md_table(
-    ["target", "sampler", "min ESS", "ESS / gradient", "gradients", "divergences", "seeds"],
+    ["target", "sampler", "min ESS", "ESS / gradient", "gradients", "divergences", "runs ok"],
     [[r.target, COMPARISON_ARM_LABELS[r.arm], num(r.ess_min), num(r.ess_per_grad),
       num(r.grad_evals), string(r.n_divergent), string(r.n_ok, "/", r.n_run)]
      for r in comparison_summary(d)],

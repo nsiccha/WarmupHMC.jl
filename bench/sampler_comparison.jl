@@ -304,6 +304,24 @@ jsonsafe(x::NamedTuple) = Dict(string(k) => jsonsafe(v) for (k, v) in pairs(x))
 jsonsafe(x) = x
 
 out = joinpath(OUT_DIR, "sampler_comparison.json")
+
+# CALL `git_provenance()` BEFORE THE `open`, NOT INSIDE IT.
+#
+# `open(path, "w")` truncates at open, so a provenance call inside the write
+# block sees THIS FILE as an uncommitted change and records
+# `worktree_dirty = true` — about itself. Measured directly: `git status
+# --porcelain --untracked-files=no -- <out>` prints nothing before the `open`
+# and ` M <out>` from inside it.
+#
+# It fails in the loudest possible wrong direction. `docs/tables.jl:provenance`
+# renders a dirty flag as "**Recorded from a worktree with uncommitted
+# changes**, so the revision named above does not describe the code that ran —
+# and no revision does", which is a strong and false claim about a measurement
+# that was perfectly clean. And it only appears on REgeneration: the first run
+# writes an untracked file, `git_provenance()` passes `--untracked-files=no`,
+# and the flag reads `false`. So the bug is invisible exactly when a harness is
+# new, and shows up later looking like a real problem with the tree.
+const PROV = git_provenance()
 # Provenance goes INSIDE `config`, merged, not beside it under its own key.
 # `docs/tables.jl:provenance` reads `config` first and falls back to the top
 # level; a `"provenance"` key is neither, so the caption rendered "an
@@ -319,7 +337,7 @@ out = joinpath(OUT_DIR, "sampler_comparison.json")
 # calls `BLAS.get_num_threads()` for the same reason.
 open(out, "w") do io
     JSON.print(io, jsonsafe(Dict(
-        "config" => merge(git_provenance(),
+        "config" => merge(PROV,
                           Dict{String,Any}("n_seeds" => N_SEEDS, "n_draws" => N_DRAWS,
                                            "n_repeats" => N_REPEATS,
                                            "funnel_K" => FUNNEL_K,

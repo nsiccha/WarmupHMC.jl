@@ -61,16 +61,28 @@ _cmp_rows(data, target, arm) =
 """
     comparison_summary(data) -> Vector of NamedTuple
 
-One median row per (target, arm): min ESS, the two rates, and total divergences
-across seeds. `n_ok` is carried so a reader can see a row backed by one seed for
-what it is.
+One median row per (target, arm): min ESS, the two rates, and divergences
+summed across seeds. `n_ok`/`n_run` count ROWS, i.e. seeds × repeats, so a row
+backed by fewer successful runs than it claims is visible as such.
+
+DIVERGENCES ARE SUMMED WITHIN A REPEAT, THEN MEDIANED ACROSS REPEATS — not
+summed over every row. A divergence count is a function of the draws, and the
+draws are bit-identical across repeats, so summing the lot would multiply the
+true count by `n_repeats` and produce a figure that silently changes meaning when
+somebody sets `WHMC_CMP_REPEATS`. It rendered as `18` instead of `6` for the
+funnel the first time this was tried. The ratios between arms survive that
+scaling, which is exactly why it is the kind of error a reader cannot catch.
 """
 function comparison_summary(data::AbstractDict)
+    reps = comparison_repeats(data)
     out = NamedTuple[]
     for t in comparison_targets(data), arm in COMPARISON_ARMS
         rows = _cmp_rows(data, t, arm)
         isempty(rows) && continue
         ok = [r for r in rows if get(r, "ok", false)]
+        per_repeat = [sum(Int(get(r, "n_divergent", 0))
+                          for r in ok if Int(get(r, "repeat", 1)) == rep; init = 0)
+                      for rep in reps]
         push!(out, (
             target = t,
             arm = arm,
@@ -80,7 +92,8 @@ function comparison_summary(data::AbstractDict)
             ess_per_grad = _cmp_median(rows, "ess_min_per_grad"),
             ess_per_s = _cmp_median(rows, "ess_min_per_s"),
             grad_evals = _cmp_median(rows, "grad_evals"),
-            n_divergent = sum(Int(get(r, "n_divergent", 0)) for r in ok; init = 0),
+            n_divergent = isempty(per_repeat) ? 0 :
+                          round(Int, Statistics.median(per_repeat)),
         ))
     end
     out

@@ -244,6 +244,10 @@ end
 println("\nThose two disagree in direction. Any backend verdict measured on a boxed")
 println("spec is a property of the spec table, not of the backend.")
 
+# `git_provenance()` BEFORE the `open` — see the trap documented on it in
+# `common.jl`. `open(path, "w")` truncates immediately, so a provenance call
+# inside this block would see this very file as an uncommitted change.
+const PROV = git_provenance()
 open(joinpath(OUT_DIR, "capture_boxing.json"), "w") do io
     JSON.print(io, Dict(
         "note" => "Which posteriordb specs capture a Core.Box, and what it costs on " *
@@ -252,7 +256,7 @@ open(joinpath(OUT_DIR, "capture_boxing.json"), "w") do io
                   "the shipped spec's, so the delta is pure overhead and the " *
                   "measurement is independent of how the shipped table is written.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
-        git_provenance()...,
+        PROV...,
         "rounds" => ROUNDS, "n_calls" => NCALLS,
         "captures" => captures, "boxed_specs" => boxed_specs,
         "ab_target" => AB_TARGET,

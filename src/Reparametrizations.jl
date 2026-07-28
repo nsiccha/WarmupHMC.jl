@@ -66,8 +66,21 @@ mode costs one.
 
     | target | `d` | Enzyme ÷ ForwardDiff |
     |---|---|---|
-    | `funnel`        | 10 | 0.35–0.42× |
-    | `eight_schools` | 10 | 0.44–0.92× |
+    | `funnel`        | 10 | 0.31–0.67× |
+    | `eight_schools` | 10 | 0.43–0.66× |
+
+    Those ranges span **every** Enzyme-`Const`-over-ForwardDiff figure checked
+    into this repository for these two targets — `annotation_sweep`,
+    `backend_replication` (7 rounds), `typical_positions`, and the
+    `gradient_overhead` pair — which is what makes them re-derivable. They
+    replace a narrower `0.35–0.42` / `0.44–0.92` that was **not**: swept against
+    the checked-in JSON by `WarmupHMC:reparam-docs`, `eight_schools`' upper bound
+    of `0.92` exceeded every value in every file (the maximum anywhere is 0.660),
+    and `funnel`'s band excluded two figures that are in the repo. The five-
+    process run those came from was never checked in, so the table asserted a
+    precision the evidence could not support while the surrounding paragraph
+    invited the reader to trust it specifically. Reported as "not reproducible",
+    not as "wrong" — the distinction is right, and widening is the fix either way.
 
     Those are the only two rows this table can carry. The larger targets —
     `seeds`, `radon_partially_pooled`, `radon_variable_intercept` — were measured

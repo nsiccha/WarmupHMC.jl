@@ -39,7 +39,72 @@ To get any reparametrization you must supply, yourself:
   parameter;
 * for each, a **location** and a **log-scale**, either as constants or as
   closures over the whole parameter vector;
-* an **AD backend**, used for the transform's own Jacobian.
+* a **reverse-mode AD backend**, used for the transform's own Jacobian.
+
+On that last point: WarmupHMC differentiates a scalar objective in the *full*
+parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
+reverse mode exists for — its cost is one pass regardless of dimension, while
+forward mode costs one pass per input. Use Enzyme, spelled as in the warning
+below, or another reverse-mode DifferentiationInterface backend.
+
+**The interface ships; the backend is yours to bring.**
+`DifferentiationInterface` is a hard dependency of WarmupHMC, so
+`ReparametrizedProblem` can always *talk* to a backend — but a backend object
+only works once you have loaded the package behind it, and `AutoEnzyme` needs
+`using Enzyme`. Nothing in `src/` ever constructs one: `ad_backend` is a field
+you fill in.
+
+!!! warning "A bare `AutoEnzyme()` does not work — it needs two options, for two different failures"
+    Pass both:
+
+    ```julia
+    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
+                 function_annotation=Enzyme.Const)
+    ```
+
+    They guard different call sites and they fail at different moments, so it is
+    worth knowing which is which.
+
+    **`function_annotation=Enzyme.Const`** — without it, the run dies on the
+    **first gradient**:
+
+    ```
+    EnzymeMutabilityException: Function argument passed to autodiff cannot be
+    proven readonly.
+    ```
+
+    What gets differentiated is a closure capturing the frozen inner gradient
+    `g_y` and the reparametrizer (see [`ReparametrizedProblem`](@ref)), and
+    Enzyme will not assume on its own that captured state holds no derivative
+    data. `Const` states what is already true here: `g_y` is frozen by
+    construction — a constant of the differentiation, not a function of `x`.
+    **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
+    the same answer, but [`ReparametrizedProblem`](@ref) records it as **22×
+    slower** per gradient on an 11-dimensional funnel. That hint diagnoses the
+    problem; it is not the fix.
+
+    **`set_runtime_activity`** — without it, the run gets past construction and
+    past the first gradient, and then dies at the **first restarting window**:
+
+    ```
+    EnzymeRuntimeActivityError: Detected potential need for runtime activity.
+    ```
+
+    That is the final joint halo transport described under
+    [What warm-up actually does](@ref), which runs your backend over a *second*
+    closure. Enzyme cannot statically prove that one's activity either, and
+    unlike the first it is not fixable by an annotation at the call site.
+
+!!! note "WarmupHMC does not depend on ForwardDiff, and does not want to"
+    `Project.toml` has no ForwardDiff entry — not a direct dependency, and there
+    is no `[weakdeps]` section for it to hide in either. ForwardDiff reaches the
+    environment only transitively, through Pathfinder, and warm-up *actively
+    defuses* it — the Pathfinder initialization passes `adtype=NoAD()` so
+    Pathfinder's forward-mode default cannot call your `logdensity` with
+    `Dual`-valued parameters, which a natively-backed target such as a BridgeStan
+    model could not accept. If you find `AutoForwardDiff()` named in a test or a
+    benchmark here, that is a harness pinned to its own frozen baselines, not a
+    recommendation — `web/src/test/ad_backend.jl` says so at the point of use.
 
 ## A complete worked example
 
@@ -49,8 +114,8 @@ each with location `0` and log-scale `v/2`.
 
 ```julia
 using WarmupHMC, LogDensityProblems, Random
-using ForwardDiff                                  # backs AutoForwardDiff
-using DifferentiationInterface: AutoForwardDiff
+using Enzyme                                       # backs AutoEnzyme
+using DifferentiationInterface: AutoEnzyme
 
 struct Funnel
     k::Int
@@ -82,12 +147,14 @@ ir = IndexedReparametrization([
     for i in 2:(k + 1)
 ])
 
-rp = ReparametrizedProblem(ir, funnel, AutoForwardDiff())
+rp = ReparametrizedProblem(ir, funnel,
+    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
+                 function_annotation=Enzyme.Const))
 result = adaptive_warmup_mcmc(Xoshiro(20260728), rp; n_draws=1000, progress=nothing)
 ```
 
-The fitted centerings live on the `IndexedReparametrization` you passed in — it
-is mutated in place — so read them back off `ir`:
+The fitted centerings live on the `IndexedReparametrization` you passed in — the
+single-chain method mutates it in place — so read them back off `ir`:
 
 ```julia
 julia> [v.source.c for (_, v) in ir.pairs]
@@ -103,13 +170,26 @@ All five coordinates were driven from `1.0` to `0.0`: warm-up found the
 non-centered parametrization of the funnel on its own, without being told that
 the funnel is the model it was looking at.
 
+Reading the result back off your own object is a *single-chain* affordance. The
+multi-chain method gives each chain its own `deepcopy`, so the object you built
+stays exactly as you built it and each chain's fitted centerings live on its own
+copy — see "What warm-up actually does" below.
+
 `result.posterior_position` is `6 × 1000` and is in the **model's own**
 parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
-!!! note "Every number on this page was measured at `36256d3`"
-    Adaptation behaviour is not fixed across commits — these same figures were
-    materially different a few commits earlier. If you are on a different tip,
+!!! note "Provenance of the figures above"
+    They were produced by the example exactly as written, at `ba6b4f0`. The same
+    run was also executed under `AutoEnzyme(; function_annotation=Enzyme.Duplicated)`
+    and under `AutoForwardDiff()` — both as controls, not as recommendations. All
+    three return the identical gradient at the first step and the identical
+    `[0.0, 0.0, 0.0, 0.0, 0.0]` and `6 × 1000` at the end. What a gradient
+    *costs* is what the backend choice decides; what it *returns* here is
+    backend-independent.
+
+    Adaptation behaviour is *not* fixed across commits, however: these same figures
+    were materially different a few commits earlier. If you are on a different tip,
     re-run rather than assume.
 
 The reparametrization is re-fitted only at warm-up windows that **restart**, and
@@ -213,6 +293,12 @@ metric is re-selected:
    coordinate are transported into the new parametrization before the next
    coordinate is scored.
 5. A coordinate with 2 or fewer halo states keeps the centering it had.
+6. Once every coordinate has settled, the **whole** halo is rebuilt in a single
+   final pass: positions and gradients are recomputed from the *originals*
+   through the composed old-to-new map, one AD pass per recorded state. The
+   scoring step above mutates a working pool as the search walks the
+   coordinates; this final pass is what the next window actually sees. The
+   wrapped model is never re-evaluated — only the transform is differentiated.
 
 The grid is a design choice, not an approximation of a continuous search.
 Centering is a bounded, one-dimensional quantity, so the candidate set can be
@@ -271,9 +357,15 @@ transform, and one AD pass over it. Your location and log-scale accessors run
 under AD on every one of those, so keep them cheap and type-generic — indexing,
 arithmetic, `exp`/`log`; not `Float64`-annotated code, not anything that mutates.
 
-**Two construction mistakes fail late rather than at construction.** Both build a
-perfectly valid-looking object and blow up further in:
+**Three construction mistakes fail late rather than at construction.** Each builds
+a perfectly valid-looking object and blows up further in:
 
+* **An under-specified Enzyme backend**, which fails late *twice*. A bare
+  `AutoEnzyme()` constructs, `logdensity` works on the result, and the first
+  `logdensity_and_gradient` throws `EnzymeMutabilityException`. Add
+  `function_annotation=Enzyme.Const` and it gets further — all the way to the
+  first restarting window — before throwing `EnzymeRuntimeActivityError`. Both
+  options are needed; see the warning at the top of this page.
 * **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
   form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
   so nothing looks wrong until the first `logdensity_and_gradient`, which hands

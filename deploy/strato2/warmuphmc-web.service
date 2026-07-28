@@ -1,0 +1,38 @@
+[Unit]
+Description=WarmupHMC posterior and benchmark dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=n
+Group=n
+WorkingDirectory=/home/n/services/WarmupHMC
+Environment=HOME=/home/n
+Environment=PATH=/home/n/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=JULIA_DEPOT_PATH=/home/n/.julia
+Environment=JULIA_NUM_THREADS=auto
+Environment=BRIDGESTAN=/home/n/.bridgestan/bridgestan-2.9.0
+Environment=STANC_PATH=/home/n/.bridgestan/bridgestan-2.9.0/bin/stanc
+Environment=WHMC_CACHE_DIR=/home/n/.local/share/WarmupHMC/cache
+Environment=HTMXO_ERROR_DIR=/home/n/.local/share/WarmupHMC/htmxo_errors
+ExecStart=/home/n/.local/bin/julia --startup-file=no --project=/home/n/.local/share/WarmupHMC/env /home/n/services/WarmupHMC/deploy/strato2/run.jl 8128
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0027
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/home/n/.julia /home/n/.bridgestan /home/n/.local/share/WarmupHMC
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -137,3 +137,182 @@ function backend_ratio_spec(rows; height::Int = 300)
         ],
     )
 end
+
+ace_plot_arm_label(arm) = get(Dict(
+    "exact_score_reference" => "reference c*",
+    "invariant_proxy" => "online proxy",
+    "whitened_noncentered" => "whitened",
+    "fully_centered" => "centered",
+), arm, arm)
+
+function ace_efficiency_plot_rows(d)
+    rows = ace_chain_rows(d)
+    isempty(rows) && error("adaptive-centering efficiency figure has zero chain rows")
+    invalid = [r for r in rows if !(r["min_bulk_ess_per_1000_grad"] isa Real)]
+    isempty(invalid) || error(
+        "adaptive-centering efficiency figure has $(length(invalid)) " *
+        "chain row(s) with missing or non-numeric bulk ESS/gradient",
+    )
+    values = [Dict{String,Any}(
+        "family" => ace_family_label(r["family"]),
+        "arm" => ace_plot_arm_label(r["arm"]),
+        "seed" => r["seed"],
+        "bulk_efficiency" => r["min_bulk_ess_per_1000_grad"],
+    ) for r in rows]
+    minimum(v["bulk_efficiency"] for v in values) > 0 || error(
+        "adaptive-centering efficiency figure requires strictly positive " *
+        "bulk ESS/gradient values for its log scale",
+    )
+    values
+end
+
+"""
+    ace_bulk_ess_spec(d; height=280) -> Dict
+
+Per-chain minimum-coordinate bulk ESS per thousand full-run gradient
+evaluations, on a shared log scale. The boxes are computed by Vega-Lite from
+the checked-in chain rows; no plotted summary is stored in the artifact.
+
+Refuses empty, missing, zero and negative inputs so the log scale cannot
+silently erase a failed chain.
+"""
+function ace_bulk_ess_spec(d; height::Int = 280)
+    Dict(
+        "\$schema" => "https://vega.github.io/schema/vega-lite/v5.json",
+        "data" => Dict("values" => ace_efficiency_plot_rows(d)),
+        "facet" => Dict("column" => Dict(
+            "field" => "family", "type" => "nominal",
+            "sort" => ["Gaussian", "Student-t(5)"],
+            "header" => Dict("title" => nothing),
+        )),
+        "spec" => Dict(
+            "width" => 300,
+            "height" => height,
+            "mark" => Dict("type" => "boxplot", "extent" => "min-max",
+                           "size" => 30),
+            "encoding" => Dict(
+                "x" => Dict(
+                    "field" => "arm", "type" => "nominal",
+                    "sort" => ["reference c*", "online proxy", "whitened", "centered"],
+                    "title" => nothing,
+                    "axis" => Dict("labelAngle" => -20, "labelLimit" => 110),
+                ),
+                "y" => Dict(
+                    "field" => "bulk_efficiency", "type" => "quantitative",
+                    "scale" => Dict("type" => "log"),
+                    "title" => "min bulk ESS / 1,000 gradients",
+                ),
+                "color" => Dict(
+                    "field" => "arm", "type" => "nominal",
+                    "sort" => ["reference c*", "online proxy", "whitened", "centered"],
+                    "legend" => nothing,
+                ),
+            ),
+        ),
+        "resolve" => Dict("scale" => Dict("y" => "shared")),
+    )
+end
+
+function ace_ratio_plot_rows(d)
+    isempty(ace_chain_rows(d)) &&
+        error("adaptive-centering ratio figure has zero chain rows")
+    values = Dict{String,Any}[]
+    for family in d["config"]["families"]
+        comparison = ace_proxy_comparison(d, family)
+        for (i, (seed, ratio)) in enumerate(zip(
+            comparison["seeds"], comparison["ratios"],
+        ))
+            push!(values, Dict{String,Any}(
+                "family" => ace_family_label(family),
+                "seed_index" => i,
+                "seed" => seed,
+                "ratio" => ratio,
+            ))
+        end
+    end
+    isempty(values) && error("adaptive-centering ratio figure has zero paired rows")
+    values
+end
+
+"""
+    ace_proxy_ratio_spec(d; height=260) -> Dict
+
+Paired per-seed proxy/reference efficiency ratios. The dashed red rule is the
+predeclared materially-worse threshold, the dotted grey rule is parity, and
+the solid rule is the family median derived by Vega-Lite.
+"""
+function ace_proxy_ratio_spec(d; height::Int = 260)
+    values = ace_ratio_plot_rows(d)
+    idx = sort!(unique(v["seed_index"] for v in values))
+    ratios = [v["ratio"] for v in values]
+    lo = min(0.8, minimum(ratios))
+    hi = max(1.0, maximum(ratios))
+    padding = max(0.02, 0.05(hi - lo))
+    Dict(
+        "\$schema" => "https://vega.github.io/schema/vega-lite/v5.json",
+        "data" => Dict("values" => values),
+        "facet" => Dict("column" => Dict(
+            "field" => "family", "type" => "nominal",
+            "sort" => ["Gaussian", "Student-t(5)"],
+            "header" => Dict("title" => nothing),
+        )),
+        "spec" => Dict(
+            "width" => 300,
+            "height" => height,
+            "layer" => [
+                Dict(
+                    "mark" => Dict("type" => "rule", "color" => "#7f8c8d",
+                                   "strokeDash" => [2, 3], "opacity" => 0.75),
+                    "encoding" => Dict("y" => Dict(
+                        "datum" => 1.0, "type" => "quantitative")),
+                ),
+                Dict(
+                    "mark" => Dict("type" => "rule", "color" => "#c0392b",
+                                   "strokeDash" => [6, 4], "opacity" => 0.85),
+                    "encoding" => Dict("y" => Dict(
+                        "datum" => 0.8, "type" => "quantitative")),
+                ),
+                Dict(
+                    "transform" => [Dict(
+                        "aggregate" => [Dict(
+                            "op" => "median", "field" => "ratio", "as" => "median_ratio",
+                        )],
+                        "groupby" => ["family"],
+                    )],
+                    "mark" => Dict("type" => "rule", "color" => "#2c3e50",
+                                   "strokeWidth" => 2.5),
+                    "encoding" => Dict("y" => Dict(
+                        "field" => "median_ratio", "type" => "quantitative")),
+                ),
+                Dict(
+                    "mark" => Dict("type" => "point", "filled" => true,
+                                   "size" => 80, "color" => "#2878b5", "opacity" => 0.85),
+                    "encoding" => Dict(
+                        "x" => Dict(
+                            "field" => "seed_index", "type" => "quantitative",
+                            "title" => "paired seed", "axis" => Dict(
+                                "values" => idx, "format" => "d",
+                                "labelOverlap" => true,
+                            ),
+                        ),
+                        "y" => Dict(
+                            "field" => "ratio", "type" => "quantitative",
+                            "scale" => Dict("zero" => false,
+                                            "domain" => [lo - padding, hi + padding]),
+                            "title" => "proxy ÷ reference ESS/gradient",
+                        ),
+                        "tooltip" => [
+                            Dict("field" => "family", "type" => "nominal",
+                                 "title" => "family"),
+                            Dict("field" => "seed", "type" => "quantitative",
+                                 "title" => "seed", "format" => "d"),
+                            Dict("field" => "ratio", "type" => "quantitative",
+                                 "title" => "proxy ÷ reference", "format" => ".3f"),
+                        ],
+                    ),
+                ),
+            ],
+        ),
+        "resolve" => Dict("scale" => Dict("y" => "shared")),
+    )
+end

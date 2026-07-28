@@ -36,6 +36,8 @@
             # 2. payload is pure state: no config, no dead `stage`
             p = deserialize(joinpath(d, "cp_latest.jls"))
             for k in (:n_draws, :stepsize_adaptation_limit, :variance_cond_target,
+                      :linear_restart_source, :linear_trajectory_weighting,
+                      :linear_metric_fallback,
                       :nonlinear_adapt, :monitor_ess, :recording_target, :kwargs,
                       :algorithm, :stepsize_adaptation, :stage)
                 @test !hasproperty(p, k)
@@ -43,6 +45,7 @@
             @test p.sampler === :adaptive
             @test p.schema_version == 2
             @test hasproperty(p, :position_and_gradient)   # state still there
+            @test hasproperty(p, :linear_recorder)
 
             # 3. re-running into a non-empty dir refuses to guess
             @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; checkpoint_dir=d, cfg...)
@@ -81,6 +84,48 @@
             @test WarmupHMC.checkpoint_sampler((; a=1)) === :adaptive
             # recording_target cannot change on resume
             @test_throws ArgumentError WarmupHMC.restore_state(p, lpdf, nothing; recording_target=7)
+        end
+    end
+
+    mktempdir() do d
+        @testset "opt-in transformed estimator resumes exactly" begin
+            weighted_cfg = (;
+                n_draws=160, n_evaluations=80, stepsize_adaptation_limit=12,
+                nonlinear_adapt=false, monitor_ess=false, init=_init(lpdf),
+                linear_restart_source=:nuts_weighted,
+                linear_trajectory_weighting=:stepsize,
+            )
+            straight = adaptive_warmup_mcmc(Xoshiro(17), lpdf; weighted_cfg...)
+            stop_after_first_window = (state, stage) ->
+                stage === :window && state.outer_counter == 1
+            adaptive_warmup_mcmc(
+                Xoshiro(17), lpdf; checkpoint_dir=d,
+                callback=stop_after_first_window, weighted_cfg...,
+            )
+            resumed = adaptive_warmup_mcmc(
+                Xoshiro(999), lpdf; checkpoint_dir=d, resume=true, weighted_cfg...,
+            )
+            @test resumed.posterior_position == straight.posterior_position
+            @test resumed.posterior_gradient == straight.posterior_gradient
+            @test resumed.total_evaluation_counter == straight.total_evaluation_counter
+            @test resumed.scale_changes == straight.scale_changes
+            @test resumed.linear_metric_fallbacks == straight.linear_metric_fallbacks
+
+            payload = deserialize(joinpath(d, "cp_latest.jls"))
+            @test payload.linear_recorder.source === :nuts_weighted
+            @test payload.linear_recorder.trajectory_weighting === :stepsize
+            inherited = WarmupHMC.restore_state(payload, lpdf, nothing;
+                linear_restart_source=nothing, linear_trajectory_weighting=nothing,
+                nonlinear_adapt=false)
+            @test inherited.linear_restart_source === :nuts_weighted
+            @test inherited.linear_trajectory_weighting === :stepsize
+            @test inherited.transformed_adaptation.weight ==
+                payload.linear_recorder.adaptation.weight
+
+            changed = WarmupHMC.restore_state(payload, lpdf, nothing;
+                linear_restart_source=:nuts_weighted,
+                linear_trajectory_weighting=:unit, nonlinear_adapt=false)
+            @test changed.transformed_adaptation.weight == 0
         end
     end
 

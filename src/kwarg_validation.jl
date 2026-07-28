@@ -76,6 +76,8 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :monitor_ess, :nonlinear_adapt, :nonlinear_evidence,
         :nonlinear_trajectory_weighting, :nonlinear_good_leaf_threshold,
         :variance_cond_target, :callback,
+        :linear_restart_source, :linear_trajectory_weighting,
+        :linear_metric_fallback,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
@@ -87,6 +89,8 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :checkpoint_name, :parallel, :n_draws, :stepsize_adaptation_limit,
         :nonlinear_evidence, :nonlinear_trajectory_weighting,
         :nonlinear_good_leaf_threshold,
+        :linear_restart_source, :linear_trajectory_weighting,
+        :linear_metric_fallback,
     ),
     :cooperative_warmup_mcmc => (
         :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,

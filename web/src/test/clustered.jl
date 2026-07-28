@@ -12,7 +12,8 @@
 
 @testitem "the clustered cooperative sampler" setup=[Determinism] tags=[:sampler] begin
     using WarmupHMC, LogDensityProblems, LinearAlgebra, Random, Statistics
-    using WarmupHMC: Variances, NutpieScaleAdaptation, unmerge!, pooled, marginal_scales,
+    using WarmupHMC: Variances, NutpieScaleAdaptation, WeightedScaleAdaptation,
+        effective_sample_size, unmerge!, pooled, marginal_scales,
         cond_compatibility, compatible, assign_clusters, lookbehind_clusters,
         loo_criterion, linkage_criterion, inclusive_criterion,
         clustered_chains, clustered_step!, clustered_output, clustered_result, chain_draws
@@ -71,6 +72,35 @@
                 @test mean(merged) ≈ mean(vall)
                 @test var(merged) ≈ var(vall)
                 @test nobs(merged) == nobs(vall) == 240
+            end
+            # General fractional weights track W and W₂ explicitly. The
+            # unbiased covariance uses W-W₂/W and is invariant to a common
+            # rescaling of every weight.
+            let xs = [[-2.0, 1.0], [0.5, 4.0], [3.0, -1.0]],
+                gs = [[1.0, -1.0], [2.0, 0.5], [-0.5, 3.0]],
+                ws = [0.2, 1.7, 0.6]
+                a = WeightedScaleAdaptation(2)
+                foreach((x, g, w) -> fit!(a, x, g; dw=w), xs, gs, ws)
+                W = sum(ws); W2 = sum(abs2, ws)
+                μx = sum(w .* x for (x, w) in zip(xs, ws)) ./ W
+                μg = sum(w .* g for (g, w) in zip(gs, ws)) ./ W
+                vx = sum(w .* abs2.(x .- μx) for (x, w) in zip(xs, ws)) ./ (W - W2 / W)
+                vg = sum(w .* abs2.(g .- μg) for (g, w) in zip(gs, ws)) ./ (W - W2 / W)
+                @test nobs(a) ≈ W
+                @test a.weight2 ≈ W2
+                @test effective_sample_size(a) ≈ W^2 / W2
+                @test a.position_mean ≈ μx
+                @test a.gradient_mean ≈ μg
+                @test marginal_scales(a) ≈ (vx ./ vg) .^ 0.25
+
+                scaled = WeightedScaleAdaptation(2)
+                foreach((x, g, w) -> fit!(scaled, x, g; dw=11w), xs, gs, ws)
+                @test marginal_scales(scaled) ≈ marginal_scales(a)
+
+                empty = WeightedScaleAdaptation(2)
+                fit!(empty, xs[1], gs[1]; dw=0.0)
+                @test nobs(empty) == 0
+                @test empty.weight2 == 0
             end
             # unmerge! is the exact inverse of merge!
             let dim = 3, rng = Xoshiro(2)

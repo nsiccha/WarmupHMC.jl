@@ -225,9 +225,18 @@ Read one results JSON and split it into scalar provenance and named row tables.
 Both shapes the drivers emit are handled without naming either: a bare array of
 rows (`after/gradient_overhead.json`), and an object carrying scalar provenance
 alongside one or more arrays of rows (`rows`, `runs`, `captures`). The rule is
-structural — an array-of-objects field is a table, every other field is
-provenance — so a new driver needs no change here. That is the point: this
-renderer must not become a second place where a result's schema is written down.
+structural — an array-of-objects field is a table, an object-valued field
+contributes its entries to provenance, every other field is provenance — so a
+new driver needs no change here. That is the point: this renderer must not become
+a second place where a result's schema is written down.
+
+The object rule is what lets a harness keep its metadata under `config` (the
+shape `provenance` in `docs/tables.jl` prefers, since one copy of
+`warmuphmc_sha` cannot disagree with a duplicate of itself) render identically to
+the older flat shape, instead of collapsing into one mashed `k=v k=v` cell with
+the SHA unreachable. The nested entry wins a name collision, matching
+`tables.jl`. It is stated as a rule about objects rather than about `config`, so
+it holds for whatever the next harness calls its grouping.
 """
 benchmark_load(key) = begin
     parsed = JSON.parsefile(benchmark_path(key))
@@ -236,17 +245,23 @@ benchmark_load(key) = begin
                   tables = ["rows" => benchmark_table(parsed)])
     end
     tables = Pair{String,Any}[]
-    scalars = String[]
+    scalars = Pair{String,Any}[]
+    nested = Pair{String,Any}[]
     for (k, v) in parsed
         if v isa AbstractVector && !isempty(v) && all(x -> x isa AbstractDict, v)
             push!(tables, k => benchmark_table(v))
+        elseif v isa AbstractDict
+            append!(nested, [string(nk) => v[nk] for nk in sort(collect(keys(v)))])
         else
-            push!(scalars, k)
+            push!(scalars, k => v)
         end
     end
     sort!(tables; by=first)
-    (; provenance = [k => _bench_cell(parsed[k])
-                     for k in _bench_order(scalars, BENCHMARK_PROVENANCE_ORDER)],
+    nested_names = Set(first.(nested))
+    flat = vcat(nested, [p for p in scalars if !(first(p) in nested_names)])
+    order = _bench_order(first.(flat), BENCHMARK_PROVENANCE_ORDER)
+    lookup = Dict(flat)
+    (; provenance = [k => _bench_cell(lookup[k]) for k in order],
        tables = tables)
 end
 

@@ -188,6 +188,27 @@ pattern(label, re, s) = push!(checks, (kind = :pattern, label = label, re = re, 
 # That is a census and it will need adding to; it is worth it at this size, and
 # an unmatched claim is reported rather than skipped so a reword cannot silently
 # unbind it.
+#
+# REACH FOR THIS ONLY WHEN THE PROSE HAS NO EXECUTION SEAM. `absence()` is an
+# EXTERNAL binding: the claim lives in one file and its predicate in another, so
+# they can drift, and only this script notices. Where the prose is executed at
+# build time there is a strictly stronger move -- put the claim in a BRANCH that
+# reads the predicate, so the claim and the predicate are the same expression:
+#
+#     nl === false ? "Nonlinear adaptation is off in every run..." :
+#     nl === true  ? "**Nonlinear adaptation was enabled**..." :
+#                    "**Whether nonlinear adaptation was on is not recorded**..."
+#
+# That is `docs/src/linear-restart.md`, and it CANNOT go stale -- it can only
+# stop being displayed. (`nonlinear_adapt` is recorded as `false`, so the third
+# branch does not render at all today.) No external check is owed, or possible,
+# or needed.
+#
+# The reason it works is the sharper form of the whole class: this defect needs
+# prose that has COMMITTED to a state. A conditional never commits -- it reports
+# whichever state holds at build time. So the rule is: if the file is built, put
+# the claim in a branch; if it is not built, and `RESULTS.md` is not, bind it
+# here. Do not reach for `absence()` on a page that could have used a branch.
 function absence(label, claim, token)
     hits = String[]
     for (root, _, files) in walkdir(RESULTS_DIR), f in files

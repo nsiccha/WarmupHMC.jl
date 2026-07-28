@@ -430,8 +430,12 @@ parametrization and let warm-up move it from there.
 
 `args` are the extra arguments the centerings need — for [`PartiallyCentered`](@ref)
 exactly two, the location and the log-scale, in that order. Each is either a
-constant or a callable applied to the whole parameter vector, so `x -> x[9]`
-reads the location off coordinate 9 and `0.` pins it to zero.
+constant or a `Function` applied to the whole parameter vector, so `x -> x[9]`
+reads the location off coordinate 9 and `0.` pins it to zero. A callable struct
+must subtype `Function`; an otherwise-callable object is treated as a constant by
+the accessor contract. That mismatch is silent at construction: the struct
+itself becomes the argument value, so any symptom appears later inside the
+centering or gradient evaluation.
 
 The callables are applied to the sampler's SOURCE-coordinate vector as it was on
 entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no

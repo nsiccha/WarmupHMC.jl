@@ -18,6 +18,13 @@ const ROWS_PATH = length(ARGS) >= 1 ? ARGS[1] : NW_ROWS_PATH
 # rather than shared because this script is deliberately dependency-light: the
 # docs build loads its derivation, and pulling in common.jl would drag
 # BridgeStan and PosteriorDB into `makedocs`.
+#
+# FOUR sites implement this one rule, not two. `docs/tables.jl`'s `results_dir`
+# says "keep the two in lockstep" and names only `common.jl`; the other two are
+# here and in `run_linear_restart_benchmark.jl` (which guards
+# `WHMC_LINEAR_BENCH_OUT`, a different variable under the same rule). A lockstep
+# search anchored on that sentence finds neither. If the rule ever changes,
+# change all four: common.jl, tables.jl, this file, run_linear_restart_benchmark.jl.
 if haskey(ENV, "WHMC_BENCH_OUT") && isempty(strip(ENV["WHMC_BENCH_OUT"]))
     error("WHMC_BENCH_OUT is set but blank; unset it or give it a real path.")
 end

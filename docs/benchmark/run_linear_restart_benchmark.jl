@@ -33,6 +33,13 @@ const N_EVALUATIONS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_EVALS", "1000"))
 # reason. Short version: an unset shell variable expands to "", `get` returns it
 # rather than the default, and `joinpath("", f)` is relative, so the run writes
 # its JSON into the current directory without saying so.
+#
+# FOUR sites implement this one rule: common.jl (`env_dir`), docs/tables.jl
+# (`results_dir`), nonlinear_weighting_report.jl, and here. `results_dir`'s
+# docstring says "keep the two in lockstep" and names only common.jl, so a
+# search anchored on it misses the two inlined ones -- this being the easiest
+# to miss, since it guards a DIFFERENT variable (`WHMC_LINEAR_BENCH_OUT`) under
+# the same rule and does not match a grep for `WHMC_BENCH_OUT`.
 if haskey(ENV, "WHMC_LINEAR_BENCH_OUT") && isempty(strip(ENV["WHMC_LINEAR_BENCH_OUT"]))
     error("WHMC_LINEAR_BENCH_OUT is set but blank; unset it or give it a real path.")
 end

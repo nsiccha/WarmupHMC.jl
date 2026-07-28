@@ -235,8 +235,32 @@ end
 
 Build a markdown table. Cells are passed through `string`, so pre-format
 anything that needs it (see [`num`](@ref)).
+
+**Zero rows is an error, not an empty table.** A headers-only table is valid
+markdown, so it renders as a blank table and the build exits 0 — an artifact
+that still parses but has lost its rows would ship as an empty table with
+nothing anywhere saying so. [`load_results`](@ref) only guards the file being
+*absent*; this guards it being present and empty.
+
+Measured before this check existed: emptying `rows` in one artifact and
+rebuilding took the build down only because a *derivation* called `median` on
+an empty array two sections further down. The three tables above it rendered
+blank and reported nothing. The catch was incidental to what the harness
+happened to compute, which is not a guarantee.
+
+If an empty result is meaningful somewhere, branch on `isempty` in the `@eval`
+block and emit prose saying so — the derived blocks in `adaptive-centering.md`
+do exactly that, and prose is the honest rendering of "there is nothing here".
 """
 function md_table(headers::AbstractVector, rows::AbstractVector)
+    isempty(rows) && error("""
+        md_table was given zero rows (headers: $(join(string.(headers), ", "))).
+
+        This is refused rather than rendered, because a headers-only table is
+        valid markdown: the page would show a blank table and the build would
+        succeed. If the underlying artifact can legitimately be empty, branch on
+        `isempty` in the @eval block and emit prose instead of a table.
+        """)
     io = IOBuffer()
     println(io, "| ", join(string.(headers), " | "), " |")
     println(io, "|", join(fill("---", length(headers)), "|"), "|")

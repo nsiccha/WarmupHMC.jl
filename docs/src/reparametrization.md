@@ -174,7 +174,7 @@ md_table(
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 Markdown.parse("*" * provenance(load_results("annotation_sweep.json");
-                                harness = "annotation_sweep.jl") * "*")
+                                harness = "docs/benchmark/annotation_sweep.jl") * "*")
 ```
 
 Two things to read off that table, and one not to. Both of the two are counted
@@ -268,7 +268,7 @@ guard = isempty(b["boxed_specs"]) ?
     "captures a `Core.Box`" :
     "**$(length(b["boxed_specs"])) of $(ncap) probed closure arguments still " *
     "capture a `Core.Box`**"
-Markdown.parse("*" * provenance(b; harness = "capture_boxing.jl") *
+Markdown.parse("*" * provenance(b; harness = "docs/benchmark/capture_boxing.jl") *
                " $(agree). $(guard).*")
 ```
 
@@ -329,7 +329,7 @@ t = load_results("typical_positions.json")
 shifts = [abs(Float64(r["const_over_fd_typical"]) / Float64(r["const_over_fd_randn"]) - 1)
           for r in t["rows"]]
 np = get(t["rows"][1], "n_positions", nothing)
-Markdown.parse("*" * provenance(t; harness = "typical_positions.jl") *
+Markdown.parse("*" * provenance(t; harness = "docs/benchmark/typical_positions.jl") *
                (np === nothing ? "" : " $(np) positions per target.") *
                " Largest shift $(num(maximum(shifts) * 100; sig = 2))%, " *
                "smallest $(num(minimum(shifts) * 100; sig = 2))%.*")

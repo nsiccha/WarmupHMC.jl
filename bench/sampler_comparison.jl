@@ -272,13 +272,27 @@ jsonsafe(x::NamedTuple) = Dict(string(k) => jsonsafe(v) for (k, v) in pairs(x))
 jsonsafe(x) = x
 
 out = joinpath(OUT_DIR, "sampler_comparison.json")
+# Provenance goes INSIDE `config`, merged, not beside it under its own key.
+# `docs/tables.jl:provenance` reads `config` first and falls back to the top
+# level; a `"provenance"` key is neither, so the caption rendered "an
+# **unrecorded** WarmupHMC revision" while the SHA sat in the file two lines
+# away. The one shape that cannot go wrong is a single flat object — there is
+# then no second copy of `warmuphmc_sha` for the first to disagree with, which
+# is exactly the reason `config` is the preferred shape there.
+#
+# `blas_threads` is READ BACK, not asserted. Line 70 sets it to 1, so writing a
+# literal `1` here would agree with reality today and keep agreeing after
+# someone deletes that line — an assertion that cannot go red is the thing the
+# rest of this corpus is built to avoid. Every harness under `docs/benchmark/`
+# calls `BLAS.get_num_threads()` for the same reason.
 open(out, "w") do io
     JSON.print(io, jsonsafe(Dict(
-        "provenance" => git_provenance(),
-        "config" => Dict("n_seeds" => N_SEEDS, "n_draws" => N_DRAWS,
-                         "funnel_K" => FUNNEL_K,
-                         "ahmc_n_adapts" => AHMC_N_ADAPTS,
-                         "blas_threads" => 1),
+        "config" => merge(git_provenance(),
+                          Dict{String,Any}("n_seeds" => N_SEEDS, "n_draws" => N_DRAWS,
+                                           "funnel_K" => FUNNEL_K,
+                                           "ahmc_n_adapts" => AHMC_N_ADAPTS,
+                                           "julia" => string(VERSION),
+                                           "blas_threads" => BLAS.get_num_threads())),
         "runs" => rows,
     )), 2)
 end

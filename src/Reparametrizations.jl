@@ -651,10 +651,6 @@ const NONLINEAR_EVIDENCE_MODES = (:linear_pool, :all_good_leaves, :nuts_weighted
 const NONLINEAR_TRAJECTORY_WEIGHTINGS = (
     :unit,
     :stepsize,
-    :valid_fraction,
-    :stepsize_valid_fraction,
-    :valid_fraction_then_unit,
-    :stepsize_valid_fraction_then_unit,
 )
 
 mutable struct NonlinearRecorder{O,T}
@@ -664,24 +660,18 @@ mutable struct NonlinearRecorder{O,T}
     online::O
 end
 
-function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:auto,
+function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
                            good_leaf_threshold=log(1e-2))
     mode in NONLINEAR_EVIDENCE_MODES || throw(ArgumentError(
         "unknown nonlinear evidence mode $mode; expected one of $(join(NONLINEAR_EVIDENCE_MODES, ", "))",
     ))
-    resolved_weighting = if trajectory_weighting === :auto
-        mode === :all_good_leaves ? :stepsize_valid_fraction :
-        mode === :nuts_weighted ? :stepsize_valid_fraction_then_unit : :unit
-    else
-        trajectory_weighting
-    end
-    resolved_weighting in NONLINEAR_TRAJECTORY_WEIGHTINGS || throw(ArgumentError(
-        "unknown nonlinear trajectory weighting $trajectory_weighting; expected :auto or one of " *
+    trajectory_weighting in NONLINEAR_TRAJECTORY_WEIGHTINGS || throw(ArgumentError(
+        "unknown nonlinear trajectory weighting $trajectory_weighting; expected one of " *
         join(NONLINEAR_TRAJECTORY_WEIGHTINGS, ", "),
     ))
     NonlinearRecorder(
         mode,
-        resolved_weighting,
+        trajectory_weighting,
         good_leaf_threshold,
         OnlineReparametrizer(
             reparametrizer(lpdf); accumulator=WeightedReparametrizationLoss,
@@ -689,32 +679,17 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:auto,
     )
 end
 
-function _valid_tree_fraction(tree_stats)
-    iszero(tree_stats.steps) && return 1.0
-    clamp(((1 << tree_stats.depth) - 1) / tree_stats.steps, 0.0, 1.0)
-end
-
-function _trajectory_weight(weighting, stepsize, tree_stats, adapting_stepsize)
-    valid_fraction = _valid_tree_fraction(tree_stats)
+function _trajectory_weight(weighting, stepsize)
     weighting === :unit && return 1.0
     weighting === :stepsize && return stepsize
-    weighting === :valid_fraction && return valid_fraction
-    weighting === :stepsize_valid_fraction && return stepsize * valid_fraction
-    weighting === :valid_fraction_then_unit &&
-        return adapting_stepsize ? valid_fraction : 1.0
-    weighting === :stepsize_valid_fraction_then_unit &&
-        return adapting_stepsize ? stepsize * valid_fraction : 1.0
     throw(ArgumentError("unsupported nonlinear trajectory weighting $weighting"))
 end
 
-function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, tree_stats,
-                           stepsize; adapting_stepsize::Bool)
+function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
     recorder.mode === :linear_pool && return recorder
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return recorder
-    trajectory_weight = _trajectory_weight(
-        recorder.trajectory_weighting, stepsize, tree_stats, adapting_stepsize,
-    )
+    trajectory_weight = _trajectory_weight(recorder.trajectory_weighting, stepsize)
     iszero(trajectory_weight) && return recorder
 
     recorded = false

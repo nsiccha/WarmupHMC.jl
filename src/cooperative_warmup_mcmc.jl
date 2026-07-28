@@ -125,7 +125,7 @@ cooperative_chain(
     variance_cond_target=2.,
     nonlinear_adapt=true,
     nonlinear_evidence=:linear_pool,
-    nonlinear_trajectory_weighting=:auto,
+    nonlinear_trajectory_weighting=:unit,
     nonlinear_good_leaf_threshold=log(1e-2),
     monitor_ess=false,
     max_window_evaluations=typemax(Int),
@@ -221,9 +221,7 @@ advance_window!(chain::CooperativeChain) = begin
             chain.nonlinear_recorder,
             chain.lpdf,
             recording_lpdf.leaves,
-            stats,
-            chain.stepsize;
-            adapting_stepsize=chain.current_transition_counter <= stepsize_adaptation_limit,
+            chain.stepsize,
         )
         chain.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps

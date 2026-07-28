@@ -444,9 +444,7 @@ run_outer_iteration!(state::AWMState) = begin
             state.nonlinear_recorder,
             lpdf,
             recording_lpdf.leaves,
-            stats,
-            state.stepsize;
-            adapting_stepsize=state.current_transition_counter <= state.stepsize_adaptation_limit,
+            state.stepsize,
         )
         state.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
@@ -890,7 +888,7 @@ restore_state(p, lpdf, progress;
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
-    nonlinear_evidence=nothing, nonlinear_trajectory_weighting=:auto,
+    nonlinear_evidence=nothing, nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
     kwargs...
 ) = begin
@@ -925,15 +923,18 @@ restore_state(p, lpdf, progress;
         nonlinear_good_leaf_threshold,
         isnothing(saved_nonlinear_recorder) ? log(1e-2) : saved_nonlinear_recorder.good_leaf_threshold,
     )
+    restored_weighting = something(
+        nonlinear_trajectory_weighting,
+        isnothing(saved_nonlinear_recorder) ? :unit : saved_nonlinear_recorder.trajectory_weighting,
+    )
     can_reuse_nonlinear = !isnothing(saved_nonlinear_recorder) &&
         saved_nonlinear_recorder.mode === restored_mode &&
-        (nonlinear_trajectory_weighting === :auto ||
-         saved_nonlinear_recorder.trajectory_weighting === nonlinear_trajectory_weighting) &&
+        saved_nonlinear_recorder.trajectory_weighting === restored_weighting &&
         saved_nonlinear_recorder.good_leaf_threshold == restored_threshold
     nonlinear_recorder = can_reuse_nonlinear ? saved_nonlinear_recorder : NonlinearRecorder(
         lpdf;
         mode=restored_mode,
-        trajectory_weighting=nonlinear_trajectory_weighting,
+        trajectory_weighting=restored_weighting,
         good_leaf_threshold=restored_threshold,
     )
     saved_linear_recorder = get(p, :linear_recorder, nothing)
@@ -1084,12 +1085,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   weight. `:nuts_weighted` streams every leaf with its exact marginal NUTS
   proposal probability. Neither streaming mode retains leaves after the current
   trajectory.
-* `nonlinear_trajectory_weighting=:auto` — whole-trajectory reliability factor
-  for a streaming evidence mode. `:auto` uses step size times the valid-tree
-  fraction for `:all_good_leaves`; for `:nuts_weighted` it uses that factor while
-  step size is adapting and unit weight afterwards. Explicit alternatives are
-  `:unit`, `:stepsize`, `:valid_fraction`, `:stepsize_valid_fraction`,
-  `:valid_fraction_then_unit`, and `:stepsize_valid_fraction_then_unit`.
+* `nonlinear_trajectory_weighting=:unit` — whole-trajectory multiplier for a
+  streaming evidence mode, independent of the selected evidence source.
+  The only alternative is `:stepsize`; a policy never changes when step-size
+  adaptation ends.
   These settings change only the nonlinear fit: selection/application remains
   subordinate to a restart independently requested by the linear criterion.
 * `variance_cond_target=2.0` — restart threshold on the marginal-scale
@@ -1162,7 +1161,9 @@ adaptive_warmup_mcmc(
     # Nonlinear evidence source. `nothing` means `:linear_pool` for a fresh run
     # and inherits the persisted source on resume.
     nonlinear_evidence=nothing,
-    nonlinear_trajectory_weighting=:auto,
+    # `nothing` means `:unit` for a fresh run and inherits the persisted policy
+    # on resume.
+    nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
     variance_cond_target=2.,
     linear_restart_source=nothing,
@@ -1201,7 +1202,9 @@ adaptive_warmup_mcmc(
                 target_acceptance_rate, max_tree_depth, init, monitor_ess,
                 nonlinear_adapt,
                 nonlinear_evidence=something(nonlinear_evidence, :linear_pool),
-                nonlinear_trajectory_weighting,
+                nonlinear_trajectory_weighting=something(
+                    nonlinear_trajectory_weighting, :unit,
+                ),
                 nonlinear_good_leaf_threshold=something(
                     nonlinear_good_leaf_threshold, log(1e-2),
                 ),

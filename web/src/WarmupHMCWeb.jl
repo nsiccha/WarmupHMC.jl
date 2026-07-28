@@ -34,11 +34,11 @@ include("posteriordb_reparametrizations.jl")
 
 @dynamicstruct struct WhmcAppData
 
-    cache_path = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
+    __cache_path__ = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
 
     pdb = PosteriorDB.database()
 
-    @diskcached posterior_names = sort([
+    @cached posterior_names = sort([
         Symbol(name) for name in PosteriorDB.posterior_names(pdb)
         if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, name)), "stan"))
     ])
@@ -55,7 +55,7 @@ include("posteriordb_reparametrizations.jl")
         ["/posteriors/$name" for name in posterior_names],
     )
 
-    @include posterior(name::Symbol) = begin
+    @struct posterior(name::Symbol) = begin
         seed     = 42
         n_draws  = 100
 
@@ -71,9 +71,9 @@ include("posteriordb_reparametrizations.jl")
 
         # === Per-method DOs ===
 
-        @include compile = begin
+        @struct compile = begin
             label = "Compiles"
-            @diskcached value = begin
+            @cached value = begin
                 t0 = time()
                 LogDensityProblems.dimension(problem)
                 (elapsed = time() - t0,)
@@ -81,37 +81,45 @@ include("posteriordb_reparametrizations.jl")
             (; elapsed) = value
         end
 
-        @include sample = begin
+        @struct sample = begin
             label = "WarmupHMC"
             rng   = Xoshiro(seed)
-            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 adaptive_warmup_mcmc(rng, cp; n_draws)
             end
-            (; elapsed, n_evaluations, result) = value
-            draws       = result.posterior_position
-            n_divergent = result.n_divergent_samples
+            (; elapsed, n_evaluations) = value
+            # `result` is renamed on the way in: `posterior` already has an indexed
+            # `result(method)` property, and an inline `@struct` child sees its parent's
+            # scope, so a bare `result` here would redefine it.
+            sampler_result = value.result
+            draws       = sampler_result.posterior_position
+            n_divergent = sampler_result.n_divergent_samples
         end
 
-        @include dynamichmc = begin
+        @struct dynamichmc = begin
             label = "DynamicHMC"
             rng   = Xoshiro(seed)
-            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 WarmupHMC.DynamicHMC.mcmc_with_warmup(rng, cp, n_draws;
                     reporter = WarmupHMC.DynamicHMC.NoProgressReport())
             end
-            (; elapsed, n_evaluations, result) = value
-            draws       = result.posterior_matrix
+            (; elapsed, n_evaluations) = value
+            # `result` is renamed on the way in: `posterior` already has an indexed
+            # `result(method)` property, and an inline `@struct` child sees its parent's
+            # scope, so a bare `result` here would redefine it.
+            sampler_result = value.result
+            draws       = sampler_result.posterior_matrix
             n_divergent = count(s -> WarmupHMC.DynamicHMC.is_divergent(s.termination),
-                                result.tree_statistics)
+                                sampler_result.tree_statistics)
         end
 
-        @include advancedhmc = begin
+        @struct advancedhmc = begin
             label    = "AdvancedHMC"
             rng      = Xoshiro(seed)
             # Match DynamicHMC's default warmup budget for a fair comparison
             # against the other samplers.
             n_adapts = 1000
-            @diskcached v"1" value = WarmupHMC.count_and_time(problem) do cp
+            @cached v"1" value = WarmupHMC.count_and_time(problem) do cp
                 metric      = AdvancedHMC.DiagEuclideanMetric(Float64, dimension)
                 hamiltonian = AdvancedHMC.Hamiltonian(metric, cp)
                 integrator  = AdvancedHMC.Leapfrog(0.1)
@@ -125,13 +133,17 @@ include("posteriordb_reparametrizations.jl")
                     n_draws + n_adapts, adaptor, n_adapts;
                     drop_warmup=true, verbose=false, progress=false)
             end
-            (; elapsed, n_evaluations, result) = value
-            θs, stats   = result
+            (; elapsed, n_evaluations) = value
+            # `result` is renamed on the way in: `posterior` already has an indexed
+            # `result(method)` property, and an inline `@struct` child sees its parent's
+            # scope, so a bare `result` here would redefine it.
+            sampler_result = value.result
+            θs, stats   = sampler_result
             draws       = reduce(hcat, θs)
             n_divergent = sum(s.numerical_error for s in stats)
         end
 
-        @include reparam = begin
+        @struct reparam = begin
             label = "Reparam"
             rng   = Xoshiro(seed)
 
@@ -144,7 +156,7 @@ include("posteriordb_reparametrizations.jl")
                                      PosteriorDB.load(PosteriorDB.dataset(pdb_posterior)))
             no_spec = isempty(spec.pairs)
 
-            @diskcached v"1" value = begin
+            @cached v"1" value = begin
                 # Harness choice, NOT a recommendation: ForwardDiff is already
                 # here transitively via Pathfinder, and no reverse-mode backend
                 # is loadable in this env. The documented backend for a
@@ -158,16 +170,20 @@ include("posteriordb_reparametrizations.jl")
                     adaptive_warmup_mcmc(rng, cp; n_draws, init)
                 end
             end
-            (; elapsed, n_evaluations, result) = value
-            draws       = result.posterior_position
-            n_divergent = result.n_divergent_samples
+            (; elapsed, n_evaluations) = value
+            # `result` is renamed on the way in: `posterior` already has an indexed
+            # `result(method)` property, and an inline `@struct` child sees its parent's
+            # scope, so a bare `result` here would redefine it.
+            sampler_result = value.result
+            draws       = sampler_result.posterior_position
+            n_divergent = sampler_result.n_divergent_samples
             centering   = [(idx, v.source.c) for (idx, v) in spec.pairs]
 
             # Reparam-specific composed card: result html + centering line,
             # or a "Run" button when unstarted, or "" when no spec exists.
             section = if no_spec
                 ""
-            elseif (@diskcache_status value) == :unstarted
+            elseif (@cache_status value) == :unstarted
                 h.section(
                     h.p(h.strong("Reparam: "),
                         h.a("Run"; hx_post="/posteriors/$name/result/reparam/run",
@@ -186,9 +202,9 @@ include("posteriordb_reparametrizations.jl")
 
         # === Rendering ===
 
-        @include result(method::Symbol) = begin
+        @struct result(method::Symbol) = begin
             m      = getproperty(__parent__, method)
-            status = @diskcache_status m.value
+            status = @cache_status m.value
             label  = m.label
             run_url = "/posteriors/$name/result/$method/run"
 
@@ -271,12 +287,12 @@ include("posteriordb_reparametrizations.jl")
 
             # Mutating actions on this method's cache.
             force!() = begin
-                status == :started && @clear_diskcache! m.value
+                status == :started && @clear_cache! m.value
                 m.value
             end
 
             clear!() = begin
-                @clear_diskcache! m.value
+                @clear_cache! m.value
                 "Cleared $method cache for $name"
             end
         end
@@ -326,12 +342,12 @@ include("posteriordb_reparametrizations.jl")
 
         # True iff any per-method `value` cache file exists for this posterior.
         # Used by `overview` to float touched posteriors to the top of the table.
-        any_cached = @is_diskcached(compile.value) || @is_diskcached(sample.value) ||
-                     @is_diskcached(dynamichmc.value) || @is_diskcached(advancedhmc.value)
+        any_cached = @is_cached(compile.value) || @is_cached(sample.value) ||
+                     @is_cached(dynamichmc.value) || @is_cached(advancedhmc.value)
 
         # Compact card for the `/gallery` view: title + per-method status
         # pills + deep link to `/posteriors/$name`. Cheap to render — only reads
-        # `@diskcache_status m.value` per method, never triggers compute.
+        # `@cache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
                 h.h4(h.a(name; href="/posteriors/$name")),
@@ -351,7 +367,7 @@ include("posteriordb_reparametrizations.jl")
     end
 end
 
-const APPDATA = WhmcAppData(; cache_type=:parallel)
+const APPDATA = WhmcAppData()
 
 # ============================================================
 # AppContext — ephemeral per-request DO. Holds rendering / page chrome

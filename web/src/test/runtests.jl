@@ -27,6 +27,7 @@ include("pathfinder_gradient.jl")
 # --- Reparametrization -------------------------------------------------------
 include("reparametrization_unit.jl")
 include("reparametrize_direction.jl")
+include("back_transform_frame.jl")
 include("reparametrized_e2e.jl")
 
 # --- Samplers, resume, checkpointing -----------------------------------------

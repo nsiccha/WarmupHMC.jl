@@ -403,7 +403,20 @@ end
 finalize_warmup!(state::AWMState) = begin
     (; progress, recording_lpdf, lpdf) = state
     update_progress!(progress, (state.monitor_ess ? "min. ESS: $(short_string(state.ess[1])), " : "") * "divergent: $(short_string(100*state.n_divergent_samples/state.n_samples))%")
-    state.nonlinear_adapt && reparametrize!(lpdf, recording_lpdf.posterior_position)
+    # NOT gated on `nonlinear_adapt`. That flag gates whether the centering is
+    # FITTED; it must not gate whether the returned draws are reported in the
+    # model's own parametrization. The sampler works in the reparametrizer's
+    # SOURCE frame whether or not anything was adapted, so gating this too meant
+    # `nonlinear_adapt=false` silently returned source-frame draws with nothing
+    # in the return value saying so — and the obvious consumer, a pinned-`c`
+    # control arm compared against an adapted arm, then summarised two different
+    # frames as if they were one.
+    #
+    # Safe unconditionally: `reparametrizer(::Any)` is an empty
+    # `IndexedReparametrization` and `reparametrize!` returns immediately on
+    # `isempty(ir.pairs)`, so this is a no-op for a plain lpdf and for a
+    # `ReparametrizedProblem` carrying no spec.
+    reparametrize!(lpdf, recording_lpdf.posterior_position)
     (;
         initial_position=state.position,
         halo_position=recording_lpdf.halo_position,

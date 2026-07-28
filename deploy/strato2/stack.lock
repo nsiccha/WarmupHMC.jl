@@ -1,0 +1,6 @@
+# repository            exact commit used by the WarmupHMC web service
+DynamicObjects.jl       f61a05e694c9b2afc0908460740708344357fcbe
+HTMX.jl                 d52ce5be0f42e3c375370c85499ba5c395f781a8
+HTMXObjects.jl          a7efd164af7dc74fc6c5e0c42b74f10a661d7d1c
+TestModules.jl          8b5c22ec0cdefd3d0eb432da2e9e86ca0d959c6e
+Treebars.jl             c02aa16ab1b08e4f5283597fe678a88e69555cd1

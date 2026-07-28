@@ -1,0 +1,8 @@
+// Let service user `n` manage exactly warmuphmc-web.service for code deploys.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        action.lookup("unit") == "warmuphmc-web.service" &&
+        subject.user == "n") {
+        return polkit.Result.YES;
+    }
+});

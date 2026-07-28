@@ -278,7 +278,11 @@ end
 
 @dynamicstruct struct WhmcAppData
 
-    __cache_path__ = joinpath(dirname(dirname(@__DIR__)), "web", "cache")
+    __cache_path__ = get(
+        ENV,
+        "WHMC_CACHE_DIR",
+        joinpath(dirname(dirname(@__DIR__)), "web", "cache"),
+    )
 
     pdb = PosteriorDB.database()
 
@@ -431,12 +435,12 @@ end
 
             # Reparam-specific composed card: result html + centering line,
             # or a "Run" button when unstarted, or "" when no spec exists.
-            section = if no_spec
+            section(root) = if no_spec
                 ""
             elseif (@cache_status value) == :unstarted
                 h.section(
                     h.p(h.strong("Reparam: "),
-                        h.a("Run"; hx_post="/posteriors/$name/result/reparam/run",
+                        h.a("Run"; hx_post=root/"posteriors/$name/result/reparam/run",
                             hx_target="closest div", hx_swap="outerHTML")))
             else
                 centering_info = !isempty(centering) ?
@@ -456,7 +460,7 @@ end
             m      = getproperty(__parent__, method)
             status = @cache_status m.value
             label  = m.label
-            run_url = "/posteriors/$name/result/$method/run"
+            run_url(root) = root/"posteriors/$name/result/$method/run"
 
             ess_vals      = MCMCDiagnosticTools.ess(reshape(m.draws', (:, 1, dimension)))
             median_ess    = median(ess_vals)
@@ -480,35 +484,35 @@ end
             run_handler = "on htmx:afterOnLoad if me.hasAttribute('data-batch') is false then remove [@hidden] from #$detail_id end remove [@data-batch] from me"
 
             # Compile-status cell (PASS/FAIL/-) for the "Compiles" column.
-            status_cell() =
+            status_cell(root) =
                 status == :ready ?
                     h.td("PASS"; data_status="success", _=toggle) :
                 status == :started ?
                     h.td("FAIL"; data_status="error",
-                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         hx_post=run_url(root), hx_target="#$detail_id", hx_swap="innerHTML",
                          _=run_handler) :
                     h.td("-"; data_status="muted",
-                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         hx_post=run_url(root), hx_target="#$detail_id", hx_swap="innerHTML",
                          _=run_handler)
 
             # Per-sampler metric cell. On `:ready` the cell toggles the detail
             # row; otherwise clicking posts the run URL.
-            metric_cell(text) =
+            metric_cell(text, root) =
                 status == :ready ?
                     h.td(text; _=toggle) :
                 status == :started ?
                     h.td(text; data_status="error",
-                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         hx_post=run_url(root), hx_target="#$detail_id", hx_swap="innerHTML",
                          _=run_handler) :
                     h.td(text; data_status="muted",
-                         hx_post=run_url, hx_target="#$detail_id", hx_swap="innerHTML",
+                         hx_post=run_url(root), hx_target="#$detail_id", hx_swap="innerHTML",
                          _=run_handler)
 
             # The 3 metric cells (min ESS, # grad, time) for a sampler row.
-            metric_cells() = (
-                metric_cell(formatted(:min_ess)),
-                metric_cell(formatted(:n_evaluations; digits=0)),
-                metric_cell(formatted(:elapsed; digits=2, suffix="s")),
+            metric_cells(root) = (
+                metric_cell(formatted(:min_ess), root),
+                metric_cell(formatted(:n_evaluations; digits=0), root),
+                metric_cell(formatted(:elapsed; digits=2, suffix="s"), root),
             )
 
             html = if status == :unstarted
@@ -553,21 +557,21 @@ end
         # ESS/Time cells double as the per-sampler trigger: when status is
         # `:ready` the cell toggles the detail row; otherwise it `hx_post`s
         # the corresponding `/posteriors/<name>/result/<m>/run` to (re-)run.
-        row_cells = [
+        row_cells(root) = [
             h.td(name; _=toggle),
-            result(:compile).status_cell(),
-            result(:sample).metric_cells()...,
-            result(:dynamichmc).metric_cells()...,
-            result(:advancedhmc).metric_cells()...,
+            result(:compile).status_cell(root),
+            result(:sample).metric_cells(root)...,
+            result(:dynamichmc).metric_cells(root)...,
+            result(:advancedhmc).metric_cells(root)...,
         ]
 
         # The bare row; the table wraps it together with a hidden sibling
         # for the expanded detail card. Routes that need to OOB-swap this
         # row return `summary_row => "row-$name"` (HTMX.jl's Pair handling
         # auto-adds hx_swap_oob and templates around table elements).
-        summary_row = h.tr(row_cells...; id="row-$name")
+        summary_row(root) = h.tr(row_cells(root)...; id="row-$name")
 
-        detail_content = begin
+        detail_content(root) = begin
             r_compile     = result(:compile)
             r_sample      = result(:sample)
             r_dynamichmc  = result(:dynamichmc)
@@ -583,7 +587,7 @@ end
                     h.h4(name),
                     r_compile.html,
                     r_sample.html,
-                    reparam.section,
+                    reparam.section(root),
                     r_dynamichmc.html,
                     r_advancedhmc.html,
                 )
@@ -598,9 +602,9 @@ end
         # Compact card for the `/gallery` view: title + per-method status
         # pills + deep link to `/posteriors/$name`. Cheap to render — only reads
         # `@cache_status m.value` per method, never triggers compute.
-        gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
+        gallery_card(root) = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
-                h.h4(static_recording ? name : h.a(name; href="/posteriors/$name")),
+                h.h4(static_recording ? name : h.a(name; href=root/"posteriors/$name")),
                 h.ul(
                     [let r = result(method); s = r.status
                         h.li(
@@ -612,7 +616,7 @@ end
                      end for method in methods]...,
                 ),
                 static_recording ? h.span() :
-                    h.p(h.a("View detail →"; href="/posteriors/$name")),
+                    h.p(h.a("View detail →"; href=root/"posteriors/$name")),
             )
         end
     end
@@ -689,8 +693,8 @@ const APPDATA = WhmcAppData()
                                       detail = __appdata__.static_recording ?
                                           h.td(; colspan="11")(
                                               h.em("Per-posterior details are available in the live dashboard."),
-                                          ) : p.detail_content
-                                      [p.summary_row, h.tr(; id="detail-$name", hidden="")(detail)]
+                                          ) : p.detail_content(__self__)
+                                      [p.summary_row(__self__), h.tr(; id="detail-$name", hidden="")(detail)]
                                   end
                                   for name in sort(__appdata__.posterior_names;
                                                   by=name -> !__appdata__.posterior(name).any_cached)];
@@ -705,7 +709,7 @@ const APPDATA = WhmcAppData()
     @get gallery() = h.div(
         h.h2("WarmupHMC Posterior Gallery ($(length(__appdata__.posterior_names)) posteriors)"),
         h.div(; class="htmxo-gallery")(
-            [__appdata__.posterior(name).gallery_card
+            [__appdata__.posterior(name).gallery_card(__self__)
              for name in __appdata__.posterior_names]...,
         ),
     )
@@ -721,7 +725,10 @@ const APPDATA = WhmcAppData()
     # in a docs page — is added here. `link` is what differs between the two
     # media, so it is a parameter rather than a branch inside the builder.
     @get benchmarks() = h.div(
-        htmxo_breadcrumb([("Table", "/", "/"), ("Benchmarks", nothing, nothing)]),
+        htmxo_breadcrumb([
+            ("Table", string(__self__), string(__self__)),
+            ("Benchmarks", nothing, nothing),
+        ]),
         benchmark_index_semantic(key -> __self__/"benchmark/$key"),
     )
 
@@ -764,10 +771,10 @@ const APPDATA = WhmcAppData()
     @include posteriors(name::Symbol) = begin
         @get index() = h.div(
             htmxo_breadcrumb([
-                ("Table", "/", "/"),
+                ("Table", string(__parent__), string(__parent__)),
                 (name, nothing, nothing),
             ]),
-            __appdata__.posterior(name).detail_content,
+            __appdata__.posterior(name).detail_content(__self__),
         )
 
         # Per-(name, method) actions: /posteriors/<name>/result/<method>/{run,cache}
@@ -778,8 +785,8 @@ const APPDATA = WhmcAppData()
             @post run() = begin
                 p = __appdata__.posterior(name)
                 p.result(method).force!()
-                method == :reparam ? p.reparam.section :
-                    [p.detail_content, p.summary_row => "row-$name"]
+                method == :reparam ? p.reparam.section(__self__) :
+                    [p.detail_content(__self__), p.summary_row(__self__) => "row-$name"]
             end
             @delete cache() = __appdata__.posterior(name).result(method).clear!()
         end

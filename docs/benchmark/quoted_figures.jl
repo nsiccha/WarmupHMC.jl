@@ -27,6 +27,24 @@
 # file where nothing can tell it has stopped being true. So the check stops being
 # a reading pass.
 #
+# There is a SECOND shape, and defect 3 is really an instance of it: figures that
+# are individually correct and wrong in RELATION to one another. `27431` and
+# `25863` were each a real measurement; what was false was presenting both as the
+# same run's bare gradient. It recurred as a `16x tax` beside an `11% overhead` --
+# both computable, different denominators, neither wrong on its own.
+#
+# Deriving a figure does not close this shape, and that is the part worth
+# internalising: A COMPUTED NUMBER VOUCHES FOR ITSELF AND FOR NOTHING AROUND IT.
+# The operator, the units, the direction of the comparison and the label beside
+# it are all hand-written text, and the correct value is precisely what stops a
+# reviewer re-reading them. Generating the number moves the risk rather than
+# removing it. (Paid for twice: once by the `16x`, and once by a line in this
+# file's own history whose bound was computed and whose `>` was typed.)
+#
+# So the checks that earn their place here are the ones that pin a RELATIONSHIP --
+# `:pattern`, where every mention of one quantity must agree, and encoding the
+# denominator a sentence intends -- not one more independently-derived figure.
+#
 # WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT. It checks figures that are
 # MECHANICALLY DERIVABLE from a live artifact. It does not check prose judgements
 # ("small enough to be paid out of the sampling gain"), and it cannot: those are
@@ -47,6 +65,39 @@
 #             rot the moment someone rewords a sentence; a pattern check does
 #             not care how many times the quantity is mentioned, only that the
 #             mentions agree with the artifact and with each other.
+#
+# PRECISION: COMPARE AT THE RENDERING, NOT AT THE FLOAT. Every check here
+# formats the computed value the way the prose formats it and compares text. That
+# is deliberate in both directions, and the tempting "compare the numbers
+# properly" refactor is a regression.
+#
+# Comparing finer than the prose reddens pages that are CORRECT AS WRITTEN, and a
+# checker that does that gets deleted rather than fixed. Shipped here once: an
+# earlier version encoded the percent-vs-`x` switch as a threshold at 3x, so
+# `eight_schools` under ForwardDiff -- 3.325, correctly written `+232%` -- went
+# red on a healthy page. Hence `both(r)`, which accepts either rendering.
+#
+# The property this buys is worth stating, because it looks like a weakness. A
+# reviewer asked whether the `18x tax` check (which encodes a DENOMINATOR -- see
+# `capture_boxing boxed wrapper tax vs bare` below) quietly loses power as the
+# de-boxing work shrinks the wrapper overhead toward zero, since the two rival
+# denominators converge there. It does not, and the reason is general: below the
+# resolution of the rendering, the two denominators produce the SAME TEXT, so
+# whichever the author intended there is no wrong number on the page to catch.
+# The defect and the detector are defined on the same quantity -- what is
+# written -- so they cannot come apart.
+#
+# Measured on the live artifact so the band is not a guess. `boxed/const` renders
+# `18x` against `bare`; against `unboxed/const` it also renders `18x` for
+# `unboxed` in `(25330.0, 26777.5]` ns -- overhead in `(-2.06%, +3.54%]`. Today
+# `unboxed = 28823.7` (11% overhead) renders `16x`, well outside, which is why
+# re-injecting the original `16x tax` defect goes red. Note the band is
+# TWO-SIDED and the collapse is at LOW overhead: below `25330.0` the wrapper
+# would be measuring faster than the bare gradient and the two separate again at
+# `19x` vs `18x`. That lower edge is unreachable in the current artifact -- every
+# `unboxed/const` round spans `27667-42965` ns against `bare = 25863`, none
+# faster than bare -- but write the interval, not the half-line: a one-sided
+# `overhead below 3.5%` is the form that later reads as wrong.
 #
 # Run after any regeneration, and before landing a prose edit that touches a
 # number. Exit 0 = every checked figure agrees.
@@ -145,11 +196,28 @@ end
 # has already carried one reversed verdict built from exactly that -- so the
 # prose asserts the sign separately, from the rounds, and an assertion about 70
 # numbers is worth strictly more than five summaries only while it still counts
-# them correctly. Pairing is by index and that is not arbitrary: `gradient_overhead`
-# times all three variants on the same `xs` within a round, rotating the order, so
-# round r's live and bare are adjacent in time on identical inputs. Comparing
-# across rounds instead would discard the pairing the harness deliberately builds
-# and widen every spread for no reason.
+# them correctly.
+#
+# PAIRING IS PER TIMING LOOP, NOT PER HARNESS. Index-pairing is correct here and
+# it is not arbitrary: `gradient_overhead` binds one `xs` per round and times all
+# three variants on it back-to-back with the order rotated, so round r's live and
+# bare are adjacent in time on identical inputs. Comparing across rounds instead
+# would discard that and widen every spread for nothing.
+#
+# The tempting generalisation from this -- "that harness pairs, this one does
+# not" -- is WRONG, and it is worth stating because I drew it and told a peer so.
+# `typical_positions.jl` pairs by the same construction (it binds `xs` OUTSIDE
+# the round loop, then `circshift(BACKENDS, r)` within it), so index-pairing is
+# right there too. What actually decides it is the loop: figures timed inside one
+# loop over shared inputs pair; figures from two SEPARATE loops do not, however
+# similar they look. In `typical_positions` that boundary falls between the
+# `typical` and `randn` position sets -- different loop iterations, different
+# inputs, so round i of one is not co-timed with round i of the other, and those
+# two columns must be compared by overlapping ranges rather than by dividing
+# across them.
+#
+# None of this is recoverable from the JSON: the artifacts record round ORDER but
+# not co-timing. Read the harness, not the file.
 paired_above = paired_total = 0
 for be in ("enzyme", "forwarddiff")
     go = live_json("docs/benchmark/results/$be-$DRIVER_SHA/gradient_overhead.json")

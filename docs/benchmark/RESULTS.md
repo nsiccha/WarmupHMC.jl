@@ -37,13 +37,21 @@ model all land within seed noise of each other around 14–23, and adaptive gets
 53–66 by settling at an *interior* `c ≈ 0.4–0.5` that no hand-written model
 offers. That interior optimum is the strongest result here.
 
-**It is not free, and on three of five targets it is a net wall-clock loss.**
-The `ReparametrizedProblem` wrapper costs ×4.9–×15.8 per
-`logdensity_and_gradient` call. Where the pathology is severe (eight_schools,
-funnel) the sampling gain dwarfs that and adaptive wins by 20×. Where it is mild
-(both radon models, seeds) the per-gradient gain is real but smaller than the
-per-call cost, and adaptive is 1.6×–3.4× **slower in wall-clock than doing
-nothing at all**.
+**It is not free, and on three of five targets it is a net wall-clock loss —
+under this AD backend.** The `ReparametrizedProblem` wrapper costs ×4.9–×15.8
+per `logdensity_and_gradient` call. Where the pathology is severe
+(eight_schools, funnel) the sampling gain dwarfs that and adaptive wins by 20×.
+Where it is mild (both radon models, seeds) the per-gradient gain is real but
+smaller than the per-call cost, and adaptive is 1.6×–3.4× **slower in wall-clock
+than doing nothing at all**.
+
+> ⚠ **The wall-clock half of this verdict is backend-specific and should not be
+> quoted as a property of the method.** Everything here was measured with
+> `AutoForwardDiff()` — forward mode over an objective that is scalar in `d`
+> inputs, which is the case reverse mode exists for. The per-gradient results
+> below are unaffected (they count gradient *evaluations*, not their cost); the
+> ×N overheads and every wall-clock comparison are pending a re-measure under
+> `AutoEnzyme()`. See the arm table for why, and "What this does not measure".
 
 So the claim the package can support today is about gradient evaluations, not
 seconds:
@@ -79,8 +87,17 @@ the sampler may do with the partial-centering parameter `c`
 | `hand-written noncentered model` | posteriordb's separately written noncentered member, sampled plain. The external reference for "noncentered-like". |
 
 All arms use `AutoForwardDiff()`, matching the shipped consumer at
-`web/src/WarmupHMCWeb.jl:148`, so the overhead figures are what a user pays
-rather than an artifact of a backend choice made here.
+`web/src/WarmupHMCWeb.jl:148` — so the overhead figures are what a user pays
+today. **They are not a property of the method, and they are probably the wrong
+backend.** `src/Reparametrizations.jl:50-51` says so itself: the differentiated
+objective `x -> ljac(x) + dot(g_y, y(x))` is *scalar in the full parameter
+vector* with the inner gradient `g_y` held fixed, "so a reverse-mode backend
+scales better with dimension". Forward mode pays roughly `d/chunk` passes over
+the transform where reverse mode pays one — and the worst overhead measured here
+(×12.4–13.4) is on the two `d ≈ 88` radon models, which are also the two largest
+wall-clock losses. Every ×N in this document should be read as
+*ForwardDiff-specific and unmeasured under reverse mode*; see
+"What this does not measure".
 
 `min ESS` is the minimum over coordinates — the number that governs how long you
 must run. Sub-figures are the min–max across the 8 seeds. `final source c` is
@@ -301,6 +318,26 @@ wall-clock loss. The `plain` arm calls BridgeStan's own gradient with no Julia A
 in the loop at all, so this comparison is what a user actually experiences, not a
 like-for-like AD comparison.
 
+**But the AD machinery here is forward mode, and this objective is the textbook
+reverse-mode shape.** `x -> ljac_(x_) + dot(g_y, y_)` has one scalar output and
+`d` inputs, with the inner gradient `g_y` frozen — so `AutoForwardDiff()` sweeps
+roughly `d/chunk` tangent passes over the transform where a reverse-mode backend
+needs one. The package's own docstring says as much
+(`src/Reparametrizations.jl:50-51`). The table is consistent with that being a
+large part of the cost — the ×12.4–13.4 row is `d = 88` — though not proof of
+it: `radon_variable_intercept` is `d = 89` and only ×5.0, so dimension is not the
+sole driver and the constant per-call overhead matters too (the funnel's ×15.0
+sits on a 55 ns bare gradient).
+
+**This has not been re-measured under reverse mode.** Enzyme is not currently a
+dependency of WarmupHMC or of this benchmark, and no arm here has been run with
+it. Until it is, treat every number in this section as the cost of *the backend
+the package ships with*, and treat "the wrapper makes adaptive a wall-clock loss
+on radon" as a claim about `AutoForwardDiff()` specifically. The
+identity-vs-live result above is the part that does not depend on the backend:
+whatever the AD costs, the reparametrization arithmetic is not what you are
+paying for.
+
 ## Harness correctness
 
 Two things this benchmark had to get right that are not obvious from the API, and
@@ -346,3 +383,17 @@ which would each have silently corrupted the fixed-parametrization arms:
 - **One sampler.** Single-chain `adaptive_warmup_mcmc` only.
   `clustered_warmup_mcmc` has no reparametrization hooks at all and
   `cooperative_warmup_mcmc` was not measured.
+- **One AD backend, and not the recommended one.** Every arm ran under
+  `AutoForwardDiff()` — chosen to match the shipped consumer
+  (`web/src/WarmupHMCWeb.jl:148`), which is what makes the overhead figures
+  representative of what a user pays *today*, and equally what makes them a
+  measurement of the package's current choice rather than of the method. Forward
+  mode is the wrong shape for this objective (see "Cost on the gradient hot
+  path"), and the standing instruction is to use DifferentiationInterface with
+  **Enzyme**, never Mooncake or ForwardDiff. The backend already arrives through
+  DI — `ReparametrizedProblem`'s third argument is an ADTypes object — so the
+  switch is one constructor argument in three places here; what it is *not* is a
+  benchmark-local change, because the shipped consumer, `golden_awm.jl:72`, and
+  the `Reparametrizations.jl` docstring example (which advertises
+  `AutoMooncake()`) all set it too. Re-measuring the ×N table and the wall-clock
+  verdict under Enzyme is the single highest-value follow-up in this document.

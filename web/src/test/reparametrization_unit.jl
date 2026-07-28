@@ -34,6 +34,32 @@ funnel_ir(sources) = IndexedReparametrization([
 funnel_problem(sources) =
     ReparametrizedProblem(funnel_ir(sources), Funnel(length(sources)), AutoForwardDiff())
 
+# A three-level funnel: `v` (log-scale) → `mu` (location) → `theta[1:k]`.
+#
+# The funnel above cannot express the case that matters below, because its `loc`
+# is the constant `0.` and its log-scale coordinate is never reparametrized. Here
+# `mu` is a real coordinate that the θ blocks read as their `loc`, so it can be
+# BOTH a closure argument and a reparametrization target — the coupled spec.
+#
+#   v ~ Normal(0, 3),  mu ~ Normal(0, exp(v/2)),  theta[i] ~ Normal(mu, exp(v/2))
+struct NestedFunnel
+    k::Int
+end
+LogDensityProblems.dimension(m::NestedFunnel) = m.k + 2
+LogDensityProblems.capabilities(::Type{NestedFunnel}) = LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity(m::NestedFunnel, y)
+    v = y[1]; mu = y[2]; th = @view y[3:end]; e = exp(-v)
+    -0.5 * v^2 / 9 - 0.5 * mu^2 * e - v / 2 - sum(t -> 0.5 * (t - mu)^2 * e + v / 2, th)
+end
+function LogDensityProblems.logdensity_and_gradient(m::NestedFunnel, y)
+    v = y[1]; mu = y[2]; th = @view y[3:end]; e = exp(-v)
+    g = similar(y)
+    g[1] = -v / 9 + 0.5 * mu^2 * e - 0.5 + 0.5 * sum(t -> (t - mu)^2, th) * e - m.k / 2
+    g[2] = -mu * e + sum(t -> t - mu, th) * e
+    g[3:end] .= .-(th .- mu) .* e
+    (LogDensityProblems.logdensity(m, y), g)
+end
+
 @testset "Reparametrizations" begin
 
     @testset "PartiallyCentered round-trip and inverse" begin
@@ -265,14 +291,199 @@ funnel_problem(sources) =
             X[:, j] = x
             G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, x)[2]
         end
+        start_sources = [1.0, 1.0, 1.0]
         optimize!(ir, X, G)
-        rp_new = funnel_problem([s.c for (_, s) in reparam_sources(rp)])
+        new_sources = [s.c for (_, s) in reparam_sources(rp)]
+        rp_new = funnel_problem(new_sources)
         err = maximum(1:n) do j
             g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
             abs(G[1, j] - g_true[1])
         end
         println("  log-scale row (1) max absolute gradient error after transport: $err")
         @test_broken err < 1e-8
+
+        # Pin the MECHANISM, not the number. Row 1 keeps its old value, so the
+        # shortfall is exactly the chain-rule term that was never applied:
+        #
+        #   G[1,j] - g_true[1,j] = Σᵢ (c_new[i] - c_old[i])/2 · (1 + g_y[i+1]·y[i+1])
+        #
+        # evaluated at the model point `y`, which transport leaves invariant.
+        # Written as an either/or so it SURVIVES the fix: once row 1 is written
+        # back the observed error goes to zero and the first branch carries it.
+        # What it rules out is the state neither branch covers — a row-1 error
+        # of some other size, i.e. a different bug wearing this one's clothes.
+        inner = Funnel(3)
+        resid = maximum(1:n) do j
+            y = ir(X[:, j])[2]
+            gy = LogDensityProblems.logdensity_and_gradient(inner, y)[2]
+            predicted = sum(1:3) do i
+                (new_sources[i] - start_sources[i]) / 2 * (1 + gy[i+1] * y[i+1])
+            end
+            g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
+            abs((G[1, j] - g_true[1]) - predicted)
+        end
+        println("  row 1 vs. closed-form missing chain-rule term: $resid")
+        @test err < 1e-8 || resid < 1e-10 * max(1.0, err)
+    end
+
+    @testset "the stale rows change the metric the sampler picks" begin
+        # Severity of the row-1 staleness above: `adaptive_warmup_mcmc.jl:390`
+        # runs the linear-metric `argmin` over the SAME halo two lines after
+        # `:388` mutates it, and every `update_loss!` reads every gradient row.
+        # So the stale row is not merely cosmetic — it is priced into the metric.
+        #
+        # The reference value here is exact, not measured. `update_loss!` for a
+        # `Diagonal` sets `t[i,i] = sqrt(std(pᵢ)/std(gᵢ))`; the funnel fits to
+        # fully non-centered (`c = 0`), and in THAT frame the target is exactly
+        # `v ~ Normal(0, 3)` with `∂logp/∂v = -v/9`. The ratio is therefore 9
+        # regardless of which draws we happened to take — sampling noise cancels
+        # between numerator and denominator — so the correct `t[1,1]` is 3.
+        rng = Xoshiro(11)
+        rp = funnel_problem([1.0, 1.0, 1.0])
+        ir = reparametrizer(rp)
+        n = 400
+        X = Matrix{Float64}(undef, 4, n)
+        G = Matrix{Float64}(undef, 4, n)
+        for j in 1:n
+            v = 3randn(rng)
+            x = [v; exp(v / 2) .* randn(rng, 3)]
+            X[:, j] = x
+            G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, x)[2]
+        end
+        optimize!(ir, X, G)
+        rp_new = funnel_problem([s.c for (_, s) in reparam_sources(rp)])
+
+        # Correct row 1 and nothing else, so the comparison isolates the defect.
+        Gfix = copy(G)
+        for j in 1:n
+            Gfix[1, j] = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2][1]
+        end
+
+        t_stale = Diagonal(ones(4)); WarmupHMC.update_loss!(t_stale, X, G)
+        t_fixed = Diagonal(ones(4)); WarmupHMC.update_loss!(t_fixed, X, Gfix)
+        println("  diagonal t[1,1]: stale = $(t_stale[1,1])  corrected = $(t_fixed[1,1])")
+
+        # With correct gradients the metric recovers the funnel's true marginal
+        # scale. This holds whether or not the defect is fixed — it is a
+        # statement about `update_loss!`, and it is what makes the next
+        # assertion's reference point trustworthy.
+        @test t_fixed[1, 1] ≈ 3.0 rtol = 1e-12
+
+        # The stale row does not merely perturb it: the sampler under-scales the
+        # neck coordinate by roughly half. Promote when row 1 is written back.
+        @test_broken t_stale[1, 1] ≈ 3.0 rtol = 1e-6
+    end
+
+    @testset "staleness hits `loc` rows too, not just the log-scale row" begin
+        # Same defect, wider blast radius than the testset above suggests: any
+        # coordinate that appears only inside an `args` closure misses its
+        # chain-rule term. Here coordinate 2 is the shared `loc` of four blocks
+        # and is NOT itself reparametrized, so `optimize!` never writes it back.
+        rng = Xoshiro(4242)
+        k = 4
+        ir_of(cs) = IndexedReparametrization([
+            (i + 2) => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(c),
+                                         x -> x[2], x -> x[1] / 2)
+            for (i, c) in enumerate(cs)
+        ])
+        prob_of(cs) = ReparametrizedProblem(ir_of(cs), NestedFunnel(k), AutoForwardDiff())
+
+        rp = prob_of(ones(k))
+        ir = reparametrizer(rp)
+        n = 400
+        X = Matrix{Float64}(undef, k + 2, n)
+        G = Matrix{Float64}(undef, k + 2, n)
+        for j in 1:n
+            v = 3randn(rng); s = exp(v / 2); mu = s * randn(rng)
+            X[:, j] = [v; mu; mu .+ s .* randn(rng, k)]
+            G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
+        end
+        optimize!(ir, X, G)
+        rp_new = prob_of([s.c for (_, s) in reparam_sources(rp)])
+        gerr = [maximum(1:n) do j
+                    g_true = LogDensityProblems.logdensity_and_gradient(rp_new, X[:, j])[2]
+                    abs(G[r, j] - g_true[r])
+                end for r in 1:(k + 2)]
+        println("  gradient error per row (rows 1,2 are the closure coordinates): ",
+                round.(gerr, sigdigits=4))
+
+        # The reparametrized rows themselves are transported correctly.
+        @test maximum(gerr[3:end]) < 1e-8
+        # The `loc` row is not. Promote both together with the log-scale row.
+        @test_broken gerr[2] < 1e-8
+    end
+
+    @testset "coupled `loc`: a reparametrized coordinate as another block's loc" begin
+        # `optimize!` transports each block with a SINGLE map,
+        # `Reparametrization(new_source, old_source, args...)`, whose `args` are
+        # evaluated once against `first(xgi)` — a column it is concurrently
+        # mutating. When the `loc` coordinate is itself in `pairs` and sorts
+        # first, the θ blocks read it AFTER it moved.
+        #
+        # That shortcut equals the true composition (old map, then inverse new
+        # map) only when one `loc` value serves both halves. Two regimes, and
+        # the difference is not a matter of degree:
+        #
+        #   c_old == c_target : the OLD map is the IDENTITY, `loc_old` drops out
+        #                       of the composition entirely, and the mutated read
+        #                       supplies exactly the `loc_new` the new map wants.
+        #                       Correct — measured exact to 1.4e-14.
+        #   c_old != c_target : both `loc_old` and `loc_new` genuinely appear.
+        #                       No single value serves both. Broken by ~1e2.
+        #
+        # So this is a SECOND-AND-LATER-window defect: the first adaptation from
+        # a fully-centered start is fine, and it breaks once that window fits a
+        # non-trivial source. Every reparametrization spec shipped in this repo
+        # is uncoupled (the `args` coordinates are disjoint from the `idx` set),
+        # so nothing hits this today — but `accel_gp` reads `x[46]` with its
+        # `idx` starting at 47, which is one off-by-one away.
+        k = 4
+        coupled_ir(cs) = IndexedReparametrization(vcat(
+            [2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(cs[1]),
+                                    0.0, x -> x[1] / 2)],
+            [(i + 2) => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(c),
+                                          x -> x[2], x -> x[1] / 2)
+             for (i, c) in enumerate(cs[2:end])]))
+        coupled_problem(cs) =
+            ReparametrizedProblem(coupled_ir(cs), NestedFunnel(k), AutoForwardDiff())
+
+        # Position invariance: `optimize!` may change the parametrization, but
+        # the MODEL point each column denotes must not move.
+        function theta_transport_error(start)
+            rng = Xoshiro(4242)
+            rp = coupled_problem(start)
+            ir = reparametrizer(rp)
+            ir_old = coupled_ir(start)
+            n = 400
+            X = Matrix{Float64}(undef, k + 2, n)
+            G = Matrix{Float64}(undef, k + 2, n)
+            for j in 1:n
+                v = 3randn(rng); s = exp(v / 2); mu = s * randn(rng)
+                X[:, j] = [v; mu; mu .+ s .* randn(rng, k)]
+                G[:, j] = LogDensityProblems.logdensity_and_gradient(rp, X[:, j])[2]
+            end
+            X0 = copy(X)
+            optimize!(ir, X, G)
+            moved = maximum(abs, view(X, 2, :) .- view(X0, 2, :))
+            err = maximum(3:(k + 2)) do r
+                maximum(j -> abs(ir(X[:, j])[2][r] - ir_old(X0[:, j])[2][r]), 1:n)
+            end
+            (; err, moved)
+        end
+
+        centered = theta_transport_error(fill(1.0, k + 1))
+        println("  coupled, c_old == c_target: θ transport error = $(centered.err) ",
+                "(loc coordinate moved by $(centered.moved))")
+        # Not vacuous: the `loc` coordinate really did move underneath the θ
+        # blocks, and they still landed on the same model point.
+        @test centered.moved > 1.0
+        @test centered.err < 1e-10
+
+        shifted = theta_transport_error(fill(0.5, k + 1))
+        println("  coupled, c_old != c_target: θ transport error = $(shifted.err) ",
+                "(loc coordinate moved by $(shifted.moved))")
+        @test shifted.moved > 1.0
+        @test_broken shifted.err < 1e-10
     end
 
     @testset "find_reparametrization! is a no-op for a plain lpdf" begin

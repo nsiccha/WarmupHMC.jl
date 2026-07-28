@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script><script src="https://unpkg.com/hyperscript.org@0.9.14"></script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"><style>@layer htmxo {
+    :where(:root) {
+        --htmxo-accent:  #4a90d9;
+        --htmxo-success: #2a9d8f;
+        --htmxo-warning: #e9a23b;
+        --htmxo-error:   #e76f51;
+        --htmxo-border:  currentColor;
+        --htmxo-muted:   color-mix(in srgb, currentColor 60%, transparent);
+    }
+}
+</style><style>:root {
+    --htmxo-accent:  var(--pico-primary, #4a90d9);
+    --htmxo-success: var(--pico-color-green-550, #2a9d8f);
+    --htmxo-warning: var(--pico-color-amber-550, #e9a23b);
+    --htmxo-error:   var(--pico-color-red-550, #e76f51);
+    --htmxo-border:  var(--pico-border-color, currentColor);
+    --htmxo-muted:   var(--pico-muted-color, color-mix(in srgb, currentColor 60%, transparent));
+}
+</style><style>@layer htmxo {
+@keyframes htmx-pulse {
+    0%, 100% { outline-color: color-mix(in srgb, var(--htmxo-accent) 30%, transparent); }
+    50% { outline-color: var(--htmxo-accent); }
+}
+.htmx-request-active {
+    outline: 2px solid var(--htmxo-accent);
+    outline-offset: -2px;
+    animation: htmx-pulse 1s ease-in-out infinite;
+}
+.htmx-request-success {
+    outline: 2px solid var(--htmxo-success);
+    outline-offset: -2px;
+    animation: htmx-fade-success 1s ease-out forwards;
+}
+.htmx-request-error {
+    outline: 2px solid var(--htmxo-error);
+    outline-offset: -2px;
+    animation: htmx-fade-error 2s ease-out forwards;
+}
+@keyframes htmx-fade-success {
+    0% { outline-color: var(--htmxo-success); }
+    100% { outline-color: transparent; }
+}
+@keyframes htmx-fade-error {
+    0% { outline-color: var(--htmxo-error); }
+    100% { outline-color: transparent; }
+}
+}
+</style><script>document.addEventListener('DOMContentLoaded', function() {
+    function getTarget(evt) {
+        var elt = evt.detail.elt;
+        var targetSel = elt.getAttribute('hx-target');
+        if (targetSel) {
+            if (targetSel === 'this') return elt;
+            var found = document.querySelector(targetSel);
+            if (found) return found;
+        }
+        return elt;
+    }
+    function isPolling(elt) {
+        var trigger = elt.getAttribute('hx-trigger') || '';
+        return trigger.indexOf('every') !== -1;
+    }
+    function isPollingRelated(elt) {
+        return isPolling(elt) || (elt.querySelector && !!elt.querySelector('[hx-trigger*="every"]'));
+    }
+    function clearFeedback(el) {
+        el.classList.remove('htmx-request-active', 'htmx-request-success', 'htmx-request-error');
+    }
+    document.body.addEventListener('htmx:beforeRequest', function(e) {
+        var elt = e.detail.elt;
+        if (isPolling(elt)) return;
+        var t = getTarget(e);
+        clearFeedback(t);
+        t.classList.add('htmx-request-active');
+        if (t !== elt) {
+            clearFeedback(elt);
+            elt.classList.add('htmx-request-active');
+        }
+    });
+    document.body.addEventListener('htmx:oobAfterSwap', function(e) {
+        var t = e.detail.target || e.detail.elt;
+        if (!t) return;
+        clearFeedback(t);
+        t.classList.add('htmx-request-success');
+        setTimeout(function() { clearFeedback(t); }, 1000);
+    });
+    document.body.addEventListener('htmx:afterRequest', function(e) {
+        var elt = e.detail.elt;
+        if (isPollingRelated(elt)) return;
+        var t = getTarget(e);
+        t.classList.remove('htmx-request-active');
+        if (e.detail.successful) {
+            t.classList.add('htmx-request-success');
+            setTimeout(function() { clearFeedback(t); }, 1000);
+            if (t !== elt) {
+                elt.classList.remove('htmx-request-active');
+                elt.classList.add('htmx-request-success');
+                setTimeout(function() { clearFeedback(elt); }, 1000);
+            }
+        } else {
+            t.classList.add('htmx-request-error');
+            setTimeout(function() { clearFeedback(t); }, 2000);
+            if (t !== elt) {
+                elt.classList.add('htmx-request-error');
+                setTimeout(function() { clearFeedback(elt); }, 2000);
+            }
+        }
+    });
+});
+</script><style>.htmxo-compose-textarea {
+    resize: none; overflow: hidden; field-sizing: content; line-height: 1.4;
+}
+.htmxo-toast {
+    position: fixed; bottom: 1rem; right: 1rem; z-index: 9999;
+    padding: 0.5rem 0.85rem; border-radius: 0.3rem; font-size: 0.85em;
+    background: var(--pico-card-background-color, #fff);
+    border: 1px solid var(--pico-muted-border-color, #ccc);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-width: 28rem;
+    opacity: 0; transform: translateY(0.5rem);
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.htmxo-toast-show { opacity: 1; transform: translateY(0); }
+.htmxo-toast-error { border-color: var(--pico-color-red-500, #d32f2f); color: var(--pico-color-red-500, #d32f2f); }
+.htmxo-toast-info { color: var(--pico-color, inherit); }
+</style><script>(function() {
+    var FIELD_SIZING = !!(window.CSS && CSS.supports && CSS.supports('field-sizing', 'content'));
+    function autoGrow(el) {
+        if (!el || FIELD_SIZING) return;
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+    }
+    function draftKey(el) { return el.getAttribute('data-draft-key') || ''; }
+    function restoreDrafts(root) {
+        var scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.htmxo-compose-draft').forEach(function(el) {
+            if (el.dataset.htmxoDraftBound === '1') return;
+            el.dataset.htmxoDraftBound = '1';
+            var k = draftKey(el);
+            if (!k) return;
+            try { var saved = localStorage.getItem(k); if (saved && !el.value) el.value = saved; } catch (e) {}
+            if (el.classList.contains('htmxo-compose-textarea')) autoGrow(el);
+            el.addEventListener('input', function() {
+                try { if (el.value) localStorage.setItem(k, el.value); else localStorage.removeItem(k); } catch (e) {}
+            });
+        });
+    }
+    function bindTextareas(root) {
+        var scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.htmxo-compose-textarea').forEach(function(el) {
+            if (el.dataset.htmxoTaBound === '1') { autoGrow(el); return; }
+            el.dataset.htmxoTaBound = '1';
+            autoGrow(el);
+            el.addEventListener('input', function() { autoGrow(el); });
+            el.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    var f = el.closest('form');
+                    if (!f) return;
+                    if (f.requestSubmit) f.requestSubmit();
+                    else f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                }
+            });
+        });
+    }
+    function clearFormDrafts(form) {
+        form.querySelectorAll('.htmxo-compose-draft').forEach(function(el) {
+            var k = draftKey(el); if (!k) return;
+            try { localStorage.removeItem(k); } catch (e) {}
+        });
+    }
+    function toast(text, status) {
+        var t = document.createElement('div');
+        t.className = 'htmxo-toast htmxo-toast-' + (status || 'info');
+        t.textContent = text;
+        document.body.appendChild(t);
+        void t.offsetWidth;
+        t.classList.add('htmxo-toast-show');
+        setTimeout(function() {
+            t.classList.remove('htmxo-toast-show');
+            setTimeout(function() { t.remove(); }, 350);
+        }, 4000);
+    }
+    window.htmxoToast = toast;
+    window.htmxoComposeRebind = function(root) { restoreDrafts(root); bindTextareas(root); };
+    function init() {
+        restoreDrafts(document);
+        bindTextareas(document);
+        document.body.addEventListener('htmx:afterSettle', function(evt) {
+            restoreDrafts(evt.detail && evt.detail.elt);
+            bindTextareas(evt.detail && evt.detail.elt);
+        });
+        // 2xx → clear drafts + reset the form. Non-2xx → keep value, toast.
+        document.body.addEventListener('htmx:afterRequest', function(evt) {
+            var form = evt.target && evt.target.closest && evt.target.closest('.htmxo-compose-form');
+            if (!form) return;
+            if (evt.detail && evt.detail.successful) {
+                clearFormDrafts(form);
+                form.reset();
+                form.querySelectorAll('.htmxo-compose-textarea').forEach(autoGrow);
+            } else {
+                toast('send failed — your text is preserved, retry when ready', 'error');
+            }
+        });
+        // No response at all (server down, network drop). Same UX as a non-2xx.
+        document.body.addEventListener('htmx:sendError', function(evt) {
+            var form = evt.target && evt.target.closest && evt.target.closest('.htmxo-compose-form');
+            if (!form) return;
+            toast('send failed — unreachable; your text is preserved', 'error');
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+})();
+</script><script src="/WarmupHMC.jl/dev/live-whmc/overlay/bar.js" defer="true"></script><style>@layer htmxo {
+/* === Generic behavior conventions === */
+/* Any element triggering an htmx action is clickable. */
+[hx-get], [hx-post], [hx-put], [hx-patch], [hx-delete] { cursor: pointer; }
+
+/* Rich generated option cards keep valid sibling DOM (radio + label +
+   semantic article). The associated label covers only rich cards, making the
+   whole presentational surface a native selection target without JavaScript;
+   concise fallback labels stay visible when no semantic card exists. */
+.htmxo-semantic-card { position: relative; }
+.htmxo-semantic-card[data-rich="true"] > input[type="radio"] {
+    position: relative;
+    z-index: 2;
+}
+.htmxo-semantic-card[data-rich="true"] > label {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    cursor: pointer;
+}
+.htmxo-semantic-card[data-rich="true"] > input:disabled + label {
+    cursor: not-allowed;
+}
+.htmxo-semantic-card[data-rich="true"] > label > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+.htmxo-semantic-status[data-status="ok"],
+.htmxo-semantic-status[data-status="available"] { color: var(--htmxo-success); }
+.htmxo-semantic-status[data-status="warn"],
+.htmxo-semantic-status[data-status="blocked"] { color: var(--htmxo-warning); }
+.htmxo-semantic-status[data-status="fail"] { color: var(--htmxo-error); }
+.htmxo-semantic-status[data-status="pending"] { color: var(--htmxo-muted); }
+
+/* `SemanticGroup` is an untitled RUN of siblings, and it is the one element in
+   the vocabulary whose meaning no HTML element carries — every other one picks
+   the element whose native rendering already says it (`article` for a card,
+   `section` for a division, `dl` for fields, `details` for a disclosure,
+   `pre>code` for code), which is why those classes need no rule here. A group
+   falls to a bare `div`, so without this rule it renders as nothing at all and
+   its children merely stack. Laid out as a row that WRAPS: siblings share the
+   width and each keeps a minimum before the row breaks, so a pair of figures
+   sits side by side on a wide viewport and stacks on a narrow one with no
+   consumer input — which is what a "run" reads like. `min-width: 0` lets a wide
+   child (a table, a `pre`) scroll inside its own box instead of blowing the row
+   out. Apps that want a different run width set the variables in their own
+   scoped stylesheet — never inline:
+       .my-app-wide-run { --htmxo-semantic-group-min: 30rem; } */
+.htmxo-semantic-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    gap: var(--htmxo-semantic-group-gap, 1rem);
+}
+.htmxo-semantic-group > * {
+    flex: 1 1 var(--htmxo-semantic-group-min, 20rem);
+    min-width: 0;
+}
+
+/* `SemanticMetric` is the OTHER element with no HTML counterpart (see the group
+   comment above): a label/value pair lowers to a `span` next to a `strong`, and
+   adjacent inline elements carry no separation of their own — so without this
+   rule `SemanticMetric("draws", 4000)` renders as the run-together `draws4000`.
+   The separator is a GAP, not a literal colon in the markup: the text peers
+   already say `draws: 4000` in their own idiom, and keeping it out of the HTML
+   leaves the label and value independently styleable, and scrapeable without a
+   punctuation strip. `baseline` keeps the value's baseline on the label's when
+   an app scales one of them up; `wrap` lets a long label drop the value to its
+   own line rather than overflow. Apps wanting a figure-over-caption metric set
+   `flex-direction: column` in their own scoped stylesheet — never inline. */
+.htmxo-semantic-metric {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--htmxo-semantic-metric-gap, 0.4rem);
+}
+
+/* `data-status` on a leaf text element (cells, badges, pills) colors the
+   text by status; on a container with `.htmxo-status-banner` it colors the
+   left border instead (see banner rules below). */
+td[data-status], th[data-status], span[data-status], small[data-status] { font-weight: bold; }
+[data-status="success"]:not(.htmxo-status-banner) { color: var(--htmxo-success); }
+[data-status="error"]:not(.htmxo-status-banner)   { color: var(--htmxo-error); }
+[data-status="warning"]:not(.htmxo-status-banner) { color: var(--htmxo-warning); }
+[data-status="muted"]:not(.htmxo-status-banner)   { color: var(--htmxo-muted); }
+
+.u-hidden { display: none; }
+.u-inline { display: inline; }
+.u-inline-block { display: inline-block; }
+.u-block { display: block; }
+.u-flex { display: flex; align-items: center; gap: 0.5rem; }
+.u-flex-tight { display: flex; align-items: center; gap: 0.25rem; }
+.u-flex-wide { display: flex; align-items: center; gap: 1rem; }
+.u-flex-wrap { flex-wrap: wrap; }
+.u-flex-between { display: flex; justify-content: space-between; align-items: center; }
+.u-stack { display: flex; flex-direction: column; gap: 0.5rem; }
+.u-stack-tight { display: flex; flex-direction: column; gap: 0.25rem; }
+.u-stack-wide { display: flex; flex-direction: column; gap: 1rem; }
+.u-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.u-grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+/* Sidebar + main page layout. Stacks on phone-sized viewports (<768px);
+   becomes a 2-col grid above. Pair with `app_layout(sidebar, content)`. */
+.htmxo-app-layout { display: block; min-height: 100vh; }
+.htmxo-app-layout > aside { padding: 1rem 0; }
+.htmxo-app-layout > main { min-width: 0; padding: 1rem 0; }
+@media (min-width: 768px) {
+    .htmxo-app-layout {
+        display: grid;
+        grid-template-columns: var(--htmxo-sidebar-width, 12rem) 1fr;
+        grid-template-areas: "sidebar content";
+        column-gap: 2rem;
+    }
+    .htmxo-app-layout > aside { grid-area: sidebar; padding: 1rem 1rem 1rem 0; border-right: 1px solid var(--pico-muted-border-color); }
+    .htmxo-app-layout > main { grid-area: content; }
+    .htmxo-app-layout > aside > nav { position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow-y: auto; }
+}
+.u-bg-soft { background: var(--pico-card-background-color, #f8f8f8); }
+.u-btn-sm { padding: 0.3rem 0.8rem; }
+.u-btn-xs { padding: 0.2rem 0.6rem; }
+.u-input-grow { flex: 1; min-width: 20rem; max-width: 500px; }
+.u-link-plain { text-decoration: none; color: inherit; }
+.u-my-2 { margin: 0.5rem 0; }
+.u-my-1 { margin: 0.25rem 0; }
+.u-my-4 { margin: 1rem 0; }
+.u-pointer { cursor: pointer; }
+.u-w-full { width: 100%; }
+.u-grow { flex: 1; min-width: 0; }
+.u-min-w-0 { min-width: 0; }
+.u-narrow { max-width: 900px; }
+.u-truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.u-pre-wrap { white-space: pre-wrap; }
+.u-mono { font-family: monospace; }
+.u-no-border { border: none; }
+.u-text-bold { font-weight: bold; }
+.u-text-normal { font-weight: normal; }
+.u-text-xs { font-size: 0.75em; }
+.u-text-sm { font-size: 0.85em; }
+.u-text-lg { font-size: 1.1em; }
+.u-text-muted { color: var(--htmxo-muted); }
+.u-text-success { color: var(--htmxo-success); }
+.u-text-error { color: var(--htmxo-error); }
+.u-text-warning { color: var(--htmxo-warning); }
+.u-text-accent { color: var(--htmxo-accent); }
+.u-text-center { text-align: center; }
+.u-text-left { text-align: left; }
+.u-text-right { text-align: right; }
+.u-mt-0 { margin-top: 0; }
+.u-mt-1 { margin-top: 0.25rem; }
+.u-mt-2 { margin-top: 0.5rem; }
+.u-mt-3 { margin-top: 0.75rem; }
+.u-mt-4 { margin-top: 1rem; }
+.u-mt-5 { margin-top: 1.5rem; }
+.u-mt-6 { margin-top: 2rem; }
+.u-mb-0 { margin-bottom: 0; }
+.u-mb-1 { margin-bottom: 0.25rem; }
+.u-mb-2 { margin-bottom: 0.5rem; }
+.u-mb-3 { margin-bottom: 0.75rem; }
+.u-mb-4 { margin-bottom: 1rem; }
+.u-mb-5 { margin-bottom: 1.5rem; }
+.u-mb-6 { margin-bottom: 2rem; }
+.u-ml-1 { margin-left: 0.25rem; }
+.u-ml-2 { margin-left: 0.5rem; }
+.u-ml-4 { margin-left: 1rem; }
+.u-mr-1 { margin-right: 0.25rem; }
+.u-mr-2 { margin-right: 0.5rem; }
+.u-mr-3 { margin-right: 0.75rem; }
+.u-m-0 { margin: 0; }
+.u-p-0 { padding: 0; }
+.u-p-2 { padding: 0.5rem; }
+.u-p-4 { padding: 1rem; }
+.u-sticky-top { position: sticky; top: 0; max-height: 100vh; overflow-y: auto; }
+.u-scroll-y { max-height: 300px; overflow: auto; }
+.u-scroll-y-lg { max-height: 400px; overflow: auto; }
+.u-card { background: var(--pico-card-background-color, transparent); padding: 1rem; border-radius: 0.5rem; }
+.u-code-block { background: var(--pico-code-background-color, #f6f8fa); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+/* Status banner — colored left-border callout. State via data-status. */
+.htmxo-status-banner { padding: 0.5rem 1rem; margin-bottom: 0.5rem; min-width: 0; overflow: hidden; background: var(--pico-card-background-color, transparent); border-left: 4px solid var(--htmxo-border); }
+.htmxo-status-banner[data-status="success"] { border-left-color: var(--htmxo-success); }
+.htmxo-status-banner[data-status="error"]   { border-left-color: var(--htmxo-error); }
+.htmxo-status-banner[data-status="warning"] { border-left-color: var(--htmxo-warning); }
+.htmxo-status-banner[data-status="accent"]  { border-left-color: var(--htmxo-accent); }
+
+/* Breadcrumb nav. Build with `htmxo_breadcrumb([("Home", "/", "/"), ...])`.
+   Children are <span> (current page, marked aria-current) or <a> (link).
+   Separators are generated via ::before — no separator element in markup. */
+.htmxo-breadcrumb { font-size: 0.85em; margin-bottom: 1rem; padding: 6px 0; border-bottom: 1px solid var(--pico-muted-border-color); }
+.htmxo-breadcrumb > * + *::before { content: ' / '; color: var(--pico-muted-color); margin: 0 6px; }
+.htmxo-breadcrumb [aria-current="page"] { color: var(--pico-color); font-weight: 500; }
+.htmxo-breadcrumb a { text-decoration: none; color: var(--pico-primary); }
+.htmxo-breadcrumb a:hover { text-decoration: underline; }
+.u-badge { display: inline-block; padding: 0.15em 0.5em; border-radius: 3px; font-size: 0.8em; font-weight: 600; line-height: 1.2; color: var(--htmxo-bg, #fff); background: var(--htmxo-muted); }
+.u-badge.u-badge-success { background: var(--htmxo-success); }
+.u-badge.u-badge-error   { background: var(--htmxo-error); }
+.u-badge.u-badge-warning { background: var(--htmxo-warning); }
+.u-badge.u-badge-accent  { background: var(--htmxo-accent); }
+.u-badge.u-badge-muted   { background: var(--htmxo-muted); }
+.u-badge-soft { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 1rem; font-size: 0.8em; line-height: 1.2; cursor: pointer; user-select: none; border: 1px solid transparent; background: color-mix(in srgb, var(--htmxo-muted) 25%, transparent); }
+.u-badge-soft.u-badge-success { background: color-mix(in srgb, var(--htmxo-success) 35%, transparent); }
+.u-badge-soft.u-badge-error   { background: color-mix(in srgb, var(--htmxo-error)   35%, transparent); }
+.u-badge-soft.u-badge-warning { background: color-mix(in srgb, var(--htmxo-warning) 35%, transparent); }
+.u-badge-soft.u-badge-accent  { background: color-mix(in srgb, var(--htmxo-accent)  35%, transparent); }
+
+/* Generic equal-column grid. Column count and gap are tunable per
+   instance via CSS variables on the element itself or an ancestor:
+       <div class="htmxo-grid" style="--htmxo-grid-cols:16">…</div>   /* DON'T — inline */
+   Apps should set the variables in their own scoped stylesheet:
+       .my-app-dense-grid { --htmxo-grid-cols: 16; --htmxo-grid-gap: 0.25rem; }
+       <div class="htmxo-grid my-app-dense-grid">…</div> */
+.htmxo-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--htmxo-grid-cols, 4), 1fr);
+    gap: var(--htmxo-grid-gap, 0.5rem);
+}
+
+/* "← Back" link. Subtler than a primary link; sits above content as a
+   navigation hint. Pair with `<a class="htmxo-back-link" href="…">← Back</a>`. */
+.htmxo-back-link {
+    display: inline-block;
+    margin-bottom: 0.5rem;
+    font-size: 0.9em;
+    text-decoration: none;
+    color: var(--htmxo-muted, currentColor);
+}
+.htmxo-back-link:hover { text-decoration: underline; }
+}
+</style><style>@layer htmxo {
+.tabset > nav {
+    margin: 0;
+    padding: 0 0 0 1rem;
+    border-bottom: 2px solid var(--htmxo-border);
+}
+.tabset > nav ul {
+    align-self: flex-end;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.tabset > nav ul li {
+    padding: 0;
+    margin: 0;
+}
+.tabset > nav ul li a {
+    display: block;
+    padding: 0.5rem 1rem;
+    border: 2px solid transparent;
+    border-bottom: none;
+    border-radius: 0.35rem 0.35rem 0 0;
+    background: transparent;
+    text-decoration: none;
+}
+.tabset > nav ul li a.contrast {
+    border-color: var(--htmxo-border);
+    background: transparent;
+}
+.tabset > .tab-panel {
+    padding: 1rem;
+    border: 2px solid var(--htmxo-border);
+    border-top: none;
+    border-radius: 0 0 0.35rem 0.35rem;
+}
+}
+</style><style>@layer htmxo {
+.htmxo-editor-input {
+    font-family: monospace;
+    font-size: 0.85em;
+    width: 100%;
+}
+.htmxo-editor-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+}
+</style><style>[data-static-disabled]{opacity:.45;pointer-events:none;cursor:not-allowed}</style></head><body><div class="htmxo-app-layout"><aside><nav><ul><li><a href="//" hx-get="//" hx-target="#content" hx-push-url="//" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Table</a></li><li><a href="//gallery" hx-get="//gallery" hx-target="#content" hx-push-url="//gallery" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Gallery</a></li></ul></nav></aside><main id="content"><div><h2>WarmupHMC Posterior Gallery (147 posteriors)</h2><div class="htmxo-gallery"><article><h4>GLMM_Poisson_data-GLMM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLMM_data-GLMM1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Binomial_data-GLM_Binomial_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Poisson_Data-GLM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>M0_data-M0_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mb_data-Mb_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mh_data-Mh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mt_data-Mt_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mtbh_data-Mtbh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mth_data-Mth_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_1_data-Rate_1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_2_data-Rate_2_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_3_data-Rate_3_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_4_data-Rate_4_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_5_data-Rate_5_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Survey_data-Survey_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arK-arK</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arma-arma11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_0-hmm_drive_0</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_1-hmm_drive_1</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bones_data-bones_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>butterfly-multi_occupancy</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>diamonds-diamonds</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_hierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_log</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_nonhierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dugongs_data-dugongs_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-log10earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_logheight_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>election88-election88_full</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>fims_Aus_Jpn_irt-2pl_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>garch-garch11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_pois_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_example-hmm_example</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_gaussian_simulated-hmm_gaussian</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hudson_lynx_hare-lotka_volterra</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>iohmm_reg_simulated-iohmm_reg</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>irt_2pl-irt_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhsiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_mom_work</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kilpisjarvi_mod-kilpisjarvi</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>loss_curves-losscurve_sislob</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix-low_dim_gauss_mix</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix_collapse-low_dim_gauss_mix_collapse</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>lsat_data-lsat_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_gp-accel_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_splines-accel_splines</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logva</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvas</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvash</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvolume</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-mesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist-nn_rbm1bJ100</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist_100-nn_rbm1bJ10</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1972-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1976-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1980-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1984-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1988-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1992-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1996-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes2000-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes_logit_data-nes_logit_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_2-normal_mixture</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_5-normal_mixture_k</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>one_comp_mm_elim_abs-one_comp_mm_elim_abs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ovarian-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>pilots-pilots</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_chapter-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_paragraph-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prostate-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mod-radon_county</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rats_data-rats_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rstan_downloads-prophet</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sat-hier_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblrc-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblri-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>science_irt-grsm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_centered_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_stanified_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sesame_data-sesame_one_pred_a</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sir-sir</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>soil_carbon-soil_incubation</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>state_wide_presidential_votes-hierarchical_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>surgical_data-surgical_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>synthetic_grid_RBF_kernels-kronecker_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_docs1200-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men1-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men2-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men3-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>timssAusTwn_irt-gpcm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>traffic_accident_nyc-bym2_offset_only</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>uk_drivers-state_space_stochastic_level_stochastic_seasonal</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_daae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_inter_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100ars_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article></div></div></main></div><style>.htmxo-status-banner section { margin-bottom: 0.5rem; }</style></body></html>

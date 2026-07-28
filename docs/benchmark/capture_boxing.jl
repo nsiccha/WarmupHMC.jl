@@ -252,7 +252,7 @@ open(joinpath(OUT_DIR, "capture_boxing.json"), "w") do io
                   "the shipped spec's, so the delta is pure overhead and the " *
                   "measurement is independent of how the shipped table is written.",
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
-        "warmuphmc_sha" => readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`),
+        git_provenance()...,
         "rounds" => ROUNDS, "n_calls" => NCALLS,
         "captures" => captures, "boxed_specs" => boxed_specs,
         "ab_target" => AB_TARGET,

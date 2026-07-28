@@ -66,6 +66,19 @@ include(joinpath(@__DIR__, "code_identical.jl"))
 const RESULTS = joinpath("docs", "benchmark", "results")
 const SHA_RE = r"\"warmuphmc_sha\"\s*:\s*\"([0-9a-fA-F]{7,40})\""
 
+"""A recorded boolean flag, as one of FOUR states rather than two.
+
+`true` / `false` / `nothing` (recorded JSON `null`) / `missing` (the key is not
+in the file at all). Both readers of `worktree_dirty` used to collapse the last
+three with `get(raw, k, false) === true`, so an artifact whose harness could not
+reach git read exactly like one that checked and found the tree clean. Those are
+different claims and only one of them is evidence."""
+function recorded_flag(text, key)
+    m = match(Regex("\"$key\"\\s*:\\s*(true|false|null)"), text)
+    m === nothing && return missing
+    m.captures[1] == "true" ? true : m.captures[1] == "false" ? false : nothing
+end
+
 """Tracked `*.json` under results/, as repo-relative paths."""
 function artifacts()
     out = git("ls-files", "--", RESULTS)
@@ -152,6 +165,58 @@ function unresolvable_reason(sha)
         "the commit is on no fetched ref (rebased away, or never published)"
 end
 
+"""Why an artifact's tree cannot be trusted to be the one its SHA names, or
+`nothing` when it can.
+
+THE PROBLEM THIS SOLVES. A recorded SHA is checkable against any later tip; a
+tree with uncommitted changes is checkable against nothing, because there is no
+revision to name. `code_identical.jl` — the whole engine of this script —
+structurally cannot answer it. So this is the one defect here with no
+retroactive remedy: the only discharge is to measure again.
+
+WHY `src_dirty` AND NOT `worktree_dirty`. The drivers' `worktree_dirty` is
+whole-tree, and it is the right thing for a human reading a provenance header.
+It is the wrong thing to GATE on, because this check's subject is `src/` alone.
+A dirty `docs/` cannot change what sampler ran — and a session writing up the
+measurement it just took has a dirty `docs/` essentially always, so gating on
+the whole tree would fire constantly for a reason that is never the reason. A
+gate red for the wrong reason is a gate that gets muted rather than fixed.
+
+WHY OLD ARTIFACTS DO NOT NEED RE-MEASURING. A clean whole tree implies a clean
+`src/`, so `worktree_dirty: false` is STRICTLY STRONGER than what is being
+asked and is accepted on its own. That is what makes adding the narrower flag
+cheap: it costs nothing already recorded.
+
+WHY `null` IS NOT `false`. All the helpers `catch` into `missing`, which
+serialises as JSON `null` — git was unreachable when the run was recorded.
+Nobody can verify anything about that tree, which is not the same claim as "it
+was clean", and defaulting it to clean is the same silent-reassurance failure as
+a `git fetch` that no-ops and exits 0."""
+function dirty_reason(path)
+    text = read(joinpath(REPO, path), String)
+    src, whole = recorded_flag(text, "src_dirty"), recorded_flag(text, "worktree_dirty")
+
+    src === true && return "`src/` had UNCOMMITTED CHANGES when this was measured, so " *
+        "the base above does not name the code that ran — and no revision does. " *
+        "Not dischargeable by any later check: re-measure from a clean tree"
+    src === false && return nothing
+    src === nothing && return "`src_dirty` is null — the harness asked git and could not " *
+        "find out, so nothing about that tree is verifiable. Not the same as clean; " *
+        "re-measure, or record why git was unreachable"
+
+    # `src_dirty` absent: fall back to the whole-tree flag, which is stronger
+    # where it says clean and useless where it does not.
+    whole === false && return nothing
+    whole === true && return "the WHOLE TREE was dirty and `src_dirty` was not recorded, so " *
+        "whether `src/` was among the changes is unknowable now. Re-measure (the harness " *
+        "records `src_dirty` as of this commit), or mark the run SUPERSEDED"
+    whole === nothing && return "`worktree_dirty` is null and `src_dirty` is absent — git was " *
+        "unreachable at measurement time and nothing narrower was recorded"
+    return "NEITHER `src_dirty` NOR `worktree_dirty` was recorded, so this artifact's tree " *
+        "is unverifiable. Absent is indistinguishable from clean, which is why it cannot " *
+        "be read as clean; re-run the harness (both flags are recorded as of this commit)"
+end
+
 function main_currency(args)
     tip = isempty(args) ? "HEAD" : args[1]
     resolves(tip) || error("tip revision `$tip` does not resolve")
@@ -170,6 +235,19 @@ function main_currency(args)
         if sha === nothing
             push!(red, p)
             println(rpad(p, 56), "  NO warmuphmc_sha — cannot be checked; record one, or mark the run SUPERSEDED")
+            continue
+        end
+
+        # Checked BEFORE the base is resolved, because it outranks the result.
+        # A dirty tree does not make the currency comparison fail — it makes it
+        # MEANINGLESS: `code_identical.jl` would compare the recorded revision
+        # against the tip and answer confidently about code that is not what
+        # ran. Reporting `current` first and the dirt second would bury the
+        # stronger fact under the weaker one.
+        dirt = dirty_reason(p)
+        if dirt !== nothing
+            push!(red, p)
+            println(rpad(p, 56), "  UNATTRIBUTABLE — ", dirt)
             continue
         end
         usable = resolves(sha) && containing_refs(sha) > 0

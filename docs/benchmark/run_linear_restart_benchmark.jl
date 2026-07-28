@@ -357,8 +357,14 @@ repo_sha() = try
 catch
     "unknown"
 end
-repo_dirty() = try
-    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no`))
+# Duplicated from `git_provenance()` in common.jl rather than shared, because
+# this driver deliberately does not include that harness. Keep the two in
+# lockstep: whole-tree AND `src/`-scoped, `missing` (JSON `null`) on failure
+# rather than `false`, since git being unreachable is not evidence of
+# cleanliness. `artifact_currency.jl` gates on `src_dirty`; `worktree_dirty` is
+# what a human reading the provenance header wants.
+repo_dirty(paths...) = try
+    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no $(paths)`))
 catch
     missing
 end
@@ -406,6 +412,7 @@ provenance = Dict(
     "timestamp_utc" => string(now(UTC)),
     "warmuphmc_sha" => repo_sha(),
     "worktree_dirty" => repo_dirty(),
+    "src_dirty" => repo_dirty("--", "src"),
     "host" => get(ENV, "KB_HOST", gethostname()),
     "native_hostname" => gethostname(),
     "julia" => string(VERSION),

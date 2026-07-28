@@ -142,29 +142,21 @@ jsonsafe(x) = x
 # because forward vs reverse mode moved the wrapper-overhead figures enough to
 # invert a wall-clock verdict. Both are provenance, and neither is recoverable
 # after the fact.
-whmc_sha() = try
-    readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`)
-catch
-    "unknown"
-end
-# `--untracked-files=no` is load-bearing, not tidiness. This benchmark WRITES
-# its results into the repo, so a bare `--porcelain` counts the previous run's
-# untracked output directory and reports every run after the first as DIRTY —
-# by construction, with the tracked source byte-identical. That fires exactly
-# when two runs are being compared, which is the one time the flag has to mean
-# something. Only tracked modifications can change what code ran.
-whmc_dirty() = try
-    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no`))
-catch
-    missing
-end
-
-const PROVENANCE = Dict("n_seeds" => N_SEEDS, "n_draws_floor" => N_DRAWS,
-                        "julia" => string(VERSION),
-                        "blas_threads" => BLAS.get_num_threads(),
-                        "ad_backend" => AD_BACKEND_NAME,
-                        "warmuphmc_sha" => whmc_sha(),
-                        "worktree_dirty" => whmc_dirty())
+# The revision and the two cleanliness flags come from `git_provenance()` in
+# common.jl — one implementation, so a harness cannot record the SHA and quietly
+# omit whether the tree it came from was clean. That combination is not
+# hypothetical: it is how eight artifacts measured in one dirty window came to
+# look, on their face, exactly like eight clean ones.
+#
+# GUARD BEFORE EVERY ARM, not once at the top. The flag is order-dependent in a
+# multi-arm run: editing any tracked file between arms gives one base two
+# provenance verdicts — arm 1 clean, arm 2 dirty, identical code — decided by
+# when the author happened to be typing.
+const PROVENANCE = merge(Dict("n_seeds" => N_SEEDS, "n_draws_floor" => N_DRAWS,
+                              "julia" => string(VERSION),
+                              "blas_threads" => BLAS.get_num_threads(),
+                              "ad_backend" => AD_BACKEND_NAME),
+                         git_provenance())
 
 open(joinpath(OUT_DIR, "runs.json"), "w") do io
     JSON.print(io, jsonsafe(merge(PROVENANCE, Dict("runs" => rows))), 2)

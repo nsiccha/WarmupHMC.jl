@@ -121,6 +121,64 @@ const BENCH_DIR = @__DIR__
 const REPO_ROOT = normpath(joinpath(BENCH_DIR, "..", ".."))
 
 """
+    git_provenance() -> Dict{String,Any}
+
+The three fields every artifact under `results/` must carry: which revision was
+measured, whether the whole tree was clean, and whether **`src/`** was clean.
+
+Merge it into a harness's provenance Dict rather than re-deriving it. Six probe
+scripts used to inline `readchomp(\\`git rev-parse HEAD\\`)` with no `try` and no
+dirty flag at all, which is how eight artifacts came to record a base measured
+from a dirty tree with only two of them able to say so.
+
+# Why `src_dirty` exists when `worktree_dirty` already does
+
+They answer different questions and only one of them is the gate's subject.
+`worktree_dirty` is whole-tree, which is what a human reading a provenance
+header wants. But `artifact_currency.jl` compares **`src/`** at the recorded
+base against `src/` at the tip, so a dirty `docs/` — which is the normal state
+of a session that is writing up the measurement it just took — turns the gate
+red for a reason that cannot change what sampler ran. A gate red for the wrong
+reason is a gate that gets muted rather than fixed.
+
+The two are not independent, and the dependence is what makes this cheap:
+a clean whole tree IMPLIES a clean `src/`, so `worktree_dirty: false` on an
+older artifact is already strictly stronger than `src_dirty: false` and needs no
+re-measurement to stay green.
+
+# Why `missing` rather than `false` on failure
+
+`git` being unreachable is not evidence of cleanliness. It serialises to JSON
+`null`, which a reader must distinguish from both `false` and absent: absent
+means the harness predates the field, `null` means the harness asked and could
+not find out. Neither is "it was clean", and defaulting either to `false` is the
+same silent-reassurance failure as a `git fetch` that no-ops and exits 0.
+
+# Why `--untracked-files=no`
+
+Load-bearing, not tidiness. These harnesses WRITE their results into the repo,
+so a bare `--porcelain` counts the previous run's untracked output directory and
+reports every run after the first as dirty — by construction, with the tracked
+source byte-identical. That fires exactly when two runs are being compared,
+which is the one time the flag has to mean anything.
+"""
+function git_provenance()
+    sha = try
+        readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`)
+    catch
+        "unknown"
+    end
+    dirty(paths...) = try
+        !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain --untracked-files=no $(paths)`))
+    catch
+        missing
+    end
+    Dict{String,Any}("warmuphmc_sha" => sha,
+                     "worktree_dirty" => dirty(),
+                     "src_dirty" => dirty("--", "src"))
+end
+
+"""
     env_dir(name, default) -> String
 
 Read an output-directory override from the environment, treating a

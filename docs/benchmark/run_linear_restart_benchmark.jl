@@ -3,7 +3,7 @@
 #   julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl
 #
 # Optional environment knobs:
-#   WHMC_LINEAR_BENCH_SEEDS=8
+#   WHMC_LINEAR_BENCH_SEEDS=32
 #   WHMC_LINEAR_BENCH_DRAWS=1000
 #   WHMC_LINEAR_BENCH_EVALS=1000
 #   WHMC_LINEAR_BENCH_TARGETS=diag_gaussian,diag_fallback_probe,correlated_gaussian,kilpisjarvi_mod-kilpisjarvi,diamonds-diamonds
@@ -24,7 +24,7 @@ import JSON
 
 const BENCH_DIR = @__DIR__
 const REPO_ROOT = normpath(joinpath(BENCH_DIR, "..", ".."))
-const N_SEEDS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_SEEDS", "8"))
+const N_SEEDS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_SEEDS", "32"))
 const N_DRAWS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_DRAWS", "1000"))
 const N_EVALUATIONS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_EVALS", "1000"))
 const OUT_DIR = get(

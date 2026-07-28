@@ -109,9 +109,11 @@ julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl
 
 The benchmark environment needs the same one-resolve setup described in
 [`docs/benchmark/README.md`](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/docs/benchmark/README.md).
-GitHub Actions runs this full command on every test workflow and uploads the
-resulting `linear_restart.json` artifact. For a quick local check of the exact
-driver without PosteriorDB or Stan:
+The checked-in full study is a deliberate quiet-host run: shared CI timing is
+too noisy to make a useful performance gate. GitHub Actions nevertheless runs
+the exact driver and schema on the three analytic controls with the quick
+configuration below, checks the reflection and fallback controls, and uploads
+its per-seed JSON artifact:
 
 ```bash
 WHMC_LINEAR_BENCH_SEEDS=2 \

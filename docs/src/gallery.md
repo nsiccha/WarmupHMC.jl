@@ -3,9 +3,10 @@
 The WarmupHMC dashboard runs every PosteriorDB model through four
 samplers (WarmupHMC, DynamicHMC, AdvancedHMC, plus an optional
 reparametrised pass) and reports compile / sample / ESS / time per
-posterior. The views below are the live dashboard during development;
-in the deployed docs they're the most recent recording committed under
-`docs/src/public/live-whmc/`.
+posterior. The views below are the live dashboard during development; in the
+deployed docs they are a **static recording made during the docs build**. The
+recording is never committed — `*.html` is ignored, so nothing under
+`docs/src/public/live-whmc/` is tracked, and CI regenerates it on every build.
 
 ## Overview table
 
@@ -27,16 +28,37 @@ in the deployed docs they're the most recent recording committed under
 </div>
 ```
 
+## What the recording does and does not include
+
+The recorder writes full-page and HX-shape variants of exactly two routes — `/`
+and `/gallery` — into `docs/src/public/live-whmc/`. That is the whole export.
+
+The live app serves more than that: per-posterior routes under
+`/posteriors/<name>`, plus `/benchmarks` and `/benchmark/<key>`. **None of those
+are recorded**, and the export deliberately removes the links that would lead to
+them, so the two views above are complete rather than a surface with dead ends
+behind it. Recording is done in a static mode that also turns the per-posterior
+detail panels into inert placeholders and disables the compute controls; the
+overview and card surfaces are intact, but nothing in a recording computes.
+
+The static benchmark evidence is not here at all — it is native Markdown on
+[Benchmark evidence](@ref), generated from the same JSON.
+
 ## Refresh the recording
 
-To re-record the dashboard for the docs:
+CI runs the recorder before building the docs, so a deployed page is always a
+recording of the revision it was built from. To reproduce it locally, after
+instantiating the web environment:
 
-```julia
-# from the WHMC web server, in a browser:
-GET /record_gallery               # uses defaults
-GET /record_gallery?force=true    # invalidate cache and re-record
+```sh
+julia --project=web docs/record_gallery.jl
 ```
 
-The recording dumps both full-page and HX-shape variants of `/`,
-`/gallery`, and every `/model/<pn>` into `docs/src/public/live-whmc/`.
-Commit the result and CI deploys it.
+That is the supported path. It records the two docs routes, writes both shapes,
+and fails loudly if any expected file is missing.
+
+!!! warning "`GET /record_gallery` is not the docs recipe"
+    The running app still exposes that route, but without the static-recording
+    mode the script sets it uses the app's **full** path list — including the
+    per-posterior routes, which are expensive. Use the script above for anything
+    aimed at the docs.

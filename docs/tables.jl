@@ -163,6 +163,15 @@ that splats `git_provenance()` *inside* its own `open(path, "w")` block sees the
 output file it is truncating and records `true` over a clean tree. That shape
 dirties only the results path, never `src/`, so it produces exactly this pair.
 
+**This caption is the later of two checks, not the only one.** It reads a
+committed artifact, so it can only fire once the bad flag has been recorded —
+and it cannot fire on a harness's *first* run at all, since that write creates
+an untracked file and `--untracked-files=no` ignores it by design. The earlier
+half is `docs/benchmark/provenance_ordering.jl`, which parses every harness
+under `docs/benchmark/` and `bench/` and goes red on the commit that introduces
+the shape. Do not try to extend this function to cover that: it never sees the
+harness source, only what the harness wrote.
+
 It is rendered rather than refused because a dirty measurement is not worthless,
 only unattributable, and some are kept deliberately as history: the `b5c7dee`
 boxed-spec base carries `worktree_dirty = true` and is `SUPERSEDED` on purpose.

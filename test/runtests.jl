@@ -2,6 +2,7 @@ using Test
 using WarmupHMC
 using Random, LinearAlgebra, Statistics
 using LogDensityProblems
+using Pkg, TOML
 using Distributions
 using DifferentiationInterface, ForwardDiff   # loads WarmupHMC's DifferentiationInterfaceExt
 
@@ -38,4 +39,5 @@ end
         include("adaptive_warmup.jl")
     end
     include("readme.jl")
+    include("compat.jl")
 end

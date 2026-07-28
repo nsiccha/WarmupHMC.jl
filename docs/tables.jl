@@ -79,6 +79,38 @@ function num(x; sig::Int = 4)
 end
 
 """
+    load_harness(relpath)
+
+Make a benchmark script's derivation functions callable from an `@eval` block,
+by including `docs/benchmark/<relpath>` into the calling module.
+
+This exists so that a *derived* figure — a paired summary, a conclusion — is
+computed from the rows at docs-build time by the same code the benchmark uses,
+instead of being stored alongside them where it can drift. Rows are the data;
+everything else is a function of the rows.
+
+Two constraints on a file loaded this way, because the docs environment is not
+the benchmark environment:
+
+  * **It must only define things.** Anything that runs at include time — reading
+    `ARGS`, writing output — runs during the docs build. Keep the driver and the
+    derivation in separate files, as `summarize.jl` already does.
+  * **It may only depend on what `docs/Project.toml` has**: `JSON`, `Markdown`,
+    `Printf`, `Statistics`. Pulling in BridgeStan or PosteriorDB to render a
+    table would make the docs build depend on the whole measurement stack.
+"""
+function load_harness(relpath::AbstractString)
+    path = normpath(joinpath(@__DIR__, "benchmark", relpath))
+    isfile(path) || error("""
+        Benchmark harness not found: $(path)
+
+        An `@eval` block asked for a derivation script under docs/benchmark/.
+        Either it was not committed, or a page names it wrongly.
+        """)
+    Base.include(Base.@__MODULE__, path)
+end
+
+"""
     md_table(headers, rows) -> Markdown.MD
 
 Build a markdown table. Cells are passed through `string`, so pre-format

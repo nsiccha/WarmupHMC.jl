@@ -437,10 +437,65 @@ end
 
 # --- Hooks for adaptive_warmup_mcmc ---
 
+_reparametrization_ad_backend(p::ReparametrizedProblem) = p.ad_backend
+_reparametrization_ad_backend(p::WrappedLogDensityProblem) =
+    _reparametrization_ad_backend(parent(p))
+
+"""
+    _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
+                             position, gradient)
+
+Transport halo positions and gradients from `old_ir`'s source coordinates to
+the final source coordinates selected in `reparametrizer(lpdf)`. The marginal
+search in `optimize!` may mutate its working pool as it selects each source;
+this final pass rematerializes the pool from the original positions and
+gradients once every source has settled.
+
+For the new-to-old map `S = inverse(old_ir) ∘ new_ir`, the transported gradient
+is
+
+```
+∇ log|J_S(x_new)| + J_S(x_new)' * g_old.
+```
+
+Compute the two terms together as the gradient of the scalar
+`log|J_S(x_new)| + dot(g_old, S(x_new))`. This is one AD pass through the full
+transform per halo column, so dependencies of a block's location or scale on
+other coordinates contribute their chain-rule terms. The wrapped model is
+never evaluated.
+"""
+function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
+                                  position, gradient)
+    new_ir = reparametrizer(lpdf)
+    old_to_new = inverse(new_ir)
+    new_to_old = inverse(old_ir)
+    backend = _reparametrization_ad_backend(lpdf)
+    columns = zip(eachcol(old_position), eachcol(old_gradient),
+                  eachcol(position), eachcol(gradient))
+    for (x_old, g_old, x_new, g_new) in columns
+        _, y = old_ir(x_old)
+        _, transported_position = old_to_new(y)
+        x_new .= transported_position
+        function transport_objective(x_)
+            ljac_new, y = new_ir(x_)
+            ljac_old, x_old = new_to_old(y)
+            ljac_new + ljac_old + dot(g_old, x_old)
+        end
+        _, transported_gradient = value_and_gradient(transport_objective, backend, x_new)
+        g_new .= transported_gradient
+    end
+    gradient
+end
+
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return position_and_gradient
+    old_ir = IndexedReparametrization(copy(ir.pairs))
+    old_position = copy(halo_position)
+    old_gradient = copy(halo_gradient)
     optimize!(ir, halo_position, halo_gradient)
+    _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
+                             halo_position, halo_gradient)
     DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
 end
 

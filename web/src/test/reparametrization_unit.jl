@@ -45,6 +45,184 @@ funnel_problem(sources) =
 struct NestedFunnel
     k::Int
 end
+
+@testset "online nonlinear evidence" begin
+    @testset "weighted correlation moments" begin
+        loss = WarmupHMC.WeightedReparametrizationLoss()
+        observations = ((0.2, -1.0, 2.0), (-0.4, 0.5, -0.25), (0.7, 2.0, -3.0))
+        weights = (0.2, 0.3, 0.5)
+        for (observation, weight) in zip(observations, weights)
+            WarmupHMC.OnlineStatsBase.fit!(loss, observation; weight)
+        end
+
+        positions = first.(Base.tail.(observations))
+        gradients = last.(observations)
+        mean_position = sum(weights .* positions) / sum(weights)
+        mean_gradient = sum(weights .* gradients) / sum(weights)
+        m2_position = sum(weights .* (positions .- mean_position).^2)
+        m2_gradient = sum(weights .* (gradients .- mean_gradient).^2)
+        co = sum(weights .* (positions .- mean_position) .* (gradients .- mean_gradient))
+
+        @test loss.weight ≈ sum(weights)
+        @test loss.weight2 ≈ sum(abs2, weights)
+        @test loss.mean_position ≈ mean_position
+        @test loss.mean_gradient ≈ mean_gradient
+        @test loss.m2_position ≈ m2_position
+        @test loss.m2_gradient ≈ m2_gradient
+        @test loss.co_position_gradient ≈ co
+        @test WarmupHMC.reparametrization_loss(loss) ≈ co / sqrt(m2_position * m2_gradient)
+        @test WarmupHMC.effective_n(loss) ≈ sum(weights)^2 / sum(abs2, weights)
+        @test WarmupHMC.OnlineStatsBase.nobs(loss) == length(observations)
+    end
+
+    @testset "leaf evidence modes and trajectory scaling" begin
+        rp = funnel_problem(fill(1.0, 3))
+        leaves = WarmupHMC.NUTSLeaves(4)
+        dHs = (0.0, -0.1, -0.2, -0.3)
+        for (i, dH) in enumerate(dHs)
+            position = [0.1i, -0.2i, 0.3i, -0.4i]
+            gradient = -position
+            WarmupHMC.record_leaf!(leaves, position, gradient, dH)
+        end
+        WarmupHMC.finalize_leaf_weights!(leaves, 2)
+        full_tree = (; depth=2, steps=3)
+
+        exact = WarmupHMC.NonlinearRecorder(
+            rp; mode=:nuts_weighted, trajectory_weighting=:auto,
+        )
+        @test exact.trajectory_weighting === :stepsize_valid_fraction_then_unit
+        WarmupHMC.record_nonlinear!(
+            exact, rp, leaves, full_tree, 0.25; adapting_stepsize=true,
+        )
+        for (_, candidates) in exact.online.pairs, (_, loss) in candidates.pairs
+            @test loss.weight ≈ 0.25
+            @test loss.groups == 1
+        end
+
+        WarmupHMC.reset!(exact)
+        WarmupHMC.record_nonlinear!(
+            exact, rp, leaves, full_tree, 0.25; adapting_stepsize=false,
+        )
+        for (_, candidates) in exact.online.pairs, (_, loss) in candidates.pairs
+            @test loss.weight ≈ 1
+            @test loss.groups == 1
+        end
+
+        good = WarmupHMC.NonlinearRecorder(
+            rp; mode=:all_good_leaves, trajectory_weighting=:auto,
+        )
+        WarmupHMC.record_nonlinear!(
+            good, rp, leaves, full_tree, 0.25; adapting_stepsize=true,
+        )
+        for (_, candidates) in good.online.pairs, (_, loss) in candidates.pairs
+            @test loss.weight ≈ 3 * 0.25
+            @test loss.groups == 1
+        end
+
+        # Only one of three evaluated noninitial steps belongs to the final valid
+        # tree, so the whole trajectory is scaled by 1/3. The acceptable-leaf
+        # mode deliberately still sees all acceptable evaluated leaves.
+        invalid_expansion = (; depth=1, steps=3)
+        WarmupHMC.reset!(good)
+        WarmupHMC.record_nonlinear!(
+            good, rp, leaves, invalid_expansion, 0.25; adapting_stepsize=true,
+        )
+        for (_, candidates) in good.online.pairs, (_, loss) in candidates.pairs
+            @test loss.weight ≈ 3 * 0.25 / 3
+            @test loss.groups == 1
+        end
+    end
+
+    @testset "streaming selection agrees with batch selection" begin
+        rng = Xoshiro(991)
+        n = 200
+        X = randn(rng, 4, n)
+        G = randn(rng, 4, n)
+        batch = funnel_ir(fill(1.0, 3))
+        stream = funnel_ir(fill(1.0, 3))
+        online = WarmupHMC.OnlineReparametrizer(
+            stream; accumulator=WarmupHMC.WeightedReparametrizationLoss,
+        )
+
+        for (position, gradient) in zip(eachcol(X), eachcol(G))
+            WarmupHMC.OnlineStatsBase.fit!(stream, online, position, gradient)
+        end
+        WarmupHMC.optimize!(stream, online)
+        WarmupHMC.optimize!(batch, copy(X), copy(G))
+
+        @test [value.source.c for (_, value) in stream.pairs] ==
+              [value.source.c for (_, value) in batch.pairs]
+    end
+
+    @testset "sampler collects beyond the halo without creating restarts" begin
+        rp = funnel_problem(fill(1.0, 3))
+        state = WarmupHMC.init_state(
+            Xoshiro(1991), rp, nothing;
+            n_draws=100,
+            n_evaluations=40,
+            recording_target=1,
+            stepsize_adaptation_limit=5,
+            target_acceptance_rate=0.8,
+            max_tree_depth=3,
+            init=(; position=zeros(4), squared_scale=Matrix{Float64}(I, 4, 4)),
+            monitor_ess=false,
+            nonlinear_adapt=true,
+            nonlinear_evidence=:nuts_weighted,
+            nonlinear_trajectory_weighting=:unit,
+            nonlinear_good_leaf_threshold=log(1e-2),
+            variance_cond_target=Inf,
+        )
+        WarmupHMC.run_outer_iteration!(state)
+
+        @test !state.restart
+        @test size(state.recording_lpdf.halo_position, 2) <= 1
+        @test WarmupHMC.OnlineStatsBase.nobs(state.nonlinear_recorder.online) >
+              size(state.recording_lpdf.halo_position, 2)
+        @test all(value.source.c == 1.0 for (_, value) in WarmupHMC.reparametrizer(rp).pairs)
+
+        payload = WarmupHMC.checkpoint_payload(state)
+        restored = WarmupHMC.restore_state(
+            payload, funnel_problem(fill(1.0, 3)), nothing;
+            n_draws=100,
+            stepsize_adaptation_limit=5,
+            variance_cond_target=Inf,
+            nonlinear_adapt=true,
+            monitor_ess=false,
+            target_acceptance_rate=0.8,
+            max_tree_depth=3,
+        )
+        @test restored.nonlinear_recorder.mode === :nuts_weighted
+        @test WarmupHMC.OnlineStatsBase.nobs(restored.nonlinear_recorder.online) ==
+              WarmupHMC.OnlineStatsBase.nobs(state.nonlinear_recorder.online)
+
+        cooperative_problem = funnel_problem(fill(1.0, 3))
+        chain = WarmupHMC.cooperative_chain(
+            Xoshiro(1992), cooperative_problem;
+            n_draws=100,
+            n_evaluations=40,
+            recording_target=1,
+            stepsize_adaptation_limit=5,
+            max_tree_depth=3,
+            init=(; position=zeros(4), squared_scale=Matrix{Float64}(I, 4, 4)),
+            nonlinear_adapt=true,
+            nonlinear_evidence=:nuts_weighted,
+            nonlinear_trajectory_weighting=:unit,
+            variance_cond_target=Inf,
+        )
+        WarmupHMC.advance_window!(chain)
+        @test !chain.restart
+        @test size(chain.recording_lpdf.halo_position, 2) <= 1
+        @test WarmupHMC.OnlineStatsBase.nobs(chain.nonlinear_recorder.online) >
+              size(chain.recording_lpdf.halo_position, 2)
+        @test all(value.source.c == 1.0 for (_, value) in
+                  WarmupHMC.reparametrizer(cooperative_problem).pairs)
+    end
+
+    @test_throws ArgumentError WarmupHMC.NonlinearRecorder(Funnel(3); mode=:unknown)
+    @test_throws ArgumentError WarmupHMC.NonlinearRecorder(
+        Funnel(3); trajectory_weighting=:unknown,
+    )
+end
 LogDensityProblems.dimension(m::NestedFunnel) = m.k + 2
 LogDensityProblems.capabilities(::Type{NestedFunnel}) = LogDensityProblems.LogDensityOrder{1}()
 function LogDensityProblems.logdensity(m::NestedFunnel, y)

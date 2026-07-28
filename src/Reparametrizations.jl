@@ -52,10 +52,43 @@ is a hard dependency of WarmupHMC, so the *interface* is always there, but a
 backend object only works once you load the AD package behind it — `AutoEnzyme`
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
-Prefer a reverse-mode backend. The objective differentiated here is scalar in the
-*full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the
-transform per gradient while reverse mode costs one, and the gap opens up exactly
-where reparametrization is worth doing — high-dimensional hierarchical models.
+A reverse-mode backend is the reasonable default here — but that follows from an
+operation count, and the measured wall-clock does not follow the operation count.
+The objective differentiated here is scalar in the *full* parameter vector, so
+forward mode costs `ceil(n / chunksize)` sweeps of the transform per gradient
+while reverse mode costs one.
+
+!!! warning "That argument does not predict wall-clock, and gets the direction wrong"
+    It is tempting to conclude that the gap widens with dimension — exactly
+    where reparametrization is worth doing. **Measured, it narrows and then
+    reverses.** Enzyme with `Const` divided by ForwardDiff, per wrapped
+    gradient (below 1.0 = Enzyme faster), across five processes with the
+    backend order rotated per round:
+
+    | target | `d` | Enzyme ÷ ForwardDiff |
+    |---|---|---|
+    | `funnel`                   | 10 | 0.35–0.42× |
+    | `eight_schools`            | 10 | 0.44–0.92× |
+    | `seeds`                    | 26 | 2.31–5.42× |
+    | `radon_variable_intercept` | 89 | 1.21–1.39× |
+    | `radon_partially_pooled`   | 88 | 1.25–1.52× |
+
+    Reverse mode wins on the two *smallest* targets and loses on the three
+    larger ones. Sampling is unaffected either way — ESS per 1000 gradients,
+    gradient counts, the fitted `c` and stuck-adaptation counts are identical
+    across backends; the backend sets the cost of a gradient, not how many are
+    needed.
+
+    So: pick the backend by measuring your own target, not by dimension. Neither
+    mode is the universally correct default, and this docstring previously
+    claimed one was.
+
+    Measured at `b5c7dee`, 184 runs per backend, results checked in at
+    `068cdeb`. Two known artifacts: DifferentiationInterface re-prepares on
+    every call (10–16% of the call at `d ≈ 88`, and equal under both backends —
+    reusing a prep object measured neutral-to-worse), and running a sampler
+    before timing warms the ForwardDiff path enough to make a naive
+    microbenchmark ~2× kinder to it.
 
 !!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
     A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
@@ -70,12 +103,33 @@ where reparametrization is worth doing — high-dimensional hierarchical models.
     is with respect to the *parameter vector*, never with respect to the problem.
 
     Enzyme's own error text suggests `function_annotation = Enzyme.Duplicated`.
-    **Do not take that hint.** It is correct — it agrees with `Const` to machine
-    precision — but it allocates and propagates a shadow copy of the closure on
-    every call, which measured **22× slower** than `Const` on an 11-dimensional
-    funnel (8556 ns vs 387 ns per gradient) and turned the wrapper into a
-    pessimization against forward mode in the benchmark harness. The hint
-    diagnoses the problem; it is not the fix.
+    **Do not take that hint.** It is correct — it agrees with `Const` to ≤9.1e-13
+    — but it allocates and propagates a shadow copy of the closure on every call.
+    The hint diagnoses the problem; it is not the fix.
+
+    How much that costs is **target-dependent**, and earlier revisions of this
+    docstring published a single ratio that does not generalize. `Duplicated`
+    divided by `Const`, per wrapped gradient:
+
+    | target | `d` | `Duplicated` ÷ `Const` |
+    |---|---|---|
+    | `funnel`                   | 10 | 11.3–13.6× |
+    | `eight_schools`            | 10 | 3.8–4.9×   |
+    | `seeds`                    | 26 | 0.96–1.16× |
+    | `radon_variable_intercept` | 89 | 1.01–1.05× |
+    | `radon_partially_pooled`   | 88 | 1.02–1.06× |
+
+    The shadow copy is a roughly **fixed per-call cost** — about 5 µs at `d = 10`,
+    about 33 µs at `d ≈ 88` — so it dominates when the gradient is otherwise
+    cheap and disappears when it is not. The funnel is the extreme case, not a
+    representative one; funnel measurements at different `c` have landed anywhere
+    from ~10× to ~22×, which is why no single number belongs here.
+
+    None of that changes the recommendation. `Const` is the right annotation on
+    **correctness** grounds everywhere — `g_y` is frozen by construction — and it
+    is never slower. It is merely not always dramatically faster.
+
+    Measured at `b5c7dee`, 184 runs per backend, results checked in at `068cdeb`.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
@@ -101,7 +155,10 @@ result = adaptive_warmup_mcmc(rng, rp)
 ```
 
 Returned draws are in the wrapped problem's own parametrization: warm-up applies
-the fitted transform to `posterior_position` before returning.
+the transform to `posterior_position` before returning. This holds under
+`nonlinear_adapt=false` too — that flag gates whether the centering is *fitted*,
+never which frame the result is reported in, since the sampler works in the
+reparametrizer's source frame either way.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
 """
@@ -340,9 +397,25 @@ replaced by one carrying the newly fitted `source` centering. Two consequences:
   throws `DimensionMismatch`, or, when the overlap collapses to one entry,
   silently overwrites every pair with that one. Build `pairs` deterministically,
   in the same order and with the same length, on both sides of a resume.
+  Order also defines accessor dependencies during inversion: if one transformed
+  coordinate is read by another block's `loc` or `log_scale`, put the provider
+  first so its source coordinate is recovered before the dependent block.
+* **The vector element type must retain every accessor's concrete type.** Julia
+  widens a vector that mixes constants and differently typed closures, and AD
+  then fails late inside warm-up. Construction rejects that shape immediately.
+  Use a single concretely typed callable representation for accessors stored in
+  one vector.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P
+    function IndexedReparametrization(pairs::P) where {P}
+        isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
+            "IndexedReparametrization pairs must have a concrete element type; " *
+            "avoid mixing constants and differently typed accessor closures in one vector " *
+            "(got eltype $(eltype(pairs)), first element type $(typeof(first(pairs))))",
+        ))
+        new{P}(pairs)
+    end
 end
 with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) = begin
     ljac = 0.
@@ -352,9 +425,40 @@ with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, 
     end
     ljac, y
 end
-InverseFunctions.inverse((;pairs)::IndexedReparametrization) = IndexedReparametrization([
-    idx => inverse(value) for (idx, value) in pairs
-])
+
+struct InverseIndexedReparametrization{I} <: AbstractReparametrization
+    forward::I
+end
+InverseFunctions.inverse(ir::IndexedReparametrization) = InverseIndexedReparametrization(ir)
+InverseFunctions.inverse(ir::InverseIndexedReparametrization) = ir.forward
+
+# Recover the source coordinates of an indexed transform from a point in its
+# target coordinates. Each accessor is evaluated on the source point being
+# reconstructed. That distinction is essential when a transformed coordinate
+# is itself another block's location or scale.
+#
+# `pairs` order is the dependency order: a block may read an earlier recovered
+# coordinate. This is the same deterministic, load-bearing order already used
+# by `optimize!` and checkpoint restoration.
+function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
+                                           ir::IndexedReparametrization,
+                                           target::AbstractVector)
+    source .= target
+    ljac = zero(eltype(target))
+    for (idx, value) in ir.pairs
+        ljac_i, source_i = reparam(inverse(value), target[idx], source)
+        source[idx] = source_i
+        ljac += ljac_i
+    end
+    ljac, source
+end
+_inverse_with_logabsdet_jacobian(ir::IndexedReparametrization,
+                                 target::AbstractVector) =
+    _inverse_with_logabsdet_jacobian!(copy(target), ir, target)
+with_logabsdet_jacobian!(source::AbstractVector,
+                         (;forward)::InverseIndexedReparametrization,
+                         target::AbstractVector) =
+    _inverse_with_logabsdet_jacobian!(source, forward, target)
 
 # --- Online reparametrization loss tracking ---
 
@@ -365,32 +469,115 @@ end
 OnlineStatsBase.nobs((;ljac)::OnlineReparametrizationLoss) = OnlineStatsBase.nobs(ljac)
 OnlineReparametrizationLoss(::AbstractMatrix) = OnlineReparametrizationLoss()
 OnlineReparametrizationLoss(::AbstractMatrix, ::AbstractMatrix) = OnlineReparametrizationLoss()
-OnlineReparametrizationLoss() = OnlineReparametrizationLoss(OnlineStatsBase.Mean(), OnlineStatsBase.CovMatrix())
-OnlineStatsBase.fit!((;ljac, cov)::OnlineReparametrizationLoss, obs) = map(OnlineStatsBase.fit!, (ljac, cov), (obs[1], [obs[2], obs[3]]))
-reparametrization_loss((;ljac, cov)::OnlineReparametrizationLoss; w1=0, w2=1-w1) = (
-    w1 * (-mean(ljac) + .5 * log(Statistics.cov(cov)[1, 1])) + w2 * Statistics.cor(cov)[1, 2]
+OnlineReparametrizationLoss() = OnlineReparametrizationLoss(
+    OnlineStatsBase.Mean(), OnlineStatsBase.CovMatrix(),
 )
-scale_estimate(orl::OnlineReparametrizationLoss) = begin
-    c = Statistics.cov(orl.cov)
-    (c[1,1] / c[2,2])^.25
+function OnlineStatsBase.fit!(loss::OnlineReparametrizationLoss, obs;
+                              weight::Real=1, count::Bool=true)
+    weight == 1 && count || throw(ArgumentError(
+        "weighted updates require WeightedReparametrizationLoss",
+    ))
+    map(OnlineStatsBase.fit!, (loss.ljac, loss.cov), (obs[1], [obs[2], obs[3]]))
 end
+reparametrization_loss((;ljac, cov)::OnlineReparametrizationLoss; w1=0, w2=1-w1) = (
+    w1 * (-mean(ljac) + .5 * log(Statistics.cov(cov)[1, 1])) +
+    w2 * Statistics.cor(cov)[1, 2]
+)
+scale_estimate(loss::OnlineReparametrizationLoss) = begin
+    c = Statistics.cov(loss.cov)
+    (c[1, 1] / c[2, 2])^.25
+end
+
+mutable struct WeightedReparametrizationLoss
+    weight::Float64
+    weight2::Float64
+    mean_ljac::Float64
+    mean_position::Float64
+    mean_gradient::Float64
+    m2_position::Float64
+    m2_gradient::Float64
+    co_position_gradient::Float64
+    groups::Int
+end
+OnlineStatsBase.nobs(loss::WeightedReparametrizationLoss) = loss.groups
+WeightedReparametrizationLoss(::AbstractMatrix) = WeightedReparametrizationLoss()
+WeightedReparametrizationLoss(::AbstractMatrix, ::AbstractMatrix) = WeightedReparametrizationLoss()
+WeightedReparametrizationLoss() = WeightedReparametrizationLoss(
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0,
+)
+
+function OnlineStatsBase.fit!(loss::WeightedReparametrizationLoss, obs;
+                              weight::Real=1, count::Bool=true)
+    weight >= 0 || throw(ArgumentError("nonlinear observation weight must be nonnegative, got $weight"))
+    iszero(weight) && return loss
+    w = Float64(weight)
+    ljac, position, gradient = obs
+    new_weight = loss.weight + w
+    fraction = w / new_weight
+
+    delta_ljac = ljac - loss.mean_ljac
+    delta_position = position - loss.mean_position
+    delta_gradient = gradient - loss.mean_gradient
+    new_mean_position = loss.mean_position + fraction * delta_position
+    new_mean_gradient = loss.mean_gradient + fraction * delta_gradient
+
+    loss.mean_ljac += fraction * delta_ljac
+    loss.mean_position = new_mean_position
+    loss.mean_gradient = new_mean_gradient
+    loss.m2_position += w * delta_position * (position - new_mean_position)
+    loss.m2_gradient += w * delta_gradient * (gradient - new_mean_gradient)
+    loss.co_position_gradient += w * delta_position * (gradient - new_mean_gradient)
+    loss.weight = new_weight
+    loss.weight2 += abs2(w)
+    count && (loss.groups += 1)
+    loss
+end
+
+function reset!(loss::WeightedReparametrizationLoss)
+    loss.weight = 0
+    loss.weight2 = 0
+    loss.mean_ljac = 0
+    loss.mean_position = 0
+    loss.mean_gradient = 0
+    loss.m2_position = 0
+    loss.m2_gradient = 0
+    loss.co_position_gradient = 0
+    loss.groups = 0
+    loss
+end
+
+function reparametrization_loss(loss::WeightedReparametrizationLoss; w1=0, w2=1-w1)
+    covariance_denom = loss.weight - loss.weight2 / loss.weight
+    variance_position = loss.m2_position / covariance_denom
+    correlation = loss.co_position_gradient /
+        sqrt(loss.m2_position * loss.m2_gradient)
+    w1 * (-loss.mean_ljac + .5 * log(variance_position)) + w2 * correlation
+end
+scale_estimate(loss::WeightedReparametrizationLoss) = begin
+    (loss.m2_position / loss.m2_gradient)^.25
+end
+effective_n(loss::WeightedReparametrizationLoss) = loss.weight^2 / loss.weight2
 
 # --- OnlineReparametrizer: fits multiple candidates ---
 
 struct OnlineReparametrizer{P}
     pairs::P
 end
-OnlineStatsBase.fit!((;pairs)::OnlineReparametrizer, args...) = for (candidate, accumulator) in pairs
-    OnlineStatsBase.fit!(accumulator, reparam(candidate, args...))
+OnlineStatsBase.fit!((;pairs)::OnlineReparametrizer, args...; kwargs...) = for (candidate, accumulator) in pairs
+    OnlineStatsBase.fit!(accumulator, reparam(candidate, args...); kwargs...)
 end
 OnlineStatsBase.nobs((;pairs)::OnlineReparametrizer) = length(pairs) == 0 ? 0 : OnlineStatsBase.nobs(pairs[1][2])
 minimizer((;pairs)::OnlineReparametrizer; kwargs...) = argmin(p -> reparametrization_loss(last(p); kwargs...), pairs)
 scale_estimate(or::OnlineReparametrizer; kwargs...) = scale_estimate(last(minimizer(or; kwargs...)))
+reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); nothing)
+_mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
+_mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
 
 reparametrization_candidates(::PartiallyCentered; n=11) = Iterators.map(PartiallyCentered, range(0, 1, n))
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
-OnlineReparametrizer(source::PartiallyCentered, xg...; kwargs...) = OnlineReparametrizer([
-    target => OnlineReparametrizationLoss(xg...)
+OnlineReparametrizer(source::PartiallyCentered, xg...;
+                     accumulator=OnlineReparametrizationLoss, kwargs...) = OnlineReparametrizer([
+    target => accumulator(xg...)
     for target in reparametrization_candidates(source; kwargs...)
 ])
 
@@ -419,6 +606,129 @@ OnlineReparametrizer((;pairs)::IndexedReparametrization; kwargs...) = OnlineRepa
     idx => OnlineReparametrizer(value; kwargs...)
     for (idx, value) in pairs
 ])
+function OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer,
+                              position::AbstractVector, gradient::AbstractVector;
+                              weight::Real=1, count::Bool=true)
+    for ((idx, value), (stored_idx, or)) in zip(ir.pairs, ors.pairs)
+        idx == stored_idx || throw(ArgumentError(
+            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+        ))
+        OnlineStatsBase.fit!(
+            or,
+            reparam_rargs(value, position[idx], gradient[idx], position)...;
+            weight, count,
+        )
+    end
+    ir
+end
+
+function optimize!(ir::IndexedReparametrization, ors::OnlineReparametrizer;
+                   loss_kwargs=(;))
+    ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (stored_idx, or)
+        idx == stored_idx || throw(ArgumentError(
+            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+        ))
+        OnlineStatsBase.nobs(or) > 2 || return idx => value
+        new_source = first(minimizer(or; loss_kwargs...))
+        idx => Reparametrization(value.target, new_source, value.args...)
+    end
+    ir
+end
+
+const NONLINEAR_EVIDENCE_MODES = (:linear_pool, :all_good_leaves, :nuts_weighted)
+const NONLINEAR_TRAJECTORY_WEIGHTINGS = (
+    :unit,
+    :stepsize,
+    :valid_fraction,
+    :stepsize_valid_fraction,
+    :valid_fraction_then_unit,
+    :stepsize_valid_fraction_then_unit,
+)
+
+mutable struct NonlinearRecorder{O,T}
+    mode::Symbol
+    trajectory_weighting::Symbol
+    good_leaf_threshold::T
+    online::O
+end
+
+function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:auto,
+                           good_leaf_threshold=log(1e-2))
+    mode in NONLINEAR_EVIDENCE_MODES || throw(ArgumentError(
+        "unknown nonlinear evidence mode $mode; expected one of $(join(NONLINEAR_EVIDENCE_MODES, ", "))",
+    ))
+    resolved_weighting = if trajectory_weighting === :auto
+        mode === :all_good_leaves ? :stepsize_valid_fraction :
+        mode === :nuts_weighted ? :stepsize_valid_fraction_then_unit : :unit
+    else
+        trajectory_weighting
+    end
+    resolved_weighting in NONLINEAR_TRAJECTORY_WEIGHTINGS || throw(ArgumentError(
+        "unknown nonlinear trajectory weighting $trajectory_weighting; expected :auto or one of " *
+        join(NONLINEAR_TRAJECTORY_WEIGHTINGS, ", "),
+    ))
+    NonlinearRecorder(
+        mode,
+        resolved_weighting,
+        good_leaf_threshold,
+        OnlineReparametrizer(
+            reparametrizer(lpdf); accumulator=WeightedReparametrizationLoss,
+        ),
+    )
+end
+
+function _valid_tree_fraction(tree_stats)
+    iszero(tree_stats.steps) && return 1.0
+    clamp(((1 << tree_stats.depth) - 1) / tree_stats.steps, 0.0, 1.0)
+end
+
+function _trajectory_weight(weighting, stepsize, tree_stats, adapting_stepsize)
+    valid_fraction = _valid_tree_fraction(tree_stats)
+    weighting === :unit && return 1.0
+    weighting === :stepsize && return stepsize
+    weighting === :valid_fraction && return valid_fraction
+    weighting === :stepsize_valid_fraction && return stepsize * valid_fraction
+    weighting === :valid_fraction_then_unit &&
+        return adapting_stepsize ? valid_fraction : 1.0
+    weighting === :stepsize_valid_fraction_then_unit &&
+        return adapting_stepsize ? stepsize * valid_fraction : 1.0
+    throw(ArgumentError("unsupported nonlinear trajectory weighting $weighting"))
+end
+
+function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, tree_stats,
+                           stepsize; adapting_stepsize::Bool)
+    recorder.mode === :linear_pool && return recorder
+    ir = reparametrizer(lpdf)
+    isempty(ir.pairs) && return recorder
+    trajectory_weight = _trajectory_weight(
+        recorder.trajectory_weighting, stepsize, tree_stats, adapting_stepsize,
+    )
+    iszero(trajectory_weight) && return recorder
+
+    recorded = false
+    for i in eachindex(leaves.dH)
+        leaf_weight = if recorder.mode === :all_good_leaves
+            i != 1 && leaves.dH[i] > recorder.good_leaf_threshold ? 1.0 : 0.0
+        else
+            leaves.weights[i]
+        end
+        weight = trajectory_weight * leaf_weight
+        iszero(weight) && continue
+        OnlineStatsBase.fit!(
+            ir,
+            recorder.online,
+            @view(leaves.position[:, i]),
+            @view(leaves.gradient[:, i]);
+            weight,
+            count=false,
+        )
+        recorded = true
+    end
+    recorded && _mark_group!(recorder.online)
+    recorder
+end
+
+reset!(recorder::NonlinearRecorder) = (reset!(recorder.online); recorder)
 OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
     ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (_, or)
         for xgi in zip(eachcol.(xg)...)
@@ -440,6 +750,19 @@ end
 _reparametrization_ad_backend(p::ReparametrizedProblem) = p.ad_backend
 _reparametrization_ad_backend(p::WrappedLogDensityProblem) =
     _reparametrization_ad_backend(parent(p))
+
+struct ReparametrizationTransportObjective{N,O,G}
+    new_ir::N
+    old_ir::O
+    old_gradient::G
+end
+
+function (objective::ReparametrizationTransportObjective)(new_position)
+    ljac_new, model_position = objective.new_ir(new_position)
+    ljac_old, old_position =
+        _inverse_with_logabsdet_jacobian(objective.old_ir, model_position)
+    ljac_new + ljac_old + dot(objective.old_gradient, old_position)
+end
 
 """
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
@@ -467,20 +790,16 @@ never evaluated.
 function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                                   position, gradient)
     new_ir = reparametrizer(lpdf)
-    old_to_new = inverse(new_ir)
-    new_to_old = inverse(old_ir)
     backend = _reparametrization_ad_backend(lpdf)
     columns = zip(eachcol(old_position), eachcol(old_gradient),
                   eachcol(position), eachcol(gradient))
     for (x_old, g_old, x_new, g_new) in columns
         _, y = old_ir(x_old)
-        _, transported_position = old_to_new(y)
+        _, transported_position = _inverse_with_logabsdet_jacobian(new_ir, y)
         x_new .= transported_position
-        function transport_objective(x_)
-            ljac_new, y = new_ir(x_)
-            ljac_old, x_old = new_to_old(y)
-            ljac_new + ljac_old + dot(g_old, x_old)
-        end
+        transport_objective = ReparametrizationTransportObjective(
+            new_ir, old_ir, collect(g_old),
+        )
         _, transported_gradient = value_and_gradient(transport_objective, backend, x_new)
         g_new .= transported_gradient
     end
@@ -496,6 +815,25 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     optimize!(ir, halo_position, halo_gradient)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              halo_position, halo_gradient)
+    DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
+end
+
+function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
+                                  halo_position, halo_gradient,
+                                  position_and_gradient)
+    recorder.mode === :linear_pool && return find_reparametrization!(
+        lpdf, halo_position, halo_gradient, position_and_gradient,
+    )
+    ir = reparametrizer(lpdf)
+    isempty(ir.pairs) && return position_and_gradient
+    old_ir = IndexedReparametrization(copy(ir.pairs))
+    old_position = copy(halo_position)
+    old_gradient = copy(halo_gradient)
+    optimize!(ir, recorder.online)
+    _jointly_transport_halo!(
+        lpdf, old_ir, old_position, old_gradient, halo_position, halo_gradient,
+    )
+    reset!(recorder)
     DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
 end
 

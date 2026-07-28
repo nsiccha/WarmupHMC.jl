@@ -1,10 +1,12 @@
 # Reverse-mode (Enzyme) coverage for `ReparametrizedProblem`.
 #
 # WHY IT EXISTS: every other item in this suite pins `AutoForwardDiff()`, which is
-# the one backend immune to the two failure modes below. `dbde8d2` broke
-# `Enzyme.Const` — the backend the `ReparametrizedProblem` docstring and both docs
-# pages tell people to use — and landed fully green, because nothing committed
-# here executed a reverse-mode backend. This item is that missing gate.
+# the one backend immune to the failure modes below. `dbde8d2` broke
+# `Enzyme.Const` at the joint-transport site — the backend the
+# `ReparametrizedProblem` docstring and both docs pages tell people to use — and
+# landed fully green, because nothing committed here executed a reverse-mode
+# backend. `aac6489` has since made that site exact and provable; this item is
+# what made the break visible and is what would catch it coming back.
 #
 # WHY IT IS TAGGED: Enzyme's compile is heavy and the CI matrix is nine rows, so
 # `--skip-tag=enzyme` keeps it out of all nine and one `ubuntu-latest` job runs
@@ -56,9 +58,11 @@
     # point: it pins the objective, not just self-consistency between backends.
     #
     # The exponent's SIGN is the whole content of this reference, and it was
-    # written inverted (`cᵢ - 1`) first: every Enzyme backend still agreed with
-    # every other to 1e-12, because they all differentiate the implementation.
-    # Only the finite-difference check below caught it. Do not drop that check.
+    # written inverted (`cᵢ - 1`) first. All three Enzyme backends still agreed
+    # with EACH OTHER exactly — they all differentiate the same implementation —
+    # so a reference built from any of them, or from a second AD system, would
+    # have ratified the error. Only the finite-difference check below caught it.
+    # Do not drop that check, and do not "simplify" it to another AD call.
     function analytic_value_and_gradient(cs, x)
         f = Funnel(K)
         ljac = [(x[1] / 2) * (1 - c) for c in cs]
@@ -197,10 +201,13 @@
     # --- site 2: the joint halo transport (added by `dbde8d2`) --------------
     #
     # `transport_objective` is a SECOND `value_and_gradient` call site on the
-    # same user-supplied backend, and Enzyme cannot statically prove it. A plain
-    # `Const` — which is correct and sufficient for site 1 — throws here, and
-    # only at the first restarting warm-up window, so a user following the
-    # docstring hits it partway into a run rather than at setup.
+    # same user-supplied backend. It used to be unprovable under a plain `Const`
+    # — which is correct and sufficient for site 1 — and threw only at the first
+    # restarting warm-up window, so a user following the docstring hit it partway
+    # into a run rather than at setup. `aac6489` made it exact and statically
+    # provable, so `CONST_ONLY` is asserted here as a plain `@test` alongside the
+    # other two backends. Keeping that path exercised is the point: it is what
+    # lets the docs drop the `set_runtime_activity` incantation.
     @testset "find_reparametrization! — the joint transport site" begin
         function run_transport(be)
             rp = ReparametrizedProblem(spec(fill(1.0, K)), Funnel(K), be)
@@ -212,16 +219,8 @@
             end
         end
 
-        # The regression. Promote this to a plain `@test` if `transport_objective`
-        # is ever made statically provable — that is the better fix and would let
-        # users pass a backend without the `mode=` incantation.
-        @test_broken try
-            run_transport(CONST_ONLY); true
-        catch
-            false
-        end
-
-        for (name, be) in (("Const+set_runtime_activity", RUNTIME_ACTIVITY),
+        for (name, be) in (("Const", CONST_ONLY),
+                           ("Const+set_runtime_activity", RUNTIME_ACTIVITY),
                            ("Duplicated", DUPLICATED))
             err = run_transport(be)
             println("  site 2  ", rpad(name, 28), "max grad err=", err)

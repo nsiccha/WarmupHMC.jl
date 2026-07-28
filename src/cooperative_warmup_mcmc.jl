@@ -27,7 +27,7 @@ and resumed to an identical state.
 `:done` (collected `n_draws`), or `:stuck` (marked for parking by the
 scheduler).
 """
-mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,NT}
+mutable struct CooperativeChain{R,L,RL,NR,A,SA,SO,EO,NT}
     # --- configuration (set once) ---
     const rng::R
     # Stable 1-based identity of this chain, equal to its index into `rngs`.
@@ -38,6 +38,7 @@ mutable struct CooperativeChain{R,L,RL,A,SA,SO,EO,NT}
     const chain_index::Int
     const lpdf::L
     const recording_lpdf::RL           # RecordingPosterior2 wrapping lpdf
+    const nonlinear_recorder::NR
     const algorithm::A                 # DynamicHMC.NUTS
     const stepsize_adaptation::SA      # DynamicHMC.DualAveraging
     const dimension::Int
@@ -123,6 +124,9 @@ cooperative_chain(
     init=missing,
     variance_cond_target=2.,
     nonlinear_adapt=true,
+    nonlinear_evidence=:linear_pool,
+    nonlinear_trajectory_weighting=:auto,
+    nonlinear_good_leaf_threshold=log(1e-2),
     monitor_ess=false,
     max_window_evaluations=typemax(Int),
     progress=nothing,
@@ -135,6 +139,12 @@ cooperative_chain(
     # One retained halo state per `thin` leaf evaluations, so a window fills the ring.
     recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    nonlinear_recorder = NonlinearRecorder(
+        lpdf;
+        mode=nonlinear_evidence,
+        trajectory_weighting=nonlinear_trajectory_weighting,
+        good_leaf_threshold=nonlinear_good_leaf_threshold,
+    )
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;
         diagonal=_initial_diagonal_scale(squared_scale),
@@ -160,7 +170,8 @@ cooperative_chain(
     )
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     CooperativeChain(
-        rng, chain_index, lpdf, recording_lpdf, algorithm, stepsize_adaptation, dimension,
+        rng, chain_index, lpdf, recording_lpdf, nonlinear_recorder,
+        algorithm, stepsize_adaptation, dimension,
         recording_target, stepsize_adaptation_limit, variance_cond_target,
         nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
         scale_options, energy_options, NamedTuple(kwargs), start_time,
@@ -206,6 +217,14 @@ advance_window!(chain::CooperativeChain) = begin
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
         finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
+        nonlinear_adapt && record_nonlinear!(
+            chain.nonlinear_recorder,
+            chain.lpdf,
+            recording_lpdf.leaves,
+            stats,
+            chain.stepsize;
+            adapting_stepsize=chain.current_transition_counter <= stepsize_adaptation_limit,
+        )
         chain.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(chain.steps_per_draw, stats.steps)
@@ -274,7 +293,10 @@ advance_window!(chain::CooperativeChain) = begin
     # leaving it stale exports a chain claiming draws it no longer holds — via
     # `chain_result`, `_joint_ess_proxy`, and (once this lands) the on-disk payload.
     chain.n_samples = 0
-    nonlinear_adapt && (chain.position_and_gradient = find_reparametrization!(chain.lpdf, halo_position, halo_gradient, chain.position_and_gradient))
+    nonlinear_adapt && (chain.position_and_gradient = find_reparametrization!(
+        chain.lpdf, chain.nonlinear_recorder, halo_position, halo_gradient,
+        chain.position_and_gradient,
+    ))
     chain.active_transformation = argmin(
         map(L->update_loss!(L, halo_position, halo_gradient; chain.kwargs...), scale_options)
     )
@@ -684,6 +706,7 @@ cooperative_checkpoint_payload(chain::CooperativeChain) = (;
     posterior_position=chain.recording_lpdf.posterior_position,
     posterior_gradient=chain.recording_lpdf.posterior_gradient,
     recorder=chain.recording_lpdf.recorder,
+    nonlinear_recorder=chain.nonlinear_recorder,
     chain.rng, chain.position_and_gradient, chain.active_transformation,
     chain.scale_options, chain.stepsize, chain.stepsize_state,
     chain.n_evaluations, chain.variance_memory, chain.variance_position,

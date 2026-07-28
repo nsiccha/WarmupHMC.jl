@@ -53,7 +53,8 @@ const _INITIALIZER_KWARGS = (:ntries, :maxiters, :ndraws, :ndraws_elbo, :history
 const _COOPERATIVE_CHAIN_KWARGS = (
     :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
     :target_acceptance_rate, :max_tree_depth, :init, :variance_cond_target,
-    :nonlinear_adapt, :monitor_ess, :max_window_evaluations, :progress,
+    :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
+    :nonlinear_good_leaf_threshold, :monitor_ess, :max_window_evaluations, :progress,
 )
 const _CLUSTERED_CHAIN_KWARGS = (
     :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
@@ -72,7 +73,9 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         # single-chain method
         :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
         :target_acceptance_rate, :max_tree_depth, :init, :progress, :description,
-        :monitor_ess, :nonlinear_adapt, :variance_cond_target, :callback,
+        :monitor_ess, :nonlinear_adapt, :nonlinear_evidence,
+        :nonlinear_trajectory_weighting, :nonlinear_good_leaf_threshold,
+        :variance_cond_target, :callback,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
@@ -82,6 +85,8 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     :resume_warmup_mcmc => (
         :progress, :description, :callback, :checkpoint_dir,
         :checkpoint_name, :parallel, :n_draws, :stepsize_adaptation_limit,
+        :nonlinear_evidence, :nonlinear_trajectory_weighting,
+        :nonlinear_good_leaf_threshold,
     ),
     :cooperative_warmup_mcmc => (
         :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,

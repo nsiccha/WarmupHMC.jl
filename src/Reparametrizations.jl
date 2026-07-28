@@ -47,17 +47,23 @@ the transform, per gradient evaluation. The transform is therefore on the
 gradient hot path, and the accessor closures in each
 [`Reparametrization`](@ref) run under AD.
 
-`ad_backend` is a DifferentiationInterface.jl backend — `AutoMooncake()`,
-`AutoForwardDiff()`, and so on; the objective is scalar in the full parameter
-vector, so a reverse-mode backend scales better with dimension. It is required
-in practice: the two-argument constructor stores `nothing`, which is not a
-backend, and the gradient call then fails. If DifferentiationInterface is not
-loaded at all, the error says so by name.
+`ad_backend` is a DifferentiationInterface.jl backend. `AutoForwardDiff()` is
+what this project actually uses and the only one reachable from the shipped
+environment; the objective is scalar in the full parameter vector, so for a
+high-dimensional problem a reverse-mode backend such as `AutoMooncake()` will
+scale better, at the cost of adding that dependency yourself.
+
+A backend is required in practice, and omitting it fails *late*: the
+two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
+is not a backend, so `logdensity` keeps working on that object and the first
+`logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
+Construction itself never complains. If DifferentiationInterface is not loaded
+at all, the error says so by name instead.
 
 # Example
 
 ```julia
-using WarmupHMC, DifferentiationInterface, Mooncake
+using WarmupHMC, DifferentiationInterface, ForwardDiff
 
 # Coordinates 2:11 are the group effects; their location is fixed at 0 and their
 # log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
@@ -66,7 +72,7 @@ ir = IndexedReparametrization([
                            0., x -> x[1] / 2)
     for i in 2:11
 ])
-rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
+rp = ReparametrizedProblem(ir, my_problem, AutoForwardDiff())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -136,7 +142,9 @@ the textbook non-centering — subtract the location, divide by the scale.
 
 Use `Float64` centerings (`PartiallyCentered(1.0)`, not `PartiallyCentered(1)`):
 warm-up writes the fitted value back into the same `pairs` vector it read, and an
-`Int`-parameterized element cannot hold a `Float64` centering.
+`Int`-parameterized element cannot hold a `Float64` centering. This fails *late* —
+not at construction, but with `MethodError: Cannot convert` at the end of the
+first restarting warm-up window, the first time a centering is written back.
 
 # How the value gets chosen
 
@@ -258,13 +266,16 @@ ir = IndexedReparametrization(
 `pairs` is mutated IN PLACE by warm-up: at every restarting window each entry is
 replaced by one carrying the newly fitted `source` centering. Two consequences:
 
-* **One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)`
-  hands the SAME object to every chain, so a shared `IndexedReparametrization`
-  has all chains adapting — and, under the default `parallel=true`, concurrently
-  writing — one shared set of centerings. Pass a vector of independently built
-  problems instead: `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])`.
-  (`cooperative_warmup_mcmc` and `clustered_warmup_mcmc` `deepcopy` per chain and
-  are not affected.)
+* **One reparametrized problem per chain.** Every multi-chain sampler gives chain
+  `i` its own `deepcopy` of the `lpdf` you pass, so no two chains ever write the
+  same `IndexedReparametrization` and the object you built is not mutated. (Of the
+  three, `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc` are the ones that
+  adapt a reparametrization at all; `clustered_warmup_mcmc` has no hooks for it
+  and does not accept `nonlinear_adapt`.) `adaptive_warmup_mcmc`'s
+  `lpdfs::AbstractArray` method is used exactly as given, so
+  `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])` is the explicit
+  spelling of the default and `fill(lpdf, length(rngs))` is how you deliberately
+  opt back into sharing one.
 * **The order of `pairs` is load-bearing across a checkpoint/resume.** A
   checkpoint stores only the fitted `source` centerings, as a bare positional
   list; on resume they are zipped back onto the freshly supplied problem's

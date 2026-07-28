@@ -37,7 +37,7 @@ carrying a non-empty [`IndexedReparametrization`](@ref) that names the coordinat
 their location/log-scale accessors. Nothing is detected automatically.
 
 ```julia
-using WarmupHMC, DifferentiationInterface, Mooncake
+using WarmupHMC, DifferentiationInterface, ForwardDiff
 
 # Eight schools example: dims 1:8 are group effects, dim 9 = location, dim 10 = log-scale
 ir = IndexedReparametrization(
@@ -46,12 +46,18 @@ ir = IndexedReparametrization(
         x -> x[9], x -> x[10]
     ))
 )
-rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
+rp = ReparametrizedProblem(ir, my_problem, AutoForwardDiff())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
 Posterior samples are transformed back to the wrapped problem's own parametrization
 before being returned.
+
+The third argument is a DifferentiationInterface.jl backend and is **not** optional:
+the two-argument form constructs fine and then fails on the first gradient. For a
+high-dimensional problem a reverse-mode backend such as `AutoMooncake()` will scale
+better than `AutoForwardDiff()`, at the cost of adding that dependency yourself —
+nothing in this project depends on it today.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end example, how the
 centering is fitted, and the constraints that bite (coordinate order across a resume,

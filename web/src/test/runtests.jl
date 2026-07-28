@@ -38,6 +38,7 @@ include("checkpoint_atomicity.jl")
 include("clustered_checkpoint.jl")
 include("cooperative_checkpoint.jl")
 include("checkpoint_dropped_draws.jl")
+include("multichain_lpdf_isolation.jl")
 
 # --- Golden harness (byte-identity + property assertions) --------------------
 # Slowest file in the suite; last so a failure elsewhere surfaces sooner.

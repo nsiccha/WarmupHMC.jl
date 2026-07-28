@@ -309,10 +309,56 @@ Markdown.parse(isempty(crossed) ?
     "is ahead depends on where the gradient is taken.")
 ```
 
-The size of the gap moves in both directions and by different amounts per
-target, which is why a single cross-target number for "how much faster" would be
-the wrong thing to quote from this page. Where a gradient is taken is part of
-what a gradient benchmark measures.
+A single cross-target number for "how much faster" would therefore be the wrong
+thing to quote from this page. Where a gradient is taken is part of what a
+gradient benchmark measures.
+
+!!! warning "The per-target `shift` column is not a result"
+    Read the shifts as *unresolved*, not as small findings. Each cell in the
+    two ratio columns is a **median over `rounds` repeats, and only that median
+    is stored** — the spread across those repeats, which is the one number that
+    would say whether a shift of a few percent is real, was computed during the
+    run and thrown away. So this page cannot tell you whether a shift is
+    separable from run-to-run variation, and neither can you from what is
+    checked in.
+
+    That is not a hypothetical worry about clocks in general. A companion
+    end-to-end measurement timed two **code-identical** revisions with
+    **bit-identical** trajectories — no ESS, gradient count or final centering
+    moved — and its wall-clock ratios still differed by up to tens of percent,
+    with one changing sign. That was a different quantity from this page's
+    per-gradient microbenchmark and its band does not transfer numerically, so
+    treat it as a reason for caution about *small* clock differences here, not
+    as a measured error bar for this table.
+
+**What survives regardless is whatever has margin**, and how much margin there
+is depends on the numbers rather than on this sentence, so it is computed from
+them:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+t = load_results("typical_positions.json")
+margin(r) = 100 * min(abs(Float64(r["const_over_fd_randn"]) - 1),
+                      abs(Float64(r["const_over_fd_typical"]) - 1))
+shift(r) = 100 * abs(Float64(r["const_over_fd_typical"]) /
+                     Float64(r["const_over_fd_randn"]) - 1)
+mm, ms = minimum(margin, t["rows"]), maximum(shift, t["rows"])
+Markdown.parse(
+    "*The smallest distance from `1×` anywhere in the table is " *
+    "$(num(mm; sig = 2))%, while the largest shift between the two columns is " *
+    "$(num(ms; sig = 2))%. " *
+    (mm > 2 * ms ?
+     "The first is the larger by more than a factor of two, which is why the " *
+     "statement about which backend is ahead can rest on these numbers while " *
+     "the individual shifts cannot." :
+     "**Those are now comparable, so the sign statement above no longer has " *
+     "margin over the shifts and should not be relied on until the harness " *
+     "records its per-round spread.**") * "*")
+```
+
+A gradient *count* elsewhere in this manual carries weight these timings do not:
+a count is provenance, a clock is a measurement of the machine that took it.
 
 ## A complete worked example
 

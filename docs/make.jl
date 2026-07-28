@@ -20,6 +20,7 @@ makedocs(
         "Home"            => "index.md",
         "Reparametrization" => "reparametrization.md",
         "Linear restart evidence" => "linear-restart.md",
+        "Nonlinear weighting evidence" => "nonlinear-weighting.md",
         "Gallery"         => "gallery.md",
         "Evidence"        => "evidence.md",
         "API"             => "api.md",

@@ -110,9 +110,44 @@ retains the full rows even when the recorded app view is not being served.
 
 ## Reproduce it
 
-The full matrix uses 32 fixed seeds, balanced arm order, single-threaded BLAS,
-three analytic controls, and the correlated PosteriorDB targets `kilpisjarvi`
-and `diamonds`. Nonlinear adaptation is disabled in every arm.
+The full matrix balances arm order — each seed rotates which arm runs first, so
+no arm is systematically measured on a cold machine. Its size and composition are
+read back out of the artifact rather than restated here, since a matrix that came
+back short would otherwise still be described as full:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+d = load_results("linear_restart.json")
+runs = d["runs"]
+u(k) = unique(String(r[k]) for r in runs)
+seeds = unique(r["seed"] for r in runs)
+syn = Dict(String(r["target"]) => r["synthetic"] for r in runs)
+nsyn = count(t -> syn[t] === true, keys(syn))
+bt, decl, nl = d["blas_threads"], get(d, "n_seeds", nothing), get(d, "nonlinear_adapt", nothing)
+gaps = String[]
+length(seeds) * length(u("arm")) * length(u("target")) == length(runs) ||
+    push!(gaps, "the seed × arm × target product does not equal the run count, " *
+                "so the matrix is not complete")
+decl === nothing || decl == length(seeds) ||
+    push!(gaps, "the artifact declares $(decl) seeds but $(length(seeds)) " *
+                "appear in its runs")
+Markdown.parse(
+    "**$(length(runs)) runs** — $(length(seeds)) fixed seeds × " *
+    "$(length(u("arm"))) arms × $(length(u("target"))) targets, of which " *
+    "$(nsyn) are analytic controls and $(length(syn) - nsyn) are PosteriorDB " *
+    "(" * join("`" .* sort([t for t in keys(syn) if syn[t] !== true]) .* "`", ", ") *
+    "), on $(bt) BLAS thread$(bt == 1 ? "" : "s"). " *
+    (isempty(gaps) ? "" : "**" * uppercasefirst(join(gaps, ", and ")) * ".** ") *
+    (nl === false ?
+     "Nonlinear adaptation is off in every run, so this page is linear-only " *
+     "evidence." :
+     nl === true ?
+     "**Nonlinear adaptation was enabled**, so this is no longer the linear-only " *
+     "evidence this page describes." :
+     "**Whether nonlinear adaptation was on is not recorded**, so that this is " *
+     "linear-only evidence cannot be read off the artifact."))
+```
 
 ```bash
 julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl

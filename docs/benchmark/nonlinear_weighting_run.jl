@@ -67,8 +67,8 @@ const TARGET_KEYS = split(get(ENV, "WHMC_NW_TARGETS",
     "radon_mn-radon_partially_pooled_centered,funnel,eight_schools"), ',')
 const DRAWS_OVERRIDE = haskey(ENV, "WHMC_NW_DRAWS") ?
     parse(Int, ENV["WHMC_NW_DRAWS"]) : nothing
-const OUT = get(ENV, "WHMC_NW_OUT",
-                joinpath(@__DIR__, "results", "nonlinear_weighting"))
+const OUT = env_dir("WHMC_NW_OUT",
+                    joinpath(@__DIR__, "results", "nonlinear_weighting"))
 
 for k in TARGET_KEYS
     haskey(TARGET_SPECS, k) || error("unknown target `$k`; known: " *

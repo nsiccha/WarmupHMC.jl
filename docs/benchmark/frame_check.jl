@@ -61,7 +61,7 @@ score(s) = maximum(abs.(s .- sp) ./ sp)
 @printf("  as returned      : %.3f\n", score(sa))
 @printf("  + reparametrize! : %.3f\n", score(sc))
 println()
-const OUT_DIR = get(ENV, "WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
+const OUT_DIR = env_dir("WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
 mkpath(OUT_DIR)
 already_model_frame = score(sa) < score(sc)
 open(joinpath(OUT_DIR, "frame_check.json"), "w") do io

@@ -29,6 +29,13 @@ const REPO_ROOT = normpath(joinpath(BENCH_DIR, "..", ".."))
 const N_SEEDS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_SEEDS", "32"))
 const N_DRAWS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_DRAWS", "1000"))
 const N_EVALUATIONS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_EVALS", "1000"))
+# Blank is refused, not defaulted -- see `env_dir` in common.jl for the full
+# reason. Short version: an unset shell variable expands to "", `get` returns it
+# rather than the default, and `joinpath("", f)` is relative, so the run writes
+# its JSON into the current directory without saying so.
+if haskey(ENV, "WHMC_LINEAR_BENCH_OUT") && isempty(strip(ENV["WHMC_LINEAR_BENCH_OUT"]))
+    error("WHMC_LINEAR_BENCH_OUT is set but blank; unset it or give it a real path.")
+end
 const OUT_DIR = get(
     ENV, "WHMC_LINEAR_BENCH_OUT",
     joinpath(BENCH_DIR, "results"),

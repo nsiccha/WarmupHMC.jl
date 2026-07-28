@@ -19,7 +19,7 @@ include(joinpath(@__DIR__, "common.jl"))
 # Same knob as the driver, for the same reason: these scripts overwrite their
 # JSON unconditionally, so a quick low-round smoke run silently replaces the
 # checked-in record with numbers too thin to mean anything.
-const OUT_DIR = get(ENV, "WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
+const OUT_DIR = env_dir("WHMC_BENCH_OUT", joinpath(@__DIR__, "results"))
 mkpath(OUT_DIR)
 using Printf, Enzyme
 import JSON

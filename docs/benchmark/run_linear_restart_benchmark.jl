@@ -7,7 +7,7 @@
 #   WHMC_LINEAR_BENCH_DRAWS=1000
 #   WHMC_LINEAR_BENCH_EVALS=1000
 #   WHMC_LINEAR_BENCH_TARGETS=diag_gaussian,diag_fallback_probe,correlated_gaussian,kilpisjarvi_mod-kilpisjarvi,diamonds-diamonds
-#   WHMC_LINEAR_BENCH_OUT=docs/benchmark/results/linear-restart
+#   WHMC_LINEAR_BENCH_OUT=docs/benchmark/results
 #
 # This is deliberately a linear-only experiment. Every run fixes
 # `nonlinear_adapt=false`; the only differences between arms are the source of
@@ -17,21 +17,19 @@
 using LinearAlgebra
 BLAS.set_num_threads(1)
 
-using WarmupHMC, PosteriorDB, LogDensityProblems, StanLogDensityProblems, BridgeStan
+using WarmupHMC, LogDensityProblems
 using Random, Statistics, Printf, Dates, Sockets
 import MCMCDiagnosticTools
 import JSON
 
 const BENCH_DIR = @__DIR__
 const REPO_ROOT = normpath(joinpath(BENCH_DIR, "..", ".."))
-const PDB = PosteriorDB.database()
-
 const N_SEEDS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_SEEDS", "8"))
 const N_DRAWS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_DRAWS", "1000"))
 const N_EVALUATIONS = parse(Int, get(ENV, "WHMC_LINEAR_BENCH_EVALS", "1000"))
 const OUT_DIR = get(
     ENV, "WHMC_LINEAR_BENCH_OUT",
-    joinpath(BENCH_DIR, "results", "linear-restart"),
+    joinpath(BENCH_DIR, "results"),
 )
 const WARMUP_DRAWS = 50
 const WARMUP_EVALUATIONS = min(200, N_EVALUATIONS)
@@ -46,6 +44,19 @@ const DEFAULT_TARGETS = [
 const SELECTED_TARGETS = let raw = get(ENV, "WHMC_LINEAR_BENCH_TARGETS", "")
     isempty(raw) ? DEFAULT_TARGETS : strip.(split(raw, ","))
 end
+const SYNTHETIC_TARGETS = Set([
+    "diag_gaussian", "diag_fallback_probe", "correlated_gaussian",
+])
+const NEEDS_POSTERIORDB = any(name -> name ∉ SYNTHETIC_TARGETS, SELECTED_TARGETS)
+
+# Keep the deterministic Gaussian controls runnable in the ordinary test
+# environment. PosteriorDB and the Stan toolchain are loaded only for the full
+# evidence matrix, which lets CI exercise the exact same driver cheaply when a
+# fast synthetic-only pass is useful.
+if NEEDS_POSTERIORDB
+    @eval using PosteriorDB, StanLogDensityProblems, BridgeStan
+end
+const PDB = NEEDS_POSTERIORDB ? PosteriorDB.database() : nothing
 
 const ARMS = [
     (name="halo_unit", source=:halo, weighting=:unit),
@@ -144,7 +155,7 @@ function stan_problem(name::AbstractString)
        force_initial_diagonal=false, recording_target=nothing)
 end
 
-make_target(name) = name in ("diag_gaussian", "diag_fallback_probe", "correlated_gaussian") ?
+make_target(name) = name in SYNTHETIC_TARGETS ?
                     synthetic_target(name) : stan_problem(name)
 
 # ---------------------------------------------------------------------------
@@ -375,40 +386,126 @@ provenance = Dict(
                     "weighting" => String(a.weighting)) for a in ARMS],
 )
 
-open(joinpath(OUT_DIR, "runs.json"), "w") do io
-    JSON.print(io, jsonsafe(merge(provenance, Dict("runs" => rows))), 2)
-end
-
-finite_values(rs, key) = [getproperty(r, key) for r in rs if r.ok && isfinite(getproperty(r, key))]
+finite_values(rs, key) = Float64[
+    getproperty(r, key) for r in rs
+    if r.ok && hasproperty(r, key) && getproperty(r, key) isa Real &&
+       isfinite(getproperty(r, key))
+]
 med(rs, key) = let values = finite_values(rs, key)
     isempty(values) ? NaN : median(values)
 end
 
-summary_path = joinpath(OUT_DIR, "SUMMARY.md")
-open(summary_path, "w") do io
-    println(io, "# Linear restart evidence benchmark")
-    println(io)
-    println(io, "WarmupHMC `", provenance["warmuphmc_sha"], "`; ", N_SEEDS,
-            " seeds; `n_draws=", N_DRAWS, "`; `n_evaluations=", N_EVALUATIONS,
-            "`; `nonlinear_adapt=false`.")
-    println(io)
-    println(io, "| target | arm | grads | restarts | min ESS | min ESS/kgrad | wall s | div | active | refl |")
-    println(io, "|---|---|---:|---:|---:|---:|---:|---:|---|---:|")
-    for target_name in SELECTED_TARGETS, arm in ARMS
-        rs = [r for r in rows if r.target == target_name && r.arm == arm.name]
-        isempty(rs) && continue
-        active = [r.active_transformation for r in rs if r.ok]
-        active_text = isempty(active) ? "-" : join(sort!(unique!(String.(active))), ",")
-        @printf(io, "| %s | %s | %.0f | %.1f | %.1f | %.2f | %.3f | %.1f | %s | %.1f |\n",
-                target_name, arm.name, med(rs, :grad_evals), med(rs, :n_restarts),
-                med(rs, :ess_min), med(rs, :ess_min_per_kgrad), med(rs, :wall_s),
-                med(rs, :divergences), active_text, med(rs, :adaptive_reflections))
+function summary_row(target_name, arm)
+    rs = [r for r in rows if r.target == target_name && r.arm == arm.name]
+    successful = [r for r in rs if r.ok]
+    active = sort!(unique!(String.(getproperty.(successful, :active_transformation))))
+    base = (;
+        target=target_name,
+        arm=arm.name,
+        source=arm.source,
+        weighting=arm.weighting,
+        n_runs=length(successful),
+        grad_evals_median=med(rs, :grad_evals),
+        restarts_median=med(rs, :n_restarts),
+        min_ess_median=med(rs, :ess_min),
+        min_ess_per_kgrad_median=med(rs, :ess_min_per_kgrad),
+        wall_s_median=med(rs, :wall_s),
+        divergences_total=sum(getproperty.(successful, :divergences)),
+        active_transformations=join(active, ","),
+        adaptive_reflections_median=med(rs, :adaptive_reflections),
+        linear_metric_fallbacks_median=med(rs, :linear_metric_fallbacks),
+    )
+    if target_name in SYNTHETIC_TARGETS
+        merge(base, (;
+            covariance_relative_error_median=med(rs, :covariance_relative_error),
+            mean_scaled_error_median=med(rs, :mean_scaled_error),
+        ))
+    else
+        merge(base, (;
+            reference_mean_z_rmse_median=med(rs, :reference_mean_z_rmse),
+            reference_sd_log_rmse_median=med(rs, :reference_sd_log_rmse),
+        ))
     end
 end
 
-println("\nWrote ", joinpath(OUT_DIR, "runs.json"))
-println("Wrote ", summary_path)
-println("\n", read(summary_path, String))
+summary_rows = [summary_row(target, arm) for target in SELECTED_TARGETS for arm in ARMS]
+
+function ratio_summary(pairs, key; higher_is_better)
+    values = Float64[]
+    for (test, baseline) in pairs
+        hasproperty(test, key) && hasproperty(baseline, key) || continue
+        numerator, denominator = getproperty(test, key), getproperty(baseline, key)
+        numerator isa Real && denominator isa Real || continue
+        isfinite(numerator) && isfinite(denominator) && numerator > 0 && denominator > 0 || continue
+        push!(values, numerator / denominator)
+    end
+    (;
+        median=isempty(values) ? NaN : median(values),
+        geomean=isempty(values) ? NaN : exp(mean(log, values)),
+        wins=count(higher_is_better ? >(1) : <(1), values),
+        n=length(values),
+    )
+end
+
+function paired_comparison(target, arm, baseline_arm, comparison)
+    tests = Dict(r.seed => r for r in rows if r.ok && r.target == target && r.arm == arm)
+    baselines = Dict(r.seed => r for r in rows if r.ok && r.target == target && r.arm == baseline_arm)
+    seeds = sort!(collect(intersect(keys(tests), keys(baselines))))
+    pairs = [(tests[seed], baselines[seed]) for seed in seeds]
+    ess = ratio_summary(pairs, :ess_min_per_kgrad; higher_is_better=true)
+    gradients = ratio_summary(pairs, :grad_evals; higher_is_better=false)
+    wall = ratio_summary(pairs, :wall_s; higher_is_better=false)
+    accuracy_key = target in SYNTHETIC_TARGETS ?
+        :covariance_relative_error : :reference_mean_z_rmse
+    accuracy = ratio_summary(pairs, accuracy_key; higher_is_better=false)
+    (;
+        target,
+        comparison,
+        arm,
+        baseline_arm,
+        n_pairs=length(pairs),
+        ess_efficiency_ratio_median=ess.median,
+        ess_efficiency_ratio_geomean=ess.geomean,
+        ess_efficiency_wins=ess.wins,
+        gradient_ratio_median=gradients.median,
+        wall_ratio_median=wall.median,
+        accuracy_metric=String(accuracy_key),
+        accuracy_error_ratio_median=accuracy.median,
+        accuracy_error_ratio_geomean=accuracy.geomean,
+        accuracy_wins=accuracy.wins,
+        restart_count_differs=count(pair -> pair[1].n_restarts != pair[2].n_restarts, pairs),
+    )
+end
+
+comparisons = vcat(
+    [paired_comparison(target, arm.name, "halo_unit", "arm_vs_halo")
+     for target in SELECTED_TARGETS for arm in ARMS[2:end]],
+    [paired_comparison(target, stepsize, unit, "stepsize_vs_unit")
+     for target in SELECTED_TARGETS
+     for (stepsize, unit) in (("all_good_stepsize", "all_good_unit"),
+                              ("nuts_stepsize", "nuts_unit"))],
+)
+
+provenance["note"] = "Linear-only restart/fallback evidence; nonlinear_adapt=false in every run. Wall time is host-specific; compare ESS per gradient across hosts."
+result_path = joinpath(OUT_DIR, "linear_restart.json")
+open(result_path, "w") do io
+    JSON.print(io, jsonsafe(merge(provenance, Dict(
+        "summary" => summary_rows,
+        "comparisons" => comparisons,
+        "runs" => rows,
+    ))), 2)
+end
+
+println("\nWrote ", result_path)
+println("\n| target | arm | grads | restarts | min ESS | min ESS/kgrad | div | active | refl | fallback |")
+println("|---|---|---:|---:|---:|---:|---:|---|---:|---:|")
+for row in summary_rows
+    @printf("| %s | %s | %.0f | %.1f | %.1f | %.2f | %.0f | %s | %.1f | %.1f |\n",
+            row.target, row.arm, row.grad_evals_median, row.restarts_median,
+            row.min_ess_median, row.min_ess_per_kgrad_median,
+            row.divergences_total, row.active_transformations,
+            row.adaptive_reflections_median, row.linear_metric_fallbacks_median)
+end
 
 n_failed = count(r -> !r.ok, rows)
 println(length(rows), " measured runs, ", n_failed, " failed")

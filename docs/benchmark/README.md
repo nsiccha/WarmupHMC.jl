@@ -9,6 +9,17 @@ adaptive method reach noncentered-like performance without being told to?**
 
 `RESULTS.md` has the answer and the numbers. This file is how to reproduce them.
 
+The same environment also carries `run_linear_restart_benchmark.jl`, the
+linear-only comparison of the legacy halo restart criterion against the running
+all-good-leaf and NUTS-weighted estimators. Its checked-in output is
+`results/linear_restart.json`; the generic WarmupHMC web renderer and the
+VitePress [Linear restart evidence](../src/linear-restart.md) page both read that
+one file. The default command runs the full 32-seed matrix:
+
+```bash
+julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl
+```
+
 ## Rerun it
 
 ```bash
@@ -53,7 +64,9 @@ A bare `Pkg.instantiate()` does **not** work here: `WarmupHMC` depends on
 one.
 
 `HTMX`, `HTMXObjects` and `DynamicObjects` appear in `[deps]` because the
-resolve develops them; nothing in this benchmark uses them directly.
+canonical resolve develops them; nothing in this benchmark uses them directly.
+The GitHub Actions evidence job develops those packages from their explicitly
+named active branches before instantiating this environment.
 
 **AD backend.** The harness selects the backend for `ReparametrizedProblem` in
 one place and it is settable per run:

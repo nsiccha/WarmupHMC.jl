@@ -18,6 +18,7 @@ makedocs(
     pages = [
         "Home"            => "index.md",
         "Reparametrization" => "reparametrization.md",
+        "Linear restart evidence" => "linear-restart.md",
         "Gallery"         => "gallery.md",
         "API"             => "api.md",
     ],

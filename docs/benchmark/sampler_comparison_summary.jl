@@ -61,16 +61,28 @@ _cmp_rows(data, target, arm) =
 """
     comparison_summary(data) -> Vector of NamedTuple
 
-One median row per (target, arm): min ESS, the two rates, and total divergences
-across seeds. `n_ok` is carried so a reader can see a row backed by one seed for
-what it is.
+One median row per (target, arm): min ESS, the two rates, and divergences
+summed across seeds. `n_ok`/`n_run` count ROWS, i.e. seeds × repeats, so a row
+backed by fewer successful runs than it claims is visible as such.
+
+DIVERGENCES ARE SUMMED WITHIN A REPEAT, THEN MEDIANED ACROSS REPEATS — not
+summed over every row. A divergence count is a function of the draws, and the
+draws are bit-identical across repeats, so summing the lot would multiply the
+true count by `n_repeats` and produce a figure that silently changes meaning when
+somebody sets `WHMC_CMP_REPEATS`. It rendered as `18` instead of `6` for the
+funnel the first time this was tried. The ratios between arms survive that
+scaling, which is exactly why it is the kind of error a reader cannot catch.
 """
 function comparison_summary(data::AbstractDict)
+    reps = comparison_repeats(data)
     out = NamedTuple[]
     for t in comparison_targets(data), arm in COMPARISON_ARMS
         rows = _cmp_rows(data, t, arm)
         isempty(rows) && continue
         ok = [r for r in rows if get(r, "ok", false)]
+        per_repeat = [sum(Int(get(r, "n_divergent", 0))
+                          for r in ok if Int(get(r, "repeat", 1)) == rep; init = 0)
+                      for rep in reps]
         push!(out, (
             target = t,
             arm = arm,
@@ -80,7 +92,8 @@ function comparison_summary(data::AbstractDict)
             ess_per_grad = _cmp_median(rows, "ess_min_per_grad"),
             ess_per_s = _cmp_median(rows, "ess_min_per_s"),
             grad_evals = _cmp_median(rows, "grad_evals"),
-            n_divergent = sum(Int(get(r, "n_divergent", 0)) for r in ok; init = 0),
+            n_divergent = isempty(per_repeat) ? 0 :
+                          round(Int, Statistics.median(per_repeat)),
         ))
     end
     out
@@ -162,6 +175,51 @@ function comparison_verdict(data::AbstractDict;
        n_comparisons = wins + losses + ties)
 end
 
+"""
+    comparison_repeats(data) -> Vector{Int}
+
+Repeat indices present in the file, in order. `[1]` for an older artifact that
+predates repeats, so everything below degrades to a single-pass answer rather
+than erroring on a missing field."""
+comparison_repeats(data::AbstractDict) =
+    sort!(unique(Int(get(r, "repeat", 1)) for r in data["runs"]))
+
+_cmp_subset(data, rep) =
+    Dict{String,Any}("runs" => [r for r in data["runs"] if Int(get(r, "repeat", 1)) == rep])
+
+"""
+    comparison_verdict_by_repeat(data; key) -> Vector of NamedTuple
+
+The same verdict [`comparison_verdict`](@ref) computes, recounted separately
+within each repeat.
+
+THIS IS THE POINT OF RECORDING REPEATS. Every repeat re-runs the same seeds, so
+the draws are bit-identical and only the clock differs. A key that is a function
+of the draws alone therefore has to produce the same verdict in every row of
+this table; one that is a function of elapsed time does not have to, and on the
+measured artifact it does not. That turns "wall-clock is noisier" from a caveat
+a reader has to take on trust into a column they can look at — and, unlike a
+caveat, it goes red on its own if a future measurement changes which of the two
+reproduces.
+"""
+function comparison_verdict_by_repeat(data::AbstractDict; kwargs...)
+    [(; repeat = rep, comparison_verdict(_cmp_subset(data, rep); kwargs...)...)
+     for rep in comparison_repeats(data)]
+end
+
+"""
+    comparison_reproduces(data; key) -> Bool
+
+Whether `key`'s verdict is identical in every repeat. A single-repeat artifact
+answers `true` vacuously — there is nothing to disagree with — which is why the
+page reports the repeat count beside it rather than this flag alone."""
+function comparison_reproduces(data::AbstractDict; kwargs...)
+    v = comparison_verdict_by_repeat(data; kwargs...)
+    isempty(v) && return true
+    all(x -> (x.n_wins, x.n_losses, x.n_ties) ==
+             (first(v).n_wins, first(v).n_losses, first(v).n_ties), v)
+end
+
 """One sentence stating what the rows show, built from the counts.
 
 Deliberately says "on this target set" and gives the denominator. A comparison
@@ -178,4 +236,28 @@ function comparison_verdict_sentence(data::AbstractDict; kwargs...)
            round(Int, 100 * v.tie_band), "% in ", v.n_ties,
            v.n_incomparable == 0 ? "." :
            string("; ", v.n_incomparable, " comparison(s) had no finite figure on one side."))
+end
+
+"""One sentence saying whether the sentence above survived re-running the same
+seeds, built from the per-repeat counts rather than from an author's memory of
+how noisy the machine felt.
+
+The two branches deliberately read differently. A verdict that reproduced is
+reported as a fact about the measurement; one that did not is reported as a
+reason to discount the verdict, with the disagreeing counts spelled out, because
+a reader who is only shown "results may vary" has been told nothing they can
+check."""
+function comparison_stability_sentence(data::AbstractDict; kwargs...)
+    v = comparison_verdict_by_repeat(data; kwargs...)
+    n = length(v)
+    n <= 1 && return string("Recorded from a single timing pass, so nothing here ",
+                            "says whether this verdict reproduces.")
+    counts = ["$(x.n_wins)–$(x.n_losses)–$(x.n_ties)" for x in v]
+    comparison_reproduces(data; kwargs...) &&
+        return string("Re-running the identical seeds ", n, " times returned this same ",
+                      "verdict every time (", counts[1], " in all ", n, " repeats).")
+    string("Re-running the identical seeds ", n, " times did **not** return the same ",
+           "verdict: the win–loss–tie counts were ", join(counts, ", "),
+           ". The draws are bit-identical across repeats, so that spread is the ",
+           "clock, not the sampler — discount this verdict accordingly.")
 end

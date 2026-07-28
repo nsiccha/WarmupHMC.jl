@@ -94,6 +94,31 @@ const N_DRAWS  = parse(Int, get(ENV, "WHMC_CMP_DRAWS",  "1000"))
 const OUT_DIR  = env_dir("WHMC_CMP_OUT", normpath(joinpath(@__DIR__, "..", "docs", "benchmark", "results")))
 const FUNNEL_K = parse(Int, get(ENV, "WHMC_CMP_FUNNEL_K", "9"))
 
+# REPEATS EXIST BECAUSE ONE OF THE TWO RATE COLUMNS DOES NOT REPRODUCE.
+#
+# Every repeat re-runs the SAME seeds, so the draws are bit-identical and only
+# the clock moves. That is not a redundant measurement, it is the only way this
+# file can tell a reader which of its own columns to trust:
+#
+#   `ess_min`, `grad_evals`, `n_divergent`  bit-identical across repeats — so
+#                                           `ess_min_per_grad` is exact.
+#   `wall_s`                                median relative spread 20–25% run to
+#                                           run, worst pair 98% (measured over
+#                                           four runs on `strato2`, 2026-07-28).
+#
+# The consequence is not academic. `comparison_verdict`'s 10% tie band is
+# NARROWER THAN THAT NOISE, so the wall-clock verdict genuinely moves: the same
+# four seeds produced 6-2-2, then 4-5-1, then 5-2-3, then 5-2-3. Reported from a
+# single pass it reads exactly as authoritative as the gradient verdict, which
+# never moved off 9-0-1 in any run.
+#
+# The fix is NOT to widen the band until the answer settles — that is fitting a
+# threshold to an observation, and it would silence the instability rather than
+# report it. It is to record the repeats so the page can COUNT the verdict once
+# per repeat and show a reader that one of the two columns disagrees with
+# itself. A caveat in prose would have been cheaper and could never go red.
+const N_REPEATS = parse(Int, get(ENV, "WHMC_CMP_REPEATS", "3"))
+
 const SELECTED = let raw = get(ENV, "WHMC_CMP_TARGETS", "")
     isempty(raw) ? nothing : Set(strip.(split(raw, ",")))
 end
@@ -212,7 +237,8 @@ end
 # ---------------------------------------------------------------------------
 
 rows = Any[]
-record!(target, r) = push!(rows, merge(Dict("target" => target), Dict(string(k) => v for (k, v) in pairs(r))))
+record!(target, rep, r) = push!(rows, merge(Dict("target" => target, "repeat" => rep),
+                                           Dict(string(k) => v for (k, v) in pairs(r))))
 
 # A short discarded run per (target, arm) so the timed runs are not JIT-bound.
 # Without it the first seed of each arm pays compilation and reads as several
@@ -234,10 +260,16 @@ if isnothing(SELECTED) || "funnel" in SELECTED
     f = Funnel(FUNNEL_K)
     for (arm, run) in ARMS
         warm_up_jit(f, run)
-        for seed in 1:N_SEEDS
+        # Repeats are the OUTER loop over seeds on purpose. Looping seeds outside
+        # would run each seed's repeats back to back, so a transient — another
+        # process waking up, a thermal excursion — would land on one seed's whole
+        # timing block and read as a property of that seed. Interleaved, it lands
+        # on one repeat of every seed, which is what the per-repeat verdict is
+        # built to expose.
+        for rep in 1:N_REPEATS, seed in 1:N_SEEDS
             r = run_sampler(; arm, run, problem = f, seed)
-            r.ok || @warn "arm failed" target = "funnel" arm seed error = r.error
-            record!("funnel", r)
+            r.ok || @warn "arm failed" target = "funnel" arm seed rep error = r.error
+            record!("funnel", rep, r)
         end
     end
 end
@@ -249,10 +281,10 @@ for tgt in TARGETS
     prob, dim, _ = stan_problem(tgt.name)
     for (arm, run) in ARMS
         warm_up_jit(prob, run)
-        for seed in 1:N_SEEDS
+        for rep in 1:N_REPEATS, seed in 1:N_SEEDS
             r = run_sampler(; arm, run, problem = prob, seed, model = prob.model)
-            r.ok || @warn "arm failed" target = tgt.name arm seed error = r.error
-            record!(tgt.name, r)
+            r.ok || @warn "arm failed" target = tgt.name arm seed rep error = r.error
+            record!(tgt.name, rep, r)
         end
     end
 end
@@ -272,6 +304,24 @@ jsonsafe(x::NamedTuple) = Dict(string(k) => jsonsafe(v) for (k, v) in pairs(x))
 jsonsafe(x) = x
 
 out = joinpath(OUT_DIR, "sampler_comparison.json")
+
+# CALL `git_provenance()` BEFORE THE `open`, NOT INSIDE IT.
+#
+# `open(path, "w")` truncates at open, so a provenance call inside the write
+# block sees THIS FILE as an uncommitted change and records
+# `worktree_dirty = true` — about itself. Measured directly: `git status
+# --porcelain --untracked-files=no -- <out>` prints nothing before the `open`
+# and ` M <out>` from inside it.
+#
+# It fails in the loudest possible wrong direction. `docs/tables.jl:provenance`
+# renders a dirty flag as "**Recorded from a worktree with uncommitted
+# changes**, so the revision named above does not describe the code that ran —
+# and no revision does", which is a strong and false claim about a measurement
+# that was perfectly clean. And it only appears on REgeneration: the first run
+# writes an untracked file, `git_provenance()` passes `--untracked-files=no`,
+# and the flag reads `false`. So the bug is invisible exactly when a harness is
+# new, and shows up later looking like a real problem with the tree.
+const PROV = git_provenance()
 # Provenance goes INSIDE `config`, merged, not beside it under its own key.
 # `docs/tables.jl:provenance` reads `config` first and falls back to the top
 # level; a `"provenance"` key is neither, so the caption rendered "an
@@ -287,8 +337,9 @@ out = joinpath(OUT_DIR, "sampler_comparison.json")
 # calls `BLAS.get_num_threads()` for the same reason.
 open(out, "w") do io
     JSON.print(io, jsonsafe(Dict(
-        "config" => merge(git_provenance(),
+        "config" => merge(PROV,
                           Dict{String,Any}("n_seeds" => N_SEEDS, "n_draws" => N_DRAWS,
+                                           "n_repeats" => N_REPEATS,
                                            "funnel_K" => FUNNEL_K,
                                            "ahmc_n_adapts" => AHMC_N_ADAPTS,
                                            "julia" => string(VERSION),

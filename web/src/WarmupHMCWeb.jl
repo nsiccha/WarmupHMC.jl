@@ -22,6 +22,142 @@ end
 include("posteriordb_reparametrizations.jl")
 
 
+# ============================================================
+# Benchmark evidence — one JSON, one renderer, two presentations
+# ============================================================
+#
+# The benchmark drivers under `docs/benchmark/` write rows-only JSON into
+# `docs/benchmark/results/`. That file is the SINGLE durable source. This
+# app renders it live, and `@include record_gallery` (bottom of the file)
+# freezes those renders into `docs/src/public/live-whmc/`, which the
+# VitePress build serves. No table is ever retyped into prose, so the docs
+# cannot drift from the run that produced them.
+#
+# Adding evidence is therefore a one-file act: drop a JSON in, and it
+# appears in the app and in the docs with no change here. Everything below
+# is deliberately schema-agnostic for that reason — see `benchmark_load`.
+
+benchmark_results_dir() =
+    joinpath(dirname(dirname(@__DIR__)), "docs", "benchmark", "results")
+
+"""
+    benchmark_key(relpath) -> String
+    benchmark_path(key)    -> String
+
+Round-trip a results file between its path under [`benchmark_results_dir`](@ref)
+and its route segment. Results live one directory deep (`after/runs.json`), so
+the separator is flattened to `~` — unreserved in RFC 3986, and absent from
+every driver-emitted name (which use `-` and `_`).
+"""
+benchmark_key(relpath) = replace(replace(relpath, ".json" => ""), '/' => '~')
+benchmark_path(key) =
+    joinpath(benchmark_results_dir(), replace(String(key), '~' => '/') * ".json")
+
+"""
+    benchmark_keys() -> Vector{String}
+
+Every results JSON currently on disk, sorted. Recomputed on each call rather
+than cached: the drivers write here while the app is running, and a stale
+listing would silently omit fresh evidence. Returns empty if the directory is
+absent (the package is usable without a docs checkout).
+"""
+benchmark_keys() = begin
+    root = benchmark_results_dir()
+    isdir(root) || return String[]
+    keys = String[]
+    for (dir, _, files) in walkdir(root), file in files
+        endswith(file, ".json") || continue
+        push!(keys, benchmark_key(relpath(joinpath(dir, file), root)))
+    end
+    sort!(keys)
+end
+
+# Provenance keys the drivers stamp, in the order worth reading them. Anything
+# else scalar is appended alphabetically, so a new field shows up unprompted
+# rather than being silently dropped.
+const BENCHMARK_PROVENANCE_ORDER =
+    ["warmuphmc_sha", "julia", "blas_threads", "n_calls", "n_seeds", "rounds",
+     "n_draws_floor", "note"]
+
+# Row columns worth seeing first; the rest follow alphabetically. Column order
+# must be deterministic — these renders get frozen into checked-in static HTML,
+# and JSON objects parse into unordered `Dict`s.
+const BENCHMARK_COLUMN_ORDER = ["target", "dim", "arm", "seed", "backend"]
+
+_bench_order(names, priority) = vcat(
+    [n for n in priority if n in names],
+    sort([n for n in names if !(n in priority)]),
+)
+
+_bench_cell(::Nothing) = ""
+_bench_cell(x::Bool) = string(x)
+_bench_cell(x::Integer) = string(x)
+# Round for reading, then drop a trailing `.0` — `184.0` and `445001.0` are
+# counts and nanoseconds, not measurements to 1 decimal. Rounding happens
+# BEFORE the integrality test so `445000.9805` lands on `445001`, not
+# `445001.0`. Full precision stays in the JSON, which is the source.
+_bench_cell(x::AbstractFloat) = begin
+    isfinite(x) || return string(x)
+    r = abs(x) >= 100 ? round(x; digits=1) : round(x; sigdigits=4)
+    r == round(r) && abs(r) < 1e15 ? string(Int(round(r))) : string(r)
+end
+_bench_cell(x::AbstractVector) = join(_bench_cell.(x), ", ")
+_bench_cell(x::AbstractDict) =
+    join(["$k=$(_bench_cell(x[k]))" for k in sort(collect(keys(x)))], " ")
+_bench_cell(x) = string(x)
+
+"""
+    benchmark_table(rows) -> NamedTuple of vectors
+
+Turn a JSON array of row objects into a Tables.jl-compatible table for
+[`render_table`](@ref). Columns are the union over all rows — a driver that
+adds a field mid-series still renders, with `""` where the field is absent —
+ordered by `BENCHMARK_COLUMN_ORDER` then alphabetically.
+"""
+benchmark_table(rows) = begin
+    names = String[]
+    for row in rows, k in keys(row)
+        k in names || push!(names, k)
+    end
+    cols = _bench_order(names, BENCHMARK_COLUMN_ORDER)
+    NamedTuple(Symbol(c) => [_bench_cell(get(row, c, nothing)) for row in rows]
+               for c in cols)
+end
+
+"""
+    benchmark_load(key) -> (; provenance, tables)
+
+Read one results JSON and split it into scalar provenance and named row tables.
+
+Both shapes the drivers emit are handled without naming either: a bare array of
+rows (`after/gradient_overhead.json`), and an object carrying scalar provenance
+alongside one or more arrays of rows (`rows`, `runs`, `captures`). The rule is
+structural — an array-of-objects field is a table, every other field is
+provenance — so a new driver needs no change here. That is the point: this
+renderer must not become a second place where a result's schema is written down.
+"""
+benchmark_load(key) = begin
+    parsed = JSON.parsefile(benchmark_path(key))
+    if parsed isa AbstractVector
+        return (; provenance = Pair{String,String}[],
+                  tables = ["rows" => benchmark_table(parsed)])
+    end
+    tables = Pair{String,Any}[]
+    scalars = String[]
+    for (k, v) in parsed
+        if v isa AbstractVector && !isempty(v) && all(x -> x isa AbstractDict, v)
+            push!(tables, k => benchmark_table(v))
+        else
+            push!(scalars, k)
+        end
+    end
+    sort!(tables; by=first)
+    (; provenance = [k => _bench_cell(parsed[k])
+                     for k in _bench_order(scalars, BENCHMARK_PROVENANCE_ORDER)],
+       tables = tables)
+end
+
+
 # --- Web app ---
 
 # ============================================================
@@ -53,6 +189,11 @@ include("posteriordb_reparametrizations.jl")
     recording_paths = vcat(
         ["/", "/gallery"],
         ["/posteriors/$name" for name in posterior_names],
+        ["/benchmarks"],
+        # Enumerated from disk, not listed by hand: a benchmark driver that
+        # writes a new results JSON gets recorded into the docs without anyone
+        # editing this file. See the benchmark-evidence block at the top.
+        ["/benchmark/$key" for key in benchmark_keys()],
     )
 
     @struct posterior(name::Symbol) = begin
@@ -454,6 +595,83 @@ const APPDATA = WhmcAppData()
              for name in __appdata__.posterior_names]...,
         ),
     )
+
+    # GET `/benchmarks` — index of the evidence under `docs/benchmark/results/`.
+    # Enumerated from disk per request (not cached), so a driver run mid-session
+    # shows up without restarting the app.
+    @get benchmarks() = begin
+        ks = benchmark_keys()
+        summaries = map(ks) do key
+            loaded = benchmark_load(key)
+            prov = Dict(loaded.provenance)
+            (; file    = key,
+               sha     = first(get(prov, "warmuphmc_sha", ""), 7),
+               tables  = join([name for (name, _) in loaded.tables], ", "),
+               rows    = sum(t -> length(first(t)), (t for (_, t) in loaded.tables); init=0),
+               note    = get(prov, "note", ""))
+        end
+        h.div(
+            htmxo_breadcrumb([("Table", "/", "/"), ("Benchmarks", nothing, nothing)]),
+            h.h2("Benchmark evidence ($(length(ks)) result files)"),
+            h.p("""Each row is one JSON written by a driver under docs/benchmark/. \
+                 That file is the source: this page renders it, and the docs build \
+                 serves a static recording of this same render. Nothing is retyped, \
+                 so a table in the documentation cannot drift from the run that \
+                 produced it."""),
+            h.p(h.strong("Check the SHA before citing a row."), """ A results file is \
+                 a snapshot of the tree it was measured on, and this directory keeps \
+                 superseded runs alongside current ones on purpose — the comparison \
+                 is often the point."""),
+            isempty(summaries) ?
+                h.p(h.em("No results checked in under docs/benchmark/results/.")) :
+                render_table(summaries; id="benchmark-index", download=false,
+                    cell=(v, c, _) -> c === :file ?
+                        h.a(string(v); href=__self__/"benchmark/$v") : string(v)),
+            sortable_table_js(), sortable_table_styles(), download_table_js(),
+        )
+    end
+
+    # Per-file view: /benchmark/<key>, where <key> is the results path with
+    # `/` flattened to `~` (see `benchmark_key`).
+    #
+    # DO NOT collapse `json_path` into its single use below. An INDEXED
+    # `@include` whose body holds exactly one statement is unwrapped by
+    # `_unwrap_short_form_body` (HTMXObjects.jl:773) and reinterpreted as the
+    # short-form EXTERNAL mount `@include benchmark(key) = SomeChild(key)` —
+    # the parser wraps a short-form method body in a `:block` too, so the head
+    # alone cannot tell the two apart and the statement count is the only
+    # signal. The lone `@get` is then spliced in as a call expression, and
+    # precompilation dies with `UndefVarError: @get not defined`. Two
+    # statements make it an inline sub-router, which is what this is. The
+    # sibling `@include posteriors` / `@include results` escape it only by
+    # happening to have more than one statement. Reported as a snag to
+    # HTMXObjects.
+    @include benchmark(key::Symbol) = begin
+        json_path = benchmark_path(key)
+
+        @get index() = if !isfile(json_path)
+            h.div(
+                htmxo_breadcrumb([("Table", string(__parent__), nothing),
+                                  ("Benchmarks", string(__parent__/"benchmarks"), nothing)]),
+                h.p(h.em("No results file `$(key)`.")),
+            )
+        else
+            loaded = benchmark_load(key)
+            h.div(
+                htmxo_breadcrumb([("Table", string(__parent__), nothing),
+                                  ("Benchmarks", string(__parent__/"benchmarks"), nothing),
+                                  (String(key), nothing, nothing)]),
+                h.h2(String(key)),
+                isempty(loaded.provenance) ? "" :
+                    h.dl([[h.dt(name), h.dd(value)]
+                          for (name, value) in loaded.provenance]...),
+                [[h.h3(name), render_table(table; id="benchmark-$key-$name",
+                                           download_filename="$key-$name.csv")]
+                 for (name, table) in loaded.tables]...,
+                sortable_table_js(), sortable_table_styles(), download_table_js(),
+            )
+        end
+    end
 
     # Drop all in-memory caches on the singleton appdata. Useful after
     # property/value-shape edits that Revise tracks at the method level but

@@ -49,14 +49,33 @@ gradient hot path, and the accessor closures in each
 
 `ad_backend` is a DifferentiationInterface.jl backend. DifferentiationInterface
 is a hard dependency of WarmupHMC, so the *interface* is always there, but a
-backend object only works once you load the AD package behind it — `AutoEnzyme()`
+backend object only works once you load the AD package behind it — `AutoEnzyme`
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
 Prefer a reverse-mode backend. The objective differentiated here is scalar in the
 *full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the
 transform per gradient while reverse mode costs one, and the gap opens up exactly
 where reparametrization is worth doing — high-dimensional hierarchical models.
-`AutoEnzyme()` is what this project benchmarks against.
+
+!!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
+    A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
+    a closure over this `ReparametrizedProblem` — it captures the reparametrizer
+    and the frozen inner gradient `g_y` — and Enzyme cannot prove that captured
+    state is read-only:
+
+        EnzymeMutabilityException: Function argument passed to autodiff cannot be proven readonly
+
+    Pass `function_annotation = Enzyme.Const`. That is semantically exact rather
+    than a workaround: `g_y` is frozen by construction, and the derivative taken
+    is with respect to the *parameter vector*, never with respect to the problem.
+
+    Enzyme's own error text suggests `function_annotation = Enzyme.Duplicated`.
+    **Do not take that hint.** It is correct — it agrees with `Const` to machine
+    precision — but it allocates and propagates a shadow copy of the closure on
+    every call, which measured **22× slower** than `Const` on an 11-dimensional
+    funnel (8556 ns vs 387 ns per gradient) and turned the wrapper into a
+    pessimization against forward mode in the benchmark harness. The hint
+    diagnoses the problem; it is not the fix.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
@@ -76,7 +95,8 @@ ir = IndexedReparametrization([
                            0., x -> x[1] / 2)
     for i in 2:11
 ])
-rp = ReparametrizedProblem(ir, my_problem, AutoEnzyme())
+rp = ReparametrizedProblem(ir, my_problem,
+                           AutoEnzyme(; function_annotation = Enzyme.Const))
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 

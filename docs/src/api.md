@@ -13,6 +13,7 @@ WarmupHMC.resume_warmup_mcmc
 
 ```@docs
 WarmupHMC.ReparametrizedProblem
+WarmupHMC.CandidateScoringPlan
 WarmupHMC.IndexedReparametrization
 WarmupHMC.PartiallyCentered
 WarmupHMC.Reparametrization

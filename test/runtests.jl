@@ -28,6 +28,9 @@ end
     @testset "Reparametrizations" begin
         include("reparametrizations.jl")
     end
+    @testset "Invariant candidate scoring" begin
+        include("invariant_scoring.jl")
+    end
     @testset "WrappedLogDensityProblems + AD" begin
         include("wrapped_logdensity.jl")
     end

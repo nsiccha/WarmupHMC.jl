@@ -305,6 +305,9 @@ const ACE_N_SEEDS = parse(Int, get(ENV, "ACE_SEEDS", "8"))
 const ACE_N_DRAWS = parse(Int, get(ENV, "ACE_DRAWS", "1000"))
 const ACE_N_EVALUATIONS = parse(Int, get(ENV, "ACE_EVALUATIONS", "1000"))
 const ACE_FAMILIES = Symbol.(split(get(ENV, "ACE_FAMILIES", "gaussian,student"), ","))
+if haskey(ENV, "ACE_OUT") && isempty(strip(ENV["ACE_OUT"]))
+    error("ACE_OUT is set but blank; unset it or give it a real path.")
+end
 const ACE_OUT = get(ENV, "ACE_OUT",
     joinpath(@__DIR__, "results", "adaptive_centering_fixed_c", "rows.json"))
 const ACE_SEEDS = collect(2026072801:(2026072800 + ACE_N_SEEDS))

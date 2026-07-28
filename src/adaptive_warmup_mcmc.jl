@@ -685,6 +685,7 @@ checkpoint_payload(state::AWMState) = (;
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(state.lpdf),
+    custom_candidate_scoring=_has_custom_candidate_scoring(state.lpdf),
 )
 
 # Opt-in on-disk checkpoint write at a boundary. Pure read of `state` + file
@@ -826,12 +827,14 @@ _fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage
 # structure (targets + index-extraction closures); only the mutated `source`
 # scalars are overwritten. No-op for a plain lpdf (empty `sources`).
 restore_reparam_sources!(lpdf, sources) = begin
-    isempty(sources) && return lpdf
     ir = reparametrizer(lpdf)
-    ir.pairs .= [
-        idx => Reparametrization(value.target, src, value.args...)
-        for ((idx, value), (_, src)) in zip(ir.pairs, sources)
-    ]
+    if !isempty(sources)
+        ir.pairs .= [
+            idx => Reparametrization(value.target, src, value.args...)
+            for ((idx, value), (_, src)) in zip(ir.pairs, sources)
+        ]
+    end
+    _synchronize_scoring!(lpdf)
     lpdf
 end
 
@@ -871,6 +874,24 @@ check_checkpoint_compatible(p, reader::Symbol, accepted) = begin
     """))
 end
 
+function _check_candidate_scoring_compatible(p, lpdf)
+    checkpoint_custom = get(p, :custom_candidate_scoring, false)
+    supplied_custom = _has_custom_candidate_scoring(lpdf)
+    checkpoint_custom == supplied_custom && return nothing
+    if checkpoint_custom
+        throw(ArgumentError(
+            "this checkpoint was written with a custom CandidateScoringPlan, but " *
+            "the supplied log density has only the default scoring plan; reconstruct " *
+            "the ReparametrizedProblem with scoring_plan=plan before resuming",
+        ))
+    end
+    throw(ArgumentError(
+        "this checkpoint was written with the default candidate scoring plan, but " *
+        "the supplied log density has a custom CandidateScoringPlan; resume with the " *
+        "same scoring strategy that wrote the checkpoint",
+    ))
+end
+
 # Reconstruct a live `AWMState` from a deserialized checkpoint `p`, a freshly
 # supplied `lpdf`, and CALLER-SUPPLIED CONFIG. Rewires the recording posterior
 # around `lpdf` (sharing the one deserialized rng between driver and recorder),
@@ -893,6 +914,7 @@ restore_state(p, lpdf, progress;
     kwargs...
 ) = begin
     check_checkpoint_compatible(p, :adaptive, (:adaptive,))
+    _check_candidate_scoring_compatible(p, lpdf)
     lpdf_dimension = LogDensityProblems.dimension(lpdf)
     p.dimension == lpdf_dimension || throw(DimensionMismatch(
         "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *

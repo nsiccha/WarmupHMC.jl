@@ -158,15 +158,22 @@ Markdown.parse("*" * provenance(load_results("annotation_sweep.json");
                                 harness = "annotation_sweep.jl") * "*")
 ```
 
-Two things to read off that table, and one not to. `Duplicated` costs several
-times `Const` on the two targets whose specs are clean, and about nothing on the
-boxed ones — because on those the boxing already dominates the call, not because
-the shadow copy became cheap. For the same reason the last column cannot be read
-as a trend in `d`: every boxed spec is also one of the larger models, so the two
-are perfectly confounded, and the boxed rows measure the defect.
+Two things to read off that table, and one not to. `Duplicated` costs more than
+`Const` on every row — the shadow copy is real work. And the last column is
+below `1×` throughout, but it must not be read as a trend in `d`: the two
+`d = 10` targets sit at opposite ends of the spread, so which target it is
+matters more than how large it is. A dimension trend, if there is one, is
+visible only within a target.
 
-The A/B that separates them rebuilds one spec with unboxed captures and asserts
-bit-identical gradients, so the difference is pure overhead:
+That reading is different from the one this page used to carry, and the reason
+is in the `spec` column. Earlier revisions compared a boxed *shipped* spec
+against a de-boxed rebuild, and had to warn that the boxed rows measured the
+defect rather than the backend, with dimension perfectly confounded because
+every boxed spec was also one of the larger models. The shipped specs no longer
+capture a `Core.Box`. The A/B therefore builds **both** controls locally and
+asserts each reproduces the shipped spec's gradients bit-for-bit, so what it
+measures is what de-boxing recovered — and the harness doubles as a regression
+guard, failing if any shipped closure starts boxing again:
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -175,26 +182,55 @@ b = load_results("capture_boxing.json")
 m(k) = Statistics.median(Float64.(b["timings_ns"][k]))
 md_table(
     ["`" * b["ab_target"] * "`", "Enzyme `Const`", "ForwardDiff", "Enzyme ÷ ForwardDiff"],
-    [["shipped spec (boxed)", num(m("shipped/const")), num(m("shipped/fd")),
-      num(m("shipped/const") / m("shipped/fd"); sig = 3) * "×"],
-     ["same spec, de-boxed", num(m("deboxed/const")), num(m("deboxed/fd")),
-      num(m("deboxed/const") / m("deboxed/fd"); sig = 3) * "×"]])
+    [["boxed control", num(m("boxed/const")), num(m("boxed/fd")),
+      num(m("boxed/const") / m("boxed/fd"); sig = 3) * "×"],
+     ["unboxed control", num(m("unboxed/const")), num(m("unboxed/fd")),
+      num(m("unboxed/const") / m("unboxed/fd"); sig = 3) * "×"]])
 ```
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 b = load_results("capture_boxing.json")
-d = Float64(b["ab_max_grad_diff"])
-agree = d == 0 ? "bit-identical" : "agree to $(num(d; sig = 2))"
+ds = Float64.([b["ab_max_grad_diff_boxed"], b["ab_max_grad_diff_unboxed"]])
+agree = all(iszero, ds) ? "bit-identical to the shipped spec's" :
+        "within $(num(maximum(ds); sig = 2)) of the shipped spec's"
+guard = isempty(b["boxed_specs"]) ?
+    "No shipped spec captures a `Core.Box`" :
+    "**$(length(b["boxed_specs"])) shipped spec(s) still capture a `Core.Box`**"
 Markdown.parse("*" * provenance(b; harness = "capture_boxing.jl") *
-               " Gradients across the A/B are $(agree).*")
+               " Both controls' gradients are $(agree). $(guard).*")
 ```
 
-The ranking inverts. Whether reverse mode's advantage grows, holds or shrinks
-with dimension is still open — answering it needs the sweep re-run against the
-fixed specs, and when that JSON lands these tables pick it up without anyone
-retyping a number.
+The ranking inverts between the two controls. Whether reverse mode's advantage
+grows, holds or shrinks with dimension was left open here until the sweep could
+be re-run against the fixed specs. It has been, so the question can now be put
+to the table above rather than deferred — and the answer is computed from it:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+rows = [r for r in load_results("annotation_sweep.json")["rows"]
+        if r["ns_forwarddiff"] !== nothing && r["ns_const"] !== nothing]
+ratio(r) = Float64(r["ns_const"]) / Float64(r["ns_forwarddiff"])
+lo, hi = extrema(ratio.(rows))
+byd = Dict{Any,Vector{Float64}}()
+for r in rows
+    push!(get!(byd, r["dim"], Float64[]), ratio(r))
+end
+spreads = [(d, maximum(v) - minimum(v)) for (d, v) in byd if length(v) > 1]
+wd, wspan = isempty(spreads) ? (nothing, 0.0) : argmax(last, spreads)
+share = (hi > lo && wd !== nothing) ? 100 * wspan / (hi - lo) : 0.0
+Markdown.parse(
+    "Across all $(length(rows)) rows the ratio spans `$(num(lo; sig = 3))×`–" *
+    "`$(num(hi; sig = 3))×`. The widest spread at any *single* dimension is at " *
+    "`d = $(wd)`, which alone accounts for $(num(share; sig = 3))% of it. " *
+    (share >= 80 ?
+     "Dimension is therefore not what this column varies with — which target it " *
+     "is dominates how large that target is." :
+     "Dimension may therefore carry part of the variation, though this sweep is " *
+     "too small to separate it from target identity."))
+```
 
 ### Where those gradients were taken
 

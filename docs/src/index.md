@@ -59,9 +59,9 @@ the two-argument form constructs fine and then fails on the first gradient. A
 **reverse-mode** backend is the reasonable default — what is differentiated is a
 scalar objective in the full parameter vector, so reverse mode costs one pass
 whatever the dimension, while forward mode costs one per coordinate. That is an
-operation count, though, and the measured wall-clock here does not follow it in
-either direction consistently; [`ReparametrizedProblem`](@ref) carries the
-per-target table.
+operation count, though, and it is not wall-clock; measure your own target.
+[`ReparametrizedProblem`](@ref) carries the per-target table and is explicit
+about which rows it can currently stand behind.
 
 With Enzyme, `function_annotation=Enzyme.Const` is not decoration: a bare
 `AutoEnzyme()` also constructs fine and then fails on the first gradient. See

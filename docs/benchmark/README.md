@@ -76,14 +76,42 @@ resolve develops them; nothing in this benchmark uses them directly.
   agreement where the arithmetic permits it is the check that the no-op wrapper
   really is a no-op; elsewhere the two arms stay within seed noise.
 
+## Always record the SHA you measured on
+
+`RESULTS.md` names the WarmupHMC commit its numbers were produced on, in the
+lede. This is not bookkeeping. The first full run of this benchmark — 184 runs,
+every arm — was measured against `34ce034`, a halo-recording regression that
+collapsed the pool the metric adaptation reads from, and which was fixed a few
+hours later. Nothing in the numbers looked wrong, and nothing could have flagged
+it, because the affected code path is upstream of every arm including the
+unwrapped control. **A measurement with no revision attached is a measurement
+that rots silently.** The `results/before` and `results/after` split exists so
+that episode stays visible rather than being overwritten.
+
+When you rerun, write to a new directory rather than over an old one:
+
+```bash
+WHMC_BENCH_OUT=docs/benchmark/results/<name> \
+  julia --project=docs/benchmark docs/benchmark/run_reparam_benchmark.jl
+julia --project=docs/benchmark docs/benchmark/compare.jl \
+  docs/benchmark/results/<old> docs/benchmark/results/<name>
+```
+
+`compare.jl` reports ESS per gradient evaluation and gradient spend per arm, the
+count of seeds whose adaptation never moved, and where the centering settled. It
+deliberately omits wall-clock: two runs that compiled different package sources
+are not comparable in seconds.
+
 ## Layout
 
 | path | what |
 |---|---|
 | `common.jl` | targets, arm construction, metrics, gradient-overhead timing |
-| `run_reparam_benchmark.jl` | driver — runs everything, writes `results/`, prints the table |
-| `results/runs.json` | one record per run, every measurement kept |
-| `results/gradient_overhead.json` | per-call cost of the transform on the gradient path |
+| `run_reparam_benchmark.jl` | driver — runs everything, writes a results dir, prints the table |
+| `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
+| `compare.jl` | before/after diff across two results dirs |
+| `results/<run>/runs.json` | one record per run, every measurement kept |
+| `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `RESULTS.md` | the write-up |
 
 ## Prior art

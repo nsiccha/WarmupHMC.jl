@@ -1,0 +1,77 @@
+[
+  {
+    "bare_ns": 544.226,
+    "dim": 10,
+    "live_ns": 2650.923,
+    "live_ratio": 4.870996608026812,
+    "n_calls": 2000,
+    "nonfinite": {
+      "bare": 0.0,
+      "live": 0.0,
+      "noop": 0.0
+    },
+    "noop_ns": 2746.31,
+    "noop_ratio": 5.046267543263276,
+    "target": "eight_schools-eight_schools_centered"
+  },
+  {
+    "bare_ns": 33222.879499999995,
+    "dim": 88,
+    "live_ns": 445000.9805,
+    "live_ratio": 13.39441334397279,
+    "n_calls": 2000,
+    "nonfinite": {
+      "bare": 0.0,
+      "live": 0.0,
+      "noop": 0.0
+    },
+    "noop_ns": 413266.15,
+    "noop_ratio": 12.439203230412344,
+    "target": "radon_mn-radon_partially_pooled_centered"
+  },
+  {
+    "bare_ns": 44179.791,
+    "dim": 89,
+    "live_ns": 220167.979,
+    "live_ratio": 4.983454516568447,
+    "n_calls": 2000,
+    "nonfinite": {
+      "bare": 0.0,
+      "live": 0.0,
+      "noop": 0.0
+    },
+    "noop_ns": 228920.338,
+    "noop_ratio": 5.181562266783924,
+    "target": "radon_mn-radon_variable_intercept_centered"
+  },
+  {
+    "bare_ns": 2795.1775,
+    "dim": 26,
+    "live_ns": 21348.8475,
+    "live_ratio": 7.637743041363206,
+    "n_calls": 2000,
+    "nonfinite": {
+      "bare": 0.0,
+      "live": 0.0,
+      "noop": 0.0
+    },
+    "noop_ns": 21984.695,
+    "noop_ratio": 7.865223228220748,
+    "target": "seeds_data-seeds_centered_model"
+  },
+  {
+    "bare_ns": 54.96,
+    "dim": 10,
+    "live_ns": 867.152,
+    "live_ratio": 15.777874818049492,
+    "n_calls": 2000,
+    "nonfinite": {
+      "bare": 0.0,
+      "live": 0.0,
+      "noop": 0.0
+    },
+    "noop_ns": 821.9295,
+    "noop_ratio": 14.955049126637554,
+    "target": "funnel"
+  }
+]

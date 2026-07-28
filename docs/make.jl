@@ -3,9 +3,10 @@ using Documenter, DocumenterVitepress, WarmupHMC
 # Note: the theme files under `src/.vitepress/theme/` (`htmxo-embed.ts`,
 # `htmxo-gallery.css`) are mirrored from HTMXObjects.jl. Previously
 # `make.jl` called `HTMXObjects.vitepress_theme_install(...)` here to
-# auto-sync them, but HTMXObjects.jl is a private repo and the CI
-# runner has no PAT_TOKEN to clone it. Re-sync manually (or via a
-# local helper) when HTMXObjects ships a new embed runtime.
+# auto-sync them. CI now clones HTMXObjects.jl to generate the static web
+# recording, but the theme remains an explicit versioned snapshot instead of
+# changing as a side effect of every docs build. Re-sync it manually when
+# HTMXObjects ships a new embed runtime.
 
 makedocs(
     sitename = "WarmupHMC.jl",

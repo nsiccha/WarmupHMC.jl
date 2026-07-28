@@ -294,6 +294,7 @@ end
     # AppContext (e.g. from `record!` directly, or from a docs script).
     recording_dir   = joinpath(dirname(dirname(@__DIR__)), "docs", "src", "public", "live-whmc")
     recording_base  = get(ENV, "RECORD_BASE_PREFIX", "/WarmupHMC.jl/dev/live-whmc")
+    static_recording = get(ENV, "WHMC_STATIC_RECORDING", "") == "1"
     recording_paths = vcat(
         ["/", "/gallery"],
         ["/posteriors/$name" for name in posterior_names],
@@ -599,7 +600,7 @@ end
         # `@cache_status m.value` per method, never triggers compute.
         gallery_card = let methods = (:compile, :sample, :dynamichmc, :advancedhmc, :reparam)
             h.article(
-                h.h4(h.a(name; href="/posteriors/$name")),
+                h.h4(static_recording ? name : h.a(name; href="/posteriors/$name")),
                 h.ul(
                     [let r = result(method); s = r.status
                         h.li(
@@ -610,7 +611,8 @@ end
                                         s == :started ? "FAIL" : "-"))
                      end for method in methods]...,
                 ),
-                h.p(h.a("View detail →"; href="/posteriors/$name")),
+                static_recording ? h.span() :
+                    h.p(h.a("View detail →"; href="/posteriors/$name")),
             )
         end
     end
@@ -684,7 +686,11 @@ const APPDATA = WhmcAppData()
             ),
             h.tbody(reduce(vcat, [begin
                                       p = __appdata__.posterior(name)
-                                      [p.summary_row, h.tr(; id="detail-$name", hidden="")(p.detail_content)]
+                                      detail = __appdata__.static_recording ?
+                                          h.td(; colspan="11")(
+                                              h.em("Per-posterior details are available in the live dashboard."),
+                                          ) : p.detail_content
+                                      [p.summary_row, h.tr(; id="detail-$name", hidden="")(detail)]
                                   end
                                   for name in sort(__appdata__.posterior_names;
                                                   by=name -> !__appdata__.posterior(name).any_cached)];
@@ -811,7 +817,7 @@ const APPDATA = WhmcAppData()
     @include tests = TestRoutes(; __req__, test_module=@__MODULE__)
 
     # GET `/record_gallery` — drives `RECORDING_STATE.record` to dump
-    # `/` (overview) + `/posteriors/$name` for every posterior into
+    # every route in `WhmcAppData.recording_paths` into
     # `docs/src/public/live-whmc/` as static HTML (full + HX shapes). The
     # docs build picks them up from there. Paths / dir / base live on
     # `WhmcAppData` to match the canonical AoV form (htmxo-gallery §2b).

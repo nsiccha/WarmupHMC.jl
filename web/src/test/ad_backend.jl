@@ -74,6 +74,23 @@ LogDensityProblems.logdensity_and_gradient(::_ADGateTarget, x) = (-sum(abs2, x) 
 # So: call it. That is strictly stronger than either — it catches a method that
 # resolves but computes the wrong thing, and it is indifferent to which module
 # the method ends up in, which is precisely the axis that has already churned.
+#
+# IF YOU COPY THIS AS A TEMPLATE, DO NOT SWAP IN A BARE `AutoEnzyme()`. It throws
+# on any `ReparametrizedProblem` — the differentiated objective is a closure over
+# the reparametrizer and the frozen `g_y`, which Enzyme cannot prove read-only:
+#
+#     EnzymeMutabilityException: Function argument passed to autodiff cannot be
+#     proven readonly
+#
+# The fix is `AutoEnzyme(; function_annotation = Enzyme.Const)`. Enzyme's own
+# error text suggests `Duplicated` instead; that agrees to machine precision and
+# is ~22x slower, so the hint diagnoses the problem without being the fix. See
+# the `ReparametrizedProblem` docstring in `src/Reparametrizations.jl`.
+#
+# `AutoForwardDiff` here is not a recommendation either — it is what the frozen
+# golden baselines were recorded against (see the header). NOTE that this means
+# the documented Enzyme guidance above is asserted by NO test: Enzyme is not in
+# this manifest, so nothing in this suite can execute it.
 let rp = WarmupHMC.ReparametrizedProblem(
         WarmupHMC.IndexedReparametrization([
             2 => WarmupHMC.Reparametrization(

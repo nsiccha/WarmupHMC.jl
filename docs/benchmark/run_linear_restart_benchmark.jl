@@ -6,7 +6,7 @@
 #   WHMC_LINEAR_BENCH_SEEDS=8
 #   WHMC_LINEAR_BENCH_DRAWS=1000
 #   WHMC_LINEAR_BENCH_EVALS=1000
-#   WHMC_LINEAR_BENCH_TARGETS=diag_gaussian,correlated_gaussian,kilpisjarvi_mod-kilpisjarvi,diamonds-diamonds
+#   WHMC_LINEAR_BENCH_TARGETS=diag_gaussian,diag_fallback_probe,correlated_gaussian,kilpisjarvi_mod-kilpisjarvi,diamonds-diamonds
 #   WHMC_LINEAR_BENCH_OUT=docs/benchmark/results/linear-restart
 #
 # This is deliberately a linear-only experiment. Every run fixes
@@ -38,6 +38,7 @@ const WARMUP_EVALUATIONS = min(200, N_EVALUATIONS)
 
 const DEFAULT_TARGETS = [
     "diag_gaussian",
+    "diag_fallback_probe",
     "correlated_gaussian",
     "kilpisjarvi_mod-kilpisjarvi",
     "diamonds-diamonds",
@@ -73,12 +74,41 @@ LogDensityProblems.logdensity(g::GaussianTarget, x) = -dot(x, g.precision, x) / 
 LogDensityProblems.logdensity_and_gradient(g::GaussianTarget, x) =
     (LogDensityProblems.logdensity(g, x), -(g.precision * x))
 
+struct DiagonalStudentT{V,T}
+    scales::V
+    degrees_of_freedom::T
+end
+LogDensityProblems.dimension(g::DiagonalStudentT) = length(g.scales)
+LogDensityProblems.capabilities(::Type{<:DiagonalStudentT}) =
+    LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity(g::DiagonalStudentT, x)
+    nu = g.degrees_of_freedom
+    -(nu + 1) / 2 * sum(log1p((xi / si)^2 / nu) for (xi, si) in zip(x, g.scales))
+end
+function LogDensityProblems.logdensity_and_gradient(g::DiagonalStudentT, x)
+    nu = g.degrees_of_freedom
+    gradient = @. -(nu + 1) * x / (nu * g.scales^2 + x^2)
+    LogDensityProblems.logdensity(g, x), gradient
+end
+
 function synthetic_target(name)
     d = 8
-    if name == "diag_gaussian"
+    if name in ("diag_gaussian", "diag_fallback_probe")
         scales = exp.(range(-2.0, 2.0, d))
-        covariance = Matrix(Diagonal(scales .^ 2))
-        note = "8D diagonal Gaussian with four orders of marginal variance"
+        if name == "diag_fallback_probe"
+            nu = 5.0
+            covariance = Matrix(Diagonal((nu / (nu - 2)) .* scales .^ 2))
+            problem = DiagonalStudentT(scales, nu)
+            note = "8D independent Student-t(5); forced diagonal start and 100-slot halo isolate fallback"
+            force_initial_diagonal = true
+            recording_target = 100
+        else
+            covariance = Matrix(Diagonal(scales .^ 2))
+            problem = GaussianTarget(covariance)
+            note = "8D diagonal Gaussian with four orders of marginal variance"
+            force_initial_diagonal = false
+            recording_target = nothing
+        end
     elseif name == "correlated_gaussian"
         # Four strongly correlated 2D blocks. This is cheap but discriminating:
         # SuccessiveReflections must fit at least one non-diagonal reflection.
@@ -86,14 +116,17 @@ function synthetic_target(name)
         correlation = kron(Matrix{Float64}(I, d ÷ 2, d ÷ 2), block)
         scales = exp.(range(-1.0, 1.0, d))
         covariance = Matrix(Diagonal(scales) * correlation * Diagonal(scales))
+        problem = GaussianTarget(covariance)
         note = "8D Gaussian with four rho=0.98 correlated blocks"
+        force_initial_diagonal = false
+        recording_target = nothing
     else
         error("unknown synthetic target $(repr(name))")
     end
-    problem = GaussianTarget(covariance)
     init = (; position=zeros(d), squared_scale=Matrix{Float64}(I, d, d))
     (; name, problem, init, model=nothing, truth_covariance=covariance,
-       reference=nothing, dimension=d, note, synthetic=true)
+       reference=nothing, dimension=d, note, synthetic=true,
+       force_initial_diagonal, recording_target)
 end
 
 function stan_problem(name::AbstractString)
@@ -107,10 +140,12 @@ function stan_problem(name::AbstractString)
     (; name=String(name), problem, init=missing, model=problem.model,
        truth_covariance=nothing, reference,
        dimension=LogDensityProblems.dimension(problem),
-       note="PosteriorDB posterior with genuine linear correlation", synthetic=false)
+       note="PosteriorDB posterior with genuine linear correlation", synthetic=false,
+       force_initial_diagonal=false, recording_target=nothing)
 end
 
-make_target(name) = endswith(name, "_gaussian") ? synthetic_target(name) : stan_problem(name)
+make_target(name) = name in ("diag_gaussian", "diag_fallback_probe", "correlated_gaussian") ?
+                    synthetic_target(name) : stan_problem(name)
 
 # ---------------------------------------------------------------------------
 # Diagnostics
@@ -182,6 +217,14 @@ metric_reflections(result) =
 function run_arm(target, arm, seed; n_draws=N_DRAWS, n_evaluations=N_EVALUATIONS)
     windows = NamedTuple[]
     callback = (state, stage) -> begin
+        # This one labelled mechanistic control deliberately begins in the
+        # diagonal family. It is not presented as a public initialization API;
+        # it makes the same-family fallback occur so that the benchmark does not
+        # mistake an unexercised branch for evidence about its quality.
+        if stage === :init && target.force_initial_diagonal
+            state.active_transformation = :diagonal
+            state.kinetic_energy = state.energy_options.diagonal
+        end
         stage === :window && push!(windows, (;
             outer=state.outer_counter,
             restart=state.restart,
@@ -200,7 +243,7 @@ function run_arm(target, arm, seed; n_draws=N_DRAWS, n_evaluations=N_EVALUATIONS
             init,
             n_draws,
             n_evaluations,
-            recording_target=n_evaluations,
+            recording_target=something(target.recording_target, n_evaluations),
             nonlinear_adapt=false,
             monitor_ess=false,
             progress=nothing,

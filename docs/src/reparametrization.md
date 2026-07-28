@@ -196,6 +196,59 @@ with dimension is still open — answering it needs the sweep re-run against the
 fixed specs, and when that JSON lands these tables pick it up without anyone
 retyping a number.
 
+### Where those gradients were taken
+
+Both tables above evaluate at `randn(d)`. A sampler does not go there, so the
+last thing to check is whether the ratio survives being measured where the
+sampler actually went. Re-taking it at sampler-visited positions in the source
+frame:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+t = load_results("typical_positions.json")
+pct(r) = (s = (Float64(r["const_over_fd_typical"]) / Float64(r["const_over_fd_randn"]) - 1) * 100;
+          string(s >= 0 ? "+" : "−", num(abs(s); sig = 2), "%"))
+md_table(
+    ["target", "`d`", "at `randn(d)`", "at visited positions", "shift"],
+    [["`" * r["target"] * "`", r["dim"],
+      num(r["const_over_fd_randn"]; sig = 4) * "×",
+      num(r["const_over_fd_typical"]; sig = 4) * "×",
+      pct(r)] for r in t["rows"]])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+t = load_results("typical_positions.json")
+shifts = [abs(Float64(r["const_over_fd_typical"]) / Float64(r["const_over_fd_randn"]) - 1)
+          for r in t["rows"]]
+np = get(t["rows"][1], "n_positions", nothing)
+Markdown.parse("*" * provenance(t; harness = "typical_positions.jl") *
+               (np === nothing ? "" : " $(np) positions per target.") *
+               " Largest shift $(num(maximum(shifts) * 100; sig = 2))%, " *
+               "smallest $(num(minimum(shifts) * 100; sig = 2))%.*")
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+t = load_results("typical_positions.json")
+crossed = [r["target"] for r in t["rows"]
+           if (Float64(r["const_over_fd_randn"]) - 1) *
+              (Float64(r["const_over_fd_typical"]) - 1) < 0]
+Markdown.parse(isempty(crossed) ?
+    "No row crosses `1×`, so which backend is ahead is not an artefact of the " *
+    "sampling distribution — only the size of the gap is." :
+    "**$(length(crossed)) row(s) cross `1×`** — " *
+    join("`" .* crossed .* "`", ", ") * " — so on those targets which backend " *
+    "is ahead depends on where the gradient is taken.")
+```
+
+The size of the gap moves in both directions and by different amounts per
+target, which is why a single cross-target number for "how much faster" would be
+the wrong thing to quote from this page. Where a gradient is taken is part of
+what a gradient benchmark measures.
+
 ## A complete worked example
 
 Neal's funnel — `v ~ Normal(0, 3)`, `xᵢ ~ Normal(0, exp(v/2))` — is the smallest

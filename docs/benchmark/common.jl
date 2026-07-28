@@ -205,16 +205,30 @@ that tree also differed is not recoverable.
 An earlier version of this docstring said the other artifacts from
 then-unfixed harnesses read `false` "only because each was generated onto a
 path that was still untracked at the time". That is wrong as an account of the
-repo. Every one of `capture_boxing.json`, `annotation_sweep.json`,
-`typical_positions.json`, `frame_check.json` and `backend_replication.json`
-WAS tracked at its own recorded SHA, and the mechanism is deterministic once
-the output path is tracked — measured in a throwaway clone: `worktree_dirty`
-is `false` immediately before the `open` and `true` from inside it, `src_dirty`
-`false` throughout. So those runs did not write to a tracked path in the tree
-they measured. `env_dir("WHMC_BENCH_OUT", ...)` is what permits that, and the
-artifacts were brought in afterwards. The three genuinely-dirty artifacts
-(`enzyme-7556a15`, `forwarddiff-7556a15`, `enzyme-b5c7dee`) predate `src_dirty`
-entirely, so nothing narrows those.
+repo, and the cleanest disproof is a WITHIN-COMMIT CONTROL rather than a
+census: `typical_positions.json` and `prep_cost.json` record the same
+`089c122`. At that revision both harnesses were bug-shaped, both artifacts were
+tracked, and both bound `OUT_DIR` through `env_dir("WHMC_BENCH_OUT", ...)` with
+the identical default — everything held fixed except where the bytes went — and
+they disagree, `false` against `true`. The same holds across
+`capture_boxing.json`, `annotation_sweep.json`, `frame_check.json` and
+`backend_replication.json`, each bug-shaped AND tracked at its own recorded
+SHA; the pair is worth citing first because it isolates the destination without
+varying the commit.
+
+The mechanism is deterministic once the output path is tracked — measured in a
+throwaway clone: `worktree_dirty` is `false` immediately before the `open` and
+`true` from inside it, `src_dirty` `false` throughout. So the `false` readings
+are proof those runs did not write to a tracked path in the tree they measured;
+`env_dir("WHMC_BENCH_OUT", ...)` is what permits that.
+
+Do not read the retraction as the refuted claim in gentler words. Those files
+EXISTED and were TRACKED at the SHA they name. What arrived afterwards was
+their new CONTENT, copied in from wherever the run actually wrote it — not the
+files themselves.
+
+The three genuinely-dirty artifacts (`enzyme-7556a15`, `forwarddiff-7556a15`,
+`enzyme-b5c7dee`) predate `src_dirty` entirely, so nothing narrows those.
 
 # Do not keep a list of which harnesses are fixed
 

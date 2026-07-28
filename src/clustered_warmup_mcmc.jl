@@ -139,7 +139,8 @@ clustered_chain(
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     algorithm = DynamicHMC.NUTS(;max_depth=max_tree_depth)
     dimension = LogDensityProblems.dimension(lpdf)
-    recorder = LimitedRecorder2(recording_target)   # ring of `recording_target` leaf-weighted halo states
+    # Ring of `recording_target` halo states; one retained per `thin` leaf evaluations.
+    recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale = _initial_diagonal_scale(squared_scale)
@@ -251,6 +252,8 @@ cluster_and_adapt!(chains::AbstractVector{<:ClusteredChain};
             end
             log_checkpoint!(chain)
             chain.n_evaluations = min(chain.n_evaluations * 2, chain.max_window_evaluations)   # decision 4hobr0
+            # Keep the halo filling the whole ring as the window budget grows.
+            chain.recording_lpdf.recorder.thin = max(1, chain.n_evaluations ÷ chain.recording_target)
         end
     end
     clusters

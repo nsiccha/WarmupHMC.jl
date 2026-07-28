@@ -62,13 +62,48 @@ one place and it is settable per run:
 |---|---|---|
 | `WHMC_BENCH_AD` | `enzyme` | `enzyme` or `forwarddiff` — the DI backend the wrapper differentiates with |
 
-Reverse mode is the rule (`AutoEnzyme()`); ForwardDiff is retained *only* so the
-two can be compared on one base, which is what `results/` documents. The
-objective is scalar in `d` inputs with the inner gradient held fixed, so forward
-mode costs `ceil(d / chunksize)` sweeps of the transform per gradient where
-reverse mode costs one — the `ReparametrizedProblem` docstring prescribes reverse
-mode for exactly this reason. Note the backend package must be loaded for the
-ADTypes object to work: `AutoEnzyme()` needs `using Enzyme`.
+Reverse mode is the rule; ForwardDiff is retained *only* so the two can be
+compared on one base, which is what `results/enzyme-b5c7dee` and
+`results/forwarddiff-b5c7dee` document. Note the backend package must be loaded
+for the ADTypes object to work: `AutoEnzyme()` needs `using Enzyme`.
+
+Two things about that default are easy to get wrong:
+
+- **It must be `AutoEnzyme(; function_annotation = Enzyme.Const)`.** A bare
+  `AutoEnzyme()` raises `EnzymeMutabilityException` here, because the
+  differentiated objective is a closure capturing the reparametrizer and the
+  frozen inner gradient. Enzyme's own error text suggests `Duplicated`, which is
+  correct but costs up to 13× more on small targets.
+- **Reverse mode is not uniformly faster on these targets, and the theoretical
+  argument for it does not survive measurement.** The objective is scalar in `d`
+  inputs with the inner gradient held fixed, so forward mode should cost
+  `ceil(d / chunksize)` sweeps where reverse costs one, with the gap widening in
+  `d`. Measured, Enzyme/`Const` wins only on the two `d = 10` targets and loses
+  on all three larger ones. See `RESULTS.md` § *Which AD backend*. Pick the
+  backend per target from the numbers, not from the argument.
+
+### Backend probes
+
+Three standalone scripts, each answering one question and writing one JSON. They
+are separate from the driver because none of them samples — they time the
+gradient path directly and finish in minutes.
+
+```bash
+julia --project=docs/benchmark docs/benchmark/replicate_backends.jl   # ROUNDS, NCALLS
+julia --project=docs/benchmark docs/benchmark/prep_cost.jl            # NCALLS
+julia --project=docs/benchmark docs/benchmark/typical_positions.jl    # ROUNDS
+```
+
+| script | question | output |
+|---|---|---|
+| `replicate_backends.jl` | ForwardDiff vs Enzyme/`Const` vs Enzyme/`Duplicated` per gradient, with rounds interleaved and the backend order rotated so drift is not charged to one backend | `results/backend_replication.json` |
+| `prep_cost.jl` | how much of the per-gradient cost is DI preparation, which the hot path redoes on every call | `results/prep_cost.json` |
+| `typical_positions.jl` | whether the verdict depends on evaluating at `randn(d)` rather than where the sampler actually goes | `results/typical_positions.json` |
+| `annotation_sweep.jl` | superseded first pass at `Const` vs `Duplicated`, one shot per configuration; kept because `replicate_backends.jl` was written to check it | `results/annotation_sweep.json` |
+
+**Run these in a process that has not just sampled.** Running a full sampler
+first warms the ForwardDiff path enough to make its subsequent microbenchmark
+~2× faster, which silently biases a backend comparison in ForwardDiff's favour.
 
 ## What is reproducible, and what is not
 
@@ -113,9 +148,15 @@ julia --project=docs/benchmark docs/benchmark/compare.jl \
 ```
 
 `compare.jl` reports ESS per gradient evaluation and gradient spend per arm, the
-count of seeds whose adaptation never moved, and where the centering settled. It
-deliberately omits wall-clock: two runs that compiled different package sources
-are not comparable in seconds.
+count of seeds whose adaptation never moved, and where the centering settled.
+
+Wall-clock is reported **only when both runs recorded the same WarmupHMC SHA** —
+two runs that compiled different package sources are not comparable in seconds,
+but two runs of the same source under different AD backends differ in seconds for
+exactly the reason being compared, and omitting it there would throw the result
+away. When it does report wall-clock it also checks that the runs are
+sampling-identical, and names any arm whose gradient count drifted ≥2% so a
+verdict can be checked against that list rather than against a global maximum.
 
 ## Layout
 
@@ -125,9 +166,20 @@ are not comparable in seconds.
 | `run_reparam_benchmark.jl` | driver — runs everything, writes a results dir, prints the table |
 | `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
 | `compare.jl` | before/after diff across two results dirs |
+| `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl` | backend probes (above) |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
+| `results/*.json` | backend-probe outputs, not tied to a sampling run |
 | `RESULTS.md` | the write-up |
+
+Result directories, newest base last:
+
+| dir | base | backend | note |
+|---|---|---|---|
+| `results/before` | `05aed41` | ForwardDiff | carried the halo-recording regression `34ce034` |
+| `results/after` | `c8fed88` | ForwardDiff | the fix; reproduced exactly by `forwarddiff-b5c7dee` |
+| `results/forwarddiff-b5c7dee` | `b5c7dee` | ForwardDiff | backend comparison baseline |
+| `results/enzyme-b5c7dee` | `b5c7dee` | Enzyme/`Const` | **current default** |
 
 ## Prior art
 

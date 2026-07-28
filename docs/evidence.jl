@@ -175,10 +175,15 @@ evidence_cell(x::Bool) = x ? "yes" : "no"
 # `all_good_leaves`, `max_tree_depth` and `ad_backend_check` rendering as
 # emphasis inside provenance text. Values carry far more identifiers than keys do
 # — filenames, symbol names, whole reproduction recipes — so this is the larger
-# exposure of the two. `|` on top of the inline escapes, since a cell sits inside
-# a pipe table.
-evidence_cell(x::AbstractString) =
-    isempty(x) ? "—" : replace(esc_md(x), "|" => "\\|")
+# exposure of the two.
+#
+# `|` is deliberately NOT escaped here any more: `md_table` escapes it, because
+# it owns the pipe-table syntax. Doing it in both places would double-escape and
+# ship a visible backslash. This function feeds two sinks — table cells and the
+# provenance bullet list — and only the table one reserves `|`, so pushing the
+# escape down to the table is also what makes the bullet path correct rather
+# than accidentally correct.
+evidence_cell(x::AbstractString) = isempty(x) ? "—" : esc_md(x)
 evidence_cell(x::Real) = num(x)
 evidence_cell(x::AbstractVector) = isempty(x) ? "—" : join(evidence_cell.(x), ", ")
 evidence_cell(x::AbstractDict) =

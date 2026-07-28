@@ -8,6 +8,23 @@ deployed docs they are a **static recording made during the docs build**. The
 recording is never committed — `*.html` is ignored, so nothing under
 `docs/src/public/live-whmc/` is tracked, and CI regenerates it on every build.
 
+## Runnable examples
+
+The dashboard below is a recording of runs, not something you can step through.
+The examples that you *can* run are, smallest first:
+
+| Example | Where | Executed at build time? |
+| --- | --- | --- |
+| Sample a 3-D Gaussian, read the draws back | [Quickstart](@ref) | **yes** |
+| Checkpoint a run and resume it | [Checkpoints, Callbacks and Resume](@ref) | **yes** |
+| Fit a nonlinear reparametrization on Neal's funnel | [A complete worked example](@ref) | no — needs an AD backend the docs environment does not carry |
+
+"Executed at build time" means the outputs on those pages are what the code
+returned during this build, and that a change breaking the example fails the
+build rather than leaving a page that reads correctly and is wrong. The funnel
+example is complete and self-contained but is not run here; see
+[A note on the code blocks](@ref).
+
 ## Overview table
 
 ```@raw html

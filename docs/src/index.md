@@ -2,6 +2,70 @@
 
 Adaptive NUTS warm-up for linear transformations and step size.
 
+## Quickstart
+
+Everything below this heading runs during the docs build. The numbers on this
+page are what the code returned, not what someone typed next to it — see
+[A note on the code blocks](@ref) at the foot of the page for which blocks that
+covers and which it does not.
+
+WarmupHMC samples anything implementing the
+[LogDensityProblems](https://github.com/tpapp/LogDensityProblems.jl) interface.
+The target here supplies its own gradient, so no AD backend is involved:
+
+```@example quickstart
+using WarmupHMC, LogDensityProblems, Random, Statistics
+
+struct DiagGaussian
+    mu::Vector{Float64}
+    sigma::Vector{Float64}
+end
+
+LogDensityProblems.dimension(p::DiagGaussian) = length(p.mu)
+LogDensityProblems.capabilities(::Type{DiagGaussian}) =
+    LogDensityProblems.LogDensityOrder{1}()
+
+# Up to a constant — MCMC never needs the normalization.
+LogDensityProblems.logdensity(p::DiagGaussian, x) =
+    -sum(abs2, (x .- p.mu) ./ p.sigma) / 2
+
+function LogDensityProblems.logdensity_and_gradient(p::DiagGaussian, x)
+    z = (x .- p.mu) ./ p.sigma
+    (-sum(abs2, z) / 2, -z ./ p.sigma)
+end
+
+lpdf = DiagGaussian([1.0, -2.0, 0.5], [0.5, 2.0, 1.0])
+nothing # hide
+```
+
+That is the whole setup. Sampling is one call:
+
+```@example quickstart
+result = adaptive_warmup_mcmc(Xoshiro(20260728), lpdf; n_draws=400, progress=nothing)
+nothing # hide
+```
+
+The result is a `NamedTuple`; `posterior_position` holds the draws, one column
+per draw:
+
+```@example quickstart
+draws = result.posterior_position          # dimension × n_draws
+size(draws)
+```
+
+```@example quickstart
+(; mean = round.(vec(mean(draws; dims=2)); digits=2),
+   std  = round.(vec(std(draws; dims=2)); digits=2))
+```
+
+Compare that against the `mu = [1.0, -2.0, 0.5]` and `sigma = [0.5, 2.0, 1.0]`
+the target was built with.
+
+`progress=nothing` turns the progress bar off, which is what you want in a
+script or a docs build; drop it and, with
+[Treebars.jl](https://github.com/nsiccha/Treebars.jl) loaded, you get a live
+one.
+
 ## Method
 
 WarmupHMC adaptively:
@@ -86,40 +150,75 @@ them off the run is byte-for-byte identical to the plain sampler.
 **Observing progress.** `callback=(state, stage) -> should_stop` fires at each
 boundary with `stage ∈ (:init, :window)`. It may read `state` and request an
 early stop by returning `true`, but it is *observational* — it must not mutate
-`state`:
+`state`. Collecting the `stage` it is handed is enough to show the boundaries
+above are the boundaries you actually get:
 
-```julia
-result = adaptive_warmup_mcmc(rng, lpdf; callback=(state, stage) -> begin
-    @info "boundary" stage stepsize=state.stepsize
-    false  # keep going
-end)
+```@example quickstart
+boundaries = Symbol[]
+adaptive_warmup_mcmc(Xoshiro(20260728), lpdf; n_draws=400, progress=nothing,
+    callback = (state, stage) -> (push!(boundaries, stage); false))
+boundaries
 ```
 
 **Writing checkpoints.** `checkpoint_dir=path` serializes a resumable snapshot at
 each boundary as `cp_init.jls`, `cp_window_<n>.jls`, and an overwritten
-`cp_latest.jls`. The multi-chain method writes chain `i` under `path/chain_<i>/`:
+`cp_latest.jls` — one `cp_window_<n>.jls` per `:window` above:
 
-```julia
-result = adaptive_warmup_mcmc(rng, lpdf; checkpoint_dir="checkpoints/")
+```@example quickstart
+dir = mktempdir()
+adaptive_warmup_mcmc(Xoshiro(20260728), lpdf;
+                     n_draws=400, progress=nothing, checkpoint_dir=dir)
+sort(readdir(dir))
 ```
 
-The snapshot deliberately excludes the (possibly non-serializable) inner problem
-and stores the reparametrizer only as its scalar centering values.
+The multi-chain method writes chain `i` under `path/chain_<i>/`. The snapshot
+deliberately excludes the (possibly non-serializable) inner problem and stores
+the reparametrizer only as its scalar centering values — so the `lpdf` you
+resume with is one **you** reconstruct, typically the same way you built it for
+the original call.
 
-**Resuming.** [`resume_warmup_mcmc`](@ref) re-supplies `lpdf` and continues from a
-checkpoint. For a fixed seed the result is identical to an uninterrupted run:
+**Resuming.** Point the sampler at the same directory with `resume=true`:
 
-```julia
-# single chain: point at a specific checkpoint file
-result = resume_warmup_mcmc(lpdf, "checkpoints/cp_latest.jls")
-
-# multi-chain: point at the parent directory; chain i resumes from chain_<i>/
-results = resume_warmup_mcmc(lpdfs, "checkpoints/")
+```@example quickstart
+resumed = adaptive_warmup_mcmc(Xoshiro(20260728), lpdf;
+                               checkpoint_dir=dir, resume=true,
+                               n_draws=400, progress=nothing)
+size(resumed.posterior_position)
 ```
 
-Because the checkpoint does not carry the inner problem, the `lpdf` you pass to
-`resume_warmup_mcmc` must be reconstructed by you — typically the same way you
-built it for the original call.
+Resuming this way takes its configuration from the **call**, so asking for a
+larger `n_draws` than the original run keeps sampling rather than re-running a
+fixed-length batch.
+
+!!! warning "`resume_warmup_mcmc` is deprecated"
+    [`resume_warmup_mcmc`](@ref)`(lpdf, "checkpoints/cp_latest.jls")` still
+    works and is still exported, but resuming is no longer a separate function.
+    It reads no configuration from the checkpoint either — a caller that relied
+    on the payload carrying the original run's `n_draws` must now pass it
+    explicitly. Prefer the `resume=true` form above.
+
+## A note on the code blocks
+
+The blocks on this page come in two kinds, and the rendered page does not
+distinguish them, so it is said here instead.
+
+**Executed.** The Quickstart and the checkpoint/resume blocks are Documenter
+`@example` blocks. They run in a shared session during every docs build, and
+the outputs shown are what they returned. If a field is renamed, a kwarg
+dropped, or `resume=true` stops working, the build fails and this page cannot
+be published saying otherwise.
+
+**Not executed.** The reparametrization block under
+[Nonlinear Reparametrizations](@ref) is a plain fence — it needs an AD backend
+(`Enzyme`), which the docs environment deliberately does not carry, and it
+refers to a `my_problem` you supply. It is illustration, not a transcript. The
+end-to-end version that *is* complete lives on
+[Nonlinear reparametrization](@ref); it is likewise not executed here.
+
+The distinction matters because an unexecuted example makes exactly the same
+visual claim as an executed one while nothing checks it. This manual had no
+executed blocks at all until the Quickstart above; the code in them was
+plausible, and being plausible is not the same as having run.
 
 ## See Also
 

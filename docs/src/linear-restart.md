@@ -104,9 +104,9 @@ checked-in JSON; the prose above does not carry a second copy of the numbers.
 The JSON contains the per-policy medians, paired comparisons, all individual
 runs, and the exact WarmupHMC revision and runtime provenance. Wall time is
 host-specific; the portable efficiency measure is minimum ESS per thousand
-gradient evaluations. The checked `docs/benchmark/results/linear_restart.json`
-retains the full per-seed rows even when the recorded app view is not being
-served.
+gradient evaluations. The
+[raw per-seed JSON pinned to its data commit](https://github.com/nsiccha/WarmupHMC.jl/blob/4ba0995165562a16ccf5eb7bca730b59fc698c23/docs/benchmark/results/linear_restart.json)
+retains the full rows even when the recorded app view is not being served.
 
 ## Reproduce it
 

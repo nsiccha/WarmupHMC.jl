@@ -545,10 +545,22 @@ end
 
 # --- Run manifest / summary ----------------------------------------------------
 #
-# TWO WRITE-ONCE JSON files at the checkpoint_dir root, never rewritten:
+# Write-once JSON at the checkpoint_dir root, never rewritten:
 #
 #   run_manifest.json  at run START    — run identity + the criteria in force
 #   run_summary.json   at FINALIZE     — the terminal answer
+#
+# The list above is the count; it is not also stated as a number, because a
+# number and a list that can disagree eventually do.
+#
+# **Adding a third one here is a cross-FILE change.** `clustered_warmup_mcmc`
+# writes its own pair through the same `_write_json` and documents its layout as
+# deliberately the same as this one — so a file added here falsifies a claim
+# over there, in a file this change need never touch. That direction is the one
+# that goes unnoticed, which is why the note lives on this side too. Before
+# adding one:
+#
+#     grep -rn '_write_json(' src/
 #
 # EXISTENCE of run_summary.json IS the run-completed signal: a consumer polling
 # for "is this run done?" needs no parsing and no field. An earlier draft had a

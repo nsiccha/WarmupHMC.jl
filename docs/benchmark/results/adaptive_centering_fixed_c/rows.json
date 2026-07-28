@@ -1,0 +1,6443 @@
+{
+  "config": {
+    "ad_backend": "not applicable (target supplies logdensity_and_gradient)",
+    "alpha": [
+      0.55,
+      0.85,
+      1.15
+    ],
+    "arm_execution": "sequential, rotated by common seed",
+    "arms": {
+      "exact_score_reference": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "fully_centered": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "invariant_proxy": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "whitened_noncentered": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "blas_threads": 1,
+    "cholesky": [
+      [
+        1.0,
+        0.65,
+        -0.25
+      ],
+      [
+        0.0,
+        0.7599342076785331,
+        0.6744004873337632
+      ],
+      [
+        0.0,
+        0.0,
+        0.6947546204840833
+      ]
+    ],
+    "common_initial_position": [
+      0.0,
+      0.15,
+      -0.2,
+      0.25
+    ],
+    "correlation": [
+      [
+        1.0,
+        0.65,
+        -0.25
+      ],
+      [
+        0.65,
+        1.0,
+        0.35
+      ],
+      [
+        -0.25,
+        0.35,
+        1.0
+      ]
+    ],
+    "cstar": [
+      0.2,
+      0.6,
+      0.9
+    ],
+    "cstar_role": "exact-score choice and fully factorized reference geometry by target construction; not an ESS optimum found by search",
+    "efficiency_denominator": "full-run gradient evaluations, including adaptation",
+    "families": [
+      "gaussian",
+      "student"
+    ],
+    "host": "strato2",
+    "init_strategy": "Pathfinder from an arm-transported common model-frame point",
+    "julia": "1.10.11",
+    "materiality_rule": {
+      "materially_better": "median proxy/optimum > 1.25 and at least 75% of seeds > 1.25",
+      "materially_worse": "median proxy/optimum < 0.8 and at least 75% of seeds < 0.8",
+      "metric": "paired per-chain minimum bulk ESS per 1000 gradients",
+      "otherwise": "inconclusive at the predeclared 20% threshold"
+    },
+    "n_draws_floor": 5000,
+    "n_evaluations": 1000,
+    "n_seeds": 16,
+    "nonlinear_adapt": false,
+    "parameter_names": [
+      "h",
+      "q1",
+      "q2",
+      "q3"
+    ],
+    "representativeness": "synthetic K=3 stress/control with BRM-like draw-varying scales and dense correlation; not a fitted BRM posterior",
+    "reproduction": "ACE_SEEDS=16 ACE_DRAWS=5000 ACE_EVALUATIONS=1000 ACE_FAMILIES=gaussian,student julia --startup-file=no --history-file=no --project=docs/benchmark docs/benchmark/adaptive_centering_fixed_c_run.jl",
+    "runner": "docs/benchmark/adaptive_centering_fixed_c_run.jl",
+    "sampler": "adaptive_warmup_mcmc",
+    "seeds": [
+      2026072801,
+      2026072802,
+      2026072803,
+      2026072804,
+      2026072805,
+      2026072806,
+      2026072807,
+      2026072808,
+      2026072809,
+      2026072810,
+      2026072811,
+      2026072812,
+      2026072813,
+      2026072814,
+      2026072815,
+      2026072816
+    ],
+    "student_df": 5.0,
+    "target_gradient": "analytic",
+    "validation": {
+      "gaussian": {
+        "max_common_frame_abs": 1.1102230246251565e-15,
+        "max_coordinate_roundtrip_abs": 4.440892098500626e-16,
+        "max_gradient_fd_abs": 3.924335523208811e-9,
+        "max_transport_logdensity_abs": 9.992007221626409e-16,
+        "n_points": 32
+      },
+      "student": {
+        "max_common_frame_abs": 1.1102230246251565e-15,
+        "max_coordinate_roundtrip_abs": 4.440892098500626e-16,
+        "max_gradient_fd_abs": 2.2185551173947715e-8,
+        "max_transport_logdensity_abs": 1.6653345369377348e-15,
+        "n_points": 32
+      }
+    },
+    "warmuphmc_sha": "38f1e2125bf7a76730a2cc75af2e2a71aa32bc0b"
+  },
+  "rows": [
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.02093575351218092,
+        0.03017524780625769,
+        -0.014421371382416445,
+        0.01576982903063562
+      ],
+      "common_sd": [
+        1.218924863174508,
+        1.0224636165961611,
+        0.9885349051240038,
+        0.9989430903499197
+      ],
+      "ess_bulk": [
+        3594.444131393223,
+        6157.906439507477,
+        5750.963077557846,
+        6715.841674478227
+      ],
+      "ess_tail": [
+        3482.9320728790567,
+        3318.993755524459,
+        4124.863916211713,
+        3855.9957923449992
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 23676,
+      "gradients_per_draw": 4.7352,
+      "gradients_per_transition": 4.688316831683168,
+      "min_bulk_ess_per_1000_grad": 151.81804913808173,
+      "min_ess_bulk": 3594.444131393223,
+      "min_ess_tail": 3318.993755524459,
+      "min_tail_ess_per_1000_grad": 140.1838889814352,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.771561172376096e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.140247132
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.023276537882105847,
+        -0.021268809486089026,
+        -0.016684217028660676,
+        -0.0010388362855683364
+      ],
+      "common_sd": [
+        1.1791053081608887,
+        1.0167795011770082,
+        0.9985609892368024,
+        1.0344506676751941
+      ],
+      "ess_bulk": [
+        4547.4061514812765,
+        5115.829434654608,
+        6093.481826180342,
+        5095.15251051454
+      ],
+      "ess_tail": [
+        3151.6299153824116,
+        3450.134623917324,
+        3725.1033692087854,
+        3093.725929304366
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 29652,
+      "gradients_per_draw": 5.9304,
+      "gradients_per_transition": 5.871683168316832,
+      "min_bulk_ess_per_1000_grad": 153.35917143805733,
+      "min_ess_bulk": 4547.4061514812765,
+      "min_ess_tail": 3093.725929304366,
+      "min_tail_ess_per_1000_grad": 104.33447758344685,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 8.992806499463768e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.197740045
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.2140034119149605,
+        -0.020916444787602007,
+        -0.03134023739172061,
+        -0.010976022924330678
+      ],
+      "common_sd": [
+        1.0267778944446588,
+        1.0178089094951126,
+        1.002802203278695,
+        0.9721133392195741
+      ],
+      "ess_bulk": [
+        91.36645449879643,
+        412.2709053045192,
+        645.0739813292261,
+        1282.9227867219781
+      ],
+      "ess_tail": [
+        52.04237860523619,
+        1243.7000641765867,
+        1439.688508174581,
+        1205.9969625757428
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 47551,
+      "gradients_per_draw": 9.5102,
+      "gradients_per_transition": 8.486703551668748,
+      "min_bulk_ess_per_1000_grad": 1.9214412840696606,
+      "min_ess_bulk": 91.36645449879643,
+      "min_ess_tail": 52.04237860523619,
+      "min_tail_ess_per_1000_grad": 1.0944539253693129,
+      "n_divergent": 704,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5603,
+      "wall_seconds": 0.119558517
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.014407698484406239,
+        0.041554704264387905,
+        -0.006967888254176378,
+        -0.00018714142170404586
+      ],
+      "common_sd": [
+        1.1692714558506445,
+        1.0387771860663948,
+        0.9861358375947527,
+        1.0087511104001055
+      ],
+      "ess_bulk": [
+        852.6751071391241,
+        627.7845803062025,
+        3335.1867518554336,
+        4520.946372480273
+      ],
+      "ess_tail": [
+        1343.0654909709567,
+        241.58884759045566,
+        2765.441856300352,
+        3423.1738873185254
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 31504,
+      "gradients_per_draw": 6.3008,
+      "gradients_per_transition": 6.238415841584159,
+      "min_bulk_ess_per_1000_grad": 19.92713878574792,
+      "min_ess_bulk": 627.7845803062025,
+      "min_ess_tail": 241.58884759045566,
+      "min_tail_ess_per_1000_grad": 7.668513445608674,
+      "n_divergent": 176,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.189537444
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.009443708286986579,
+        0.0028190079759653733,
+        -0.00216268427726039,
+        0.002533277673833755
+      ],
+      "common_sd": [
+        1.2025045574393576,
+        1.0093128165668237,
+        0.9842576748286991,
+        0.9952575072387264
+      ],
+      "ess_bulk": [
+        4246.2321151707065,
+        4041.0557806172155,
+        4799.6186499912565,
+        5788.1644458451265
+      ],
+      "ess_tail": [
+        3700.631186460451,
+        3558.208560119658,
+        3763.899464096284,
+        3609.081708217977
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27922,
+      "gradients_per_draw": 5.5844,
+      "gradients_per_transition": 5.529108910891089,
+      "min_bulk_ess_per_1000_grad": 144.72658765909375,
+      "min_ess_bulk": 4041.0557806172155,
+      "min_ess_tail": 3558.208560119658,
+      "min_tail_ess_per_1000_grad": 127.43387150346172,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.7041923427996153e-14,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5050,
+      "wall_seconds": 0.16727025
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.08736068548070738,
+        -0.023964980522218522,
+        0.048191634943514916,
+        0.026628872195575002
+      ],
+      "common_sd": [
+        1.1069286089435169,
+        0.9973842097356684,
+        1.0413898841636977,
+        0.9937626805245899
+      ],
+      "ess_bulk": [
+        123.92952745371541,
+        2092.2313028069793,
+        811.0130357474346,
+        2070.09987761375
+      ],
+      "ess_tail": [
+        43.8541823141324,
+        2575.585189372437,
+        1176.3725743811372,
+        2791.484423340748
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 86901,
+      "gradients_per_draw": 17.3802,
+      "gradients_per_transition": 14.847257816504356,
+      "min_bulk_ess_per_1000_grad": 1.4261001306511478,
+      "min_ess_bulk": 123.92952745371541,
+      "min_ess_tail": 43.8541823141324,
+      "min_tail_ess_per_1000_grad": 0.5046453126446462,
+      "n_divergent": 239,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5853,
+      "wall_seconds": 0.20747409
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.0016522795376564727,
+        -0.00710692683391087,
+        -0.025030054091718913,
+        0.013577890647841508
+      ],
+      "common_sd": [
+        1.2123515125871553,
+        1.0080561217013027,
+        1.03222703334869,
+        0.9673642112551017
+      ],
+      "ess_bulk": [
+        804.7962101605411,
+        1469.9903079458081,
+        2746.6304291692513,
+        4887.353041917474
+      ],
+      "ess_tail": [
+        432.40506907443887,
+        475.43021012616424,
+        2382.864094463239,
+        3394.0771539177777
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 40014,
+      "gradients_per_draw": 8.0028,
+      "gradients_per_transition": 7.9235643564356435,
+      "min_bulk_ess_per_1000_grad": 20.112865751000676,
+      "min_ess_bulk": 804.7962101605411,
+      "min_ess_tail": 432.40506907443887,
+      "min_tail_ess_per_1000_grad": 10.806344506283773,
+      "n_divergent": 128,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5050,
+      "wall_seconds": 0.188543682
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.012901923614333009,
+        0.004773880453636851,
+        0.0053022549172067794,
+        0.013408533980968317
+      ],
+      "common_sd": [
+        1.222853709049078,
+        0.9950298360799673,
+        1.0009146107099591,
+        1.013536272087143
+      ],
+      "ess_bulk": [
+        3651.759586409258,
+        6252.446414754087,
+        5626.284775532866,
+        6835.976142397111
+      ],
+      "ess_tail": [
+        3532.866403972983,
+        3763.804944059137,
+        3821.05268982536,
+        3944.2584365465523
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24278,
+      "gradients_per_draw": 4.8556,
+      "gradients_per_transition": 4.807524752475247,
+      "min_bulk_ess_per_1000_grad": 150.41434988093164,
+      "min_ess_bulk": 3651.759586409258,
+      "min_ess_tail": 3532.866403972983,
+      "min_tail_ess_per_1000_grad": 145.51719268362234,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.880984919163893e-15,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5050,
+      "wall_seconds": 0.15222193
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.1162622995463508,
+        0.031460332395105595,
+        0.045294734889610604,
+        -0.01883373559588997
+      ],
+      "common_sd": [
+        1.1357710091115758,
+        0.9909631321409259,
+        1.0231610525031858,
+        1.0028346967142794
+      ],
+      "ess_bulk": [
+        108.1148055027021,
+        1879.8226874270258,
+        584.4851663325811,
+        1752.958532216183
+      ],
+      "ess_tail": [
+        39.405974057977815,
+        2215.2943605613236,
+        449.1106716956744,
+        2977.812915331601
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 85897,
+      "gradients_per_draw": 17.1794,
+      "gradients_per_transition": 15.254306517492452,
+      "min_bulk_ess_per_1000_grad": 1.2586563617204571,
+      "min_ess_bulk": 108.1148055027021,
+      "min_ess_tail": 39.405974057977815,
+      "min_tail_ess_per_1000_grad": 0.4587584439267706,
+      "n_divergent": 303,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5631,
+      "wall_seconds": 0.205189286
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.007638655385072584,
+        0.008998197772505745,
+        -0.010115177308265355,
+        0.01067705600318246
+      ],
+      "common_sd": [
+        1.171191465619922,
+        1.0167294324357485,
+        1.0197127316669357,
+        1.0062291345428185
+      ],
+      "ess_bulk": [
+        1645.763275660123,
+        2815.3632963605896,
+        3263.0584226180185,
+        4932.557341046431
+      ],
+      "ess_tail": [
+        2314.293900909649,
+        2918.5764644659375,
+        2942.1967600036864,
+        3570.135737369144
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 37897,
+      "gradients_per_draw": 7.5794,
+      "gradients_per_transition": 7.504356435643564,
+      "min_bulk_ess_per_1000_grad": 43.4272706457008,
+      "min_ess_bulk": 1645.763275660123,
+      "min_ess_tail": 2314.293900909649,
+      "min_tail_ess_per_1000_grad": 61.06799749082115,
+      "n_divergent": 53,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.6645352591003757e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.21737122
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.023836300226108772,
+        0.004308210552774792,
+        0.0001565723631768259,
+        -0.026193900416033387
+      ],
+      "common_sd": [
+        1.186805805747356,
+        0.9829355695457693,
+        0.9836732662994744,
+        1.0097473659924525
+      ],
+      "ess_bulk": [
+        3976.921221367904,
+        6359.875916944341,
+        6667.502815149896,
+        6241.527115466696
+      ],
+      "ess_tail": [
+        3766.460401367101,
+        3924.3523361470084,
+        4331.271013281511,
+        3346.996947899942
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 21960,
+      "gradients_per_draw": 4.392,
+      "gradients_per_transition": 4.348514851485149,
+      "min_bulk_ess_per_1000_grad": 181.09841627358398,
+      "min_ess_bulk": 3976.921221367904,
+      "min_ess_tail": 3346.996947899942,
+      "min_tail_ess_per_1000_grad": 152.41334006830337,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.773959005888173e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.114600174
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.010983121535039659,
+        0.005518784201717658,
+        0.004449660003713548,
+        0.005903065795118026
+      ],
+      "common_sd": [
+        1.2228882454721421,
+        0.9726864676828773,
+        1.035098291007212,
+        1.0192321888120284
+      ],
+      "ess_bulk": [
+        4341.00994110775,
+        5266.7035237921,
+        5107.470911376957,
+        5932.696325721488
+      ],
+      "ess_tail": [
+        4033.2559375170645,
+        3623.8964519270044,
+        3720.93191486899,
+        3695.5744914770016
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 26651,
+      "gradients_per_draw": 5.3302,
+      "gradients_per_transition": 5.277425742574257,
+      "min_bulk_ess_per_1000_grad": 162.88356688708677,
+      "min_ess_bulk": 4341.00994110775,
+      "min_ess_tail": 3623.8964519270044,
+      "min_tail_ess_per_1000_grad": 135.97600284893642,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.495603971894525e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.160785369
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.07293146623002095,
+        -0.07066516114997226,
+        -0.018120562602377075,
+        -0.006294291179870669
+      ],
+      "common_sd": [
+        1.171918352677955,
+        0.9797763078305853,
+        1.0047513065843248,
+        1.0030160052401234
+      ],
+      "ess_bulk": [
+        2001.5761444728664,
+        2662.084678483132,
+        3808.569058221469,
+        4054.4726194925584
+      ],
+      "ess_tail": [
+        2444.760385145507,
+        3242.0817813493586,
+        2949.1175085466452,
+        3360.0994285556735
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 47081,
+      "gradients_per_draw": 9.4162,
+      "gradients_per_transition": 9.322970297029704,
+      "min_bulk_ess_per_1000_grad": 42.513458602681894,
+      "min_ess_bulk": 2001.5761444728664,
+      "min_ess_tail": 2444.760385145507,
+      "min_tail_ess_per_1000_grad": 51.926687732747965,
+      "n_divergent": 25,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.6629367034256575e-15,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.237096446
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.022174680294353773,
+        0.0019182776482323252,
+        0.022965106315896232,
+        -0.001228817447819429
+      ],
+      "common_sd": [
+        1.2043850035333303,
+        1.0041884780068726,
+        1.0031618084745488,
+        1.0137034669724316
+      ],
+      "ess_bulk": [
+        3885.0717408190076,
+        6115.918530582813,
+        6220.393674452797,
+        5865.807260582126
+      ],
+      "ess_tail": [
+        3407.064047998037,
+        4410.321715901368,
+        3677.487867103187,
+        3977.2949899178834
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24812,
+      "gradients_per_draw": 4.9624,
+      "gradients_per_transition": 4.913267326732673,
+      "min_bulk_ess_per_1000_grad": 156.58035389404353,
+      "min_ess_bulk": 3885.0717408190076,
+      "min_ess_tail": 3407.064047998037,
+      "min_tail_ess_per_1000_grad": 137.31517201346273,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.328271240363392e-15,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.128142425
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.02740001859543346,
+        -0.005790578775839077,
+        -0.005059208564442522,
+        0.028095756337885403
+      ],
+      "common_sd": [
+        1.192490247318515,
+        0.9756509172140695,
+        0.9809198257336315,
+        1.0065872426180928
+      ],
+      "ess_bulk": [
+        4143.90726891523,
+        4762.025023268036,
+        5047.483821050835,
+        5731.739152774546
+      ],
+      "ess_tail": [
+        3273.6644636332317,
+        3749.8683029032777,
+        4085.2089503396437,
+        3637.1376650859884
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27739,
+      "gradients_per_draw": 5.5478,
+      "gradients_per_transition": 5.492871287128713,
+      "min_bulk_ess_per_1000_grad": 149.38920901673563,
+      "min_ess_bulk": 4143.90726891523,
+      "min_ess_tail": 3273.6644636332317,
+      "min_tail_ess_per_1000_grad": 118.01667196485928,
+      "n_divergent": 1,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.9262369477246466e-14,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.144603365
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.00639742863652979,
+        0.049693386964491694,
+        0.01339642570726786,
+        0.055830817044777055
+      ],
+      "common_sd": [
+        1.2023303753830634,
+        0.9836456680725414,
+        0.9954312006528581,
+        0.9980391776766623
+      ],
+      "ess_bulk": [
+        46.03869580474301,
+        916.6981018320631,
+        270.3314212222201,
+        480.3657001050789
+      ],
+      "ess_tail": [
+        null,
+        1432.3573991025598,
+        2134.4705126961835,
+        2281.0929896630105
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 69773,
+      "gradients_per_draw": 13.9546,
+      "gradients_per_transition": 10.74091748768473,
+      "min_bulk_ess_per_1000_grad": 0.6598354063139468,
+      "min_ess_bulk": 46.03869580474301,
+      "min_ess_tail": null,
+      "min_tail_ess_per_1000_grad": null,
+      "n_divergent": 592,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 6496,
+      "wall_seconds": 0.619677451
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.0049849603427662105,
+        -0.010981093031344697,
+        -0.02033421404495102,
+        -0.00553964545435187
+      ],
+      "common_sd": [
+        1.203446362204372,
+        0.973008064817389,
+        1.004965777589409,
+        1.0104527454159609
+      ],
+      "ess_bulk": [
+        4327.341731814302,
+        5908.206731150639,
+        5691.576220462834,
+        5620.490285484871
+      ],
+      "ess_tail": [
+        3736.9839003769152,
+        3600.4571270609918,
+        3926.775616000748,
+        3728.6354452477717
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 26064,
+      "gradients_per_draw": 5.2128,
+      "gradients_per_transition": 5.161188118811881,
+      "min_bulk_ess_per_1000_grad": 166.02753728569297,
+      "min_ess_bulk": 4327.341731814302,
+      "min_ess_tail": 3600.4571270609918,
+      "min_tail_ess_per_1000_grad": 138.1390855993321,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4432899320127035e-14,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5050,
+      "wall_seconds": 0.159526041
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.025430870164413533,
+        0.009659877056774414,
+        0.00723278838918623,
+        -0.011089340258250244
+      ],
+      "common_sd": [
+        1.1659100600949273,
+        0.9946998342425349,
+        0.9877315365399637,
+        0.999043415640523
+      ],
+      "ess_bulk": [
+        4379.2210525037035,
+        5467.998767376498,
+        6603.570953468465,
+        6339.1894458432425
+      ],
+      "ess_tail": [
+        3432.3288798645585,
+        3746.1170987138958,
+        3877.028968356055,
+        3735.3278258211135
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 30880,
+      "gradients_per_draw": 6.176,
+      "gradients_per_transition": 6.114851485148515,
+      "min_bulk_ess_per_1000_grad": 141.8141532546536,
+      "min_ess_bulk": 4379.2210525037035,
+      "min_ess_tail": 3432.3288798645585,
+      "min_tail_ess_per_1000_grad": 111.1505466277383,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.995204332975845e-15,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5050,
+      "wall_seconds": 0.181476317
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.06786367789995207,
+        0.03821459479211349,
+        -0.03812824856594086,
+        0.027986409174194312
+      ],
+      "common_sd": [
+        1.1626045825611961,
+        0.9770837879108394,
+        1.0107872279267434,
+        1.0152155228423456
+      ],
+      "ess_bulk": [
+        242.90171892653055,
+        1709.3706399251396,
+        2026.1595268382714,
+        1999.8358160684295
+      ],
+      "ess_tail": [
+        208.93797161928805,
+        1935.4944254000973,
+        2723.313089030094,
+        2213.944623718545
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 100513,
+      "gradients_per_draw": 20.1026,
+      "gradients_per_transition": 19.42280193236715,
+      "min_bulk_ess_per_1000_grad": 2.416619929029385,
+      "min_ess_bulk": 242.90171892653055,
+      "min_ess_tail": 208.93797161928805,
+      "min_tail_ess_per_1000_grad": 2.0787159036073746,
+      "n_divergent": 132,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5175,
+      "wall_seconds": 0.218744055
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.04338496066674717,
+        -0.018049381300451056,
+        0.03737463945224597,
+        0.0005009583122774781
+      ],
+      "common_sd": [
+        1.201943540876969,
+        1.014050469023375,
+        1.0045988599785522,
+        0.994595953892894
+      ],
+      "ess_bulk": [
+        1393.3044688951802,
+        2104.3214527933596,
+        3138.307309884302,
+        5323.745976218484
+      ],
+      "ess_tail": [
+        1144.3304723189983,
+        1549.4272458012106,
+        2665.0218364924194,
+        3143.565700037489
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 39108,
+      "gradients_per_draw": 7.8216,
+      "gradients_per_transition": 7.744158415841584,
+      "min_bulk_ess_per_1000_grad": 35.62709596233968,
+      "min_ess_bulk": 1393.3044688951802,
+      "min_ess_tail": 1144.3304723189983,
+      "min_tail_ess_per_1000_grad": 29.260777138155834,
+      "n_divergent": 95,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.941291737419306e-15,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5050,
+      "wall_seconds": 0.188560465
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.03254067763746769,
+        -0.00867004558590814,
+        0.018417391949178318,
+        -0.013925254447290657
+      ],
+      "common_sd": [
+        1.2148635120811395,
+        1.012653416908182,
+        1.0319493710209426,
+        1.007711185130062
+      ],
+      "ess_bulk": [
+        4294.292099380683,
+        5091.938632809963,
+        5722.987340320937,
+        5463.177479091062
+      ],
+      "ess_tail": [
+        3213.1334192988993,
+        3707.6024099685496,
+        3365.450711217248,
+        3489.2048973352257
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 28356,
+      "gradients_per_draw": 5.6712,
+      "gradients_per_transition": 5.615049504950495,
+      "min_bulk_ess_per_1000_grad": 151.44209688886596,
+      "min_ess_bulk": 4294.292099380683,
+      "min_ess_tail": 3213.1334192988993,
+      "min_tail_ess_per_1000_grad": 113.31405767029551,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.218048215738236e-15,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5050,
+      "wall_seconds": 0.185703061
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.1427087076904459,
+        -0.04638631475145674,
+        0.03309121312366564,
+        -0.008049751742214097
+      ],
+      "common_sd": [
+        1.0568083919110454,
+        1.0032157636474461,
+        1.0185435347880432,
+        0.9653169193137553
+      ],
+      "ess_bulk": [
+        162.69035516024465,
+        1401.759778260844,
+        1141.3829248347167,
+        1490.6210175302604
+      ],
+      "ess_tail": [
+        87.846357307752,
+        2125.99814873477,
+        640.1168575517994,
+        2679.5569744448117
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 52618,
+      "gradients_per_draw": 10.5236,
+      "gradients_per_transition": 10.37012219156484,
+      "min_bulk_ess_per_1000_grad": 3.091914461975838,
+      "min_ess_bulk": 162.69035516024465,
+      "min_ess_tail": 87.846357307752,
+      "min_tail_ess_per_1000_grad": 1.6695115228201756,
+      "n_divergent": 326,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5074,
+      "wall_seconds": 0.126765344
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.038764687245947775,
+        0.009287674481603218,
+        0.029360305090931876,
+        0.013229302265716678
+      ],
+      "common_sd": [
+        1.1669446084158301,
+        0.9936777754998306,
+        0.9949796705827397,
+        1.0148144339358371
+      ],
+      "ess_bulk": [
+        2048.232843148896,
+        2625.27880088637,
+        3765.301654039769,
+        4464.84387826046
+      ],
+      "ess_tail": [
+        2691.0371345845533,
+        2993.9012347656508,
+        3656.629798039843,
+        3568.5725561048785
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 44167,
+      "gradients_per_draw": 8.8334,
+      "gradients_per_transition": 8.745940594059405,
+      "min_bulk_ess_per_1000_grad": 46.37473324312033,
+      "min_ess_bulk": 2048.232843148896,
+      "min_ess_tail": 2691.0371345845533,
+      "min_tail_ess_per_1000_grad": 60.92868283072325,
+      "n_divergent": 19,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.552713678800501e-15,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5050,
+      "wall_seconds": 0.260833727
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.009970672605541669,
+        0.00421965922794028,
+        -0.014049030033018061,
+        -0.010832762238565467
+      ],
+      "common_sd": [
+        1.1708560642669414,
+        0.9680043327704816,
+        1.0023262112939346,
+        1.0273345014900184
+      ],
+      "ess_bulk": [
+        5194.874000692947,
+        7754.782761228229,
+        9205.978811670606,
+        7975.875748831121
+      ],
+      "ess_tail": [
+        3769.5083616273673,
+        3914.8850544036977,
+        4024.911588124779,
+        3978.0022928940884
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 17902,
+      "gradients_per_draw": 3.5804,
+      "gradients_per_transition": 3.544950495049505,
+      "min_bulk_ess_per_1000_grad": 290.18400182621764,
+      "min_ess_bulk": 5194.874000692947,
+      "min_ess_tail": 3769.5083616273673,
+      "min_tail_ess_per_1000_grad": 210.56353265709794,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.0325074129013956e-14,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5050,
+      "wall_seconds": 0.115228151
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.38108374250960186,
+        0.005100988956862215,
+        0.001949719556950677,
+        0.0437172507059331
+      ],
+      "common_sd": [
+        0.9339567015795927,
+        0.9571437608453526,
+        1.0095458566175577,
+        0.9701958726720569
+      ],
+      "ess_bulk": [
+        35.05548894959919,
+        120.4359822408263,
+        391.0374997754633,
+        743.433685215569
+      ],
+      "ess_tail": [
+        43.20965592779085,
+        915.4584944760672,
+        519.6784085140421,
+        795.4902012358448
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 119672,
+      "gradients_per_draw": 23.9344,
+      "gradients_per_transition": 16.15224726683763,
+      "min_bulk_ess_per_1000_grad": 0.2929297492278828,
+      "min_ess_bulk": 35.05548894959919,
+      "min_ess_tail": 43.20965592779085,
+      "min_tail_ess_per_1000_grad": 0.3610673835800425,
+      "n_divergent": 821,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.842170943040401e-14,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 7409,
+      "wall_seconds": 0.310893411
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.05502800742022264,
+        -0.008485930529851587,
+        -0.0014223927969044612,
+        -0.01607162760439646
+      ],
+      "common_sd": [
+        1.162473154400467,
+        1.0115496845519338,
+        0.9920312871715518,
+        0.991881384816642
+      ],
+      "ess_bulk": [
+        1842.0426572961949,
+        2472.78465872152,
+        3295.3338383535825,
+        4667.058177183725
+      ],
+      "ess_tail": [
+        1986.91330170803,
+        2222.2052142523717,
+        2912.575516270171,
+        3142.890936853281
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 40411,
+      "gradients_per_draw": 8.0822,
+      "gradients_per_transition": 8.002178217821783,
+      "min_bulk_ess_per_1000_grad": 45.58270414729145,
+      "min_ess_bulk": 1842.0426572961949,
+      "min_ess_tail": 1986.91330170803,
+      "min_tail_ess_per_1000_grad": 49.167635092129125,
+      "n_divergent": 60,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.6645352591003757e-15,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.200056332
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.029413264425620544,
+        -0.016769346440532962,
+        0.02061521641437497,
+        -0.008286916550793676
+      ],
+      "common_sd": [
+        1.189598086698309,
+        0.9953191880359213,
+        1.0038090016123906,
+        1.01874239978415
+      ],
+      "ess_bulk": [
+        4286.048549896025,
+        5653.057255894463,
+        6091.2906148229185,
+        6051.757130236457
+      ],
+      "ess_tail": [
+        3471.059283777132,
+        4068.338056025406,
+        3475.778367102059,
+        3807.623538979237
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 26666,
+      "gradients_per_draw": 5.3332,
+      "gradients_per_transition": 5.280396039603961,
+      "min_bulk_ess_per_1000_grad": 160.73083889207325,
+      "min_ess_bulk": 4286.048549896025,
+      "min_ess_tail": 3471.059283777132,
+      "min_tail_ess_per_1000_grad": 130.16797734107595,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2212453270876722e-14,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.191437756
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.008298445491405262,
+        0.005390444677052032,
+        0.022006477725831107,
+        0.013659032634264033
+      ],
+      "common_sd": [
+        1.216519786031281,
+        0.9887214772047404,
+        1.0071405185391396,
+        1.0048622395685332
+      ],
+      "ess_bulk": [
+        4855.402887761843,
+        4456.674397593174,
+        4654.5677889118,
+        5921.2399739529665
+      ],
+      "ess_tail": [
+        3569.6498678276885,
+        3314.9416384715923,
+        4010.8382449481587,
+        3878.296050228625
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 21930,
+      "gradients_per_draw": 4.386,
+      "gradients_per_transition": 4.342574257425743,
+      "min_bulk_ess_per_1000_grad": 203.22272674843475,
+      "min_ess_bulk": 4456.674397593174,
+      "min_ess_tail": 3314.9416384715923,
+      "min_tail_ess_per_1000_grad": 151.16012943326913,
+      "n_divergent": 1,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.992007221626409e-15,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.103199518
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.023989757518898047,
+        -0.00031097437791532614,
+        0.02100281599314656,
+        -0.0031198399669122544
+      ],
+      "common_sd": [
+        1.148361617557483,
+        0.9841677537417618,
+        1.0111096201983487,
+        1.0028269611264293
+      ],
+      "ess_bulk": [
+        2048.7924623356166,
+        2455.2740685710214,
+        3272.612371521265,
+        5509.194038641835
+      ],
+      "ess_tail": [
+        2494.0689315408245,
+        2562.1623384874897,
+        2614.859059871105,
+        3003.8679405885478
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 39774,
+      "gradients_per_draw": 7.9548,
+      "gradients_per_transition": 7.876039603960396,
+      "min_bulk_ess_per_1000_grad": 51.51084784873577,
+      "min_ess_bulk": 2048.7924623356166,
+      "min_ess_tail": 2494.0689315408245,
+      "min_tail_ess_per_1000_grad": 62.706012257777054,
+      "n_divergent": 66,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.6645352591003757e-15,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.206910632
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.005661615679015979,
+        0.002574734314395136,
+        0.01716045976143456,
+        0.020988553977337784
+      ],
+      "common_sd": [
+        1.1919814528642294,
+        1.003003468693214,
+        1.0216913033545405,
+        1.0004839170196476
+      ],
+      "ess_bulk": [
+        3959.441757353767,
+        6223.789535324512,
+        5427.4388377844625,
+        5796.220594847144
+      ],
+      "ess_tail": [
+        3922.1565936584834,
+        4088.782292957155,
+        3510.9214556090674,
+        3935.3069597405092
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24066,
+      "gradients_per_draw": 4.8132,
+      "gradients_per_transition": 4.765544554455445,
+      "min_bulk_ess_per_1000_grad": 164.52429807004768,
+      "min_ess_bulk": 3959.441757353767,
+      "min_ess_tail": 3510.9214556090674,
+      "min_tail_ess_per_1000_grad": 145.8872041722375,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.8833827526759706e-15,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.135839579
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.009148261177325819,
+        0.007925162708602837,
+        -0.005636127222194912,
+        0.009721957074039944
+      ],
+      "common_sd": [
+        1.1970957832278544,
+        1.0144324033038647,
+        1.0146710242733243,
+        1.0314031626080902
+      ],
+      "ess_bulk": [
+        4634.263053137373,
+        4763.982658578523,
+        5374.09346505697,
+        5530.329284640593
+      ],
+      "ess_tail": [
+        3930.8928653737385,
+        3491.7438735078044,
+        3577.003667090325,
+        3598.9016963238546
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 29576,
+      "gradients_per_draw": 5.9152,
+      "gradients_per_transition": 5.8566336633663365,
+      "min_bulk_ess_per_1000_grad": 156.68998691971103,
+      "min_ess_bulk": 4634.263053137373,
+      "min_ess_tail": 3491.7438735078044,
+      "min_tail_ess_per_1000_grad": 118.0600444112728,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.103828801926284e-15,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.152426742
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.10839969423245362,
+        -0.0028302814742702303,
+        0.001931327141410247,
+        0.01848547677454153
+      ],
+      "common_sd": [
+        1.1449779169227543,
+        1.0079087199700287,
+        1.0311581758355342,
+        0.9980072893060752
+      ],
+      "ess_bulk": [
+        181.237339743804,
+        1127.8680712237515,
+        1164.465202623029,
+        2339.090015823424
+      ],
+      "ess_tail": [
+        80.53487334029278,
+        1038.3199765962447,
+        1259.2276155109955,
+        2855.24104506939
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 71548,
+      "gradients_per_draw": 14.3096,
+      "gradients_per_transition": 13.217808978385369,
+      "min_bulk_ess_per_1000_grad": 2.533087434223235,
+      "min_ess_bulk": 181.237339743804,
+      "min_ess_tail": 80.53487334029278,
+      "min_tail_ess_per_1000_grad": 1.1256062131756692,
+      "n_divergent": 317,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5413,
+      "wall_seconds": 0.168881404
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.002044010309558307,
+        0.017124544535119537,
+        -0.025291814503147474,
+        -0.006859549393848065
+      ],
+      "common_sd": [
+        1.1792213291120777,
+        1.0011526955483714,
+        0.9876491080092432,
+        0.9903414184734898
+      ],
+      "ess_bulk": [
+        3842.4466302118026,
+        5226.514787668116,
+        6010.747277113429,
+        5619.625676958189
+      ],
+      "ess_tail": [
+        3334.648736762608,
+        3379.3434395685067,
+        3928.577379176595,
+        3616.612994457704
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24400,
+      "gradients_per_draw": 4.88,
+      "gradients_per_transition": 4.8316831683168315,
+      "min_bulk_ess_per_1000_grad": 157.47732091031978,
+      "min_ess_bulk": 3842.4466302118026,
+      "min_ess_tail": 3334.648736762608,
+      "min_tail_ess_per_1000_grad": 136.66593183453313,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.0547118733938987e-14,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.156320016
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.018922811448971785,
+        -0.0069862435297295715,
+        0.015158968050197657,
+        -0.017395626934198494
+      ],
+      "common_sd": [
+        1.235263398045559,
+        1.0069954580310072,
+        1.0235918643448618,
+        0.9805960638455273
+      ],
+      "ess_bulk": [
+        3587.1038090431057,
+        4067.7209455694306,
+        5104.746393977421,
+        5385.879488831364
+      ],
+      "ess_tail": [
+        1741.6066976601473,
+        2887.467819322688,
+        3539.2587363566,
+        3958.9677053199275
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24261,
+      "gradients_per_draw": 4.8522,
+      "gradients_per_transition": 4.804158415841584,
+      "min_bulk_ess_per_1000_grad": 147.85473842970634,
+      "min_ess_bulk": 3587.1038090431057,
+      "min_ess_tail": 1741.6066976601473,
+      "min_tail_ess_per_1000_grad": 71.78627004905599,
+      "n_divergent": 9,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.861977570020827e-14,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.116000367
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.12045156199853914,
+        -0.006008143816457806,
+        -0.012797915412232583,
+        -0.02306387400592305
+      ],
+      "common_sd": [
+        1.123001151228137,
+        0.9729747937203851,
+        1.0111915943490288,
+        1.0258953187434923
+      ],
+      "ess_bulk": [
+        263.9922370864429,
+        2269.9455748158875,
+        2441.567368665456,
+        1769.8953580135344
+      ],
+      "ess_tail": [
+        132.08374773338173,
+        2865.6959136140667,
+        2790.1543328192042,
+        2482.678809494963
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 171316,
+      "gradients_per_draw": 34.2632,
+      "gradients_per_transition": 21.87105834290821,
+      "min_bulk_ess_per_1000_grad": 1.5409666177499062,
+      "min_ess_bulk": 263.9922370864429,
+      "min_ess_tail": 132.08374773338173,
+      "min_tail_ess_per_1000_grad": 0.7709948150399363,
+      "n_divergent": 122,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 7833,
+      "wall_seconds": 0.54830395
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.03661776811514671,
+        0.004187137729935145,
+        -0.03452668694273088,
+        -0.0019043424525921385
+      ],
+      "common_sd": [
+        1.1563627229465125,
+        0.9882557829172369,
+        1.0075717441116463,
+        0.9871604182396866
+      ],
+      "ess_bulk": [
+        2077.248926010906,
+        2894.9834337136795,
+        2927.345529581224,
+        5076.952898774759
+      ],
+      "ess_tail": [
+        2565.4606018848453,
+        3356.5899770543056,
+        2603.4984980421555,
+        3380.5366379875236
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 47630,
+      "gradients_per_draw": 9.526,
+      "gradients_per_transition": 9.431683168316832,
+      "min_bulk_ess_per_1000_grad": 43.612196641001596,
+      "min_ess_bulk": 2077.248926010906,
+      "min_ess_tail": 2565.4606018848453,
+      "min_tail_ess_per_1000_grad": 53.86228431418949,
+      "n_divergent": 23,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.774758283725532e-15,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.23970758
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.0017933150639984755,
+        -0.014327708294424897,
+        -0.004871748947626923,
+        -0.01114592278524174
+      ],
+      "common_sd": [
+        1.2097704177025288,
+        1.010672681343454,
+        1.0056769983467404,
+        0.9951180105268298
+      ],
+      "ess_bulk": [
+        4618.181376348808,
+        4646.575778500079,
+        5301.47117330363,
+        5861.787724027464
+      ],
+      "ess_tail": [
+        3906.589949418778,
+        3786.2404440556925,
+        3983.349872375568,
+        3595.651708550674
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27356,
+      "gradients_per_draw": 5.4712,
+      "gradients_per_transition": 5.417029702970297,
+      "min_bulk_ess_per_1000_grad": 168.8178599337918,
+      "min_ess_bulk": 4618.181376348808,
+      "min_ess_tail": 3595.651708550674,
+      "min_tail_ess_per_1000_grad": 131.43923484978336,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.190292640122607e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.143166521
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.13874533267241124,
+        -0.02083039531125578,
+        -0.022393795742414645,
+        -0.015857666792831918
+      ],
+      "common_sd": [
+        1.0695321666419266,
+        1.018460513758052,
+        1.0266033809892963,
+        1.0063388877379607
+      ],
+      "ess_bulk": [
+        296.8484445450478,
+        2397.203775663449,
+        1973.0798278711643,
+        2022.7479293710749
+      ],
+      "ess_tail": [
+        243.72465206788033,
+        2841.4282302473616,
+        2548.046202937461,
+        3264.890597767719
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 86754,
+      "gradients_per_draw": 17.3508,
+      "gradients_per_transition": 16.565590987206416,
+      "min_bulk_ess_per_1000_grad": 3.421726312850679,
+      "min_ess_bulk": 296.8484445450478,
+      "min_ess_tail": 243.72465206788033,
+      "min_tail_ess_per_1000_grad": 2.809376536734679,
+      "n_divergent": 111,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5237,
+      "wall_seconds": 0.205279351
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.04326882711051491,
+        0.03992634003112504,
+        -0.008541048216851964,
+        0.002455341040479016
+      ],
+      "common_sd": [
+        1.224069448871526,
+        1.039237260301039,
+        0.9849622782527704,
+        1.0124045513938764
+      ],
+      "ess_bulk": [
+        629.0231939922468,
+        761.3925313528019,
+        2564.1772757428107,
+        5384.745518679157
+      ],
+      "ess_tail": [
+        222.88733285446438,
+        1183.669876094724,
+        2889.48381885127,
+        3400.940036230333
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 42256,
+      "gradients_per_draw": 8.4512,
+      "gradients_per_transition": 8.367524752475248,
+      "min_bulk_ess_per_1000_grad": 14.886008945291715,
+      "min_ess_bulk": 629.0231939922468,
+      "min_ess_tail": 222.88733285446438,
+      "min_tail_ess_per_1000_grad": 5.274690762364266,
+      "n_divergent": 145,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.202522405
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.0256853018680057,
+        -0.023339320794096355,
+        0.005569801217768975,
+        -0.04953940351936901
+      ],
+      "common_sd": [
+        1.2177500280938307,
+        1.0245628178515542,
+        1.0031399902980125,
+        0.9838167033256273
+      ],
+      "ess_bulk": [
+        4657.947968556164,
+        5859.617126245411,
+        5525.46418145678,
+        6152.744695064297
+      ],
+      "ess_tail": [
+        3364.56329608207,
+        3717.1046726278096,
+        3765.0647790017024,
+        3825.087590261277
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27090,
+      "gradients_per_draw": 5.418,
+      "gradients_per_transition": 5.364356435643565,
+      "min_bulk_ess_per_1000_grad": 171.9434466059861,
+      "min_ess_bulk": 4657.947968556164,
+      "min_ess_tail": 3364.56329608207,
+      "min_tail_ess_per_1000_grad": 124.19945721971466,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2434497875801753e-14,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.14935971
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.2032822856351426,
+        -0.02139035269400711,
+        0.003588330877015203,
+        0.028417438414490903
+      ],
+      "common_sd": [
+        1.1075268770154991,
+        1.0143204095321197,
+        0.9729209698391657,
+        0.9872662566817735
+      ],
+      "ess_bulk": [
+        267.8336984438715,
+        1685.6019603701347,
+        1534.9052376196917,
+        2380.6944247940205
+      ],
+      "ess_tail": [
+        111.0281680833472,
+        1450.7658431822224,
+        2141.1477217549646,
+        2476.4621042857466
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 79235,
+      "gradients_per_draw": 15.847,
+      "gradients_per_transition": 14.804745889387146,
+      "min_bulk_ess_per_1000_grad": 3.3802448216554746,
+      "min_ess_bulk": 267.8336984438715,
+      "min_ess_tail": 111.0281680833472,
+      "min_tail_ess_per_1000_grad": 1.4012515691720475,
+      "n_divergent": 240,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5352,
+      "wall_seconds": 0.178637078
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.07417537974887031,
+        -0.0012857595263428576,
+        0.018636501286047574,
+        0.011388642654097045
+      ],
+      "common_sd": [
+        1.2227374375541518,
+        1.0085279839371395,
+        0.9949207424600601,
+        1.0007543490866129
+      ],
+      "ess_bulk": [
+        1622.1083928079659,
+        2104.3922252387697,
+        4016.6372724307416,
+        4058.796272236542
+      ],
+      "ess_tail": [
+        1686.2156979710521,
+        942.8829706732091,
+        3816.5852447341,
+        3360.992707139804
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 39014,
+      "gradients_per_draw": 7.8028,
+      "gradients_per_transition": 7.725544554455445,
+      "min_bulk_ess_per_1000_grad": 41.577597601065406,
+      "min_ess_bulk": 1622.1083928079659,
+      "min_ess_tail": 942.8829706732091,
+      "min_tail_ess_per_1000_grad": 24.167810803127317,
+      "n_divergent": 56,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.9968028886505635e-15,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5050,
+      "wall_seconds": 0.217120435
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.005292021605974503,
+        0.005806708695536428,
+        0.005111370956736964,
+        0.0015106357570299595
+      ],
+      "common_sd": [
+        1.2146475494858482,
+        1.0298213364925937,
+        1.008626009045488,
+        0.996260447003273
+      ],
+      "ess_bulk": [
+        3877.1102433766896,
+        5723.0213931076305,
+        5186.548842139411,
+        5705.395349541529
+      ],
+      "ess_tail": [
+        3253.4437461550588,
+        3782.923722684204,
+        3754.937050145919,
+        3379.5120770392446
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 25400,
+      "gradients_per_draw": 5.08,
+      "gradients_per_transition": 5.02970297029703,
+      "min_bulk_ess_per_1000_grad": 152.6421355660114,
+      "min_ess_bulk": 3877.1102433766896,
+      "min_ess_tail": 3253.4437461550588,
+      "min_tail_ess_per_1000_grad": 128.0883364627976,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.176836406102666e-14,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5050,
+      "wall_seconds": 0.145814997
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.0075204072248065915,
+        0.003237152962588073,
+        -0.016744546514638296,
+        -0.00044699878980755165
+      ],
+      "common_sd": [
+        1.17530967805068,
+        0.997166058279534,
+        0.9924995508337712,
+        0.9798095708448575
+      ],
+      "ess_bulk": [
+        4346.041728929104,
+        4429.483341151742,
+        5262.899854677116,
+        5779.167633637713
+      ],
+      "ess_tail": [
+        3559.2787403964126,
+        3370.699948450969,
+        3661.111375187912,
+        3805.120857937477
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 24760,
+      "gradients_per_draw": 4.952,
+      "gradients_per_transition": 4.902970297029703,
+      "min_bulk_ess_per_1000_grad": 175.52672572411564,
+      "min_ess_bulk": 4346.041728929104,
+      "min_ess_tail": 3370.699948450969,
+      "min_tail_ess_per_1000_grad": 136.1348929099745,
+      "n_divergent": 1,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.325873406851315e-15,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5050,
+      "wall_seconds": 0.140370461
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.012204719436876487,
+        -0.025241366539181662,
+        -0.023298904911118815,
+        0.02177335879020251
+      ],
+      "common_sd": [
+        1.1694645838748077,
+        0.9823353229255819,
+        0.9958676303942963,
+        0.9870577421712865
+      ],
+      "ess_bulk": [
+        1724.552406580054,
+        2654.260363432691,
+        2859.8855351885154,
+        4556.0353430538735
+      ],
+      "ess_tail": [
+        1142.9385991621182,
+        3049.2162515782115,
+        2623.479824944234,
+        3739.065611561919
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 36830,
+      "gradients_per_draw": 7.366,
+      "gradients_per_transition": 7.293069306930693,
+      "min_bulk_ess_per_1000_grad": 46.82466485419641,
+      "min_ess_bulk": 1724.552406580054,
+      "min_ess_tail": 1142.9385991621182,
+      "min_tail_ess_per_1000_grad": 31.032815616674405,
+      "n_divergent": 71,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.212986818
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.002982598168337586,
+        -0.00464405002009546,
+        0.01953860403342868,
+        -0.017473316085820124
+      ],
+      "common_sd": [
+        1.2067329384384105,
+        0.9950340767684733,
+        1.020108521473985,
+        1.0026996979115441
+      ],
+      "ess_bulk": [
+        4360.27180296459,
+        5080.295341880886,
+        5292.4074422821495,
+        5418.326764230896
+      ],
+      "ess_tail": [
+        3518.0862001742234,
+        4037.7149101204614,
+        3521.650372376152,
+        3702.072890357612
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 26170,
+      "gradients_per_draw": 5.234,
+      "gradients_per_transition": 5.182178217821782,
+      "min_bulk_ess_per_1000_grad": 166.61336656341575,
+      "min_ess_bulk": 4360.27180296459,
+      "min_ess_tail": 3518.0862001742234,
+      "min_tail_ess_per_1000_grad": 134.4320290475439,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.865174681370263e-14,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.191274541
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.00013925989800834867,
+        -0.006801918165391393,
+        0.018081789890745683,
+        -0.019737289118290716
+      ],
+      "common_sd": [
+        1.2103792508125788,
+        0.9741235834426977,
+        0.991643988973947,
+        0.9924858360199886
+      ],
+      "ess_bulk": [
+        4562.089895398461,
+        5648.520155959534,
+        5373.996053449571,
+        5954.316371273994
+      ],
+      "ess_tail": [
+        3949.8450950743504,
+        3907.962552194125,
+        3957.872641778663,
+        3804.960863323839
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27764,
+      "gradients_per_draw": 5.5528,
+      "gradients_per_transition": 5.497821782178218,
+      "min_bulk_ess_per_1000_grad": 164.31673733606326,
+      "min_ess_bulk": 4562.089895398461,
+      "min_ess_tail": 3804.960863323839,
+      "min_tail_ess_per_1000_grad": 137.04656617648175,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 8.326672684688674e-15,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.152415627
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.1918829186977713,
+        -0.018398565300883664,
+        0.0406695362252453,
+        -0.026235696715105263
+      ],
+      "common_sd": [
+        0.9994742961020173,
+        1.0437674937411805,
+        1.002365688332147,
+        0.9864319238124785
+      ],
+      "ess_bulk": [
+        150.813865740614,
+        522.2225861326797,
+        1592.1337352979765,
+        2302.093996368137
+      ],
+      "ess_tail": [
+        54.37002796520516,
+        801.8783516905332,
+        1990.205581762862,
+        2778.702474949188
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 47185,
+      "gradients_per_draw": 9.437,
+      "gradients_per_transition": 8.29261862917399,
+      "min_bulk_ess_per_1000_grad": 3.196224769325294,
+      "min_ess_bulk": 150.813865740614,
+      "min_ess_tail": 54.37002796520516,
+      "min_tail_ess_per_1000_grad": 1.1522735607757797,
+      "n_divergent": 474,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5690,
+      "wall_seconds": 0.111522476
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.002167165896566559,
+        -0.02681840478729214,
+        0.001494369263852233,
+        0.013287041238351617
+      ],
+      "common_sd": [
+        1.1996809111255342,
+        0.9953069129267738,
+        0.9847132382238445,
+        0.9983836997547085
+      ],
+      "ess_bulk": [
+        4343.43849168956,
+        5689.590317308256,
+        5820.574888389164,
+        5792.215003174366
+      ],
+      "ess_tail": [
+        4089.6154740065,
+        4100.553189665714,
+        4215.746358535545,
+        4099.708587660731
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 25786,
+      "gradients_per_draw": 5.1572,
+      "gradients_per_transition": 5.106138613861386,
+      "min_bulk_ess_per_1000_grad": 168.4417316252835,
+      "min_ess_bulk": 4343.43849168956,
+      "min_ess_tail": 4089.6154740065,
+      "min_tail_ess_per_1000_grad": 158.59828876159546,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.749356711883593e-14,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.13495694
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.04816495992838703,
+        -0.022070022469428477,
+        0.01077930320661383,
+        -0.005431067908251768
+      ],
+      "common_sd": [
+        1.2010932873002467,
+        0.9929731883397102,
+        0.9808745495912123,
+        0.9968743596212726
+      ],
+      "ess_bulk": [
+        4486.160077207614,
+        5177.879500701145,
+        5367.285090964893,
+        5828.420952537073
+      ],
+      "ess_tail": [
+        3544.5211995875966,
+        3561.4639517756223,
+        4067.295511858837,
+        3841.4325509005994
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 28832,
+      "gradients_per_draw": 5.7664,
+      "gradients_per_transition": 5.709306930693069,
+      "min_bulk_ess_per_1000_grad": 155.59656205631293,
+      "min_ess_bulk": 4486.160077207614,
+      "min_ess_tail": 3544.5211995875966,
+      "min_tail_ess_per_1000_grad": 122.93705603453095,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.151100913
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.2488100128560677,
+        0.006926794178385323,
+        0.03603622677635696,
+        0.011461596669802919
+      ],
+      "common_sd": [
+        1.2252860436900694,
+        0.919953527312366,
+        1.0044835940203993,
+        0.9322643017478616
+      ],
+      "ess_bulk": [
+        28.839232262310695,
+        593.408536255563,
+        218.01450182906822,
+        886.1634278127924
+      ],
+      "ess_tail": [
+        null,
+        663.6591866339453,
+        1534.2482646951364,
+        161.84994327824933
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 80652,
+      "gradients_per_draw": 16.1304,
+      "gradients_per_transition": 10.179477470655055,
+      "min_bulk_ess_per_1000_grad": 0.35757615759448863,
+      "min_ess_bulk": 28.839232262310695,
+      "min_ess_tail": null,
+      "min_tail_ess_per_1000_grad": null,
+      "n_divergent": 900,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.552713678800501e-15,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 7923,
+      "wall_seconds": 0.217794805
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.01966881977489213,
+        0.005950110450954228,
+        -0.03199590477556839,
+        -0.02200551285472412
+      ],
+      "common_sd": [
+        1.1847105589996265,
+        0.9894493446888473,
+        0.9818189241809439,
+        1.0236183309709213
+      ],
+      "ess_bulk": [
+        1469.8248109516576,
+        2359.8969952900557,
+        3233.350637930269,
+        4881.777069007102
+      ],
+      "ess_tail": [
+        1923.36503166534,
+        2518.6183363214,
+        3076.4013242962574,
+        2924.4881491488727
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 51918,
+      "gradients_per_draw": 10.3836,
+      "gradients_per_transition": 10.28079207920792,
+      "min_bulk_ess_per_1000_grad": 28.310505238099648,
+      "min_ess_bulk": 1469.8248109516576,
+      "min_ess_tail": 1923.36503166534,
+      "min_tail_ess_per_1000_grad": 37.04620809093841,
+      "n_divergent": 28,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.262334579
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.01774202491349802,
+        0.022320539561272622,
+        0.018767666645324414,
+        -0.011552463632078219
+      ],
+      "common_sd": [
+        1.1815982059801804,
+        1.0220557078876884,
+        0.9942813722372065,
+        0.9920614824111945
+      ],
+      "ess_bulk": [
+        4775.770492319404,
+        4936.263419401729,
+        5361.466664480302,
+        5528.430064344551
+      ],
+      "ess_tail": [
+        3954.188804799449,
+        3727.205338785346,
+        3531.478943027089,
+        3832.237351500605
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 29178,
+      "gradients_per_draw": 5.8356,
+      "gradients_per_transition": 5.777821782178218,
+      "min_bulk_ess_per_1000_grad": 163.6771023483242,
+      "min_ess_bulk": 4775.770492319404,
+      "min_ess_tail": 3531.478943027089,
+      "min_tail_ess_per_1000_grad": 121.03224837298954,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.662137425588298e-15,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5050,
+      "wall_seconds": 0.153723122
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.10911327808139533,
+        0.09394465854454455,
+        -0.0068757200764309944,
+        0.10582341414832692
+      ],
+      "common_sd": [
+        1.2432907471681893,
+        0.9947207077612077,
+        0.9592312459908965,
+        1.0267986762533123
+      ],
+      "ess_bulk": [
+        36.55215325336096,
+        181.4519417520621,
+        698.6550074266315,
+        267.60594635143485
+      ],
+      "ess_tail": [
+        24.301742602836242,
+        1333.8782786900833,
+        2034.1874956213187,
+        53.45839257890936
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 67533,
+      "gradients_per_draw": 13.5066,
+      "gradients_per_transition": 9.886253842775583,
+      "min_bulk_ess_per_1000_grad": 0.5412487710209967,
+      "min_ess_bulk": 36.55215325336096,
+      "min_ess_tail": 24.301742602836242,
+      "min_tail_ess_per_1000_grad": 0.35984988972556,
+      "n_divergent": 753,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 6831,
+      "wall_seconds": 0.148160443
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.07482828664028299,
+        -0.009558416348049567,
+        0.019921004247222485,
+        0.011843512715067877
+      ],
+      "common_sd": [
+        1.1773053151469384,
+        0.9887506856490487,
+        1.0122020235087184,
+        0.9992897356433361
+      ],
+      "ess_bulk": [
+        1875.083544580587,
+        2565.228549068363,
+        3854.8674357573877,
+        4680.2847910512255
+      ],
+      "ess_tail": [
+        2224.532747736438,
+        2366.047992278589,
+        3449.735432432128,
+        3530.167184855491
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 39927,
+      "gradients_per_draw": 7.9854,
+      "gradients_per_transition": 7.906336633663367,
+      "min_bulk_ess_per_1000_grad": 46.96279571669765,
+      "min_ess_bulk": 1875.083544580587,
+      "min_ess_tail": 2224.532747736438,
+      "min_tail_ess_per_1000_grad": 55.71499856579353,
+      "n_divergent": 21,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5050,
+      "wall_seconds": 0.218669201
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.029185108157268286,
+        -0.021205375960123642,
+        0.007883884049176917,
+        -0.002851294416297364
+      ],
+      "common_sd": [
+        1.1924914318878423,
+        1.014415008435649,
+        1.0011809216677297,
+        0.9923735512681242
+      ],
+      "ess_bulk": [
+        4418.459834577885,
+        7745.056759364885,
+        8053.25295830569,
+        7454.759298876222
+      ],
+      "ess_tail": [
+        4120.446438965265,
+        4130.443019933156,
+        4179.352900214899,
+        4280.748865863459
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 19294,
+      "gradients_per_draw": 3.8588,
+      "gradients_per_transition": 3.8205940594059404,
+      "min_bulk_ess_per_1000_grad": 229.0069365905403,
+      "min_ess_bulk": 4418.459834577885,
+      "min_ess_tail": 4120.446438965265,
+      "min_tail_ess_per_1000_grad": 213.56102617213978,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 8.215650382226158e-15,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5050,
+      "wall_seconds": 0.134589934
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.1121841696204614,
+        -0.005257618261749605,
+        -0.026586920359121007,
+        -0.02333885964131542
+      ],
+      "common_sd": [
+        1.1986909905686034,
+        1.0325661484938626,
+        1.0283036498837588,
+        0.9633258542931536
+      ],
+      "ess_bulk": [
+        337.109484301252,
+        1712.5145638588679,
+        2282.901850374941,
+        888.4441543278382
+      ],
+      "ess_tail": [
+        409.1952692650333,
+        577.4926460462478,
+        2440.8350748780663,
+        2157.9532475056826
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 194525,
+      "gradients_per_draw": 38.905,
+      "gradients_per_transition": 38.17209576138148,
+      "min_bulk_ess_per_1000_grad": 1.7329879671057808,
+      "min_ess_bulk": 337.109484301252,
+      "min_ess_tail": 409.1952692650333,
+      "min_tail_ess_per_1000_grad": 2.103561337951591,
+      "n_divergent": 51,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5096,
+      "wall_seconds": 0.906757355
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.020375434586075748,
+        -0.0027503863401645394,
+        -0.010512799979485546,
+        -0.01735469074092394
+      ],
+      "common_sd": [
+        1.1850097768607681,
+        0.9817913268484137,
+        1.020228481735807,
+        1.0027019030359796
+      ],
+      "ess_bulk": [
+        1160.6585422445523,
+        2091.396211231391,
+        3024.843531863045,
+        3941.947029985095
+      ],
+      "ess_tail": [
+        935.8277518350791,
+        2261.3069464354035,
+        2921.7314946461624,
+        3109.53157336284
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 43634,
+      "gradients_per_draw": 8.7268,
+      "gradients_per_transition": 8.64039603960396,
+      "min_bulk_ess_per_1000_grad": 26.59986575249925,
+      "min_ess_bulk": 1160.6585422445523,
+      "min_ess_tail": 935.8277518350791,
+      "min_tail_ess_per_1000_grad": 21.447214370332286,
+      "n_divergent": 60,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5050,
+      "wall_seconds": 0.207906848
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.010473896743838201,
+        -0.003606789086357254,
+        0.02339522238447518,
+        -0.0073309039541272925
+      ],
+      "common_sd": [
+        1.196717764106357,
+        0.9924658187277932,
+        1.0070712307001009,
+        0.9902653965621692
+      ],
+      "ess_bulk": [
+        4546.918987957452,
+        5774.768340375108,
+        5655.993015583152,
+        5168.799872827818
+      ],
+      "ess_tail": [
+        3454.2292442674525,
+        3906.6568193343264,
+        3504.2457350541854,
+        3619.494877551034
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27842,
+      "gradients_per_draw": 5.5684,
+      "gradients_per_transition": 5.513267326732673,
+      "min_bulk_ess_per_1000_grad": 163.3115073614486,
+      "min_ess_bulk": 4546.918987957452,
+      "min_ess_tail": 3454.2292442674525,
+      "min_tail_ess_per_1000_grad": 124.06541355748338,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.88418203051333e-15,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5050,
+      "wall_seconds": 0.179316446
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.013962150708770892,
+        0.017858496798909444,
+        -0.010658254168241203,
+        0.010042859110768316
+      ],
+      "common_sd": [
+        1.1967173006386636,
+        1.0104878616642574,
+        1.013590195617035,
+        0.9867742225418354
+      ],
+      "ess_bulk": [
+        4273.8859333916525,
+        4569.257407223504,
+        5333.73826265833,
+        5590.393941656928
+      ],
+      "ess_tail": [
+        3302.777425883501,
+        3472.8185545606575,
+        3590.275858386268,
+        3756.0109024587946
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 27135,
+      "gradients_per_draw": 5.427,
+      "gradients_per_transition": 5.373267326732673,
+      "min_bulk_ess_per_1000_grad": 157.50454886278433,
+      "min_ess_bulk": 4273.8859333916525,
+      "min_ess_tail": 3302.777425883501,
+      "min_tail_ess_per_1000_grad": 121.71650731098218,
+      "n_divergent": 1,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.9761969838327786e-14,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5050,
+      "wall_seconds": 0.166690139
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.012945462194651225,
+        0.00045750215489184976,
+        -0.031347863202939155,
+        0.007981282156591916
+      ],
+      "common_sd": [
+        1.1903117651698527,
+        0.996548356026112,
+        0.9939558403782445,
+        1.0083010702647797
+      ],
+      "ess_bulk": [
+        1222.8915839306949,
+        1809.4509756322643,
+        3159.024676977677,
+        5342.561722895563
+      ],
+      "ess_tail": [
+        1128.5462049201374,
+        2509.7397257873754,
+        3259.8960938948367,
+        3341.009464666377
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 39038,
+      "gradients_per_draw": 7.8076,
+      "gradients_per_transition": 7.73029702970297,
+      "min_bulk_ess_per_1000_grad": 31.325672010110534,
+      "min_ess_bulk": 1222.8915839306949,
+      "min_ess_tail": 1128.5462049201374,
+      "min_tail_ess_per_1000_grad": 28.908914517140666,
+      "n_divergent": 113,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5050,
+      "wall_seconds": 0.189283433
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.0019357347221991817,
+        0.01236537421976918,
+        0.00020445332700354997,
+        -0.0008648241535286498
+      ],
+      "common_sd": [
+        1.2044218592384874,
+        0.9954801325748599,
+        0.996657215312746,
+        0.9949841894683066
+      ],
+      "ess_bulk": [
+        3986.460972694965,
+        5916.627052918025,
+        5841.764312872444,
+        5758.105803197642
+      ],
+      "ess_tail": [
+        3254.172458273893,
+        3246.6799181597535,
+        3813.5332400688776,
+        3533.004904532785
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 25321,
+      "gradients_per_draw": 5.0642,
+      "gradients_per_transition": 5.014059405940594,
+      "min_bulk_ess_per_1000_grad": 157.4369484891973,
+      "min_ess_bulk": 3986.460972694965,
+      "min_ess_tail": 3246.6799181597535,
+      "min_tail_ess_per_1000_grad": 128.22084112632808,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.020605904817785e-14,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5050,
+      "wall_seconds": 0.147339461
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.00507853938810583,
+        -0.0006451963051944772,
+        0.006431261368239238,
+        -0.013140070748759607
+      ],
+      "common_sd": [
+        1.2201899481938494,
+        1.001050778975949,
+        0.9806922767987316,
+        0.9939973018538865
+      ],
+      "ess_bulk": [
+        4137.243404247622,
+        4375.033001636065,
+        5003.461331845918,
+        5851.85062332221
+      ],
+      "ess_tail": [
+        3879.532827410319,
+        3453.9206058837617,
+        3640.7186041139817,
+        4149.532649036428
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 26240,
+      "gradients_per_draw": 5.248,
+      "gradients_per_transition": 5.196039603960396,
+      "min_bulk_ess_per_1000_grad": 157.66933705211972,
+      "min_ess_bulk": 4137.243404247622,
+      "min_ess_tail": 3453.9206058837617,
+      "min_tail_ess_per_1000_grad": 131.62807187057018,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.10702591327572e-15,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5050,
+      "wall_seconds": 0.136747832
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.21979021941593202,
+        -0.02108240557993459,
+        -0.0006566193161593548,
+        -0.006333874888240604
+      ],
+      "common_sd": [
+        1.0091841986257148,
+        1.0218876395298233,
+        0.980865788470263,
+        0.9986744771557264
+      ],
+      "ess_bulk": [
+        385.9029931522488,
+        1194.6073559934623,
+        1606.460346101784,
+        3123.977649995243
+      ],
+      "ess_tail": [
+        304.4828161272869,
+        1070.3608460870648,
+        2091.9261875680713,
+        2963.4271442191375
+      ],
+      "family": "gaussian",
+      "gradient_evaluations": 101984,
+      "gradients_per_draw": 20.3968,
+      "gradients_per_transition": 12.626470224093104,
+      "min_bulk_ess_per_1000_grad": 3.7839562397263182,
+      "min_ess_bulk": 385.9029931522488,
+      "min_ess_tail": 304.4828161272869,
+      "min_tail_ess_per_1000_grad": 2.9855939767736794,
+      "n_divergent": 206,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 8077,
+      "wall_seconds": 0.250862375
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "ess_bulk": [
+        67689.81963048056,
+        98380.15333588913,
+        97646.43143062525,
+        99540.67654064498
+      ],
+      "ess_tail": [
+        59684.592265243184,
+        63846.49374595484,
+        64159.49744284289,
+        63935.14354946675
+      ],
+      "family": "gaussian",
+      "max_rhat": 1.0001452235336479,
+      "min_ess_bulk": 67689.81963048056,
+      "min_ess_tail": 59684.592265243184,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0000038578844772,
+        1.0001452235336479,
+        1.000076286344411,
+        1.0000654761976024
+      ],
+      "row_type": "pooled",
+      "total_divergent": 0,
+      "total_gradient_evaluations": 390727
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "ess_bulk": [
+        68184.49145290219,
+        77864.95824465518,
+        86911.72556266679,
+        93205.22594291058
+      ],
+      "ess_tail": [
+        60652.92067954461,
+        58444.54850541215,
+        62477.57617231294,
+        61505.86932769736
+      ],
+      "family": "gaussian",
+      "max_rhat": 1.0002683101738095,
+      "min_ess_bulk": 68184.49145290219,
+      "min_ess_tail": 58444.54850541215,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.000204378147717,
+        1.0002683101738095,
+        1.000154202098053,
+        1.0001465723076057
+      ],
+      "row_type": "pooled",
+      "total_divergent": 13,
+      "total_gradient_evaluations": 438232
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "ess_bulk": [
+        1274.0844426491817,
+        10896.349616166279,
+        11157.858678816609,
+        17079.631215518908
+      ],
+      "ess_tail": [
+        539.5302781788954,
+        21019.017019351886,
+        20128.891213515395,
+        9774.790718664879
+      ],
+      "family": "gaussian",
+      "max_rhat": 1.017195335672059,
+      "min_ess_bulk": 1274.0844426491817,
+      "min_ess_tail": 539.5302781788954,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.017195335672059,
+        1.0020160301410905,
+        1.0009939947444069,
+        1.0014493770133295
+      ],
+      "row_type": "pooled",
+      "total_divergent": 6291,
+      "total_gradient_evaluations": 1463657
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "ess_bulk": [
+        20728.230065499778,
+        26982.6253028531,
+        51620.94931795425,
+        75095.73531834055
+      ],
+      "ess_tail": [
+        15413.487277153095,
+        19295.636443866115,
+        49352.16125710381,
+        55491.681432012134
+      ],
+      "family": "gaussian",
+      "max_rhat": 1.0005102736098623,
+      "min_ess_bulk": 20728.230065499778,
+      "min_ess_tail": 15413.487277153095,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0005102736098623,
+        1.0003232323974511,
+        1.0003115913561198,
+        1.0002317505517182
+      ],
+      "row_type": "pooled",
+      "total_divergent": 1139,
+      "total_gradient_evaluations": 660203
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.032473338383530094,
+        -0.007370264110220773,
+        -0.03684751266258477,
+        0.02236691303462691
+      ],
+      "common_sd": [
+        1.1950755832873896,
+        1.3509219723141943,
+        1.293729217003734,
+        1.3474405987489508
+      ],
+      "ess_bulk": [
+        4798.940060381997,
+        4033.9322628943696,
+        4746.622557228487,
+        4423.852477154105
+      ],
+      "ess_tail": [
+        4033.2559375170636,
+        2339.5990041499863,
+        2732.1929966433568,
+        2689.0678296448627
+      ],
+      "family": "student",
+      "gradient_evaluations": 25814,
+      "gradients_per_draw": 5.1628,
+      "gradients_per_transition": 5.111683168316832,
+      "min_bulk_ess_per_1000_grad": 156.26916645596845,
+      "min_ess_bulk": 4033.9322628943696,
+      "min_ess_tail": 2339.5990041499863,
+      "min_tail_ess_per_1000_grad": 90.63295127256475,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.4424906541753444e-14,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.131328272
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.01550780922864656,
+        -0.011854111763267351,
+        -0.037101311668455504,
+        0.014832577398233236
+      ],
+      "common_sd": [
+        1.2146054745139647,
+        1.2970208834855521,
+        1.3499987858245666,
+        1.298240748071683
+      ],
+      "ess_bulk": [
+        4989.901344369009,
+        3908.047914071847,
+        4005.1326528385794,
+        4244.735795593176
+      ],
+      "ess_tail": [
+        3747.095897056148,
+        2608.757616376293,
+        2580.793372346842,
+        2370.8117833749534
+      ],
+      "family": "student",
+      "gradient_evaluations": 28852,
+      "gradients_per_draw": 5.7704,
+      "gradients_per_transition": 5.713267326732673,
+      "min_bulk_ess_per_1000_grad": 135.4515428418081,
+      "min_ess_bulk": 3908.047914071847,
+      "min_ess_tail": 2370.8117833749534,
+      "min_tail_ess_per_1000_grad": 82.17148840201558,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.880984919163893e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.153472506
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.13616416338256832,
+        -0.007037089421661553,
+        -0.05121729723378734,
+        0.012001635128826403
+      ],
+      "common_sd": [
+        1.028759362576037,
+        1.3830714698117583,
+        1.267323081401529,
+        1.278347245269247
+      ],
+      "ess_bulk": [
+        345.1595295388335,
+        1226.5981013027533,
+        1808.621028833429,
+        2434.155208161631
+      ],
+      "ess_tail": [
+        220.36999046019812,
+        834.2495799563964,
+        1589.421242213992,
+        2000.14063495234
+      ],
+      "family": "student",
+      "gradient_evaluations": 114652,
+      "gradients_per_draw": 22.9304,
+      "gradients_per_transition": 11.21620035218157,
+      "min_bulk_ess_per_1000_grad": 3.0104972398111984,
+      "min_ess_bulk": 345.1595295388335,
+      "min_ess_tail": 220.36999046019812,
+      "min_tail_ess_per_1000_grad": 1.9220771592313968,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 10222,
+      "wall_seconds": 0.352757002
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.0414394589785878,
+        0.019484141688388697,
+        0.012617480820212032,
+        -0.02484350322669965
+      ],
+      "common_sd": [
+        1.1430006687791787,
+        1.26957933523596,
+        1.2149769414148275,
+        1.2560306109773096
+      ],
+      "ess_bulk": [
+        2034.4211436419746,
+        2467.7213754161785,
+        3710.2654876179763,
+        3831.168240162154
+      ],
+      "ess_tail": [
+        1879.728157409492,
+        2314.787857792765,
+        2789.921193875781,
+        2063.4723522718828
+      ],
+      "family": "student",
+      "gradient_evaluations": 46080,
+      "gradients_per_draw": 9.216,
+      "gradients_per_transition": 9.124752475247524,
+      "min_bulk_ess_per_1000_grad": 44.149764401952574,
+      "min_ess_bulk": 2034.4211436419746,
+      "min_ess_tail": 1879.728157409492,
+      "min_tail_ess_per_1000_grad": 40.79271174933793,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.608224830031759e-15,
+      "row_type": "chain",
+      "seed": 2026072801,
+      "total_transitions": 5050,
+      "wall_seconds": 0.246603138
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.019367717616637907,
+        0.011736200713685627,
+        -0.06363667114407838,
+        -0.008958755096448574
+      ],
+      "common_sd": [
+        1.2221595793448312,
+        1.2020830594987302,
+        1.4430641445005463,
+        1.2669485672647747
+      ],
+      "ess_bulk": [
+        5448.508477964729,
+        4329.994472619328,
+        3480.922835928304,
+        4314.215033270847
+      ],
+      "ess_tail": [
+        4017.283391080474,
+        2601.2307420451857,
+        2262.381078070381,
+        2205.934375997703
+      ],
+      "family": "student",
+      "gradient_evaluations": 27181,
+      "gradients_per_draw": 5.4362,
+      "gradients_per_transition": 5.382376237623762,
+      "min_bulk_ess_per_1000_grad": 128.06456112462027,
+      "min_ess_bulk": 3480.922835928304,
+      "min_ess_tail": 2205.934375997703,
+      "min_tail_ess_per_1000_grad": 81.15721923393924,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.1510571102112408e-14,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5050,
+      "wall_seconds": 0.146375871
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.07538484646819525,
+        0.12394745749528224,
+        -0.03918777808239323,
+        0.12049082162844915
+      ],
+      "common_sd": [
+        1.1740409034648602,
+        1.331794899104409,
+        1.201349206585151,
+        1.4056914216660108
+      ],
+      "ess_bulk": [
+        93.52000936748615,
+        218.40166830225564,
+        1465.887781381085,
+        160.22192512769263
+      ],
+      "ess_tail": [
+        26.042699703876874,
+        1276.9316748758083,
+        1442.7047889310538,
+        2424.1487947603387
+      ],
+      "family": "student",
+      "gradient_evaluations": 70748,
+      "gradients_per_draw": 14.1496,
+      "gradients_per_transition": 12.971763843050972,
+      "min_bulk_ess_per_1000_grad": 1.3218749557229343,
+      "min_ess_bulk": 93.52000936748615,
+      "min_ess_tail": 26.042699703876874,
+      "min_tail_ess_per_1000_grad": 0.3681051012590727,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5454,
+      "wall_seconds": 0.162737894
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.0399022530348432,
+        -0.0014258527673451109,
+        -0.035087787828260046,
+        0.02077510136522741
+      ],
+      "common_sd": [
+        1.212162733317793,
+        1.2233641819357772,
+        1.296364832585781,
+        1.3336053250330224
+      ],
+      "ess_bulk": [
+        550.8191961552737,
+        4649.291939243014,
+        3911.078782277781,
+        3568.3318646954763
+      ],
+      "ess_tail": [
+        290.337646764338,
+        3031.7305998572374,
+        1873.092914863978,
+        2170.261189510358
+      ],
+      "family": "student",
+      "gradient_evaluations": 35014,
+      "gradients_per_draw": 7.0028,
+      "gradients_per_transition": 6.5227272727272725,
+      "min_bulk_ess_per_1000_grad": 15.731398759218418,
+      "min_ess_bulk": 550.8191961552737,
+      "min_ess_tail": 290.337646764338,
+      "min_tail_ess_per_1000_grad": 8.292044518316617,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5368,
+      "wall_seconds": 0.097046276
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.01559971894575529,
+        -0.02308432652370192,
+        -0.02393466733055062,
+        -0.028824948627507046
+      ],
+      "common_sd": [
+        1.1982264255626962,
+        1.3572107861431244,
+        1.2661021931635215,
+        1.3339394194137446
+      ],
+      "ess_bulk": [
+        5175.213775336865,
+        4634.177490328683,
+        5683.183493797299,
+        5094.9389895953445
+      ],
+      "ess_tail": [
+        3754.6444128760486,
+        2776.7104196006935,
+        2859.645353426411,
+        2455.5071582669534
+      ],
+      "family": "student",
+      "gradient_evaluations": 28496,
+      "gradients_per_draw": 5.6992,
+      "gradients_per_transition": 5.6427722772277225,
+      "min_bulk_ess_per_1000_grad": 162.62554359659893,
+      "min_ess_bulk": 4634.177490328683,
+      "min_ess_tail": 2455.5071582669534,
+      "min_tail_ess_per_1000_grad": 86.17023997287174,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.021405182655144e-14,
+      "row_type": "chain",
+      "seed": 2026072802,
+      "total_transitions": 5050,
+      "wall_seconds": 0.160533892
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.20776860112019727,
+        0.057409410105525305,
+        -0.044506703837514476,
+        0.021659345627476352
+      ],
+      "common_sd": [
+        0.9911398587259664,
+        1.3379814255904543,
+        1.3660503582610166,
+        1.2920871238988014
+      ],
+      "ess_bulk": [
+        300.1706469726491,
+        1105.3923753626184,
+        1209.3914134622978,
+        1273.1661075563172
+      ],
+      "ess_tail": [
+        157.1065459798941,
+        615.2222019801306,
+        971.0154382189576,
+        1488.7800621127024
+      ],
+      "family": "student",
+      "gradient_evaluations": 106284,
+      "gradients_per_draw": 21.2568,
+      "gradients_per_transition": 12.686082597278586,
+      "min_bulk_ess_per_1000_grad": 2.824231746760087,
+      "min_ess_bulk": 300.1706469726491,
+      "min_ess_tail": 157.1065459798941,
+      "min_tail_ess_per_1000_grad": 1.478176827931712,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 8378,
+      "wall_seconds": 0.256928687
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.019256490957102145,
+        -0.012483499313235238,
+        0.018647005801179065,
+        0.023468337337662022
+      ],
+      "common_sd": [
+        1.2119726490534,
+        1.2638253182744097,
+        1.3251735895189498,
+        1.2923224275801644
+      ],
+      "ess_bulk": [
+        1818.4131081849841,
+        1972.9070160322606,
+        3142.1106793622043,
+        3669.0265425469242
+      ],
+      "ess_tail": [
+        1338.45963539791,
+        1232.8857166113398,
+        2282.9684875644616,
+        2499.3398645515185
+      ],
+      "family": "student",
+      "gradient_evaluations": 42620,
+      "gradients_per_draw": 8.524,
+      "gradients_per_transition": 8.43960396039604,
+      "min_bulk_ess_per_1000_grad": 42.66572285746091,
+      "min_ess_bulk": 1818.4131081849841,
+      "min_ess_tail": 1232.8857166113398,
+      "min_tail_ess_per_1000_grad": 28.927398324996243,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.278126067
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.007643223756530637,
+        -0.019139340194275392,
+        0.02181027457954396,
+        -0.013025014396318105
+      ],
+      "common_sd": [
+        1.1741822536321773,
+        1.309920185810237,
+        1.2947403743121149,
+        1.2936496596104372
+      ],
+      "ess_bulk": [
+        5290.100487210897,
+        4711.199644387017,
+        4445.121205890145,
+        4694.640221578447
+      ],
+      "ess_tail": [
+        3703.5738393625534,
+        3094.1286625044813,
+        2843.594046247341,
+        2646.9453096567354
+      ],
+      "family": "student",
+      "gradient_evaluations": 26516,
+      "gradients_per_draw": 5.3032,
+      "gradients_per_transition": 5.250693069306931,
+      "min_bulk_ess_per_1000_grad": 167.6392067389555,
+      "min_ess_bulk": 4445.121205890145,
+      "min_ess_tail": 2646.9453096567354,
+      "min_tail_ess_per_1000_grad": 99.82445729584913,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.3306690738754696e-14,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.141352256
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.000507942439602554,
+        0.003938669629649185,
+        0.026002909340662968,
+        -0.026865788780282406
+      ],
+      "common_sd": [
+        1.2005395607113007,
+        1.237344033362287,
+        1.2915938027759233,
+        1.2544843091137503
+      ],
+      "ess_bulk": [
+        5098.446674258577,
+        3844.341266761532,
+        4850.273520735031,
+        5142.409428368708
+      ],
+      "ess_tail": [
+        4115.605141814988,
+        2690.36190841682,
+        3038.825763059479,
+        2577.7894823015354
+      ],
+      "family": "student",
+      "gradient_evaluations": 27509,
+      "gradients_per_draw": 5.5018,
+      "gradients_per_transition": 5.447326732673267,
+      "min_bulk_ess_per_1000_grad": 139.74849201212447,
+      "min_ess_bulk": 3844.341266761532,
+      "min_ess_tail": 2577.7894823015354,
+      "min_tail_ess_per_1000_grad": 93.70713156790634,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.769962616701378e-15,
+      "row_type": "chain",
+      "seed": 2026072803,
+      "total_transitions": 5050,
+      "wall_seconds": 0.178803648
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.06169214528821633,
+        -0.006526141140785015,
+        0.022596691946769103,
+        -0.020217207563042905
+      ],
+      "common_sd": [
+        1.1640434205607297,
+        1.3173227429036585,
+        1.2592076954695115,
+        1.247007811016668
+      ],
+      "ess_bulk": [
+        2213.1047135577173,
+        2066.1595901663222,
+        3897.922321395835,
+        3648.614602243125
+      ],
+      "ess_tail": [
+        3166.406928516532,
+        1269.1189712548905,
+        2609.144886485738,
+        2532.7147529402664
+      ],
+      "family": "student",
+      "gradient_evaluations": 46200,
+      "gradients_per_draw": 9.24,
+      "gradients_per_transition": 9.148514851485148,
+      "min_bulk_ess_per_1000_grad": 44.722069051219094,
+      "min_ess_bulk": 2066.1595901663222,
+      "min_ess_tail": 1269.1189712548905,
+      "min_tail_ess_per_1000_grad": 27.470107602919708,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.1086244689504383e-15,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.232784153
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.02633048105838015,
+        0.003908215990475371,
+        0.014762585185091692,
+        0.03156462872683762
+      ],
+      "common_sd": [
+        1.2099559641934996,
+        1.2931304389208045,
+        1.2372952046421237,
+        1.3945184155028336
+      ],
+      "ess_bulk": [
+        5204.9211908174775,
+        5336.548631261346,
+        5390.547924889167,
+        4646.597460060019
+      ],
+      "ess_tail": [
+        3834.3605348403644,
+        3043.870353285664,
+        2390.258881414669,
+        2641.72968219565
+      ],
+      "family": "student",
+      "gradient_evaluations": 30054,
+      "gradients_per_draw": 6.0108,
+      "gradients_per_transition": 5.951287128712871,
+      "min_bulk_ess_per_1000_grad": 154.60828708524718,
+      "min_ess_bulk": 4646.597460060019,
+      "min_ess_tail": 2390.258881414669,
+      "min_tail_ess_per_1000_grad": 79.5321381983985,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.1796119636642288e-14,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.166783227
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.02859139567110144,
+        -0.012612664870270511,
+        -0.005544216514290161,
+        0.04567931933857169
+      ],
+      "common_sd": [
+        1.1748030816147546,
+        1.27852272476644,
+        1.2415332063825004,
+        1.259582821964384
+      ],
+      "ess_bulk": [
+        4874.486756620094,
+        4104.367286889376,
+        4920.8635559085205,
+        4997.801158548399
+      ],
+      "ess_tail": [
+        3553.159860716958,
+        2662.6944069072983,
+        2650.3356900534995,
+        2873.4049518504303
+      ],
+      "family": "student",
+      "gradient_evaluations": 31382,
+      "gradients_per_draw": 6.2764,
+      "gradients_per_transition": 6.2142574257425744,
+      "min_bulk_ess_per_1000_grad": 130.78730759318643,
+      "min_ess_bulk": 4104.367286889376,
+      "min_ess_tail": 2650.3356900534995,
+      "min_tail_ess_per_1000_grad": 84.45400835043974,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.7208456881689926e-14,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5050,
+      "wall_seconds": 0.183853779
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.10615285245183911,
+        -0.13781227490321743,
+        0.04469994236077469,
+        -0.05619189410278741
+      ],
+      "common_sd": [
+        1.1289161517435748,
+        1.426728090578638,
+        1.4287317738421992,
+        1.2576100353126145
+      ],
+      "ess_bulk": [
+        207.7739771291498,
+        548.9250829749227,
+        1286.784294283382,
+        1644.711650755745
+      ],
+      "ess_tail": [
+        144.25134466630155,
+        275.90690431738284,
+        1247.5485532762605,
+        843.7012659393098
+      ],
+      "family": "student",
+      "gradient_evaluations": 62434,
+      "gradients_per_draw": 12.4868,
+      "gradients_per_transition": 11.337207190848012,
+      "min_bulk_ess_per_1000_grad": 3.3278978942427173,
+      "min_ess_bulk": 207.7739771291498,
+      "min_ess_tail": 144.25134466630155,
+      "min_tail_ess_per_1000_grad": 2.310461361858948,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072804,
+      "total_transitions": 5507,
+      "wall_seconds": 0.18809321
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.008627182873080442,
+        -0.001486034109421493,
+        -0.0046607438431166565,
+        0.013152597244624656
+      ],
+      "common_sd": [
+        1.2148933752080948,
+        1.2626864679988292,
+        1.271004523098584,
+        1.2875236615366776
+      ],
+      "ess_bulk": [
+        5052.32424262099,
+        4862.518921677755,
+        4826.984363132385,
+        5283.476743864617
+      ],
+      "ess_tail": [
+        3496.5183639192055,
+        3025.2261439075887,
+        2584.0072349554134,
+        2708.841310253419
+      ],
+      "family": "student",
+      "gradient_evaluations": 26905,
+      "gradients_per_draw": 5.381,
+      "gradients_per_transition": 5.327722772277228,
+      "min_bulk_ess_per_1000_grad": 179.4084505903135,
+      "min_ess_bulk": 4826.984363132385,
+      "min_ess_tail": 2584.0072349554134,
+      "min_tail_ess_per_1000_grad": 96.04189685766264,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-14,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5050,
+      "wall_seconds": 0.145355352
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.02912562679675582,
+        -0.00762231140231202,
+        0.0023869055691489436,
+        -0.026258290147215736
+      ],
+      "common_sd": [
+        1.1941698731788544,
+        1.289951732124053,
+        1.253949881150635,
+        1.325883265359311
+      ],
+      "ess_bulk": [
+        4720.126079589659,
+        3781.658118653221,
+        3911.1027017659526,
+        4572.2401986166
+      ],
+      "ess_tail": [
+        4212.938450116514,
+        2611.2505963577887,
+        2672.4450954682206,
+        2830.531153582632
+      ],
+      "family": "student",
+      "gradient_evaluations": 27184,
+      "gradients_per_draw": 5.4368,
+      "gradients_per_transition": 5.382970297029703,
+      "min_bulk_ess_per_1000_grad": 139.11337987982714,
+      "min_ess_bulk": 3781.658118653221,
+      "min_ess_tail": 2611.2505963577887,
+      "min_tail_ess_per_1000_grad": 96.05836508084862,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2545520178264269e-14,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5050,
+      "wall_seconds": 0.161602467
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.056992710580093316,
+        -0.09392764119437937,
+        0.022139324049780657,
+        -0.0190564803876078
+      ],
+      "common_sd": [
+        1.1085791093378108,
+        1.313967817228833,
+        1.345355490882935,
+        1.2564446906734024
+      ],
+      "ess_bulk": [
+        219.94417549103557,
+        613.5118248371731,
+        496.0422915790834,
+        1710.0654436702239
+      ],
+      "ess_tail": [
+        117.09226983617882,
+        202.29098050718034,
+        211.2567041473685,
+        2682.893434732453
+      ],
+      "family": "student",
+      "gradient_evaluations": 77695,
+      "gradients_per_draw": 15.539,
+      "gradients_per_transition": 15.001930874686233,
+      "min_bulk_ess_per_1000_grad": 2.8308665356977354,
+      "min_ess_bulk": 219.94417549103557,
+      "min_ess_tail": 117.09226983617882,
+      "min_tail_ess_per_1000_grad": 1.507076000208235,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5179,
+      "wall_seconds": 0.215541295
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.08019223744727882,
+        0.007826184584172552,
+        -0.02456029981516245,
+        -0.006247921433554393
+      ],
+      "common_sd": [
+        1.3499620837357402,
+        1.3016488102091397,
+        1.2585050136558373,
+        1.2461989477321032
+      ],
+      "ess_bulk": [
+        182.01021921462768,
+        1117.6917357108803,
+        3808.6732066751156,
+        4257.031431452285
+      ],
+      "ess_tail": [
+        42.74105531091559,
+        2235.841824789171,
+        2453.7793156923035,
+        2578.6779248262237
+      ],
+      "family": "student",
+      "gradient_evaluations": 46475,
+      "gradients_per_draw": 9.295,
+      "gradients_per_transition": 9.061220510820823,
+      "min_bulk_ess_per_1000_grad": 3.9163038023588532,
+      "min_ess_bulk": 182.01021921462768,
+      "min_ess_tail": 42.74105531091559,
+      "min_tail_ess_per_1000_grad": 0.9196569190084043,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2434497875801753e-14,
+      "row_type": "chain",
+      "seed": 2026072805,
+      "total_transitions": 5129,
+      "wall_seconds": 0.11711243
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.026483453786503065,
+        -0.0004044910568586002,
+        -0.008336179206141839,
+        -0.014043181964446655
+      ],
+      "common_sd": [
+        1.2511069744209826,
+        1.2151205107681349,
+        1.2406972840770656,
+        1.2419087018287798
+      ],
+      "ess_bulk": [
+        5356.279387230235,
+        4951.589419325957,
+        4831.1347481429075,
+        5119.515645350463
+      ],
+      "ess_tail": [
+        3802.984778462321,
+        2961.8962525193588,
+        2827.496845949825,
+        3057.5003401043396
+      ],
+      "family": "student",
+      "gradient_evaluations": 31344,
+      "gradients_per_draw": 6.2688,
+      "gradients_per_transition": 6.206732673267327,
+      "min_bulk_ess_per_1000_grad": 154.1326808366165,
+      "min_ess_bulk": 4831.1347481429075,
+      "min_ess_tail": 2827.496845949825,
+      "min_tail_ess_per_1000_grad": 90.2085517467402,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.3322676295501878e-14,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5050,
+      "wall_seconds": 0.177166408
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.09321910724196462,
+        -0.02417343135045252,
+        0.05219758544908484,
+        -0.002731168215044739
+      ],
+      "common_sd": [
+        1.0638983476108437,
+        1.3317010604265986,
+        1.2897932892449342,
+        1.3556104360664147
+      ],
+      "ess_bulk": [
+        572.5423025086803,
+        1860.6989848936119,
+        2286.3161809674693,
+        2694.8454095925927
+      ],
+      "ess_tail": [
+        595.5789071441912,
+        1629.653003387182,
+        1999.1212740144529,
+        2778.7018803638207
+      ],
+      "family": "student",
+      "gradient_evaluations": 96034,
+      "gradients_per_draw": 19.2068,
+      "gradients_per_transition": 16.005666666666666,
+      "min_bulk_ess_per_1000_grad": 5.961870821882671,
+      "min_ess_bulk": 572.5423025086803,
+      "min_ess_tail": 595.5789071441912,
+      "min_tail_ess_per_1000_grad": 6.20175049611795,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 6000,
+      "wall_seconds": 0.227227174
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.0033805823833046454,
+        -0.023616763222750775,
+        0.004320860395108347,
+        0.010855722701542125
+      ],
+      "common_sd": [
+        1.2001184834060281,
+        1.4354102733790886,
+        1.3818840774220993,
+        1.25589431862929
+      ],
+      "ess_bulk": [
+        893.5001681310505,
+        3545.3020207394034,
+        3054.632636555216,
+        4302.950797688697
+      ],
+      "ess_tail": [
+        770.7770323673989,
+        2946.945018725274,
+        1585.7814886699045,
+        2782.11411957909
+      ],
+      "family": "student",
+      "gradient_evaluations": 34950,
+      "gradients_per_draw": 6.99,
+      "gradients_per_transition": 6.495075264820665,
+      "min_bulk_ess_per_1000_grad": 25.565097800602306,
+      "min_ess_bulk": 893.5001681310505,
+      "min_ess_tail": 770.7770323673989,
+      "min_tail_ess_per_1000_grad": 22.05370621938194,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.440092820663267e-15,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5381,
+      "wall_seconds": 0.107775855
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.004765496566226133,
+        -0.018625148513285204,
+        0.017795089617083305,
+        -0.026549238637503015
+      ],
+      "common_sd": [
+        1.1827745036103068,
+        1.2634292701534957,
+        1.3668732276886955,
+        1.3979968724471683
+      ],
+      "ess_bulk": [
+        5629.274371966364,
+        5899.112641216005,
+        4303.846784451653,
+        4736.113833339095
+      ],
+      "ess_tail": [
+        3686.847226452895,
+        2660.5156387614966,
+        2230.355516445368,
+        2673.9348949561913
+      ],
+      "family": "student",
+      "gradient_evaluations": 30606,
+      "gradients_per_draw": 6.1212,
+      "gradients_per_transition": 6.060594059405941,
+      "min_bulk_ess_per_1000_grad": 140.62101497914304,
+      "min_ess_bulk": 4303.846784451653,
+      "min_ess_tail": 2230.355516445368,
+      "min_tail_ess_per_1000_grad": 72.87314632573246,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.6209256159527285e-14,
+      "row_type": "chain",
+      "seed": 2026072806,
+      "total_transitions": 5050,
+      "wall_seconds": 0.192156609
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.054058102798088405,
+        0.014598317899343056,
+        0.01654251477482689,
+        0.018762888965721317
+      ],
+      "common_sd": [
+        1.178790100318188,
+        1.2808415111387246,
+        1.2995930622186622,
+        1.328840776872437
+      ],
+      "ess_bulk": [
+        405.41770903477646,
+        3340.550101449925,
+        2451.057336283707,
+        1252.8733631705802
+      ],
+      "ess_tail": [
+        556.2150997232256,
+        2547.15659786749,
+        2598.4709401088635,
+        1715.062807896222
+      ],
+      "family": "student",
+      "gradient_evaluations": 199110,
+      "gradients_per_draw": 39.822,
+      "gradients_per_transition": 39.14864333464412,
+      "min_bulk_ess_per_1000_grad": 2.0361494100485986,
+      "min_ess_bulk": 405.41770903477646,
+      "min_ess_tail": 556.2150997232256,
+      "min_tail_ess_per_1000_grad": 2.793506602999476,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5086,
+      "wall_seconds": 0.920359739
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.011763474234828422,
+        0.03842319764312157,
+        -0.0052224856990866365,
+        -0.009631058082973784
+      ],
+      "common_sd": [
+        1.1725980002764074,
+        1.2381352541079755,
+        1.2819305790147066,
+        1.2613566854716214
+      ],
+      "ess_bulk": [
+        868.1757176742616,
+        1689.434865054688,
+        2288.963692858198,
+        3733.026054564763
+      ],
+      "ess_tail": [
+        220.13040304317735,
+        2184.7989737755297,
+        2408.34209229808,
+        2192.646491174636
+      ],
+      "family": "student",
+      "gradient_evaluations": 43492,
+      "gradients_per_draw": 8.6984,
+      "gradients_per_transition": 8.612277227722773,
+      "min_bulk_ess_per_1000_grad": 19.96173359869083,
+      "min_ess_bulk": 868.1757176742616,
+      "min_ess_tail": 220.13040304317735,
+      "min_tail_ess_per_1000_grad": 5.061399867634907,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.882583474838611e-15,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.212125339
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.015925574214889382,
+        -0.0055203329306698305,
+        -0.018839765622743657,
+        -0.021917762952891173
+      ],
+      "common_sd": [
+        1.2062343863186842,
+        1.3250871765824666,
+        1.2788966857559259,
+        1.2450105892809724
+      ],
+      "ess_bulk": [
+        5204.589229745101,
+        5258.055297734661,
+        4952.196070093852,
+        5093.940573762523
+      ],
+      "ess_tail": [
+        3656.4269685086115,
+        2519.918240118626,
+        2794.869556371003,
+        3056.9842413746833
+      ],
+      "family": "student",
+      "gradient_evaluations": 28533,
+      "gradients_per_draw": 5.7066,
+      "gradients_per_transition": 5.65009900990099,
+      "min_bulk_ess_per_1000_grad": 173.5603010582081,
+      "min_ess_bulk": 4952.196070093852,
+      "min_ess_tail": 2519.918240118626,
+      "min_tail_ess_per_1000_grad": 88.31592332101869,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.0436096431476471e-14,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.15983615
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.007552445137609889,
+        0.03235562386857244,
+        0.0647336812994479,
+        -0.012059729691414254
+      ],
+      "common_sd": [
+        1.187921164602234,
+        1.2746054513397111,
+        1.259446943566181,
+        1.2621981414177417
+      ],
+      "ess_bulk": [
+        5332.1825709647255,
+        3619.6628535417367,
+        4066.7739450931263,
+        4308.165141308955
+      ],
+      "ess_tail": [
+        4207.942904439118,
+        2483.8974641602545,
+        2808.9751740253632,
+        2491.834843517717
+      ],
+      "family": "student",
+      "gradient_evaluations": 29388,
+      "gradients_per_draw": 5.8776,
+      "gradients_per_transition": 5.819405940594059,
+      "min_bulk_ess_per_1000_grad": 123.16805681032179,
+      "min_ess_bulk": 3619.6628535417367,
+      "min_ess_tail": 2483.8974641602545,
+      "min_tail_ess_per_1000_grad": 84.52080659317593,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.327471962526033e-15,
+      "row_type": "chain",
+      "seed": 2026072807,
+      "total_transitions": 5050,
+      "wall_seconds": 0.170239278
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.042542822342038294,
+        -0.033422360470763114,
+        0.026724603502674454,
+        0.03320278236848714
+      ],
+      "common_sd": [
+        1.1637047680681514,
+        1.2711145123680754,
+        1.2412742176363967,
+        1.265354421048052
+      ],
+      "ess_bulk": [
+        2099.187080195579,
+        2314.994131510843,
+        3146.8715757385075,
+        4246.006385084811
+      ],
+      "ess_tail": [
+        2817.3183422367006,
+        1716.649693856872,
+        2393.1439907274234,
+        2564.1867934630263
+      ],
+      "family": "student",
+      "gradient_evaluations": 44256,
+      "gradients_per_draw": 8.8512,
+      "gradients_per_transition": 8.763564356435644,
+      "min_bulk_ess_per_1000_grad": 47.43282448019656,
+      "min_ess_bulk": 2099.187080195579,
+      "min_ess_tail": 1716.649693856872,
+      "min_tail_ess_per_1000_grad": 38.78908382720698,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.231090616
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.010557880393358338,
+        0.031263095166436196,
+        0.038834651855979285,
+        0.024588864705937772
+      ],
+      "common_sd": [
+        1.2006050260710661,
+        1.2636721992008595,
+        1.433621614739909,
+        1.2968235843667402
+      ],
+      "ess_bulk": [
+        5238.217244863128,
+        4672.610392266969,
+        4524.1374114944365,
+        4568.874496006785
+      ],
+      "ess_tail": [
+        3463.500755565126,
+        2888.888526263011,
+        2541.3881264325723,
+        2579.928699209475
+      ],
+      "family": "student",
+      "gradient_evaluations": 28584,
+      "gradients_per_draw": 5.7168,
+      "gradients_per_transition": 5.66019801980198,
+      "min_bulk_ess_per_1000_grad": 158.27516832824085,
+      "min_ess_bulk": 4524.1374114944365,
+      "min_ess_tail": 2541.3881264325723,
+      "min_tail_ess_per_1000_grad": 88.90946426086526,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2434497875801753e-14,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.182636218
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.004217195521132586,
+        -0.0027073394389496136,
+        -0.023221890765355382,
+        -0.010881673638373283
+      ],
+      "common_sd": [
+        1.1965161333737888,
+        1.2835509364600337,
+        1.282611944412684,
+        1.2878249294713309
+      ],
+      "ess_bulk": [
+        5441.569533042425,
+        4188.026836656042,
+        4563.951238922847,
+        4503.9128525228325
+      ],
+      "ess_tail": [
+        3831.748217201267,
+        2786.9723533389056,
+        2471.0605000982796,
+        2535.915030228537
+      ],
+      "family": "student",
+      "gradient_evaluations": 30332,
+      "gradients_per_draw": 6.0664,
+      "gradients_per_transition": 6.006336633663366,
+      "min_bulk_ess_per_1000_grad": 138.07288792878947,
+      "min_ess_bulk": 4188.026836656042,
+      "min_ess_tail": 2471.0605000982796,
+      "min_tail_ess_per_1000_grad": 81.46711394231437,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.8833827526759706e-15,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5050,
+      "wall_seconds": 0.147265569
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.01134588801939427,
+        -0.07170306293485547,
+        0.005824437520108258,
+        0.035632525550565924
+      ],
+      "common_sd": [
+        1.156044271777366,
+        1.2718468353230235,
+        1.328212793988266,
+        1.2845397867210007
+      ],
+      "ess_bulk": [
+        166.15806698141367,
+        594.0293692528294,
+        1959.2798781053614,
+        2503.2577043774545
+      ],
+      "ess_tail": [
+        98.38924860909889,
+        444.52440549326127,
+        1432.799530124519,
+        1886.5117237303514
+      ],
+      "family": "student",
+      "gradient_evaluations": 101150,
+      "gradients_per_draw": 20.23,
+      "gradients_per_transition": 17.41263556550181,
+      "min_bulk_ess_per_1000_grad": 1.6426897378291019,
+      "min_ess_bulk": 166.15806698141367,
+      "min_ess_tail": 98.38924860909889,
+      "min_tail_ess_per_1000_grad": 0.9727063629174383,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072808,
+      "total_transitions": 5809,
+      "wall_seconds": 0.256870707
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.00414799775515349,
+        -0.016316783138930625,
+        0.027479627252642042,
+        -0.019298234540720643
+      ],
+      "common_sd": [
+        1.2268754805098712,
+        1.3078946197340398,
+        1.272347442712319,
+        1.271513264343136
+      ],
+      "ess_bulk": [
+        5221.853348029512,
+        5045.41491953202,
+        5000.5340292680785,
+        5524.687180227675
+      ],
+      "ess_tail": [
+        3206.749202250907,
+        2870.426377877627,
+        2785.0674121892503,
+        2583.138496388967
+      ],
+      "family": "student",
+      "gradient_evaluations": 28562,
+      "gradients_per_draw": 5.7124,
+      "gradients_per_transition": 5.6558415841584155,
+      "min_bulk_ess_per_1000_grad": 175.07646625824796,
+      "min_ess_bulk": 5000.5340292680785,
+      "min_ess_tail": 2583.138496388967,
+      "min_tail_ess_per_1000_grad": 90.43969247212964,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.0103029524088925e-14,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.134411718
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.026509044469636193,
+        -0.04627622423048655,
+        0.025545877677176754,
+        -0.0005592749577880733
+      ],
+      "common_sd": [
+        1.1832220628978203,
+        1.3344344331798614,
+        1.2833004256682041,
+        1.2821236206159816
+      ],
+      "ess_bulk": [
+        5483.382262345172,
+        3757.5490795844025,
+        4413.783200409425,
+        5637.809971094994
+      ],
+      "ess_tail": [
+        3399.113268378734,
+        2513.6039106261806,
+        2749.2436864319425,
+        2482.056908359337
+      ],
+      "family": "student",
+      "gradient_evaluations": 33586,
+      "gradients_per_draw": 6.7172,
+      "gradients_per_transition": 6.65069306930693,
+      "min_bulk_ess_per_1000_grad": 111.87843385888175,
+      "min_ess_bulk": 3757.5490795844025,
+      "min_ess_tail": 2482.056908359337,
+      "min_tail_ess_per_1000_grad": 73.90153362589581,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.216449660063518e-15,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.181518525
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.07919806381885196,
+        -0.06687870340582053,
+        0.05715591860402411,
+        0.06978289712230118
+      ],
+      "common_sd": [
+        1.1742776269158561,
+        1.5036884722179815,
+        1.2609887218441456,
+        1.366878465626069
+      ],
+      "ess_bulk": [
+        250.2663169057944,
+        477.56337775839404,
+        828.5866727980618,
+        628.0156070492518
+      ],
+      "ess_tail": [
+        108.43271872766117,
+        164.08161605049415,
+        602.8244797267828,
+        205.47601787961258
+      ],
+      "family": "student",
+      "gradient_evaluations": 93430,
+      "gradients_per_draw": 18.686,
+      "gradients_per_transition": 15.618522233366766,
+      "min_bulk_ess_per_1000_grad": 2.678650507393711,
+      "min_ess_bulk": 250.2663169057944,
+      "min_ess_tail": 108.43271872766117,
+      "min_tail_ess_per_1000_grad": 1.1605771029397534,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5982,
+      "wall_seconds": 0.22808772
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.06674722363752825,
+        -0.025565186363776155,
+        -0.01755072440722264,
+        -0.014176953359337179
+      ],
+      "common_sd": [
+        1.2209442978327414,
+        1.3347449216427916,
+        1.3264754720825653,
+        1.1668353995769931
+      ],
+      "ess_bulk": [
+        398.91819613676165,
+        1297.2756467472263,
+        2464.657307213973,
+        4258.194698232372
+      ],
+      "ess_tail": [
+        93.86793900560328,
+        2265.675627477157,
+        2112.7695348167404,
+        2658.2576323989183
+      ],
+      "family": "student",
+      "gradient_evaluations": 47807,
+      "gradients_per_draw": 9.5614,
+      "gradients_per_transition": 9.466732673267327,
+      "min_bulk_ess_per_1000_grad": 8.344346981336658,
+      "min_ess_bulk": 398.91819613676165,
+      "min_ess_tail": 93.86793900560328,
+      "min_tail_ess_per_1000_grad": 1.9634768758885366,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.549516567451064e-15,
+      "row_type": "chain",
+      "seed": 2026072809,
+      "total_transitions": 5050,
+      "wall_seconds": 0.246235149
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.001052267952920544,
+        -0.00828142623642949,
+        0.02177323903452159,
+        -0.002271122638206384
+      ],
+      "common_sd": [
+        1.1848645595638672,
+        1.3378819701127462,
+        1.3005480630620958,
+        1.2703409418267655
+      ],
+      "ess_bulk": [
+        5153.7819841876635,
+        3322.8788004472103,
+        4361.746146843151,
+        4517.808926038
+      ],
+      "ess_tail": [
+        4248.591407779224,
+        2173.631264916753,
+        2951.0634093429117,
+        2844.1160444952175
+      ],
+      "family": "student",
+      "gradient_evaluations": 26690,
+      "gradients_per_draw": 5.338,
+      "gradients_per_transition": 5.285148514851485,
+      "min_bulk_ess_per_1000_grad": 124.49901837569165,
+      "min_ess_bulk": 3322.8788004472103,
+      "min_ess_tail": 2173.631264916753,
+      "min_tail_ess_per_1000_grad": 81.43991251093117,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.439293542825908e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.132151998
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.09583301598600336,
+        0.030124279910405574,
+        -0.03518877586989151,
+        0.039490883139930245
+      ],
+      "common_sd": [
+        1.099325962802359,
+        1.319629336537059,
+        1.3113977652206532,
+        1.2972853947264325
+      ],
+      "ess_bulk": [
+        423.3263099132971,
+        1435.0416727533943,
+        1969.2838179586672,
+        2165.277688540844
+      ],
+      "ess_tail": [
+        303.39951135696015,
+        1649.2017649410543,
+        1867.9477471267205,
+        2286.18028274715
+      ],
+      "family": "student",
+      "gradient_evaluations": 64124,
+      "gradients_per_draw": 12.8248,
+      "gradients_per_transition": 12.237404580152672,
+      "min_bulk_ess_per_1000_grad": 6.601682831908445,
+      "min_ess_bulk": 423.3263099132971,
+      "min_ess_tail": 303.39951135696015,
+      "min_tail_ess_per_1000_grad": 4.73145018022831,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5240,
+      "wall_seconds": 0.147068557
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.04163716262390484,
+        -0.0547578028272115,
+        0.0808226592417451,
+        0.0012672105543113322
+      ],
+      "common_sd": [
+        1.1974770928103002,
+        1.3890439772295569,
+        1.4177852862730858,
+        1.2955244797993044
+      ],
+      "ess_bulk": [
+        1204.419361280348,
+        983.5653571217794,
+        1819.5494953105224,
+        4015.638608502355
+      ],
+      "ess_tail": [
+        1524.2895990015452,
+        833.1202282534748,
+        1421.9842664160285,
+        2792.6088056378517
+      ],
+      "family": "student",
+      "gradient_evaluations": 43598,
+      "gradients_per_draw": 8.7196,
+      "gradients_per_transition": 8.633267326732673,
+      "min_bulk_ess_per_1000_grad": 22.559873322670292,
+      "min_ess_bulk": 983.5653571217794,
+      "min_ess_tail": 833.1202282534748,
+      "min_tail_ess_per_1000_grad": 19.109138681899967,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.329070518200751e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.210530038
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.007244350392506256,
+        -8.078240443479059e-5,
+        -0.034021342200689995,
+        0.02258819835935185
+      ],
+      "common_sd": [
+        1.229182720578776,
+        1.262464129168887,
+        1.3060554676831917,
+        1.2918868296314052
+      ],
+      "ess_bulk": [
+        5338.389206109878,
+        5456.706077142073,
+        5171.146001556915,
+        4925.478521236916
+      ],
+      "ess_tail": [
+        3337.7088902037167,
+        2318.327977237837,
+        2724.126983056218,
+        2675.9527559837375
+      ],
+      "family": "student",
+      "gradient_evaluations": 30110,
+      "gradients_per_draw": 6.022,
+      "gradients_per_transition": 5.962376237623762,
+      "min_bulk_ess_per_1000_grad": 163.58281372424165,
+      "min_ess_bulk": 4925.478521236916,
+      "min_ess_tail": 2318.327977237837,
+      "min_tail_ess_per_1000_grad": 76.99528320285077,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 9.769962616701378e-15,
+      "row_type": "chain",
+      "seed": 2026072810,
+      "total_transitions": 5050,
+      "wall_seconds": 0.169945051
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.01905357784398553,
+        -0.007714889243291468,
+        -0.022400520361546678,
+        0.02648300849581642
+      ],
+      "common_sd": [
+        1.1162953657739143,
+        1.3182408409971988,
+        1.2191438826977468,
+        1.3063059472020864
+      ],
+      "ess_bulk": [
+        255.1599404078047,
+        1487.960589682935,
+        1653.3383397504847,
+        1993.7246138982603
+      ],
+      "ess_tail": [
+        60.38456587411263,
+        1166.9900427524392,
+        1162.7382494811798,
+        686.8907283828446
+      ],
+      "family": "student",
+      "gradient_evaluations": 125781,
+      "gradients_per_draw": 25.1562,
+      "gradients_per_transition": 15.65803560313706,
+      "min_bulk_ess_per_1000_grad": 2.0286048004691066,
+      "min_ess_bulk": 255.1599404078047,
+      "min_ess_tail": 60.38456587411263,
+      "min_tail_ess_per_1000_grad": 0.480077005860286,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.842170943040401e-14,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 8033,
+      "wall_seconds": 0.325377783
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.02005120515388139,
+        -0.010966162856814078,
+        -0.03342892621219892,
+        0.01638453768572016
+      ],
+      "common_sd": [
+        1.1886798550149138,
+        1.313595377920398,
+        1.2574046413164797,
+        1.2641088189353369
+      ],
+      "ess_bulk": [
+        945.28417418533,
+        3132.2285514026867,
+        4715.100480396567,
+        4562.147422486213
+      ],
+      "ess_tail": [
+        348.1166433824631,
+        2128.333806763268,
+        3411.0242692222228,
+        2377.0198270276505
+      ],
+      "family": "student",
+      "gradient_evaluations": 33739,
+      "gradients_per_draw": 6.7478,
+      "gradients_per_transition": 6.312254443405052,
+      "min_bulk_ess_per_1000_grad": 28.01755162231631,
+      "min_ess_bulk": 945.28417418533,
+      "min_ess_tail": 348.1166433824631,
+      "min_tail_ess_per_1000_grad": 10.317930092251197,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.993605777301127e-15,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5345,
+      "wall_seconds": 0.110608774
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.03595274763863928,
+        0.0038981567608218177,
+        0.02321000229874742,
+        0.02036414967544043
+      ],
+      "common_sd": [
+        1.216470660862029,
+        1.240506213194317,
+        1.3020856162174022,
+        1.2561586835958136
+      ],
+      "ess_bulk": [
+        5145.9504527327035,
+        4735.634504006614,
+        3732.266226642156,
+        4799.265517445352
+      ],
+      "ess_tail": [
+        3672.1975711677983,
+        2596.9603462236255,
+        2530.34048832045,
+        2597.076358863166
+      ],
+      "family": "student",
+      "gradient_evaluations": 23904,
+      "gradients_per_draw": 4.7808,
+      "gradients_per_transition": 4.733465346534653,
+      "min_bulk_ess_per_1000_grad": 156.13563531802862,
+      "min_ess_bulk": 3732.266226642156,
+      "min_ess_tail": 2530.34048832045,
+      "min_tail_ess_per_1000_grad": 105.85427076307103,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.6423307986078726e-14,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5050,
+      "wall_seconds": 0.153338941
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.013942909316745357,
+        -0.01203137773919111,
+        -0.0017977089712650557,
+        -0.01512829875419324
+      ],
+      "common_sd": [
+        1.1653097477167722,
+        1.334058692653591,
+        1.2887098030500546,
+        1.2295466104503228
+      ],
+      "ess_bulk": [
+        4484.03379263705,
+        3043.7841249236676,
+        4928.198993064623,
+        4975.262949015582
+      ],
+      "ess_tail": [
+        3625.1199839306146,
+        1848.460108595673,
+        2759.34059282907,
+        2867.336682108253
+      ],
+      "family": "student",
+      "gradient_evaluations": 30548,
+      "gradients_per_draw": 6.1096,
+      "gradients_per_transition": 6.049108910891089,
+      "min_bulk_ess_per_1000_grad": 99.63939128334646,
+      "min_ess_bulk": 3043.7841249236676,
+      "min_ess_tail": 1848.460108595673,
+      "min_tail_ess_per_1000_grad": 60.510020577310236,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 5.10702591327572e-15,
+      "row_type": "chain",
+      "seed": 2026072811,
+      "total_transitions": 5050,
+      "wall_seconds": 0.171048875
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.04387019398073577,
+        0.02279075425480878,
+        0.03277500845162916,
+        -0.002761747032637803
+      ],
+      "common_sd": [
+        1.1451976104514654,
+        1.201912325015401,
+        1.2818517160904794,
+        1.2994073434792615
+      ],
+      "ess_bulk": [
+        2064.4502012684416,
+        2618.542793177047,
+        2674.469167696074,
+        3504.84182530843
+      ],
+      "ess_tail": [
+        2424.5959787104757,
+        2116.4010641967257,
+        1755.0166452280155,
+        2560.7388601629227
+      ],
+      "family": "student",
+      "gradient_evaluations": 37432,
+      "gradients_per_draw": 7.4864,
+      "gradients_per_transition": 7.412277227722773,
+      "min_bulk_ess_per_1000_grad": 55.15201435318555,
+      "min_ess_bulk": 2064.4502012684416,
+      "min_ess_tail": 1755.0166452280155,
+      "min_tail_ess_per_1000_grad": 46.885462845373354,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 4.440892098500626e-15,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.22171828
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.003774302918499187,
+        -0.024455942448955395,
+        -0.02047809874987492,
+        0.01055513309937368
+      ],
+      "common_sd": [
+        1.1767432693771083,
+        1.2548270025022972,
+        1.2794713579973225,
+        1.2724608021258248
+      ],
+      "ess_bulk": [
+        5256.640434484381,
+        4659.926696126558,
+        4959.096777428754,
+        5126.953623033145
+      ],
+      "ess_tail": [
+        3978.0628609684236,
+        2988.22754431271,
+        2475.679776244798,
+        3076.4871413451415
+      ],
+      "family": "student",
+      "gradient_evaluations": 23461,
+      "gradients_per_draw": 4.6922,
+      "gradients_per_transition": 4.645742574257426,
+      "min_bulk_ess_per_1000_grad": 198.62438498472181,
+      "min_ess_bulk": 4659.926696126558,
+      "min_ess_tail": 2475.679776244798,
+      "min_tail_ess_per_1000_grad": 105.52319919205482,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.7319479184152442e-14,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.159997152
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.00979364411639866,
+        -0.012567588478927555,
+        -0.008508861442922969,
+        0.02485747201581927
+      ],
+      "common_sd": [
+        1.18094794396444,
+        1.3144364837045173,
+        1.257813724713395,
+        1.2721469544140251
+      ],
+      "ess_bulk": [
+        3892.2926814751995,
+        3735.2966389947455,
+        3993.781170216618,
+        4091.7155417466365
+      ],
+      "ess_tail": [
+        3740.5210715464236,
+        2555.3039347096824,
+        2595.169358207679,
+        2770.7170508741865
+      ],
+      "family": "student",
+      "gradient_evaluations": 29612,
+      "gradients_per_draw": 5.9224,
+      "gradients_per_transition": 5.863762376237624,
+      "min_bulk_ess_per_1000_grad": 126.14131564888375,
+      "min_ess_bulk": 3735.2966389947455,
+      "min_ess_tail": 2555.3039347096824,
+      "min_tail_ess_per_1000_grad": 86.29285204341762,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.0325074129013956e-14,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5050,
+      "wall_seconds": 0.160958258
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.15809271452878762,
+        0.0202167226200407,
+        0.00972277336459922,
+        -0.06663372671039963
+      ],
+      "common_sd": [
+        1.2728936221354428,
+        1.1788144344470302,
+        1.2400935173698242,
+        1.2383593965180537
+      ],
+      "ess_bulk": [
+        58.73301448947761,
+        1925.4573347263643,
+        1093.946996364661,
+        550.7931706973562
+      ],
+      "ess_tail": [
+        166.8173960390532,
+        1423.8835091496705,
+        2068.240924123432,
+        2406.6034193763803
+      ],
+      "family": "student",
+      "gradient_evaluations": 76969,
+      "gradients_per_draw": 15.3938,
+      "gradients_per_transition": 15.214271595176912,
+      "min_bulk_ess_per_1000_grad": 0.7630736334040666,
+      "min_ess_bulk": 58.73301448947761,
+      "min_ess_tail": 166.8173960390532,
+      "min_tail_ess_per_1000_grad": 2.1673322511537525,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072812,
+      "total_transitions": 5059,
+      "wall_seconds": 0.187800855
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.01590685606769468,
+        0.012277823367804365,
+        -0.007782322305987492,
+        -0.011419138287849847
+      ],
+      "common_sd": [
+        1.1862242141918002,
+        1.2599970136059473,
+        1.3189824563959214,
+        1.336705143634566
+      ],
+      "ess_bulk": [
+        5422.41116729365,
+        4947.998408558464,
+        4218.558250824605,
+        5000.842188309732
+      ],
+      "ess_tail": [
+        3312.9528426489337,
+        2768.1663039140276,
+        2202.8045497199773,
+        2876.1794013888702
+      ],
+      "family": "student",
+      "gradient_evaluations": 30194,
+      "gradients_per_draw": 6.0388,
+      "gradients_per_transition": 5.979009900990099,
+      "min_bulk_ess_per_1000_grad": 139.71511726914636,
+      "min_ess_bulk": 4218.558250824605,
+      "min_ess_tail": 2202.8045497199773,
+      "min_tail_ess_per_1000_grad": 72.9550423832542,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2101430968414206e-14,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.187088674
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        -0.013267214999039307,
+        -0.006822855165556536,
+        -0.010943973441128695,
+        0.0028584713489761774
+      ],
+      "common_sd": [
+        1.2033230799749068,
+        1.2365036470816004,
+        1.3752945182983802,
+        1.2696783871560906
+      ],
+      "ess_bulk": [
+        5035.177642959391,
+        4151.00599814624,
+        3804.6545609288846,
+        5268.324854914651
+      ],
+      "ess_tail": [
+        3761.4275600869455,
+        2638.485400255037,
+        2318.362492058301,
+        2681.470389176629
+      ],
+      "family": "student",
+      "gradient_evaluations": 31854,
+      "gradients_per_draw": 6.3708,
+      "gradients_per_transition": 6.307722772277228,
+      "min_bulk_ess_per_1000_grad": 119.4404018625254,
+      "min_ess_bulk": 3804.6545609288846,
+      "min_ess_tail": 2318.362492058301,
+      "min_tail_ess_per_1000_grad": 72.78089069059776,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.0095036745715333e-14,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.172471999
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.1355594041427185,
+        -0.004723375444794673,
+        -0.015706489771624456,
+        -0.0019753544580618783
+      ],
+      "common_sd": [
+        1.1303348146695966,
+        1.3601634341077442,
+        1.3467872277629738,
+        1.3237560486719109
+      ],
+      "ess_bulk": [
+        470.91003288661886,
+        1172.9292425315853,
+        2085.14897512311,
+        2935.28755733371
+      ],
+      "ess_tail": [
+        508.4893865735518,
+        908.5115830264244,
+        1702.5694668693993,
+        3049.754508240209
+      ],
+      "family": "student",
+      "gradient_evaluations": 181808,
+      "gradients_per_draw": 36.3616,
+      "gradients_per_transition": 24.79989087436912,
+      "min_bulk_ess_per_1000_grad": 2.590150229289244,
+      "min_ess_bulk": 470.91003288661886,
+      "min_ess_tail": 508.4893865735518,
+      "min_tail_ess_per_1000_grad": 2.7968482496565157,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 7331,
+      "wall_seconds": 0.501976748
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.025008095503553908,
+        -0.02844479702763826,
+        0.005001106575314686,
+        -0.010516353020660892
+      ],
+      "common_sd": [
+        1.1693969958676151,
+        1.2809036013471662,
+        1.375817527186154,
+        1.2529808850802342
+      ],
+      "ess_bulk": [
+        1587.3216999453039,
+        1556.1462371885557,
+        2250.9968349449464,
+        3967.69722881909
+      ],
+      "ess_tail": [
+        1961.2217345257882,
+        595.230164023434,
+        2049.745966715085,
+        2603.475863764575
+      ],
+      "family": "student",
+      "gradient_evaluations": 53346,
+      "gradients_per_draw": 10.6692,
+      "gradients_per_transition": 10.563564356435643,
+      "min_bulk_ess_per_1000_grad": 29.17081387898916,
+      "min_ess_bulk": 1556.1462371885557,
+      "min_ess_tail": 595.230164023434,
+      "min_tail_ess_per_1000_grad": 11.157915570491394,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.439293542825908e-15,
+      "row_type": "chain",
+      "seed": 2026072813,
+      "total_transitions": 5050,
+      "wall_seconds": 0.254877898
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.016198601793280098,
+        0.01178990782634581,
+        0.020121491625794366,
+        0.010143218265889513
+      ],
+      "common_sd": [
+        1.1703365831420447,
+        1.3028327493824872,
+        1.232672058545302,
+        1.2580569822670389
+      ],
+      "ess_bulk": [
+        4918.51404651106,
+        4051.1484496349553,
+        4363.955147716735,
+        5273.776798193515
+      ],
+      "ess_tail": [
+        3811.013024046176,
+        2278.633723590159,
+        2861.9336837935034,
+        2889.715749129758
+      ],
+      "family": "student",
+      "gradient_evaluations": 31195,
+      "gradients_per_draw": 6.239,
+      "gradients_per_transition": 6.177227722772277,
+      "min_bulk_ess_per_1000_grad": 129.86531333979661,
+      "min_ess_bulk": 4051.1484496349553,
+      "min_ess_tail": 2278.633723590159,
+      "min_tail_ess_per_1000_grad": 73.0448380698881,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.6209256159527285e-14,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5050,
+      "wall_seconds": 0.172288716
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.051041457061316985,
+        0.001615009990440023,
+        0.006339431827028124,
+        0.014047235595253494
+      ],
+      "common_sd": [
+        1.0949785904093794,
+        1.2324135540403272,
+        1.2203677355424367,
+        1.316393982506755
+      ],
+      "ess_bulk": [
+        502.4562883070183,
+        2232.366213689018,
+        2207.447211398329,
+        2574.680694672859
+      ],
+      "ess_tail": [
+        588.9997901029063,
+        1657.6210075330882,
+        2300.79750621862,
+        2944.6521127411042
+      ],
+      "family": "student",
+      "gradient_evaluations": 123019,
+      "gradients_per_draw": 24.6038,
+      "gradients_per_transition": 20.00308943089431,
+      "min_bulk_ess_per_1000_grad": 4.084379553621948,
+      "min_ess_bulk": 502.4562883070183,
+      "min_ess_tail": 588.9997901029063,
+      "min_tail_ess_per_1000_grad": 4.787876589005815,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 6150,
+      "wall_seconds": 0.316924016
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.025984696075437325,
+        0.0023709213853928142,
+        -0.0045749050779897065,
+        -0.04899927779479791
+      ],
+      "common_sd": [
+        1.1848558367670177,
+        1.2603263591123182,
+        1.2572721136790808,
+        1.3344215974354718
+      ],
+      "ess_bulk": [
+        1307.0518280720983,
+        3586.6361097355166,
+        4192.79841143281,
+        4245.9287161316415
+      ],
+      "ess_tail": [
+        1271.6282199296302,
+        2147.8864792376694,
+        3164.342124721506,
+        2559.080389599768
+      ],
+      "family": "student",
+      "gradient_evaluations": 36105,
+      "gradients_per_draw": 7.221,
+      "gradients_per_transition": 7.033898305084746,
+      "min_bulk_ess_per_1000_grad": 36.201407784852464,
+      "min_ess_bulk": 1307.0518280720983,
+      "min_ess_tail": 1271.6282199296302,
+      "min_tail_ess_per_1000_grad": 35.220280291639114,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.217248937900877e-15,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5133,
+      "wall_seconds": 0.073333606
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.02062476032942871,
+        0.008444331621734094,
+        0.015307853688073825,
+        0.010255652913865921
+      ],
+      "common_sd": [
+        1.2044589807215265,
+        1.2720561184273378,
+        1.3203635064791002,
+        1.2812621575369865
+      ],
+      "ess_bulk": [
+        4637.000556688883,
+        4314.189437374514,
+        4900.590816329829,
+        4720.825314455917
+      ],
+      "ess_tail": [
+        3558.4598181830775,
+        2999.3935482088036,
+        2615.460267379803,
+        2542.1970397177015
+      ],
+      "family": "student",
+      "gradient_evaluations": 25846,
+      "gradients_per_draw": 5.1692,
+      "gradients_per_transition": 5.118019801980198,
+      "min_bulk_ess_per_1000_grad": 166.91903727364055,
+      "min_ess_bulk": 4314.189437374514,
+      "min_ess_tail": 2542.1970397177015,
+      "min_tail_ess_per_1000_grad": 98.35939950931292,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 3.26405569239796e-14,
+      "row_type": "chain",
+      "seed": 2026072814,
+      "total_transitions": 5050,
+      "wall_seconds": 0.140166371
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        -0.07131507315589038,
+        -0.05730313323579193,
+        0.06763787140139706,
+        -0.007675436916301266
+      ],
+      "common_sd": [
+        1.0864745398530877,
+        1.2699671098460557,
+        1.3477012998749776,
+        1.2725705833907124
+      ],
+      "ess_bulk": [
+        314.2531487208736,
+        2356.040860503902,
+        2707.2182844714316,
+        2609.909813502153
+      ],
+      "ess_tail": [
+        146.2218768274946,
+        1840.952585259432,
+        2511.71600651456,
+        2711.2044863246037
+      ],
+      "family": "student",
+      "gradient_evaluations": 82795,
+      "gradients_per_draw": 16.559,
+      "gradients_per_transition": 15.983590733590734,
+      "min_bulk_ess_per_1000_grad": 3.795557083409307,
+      "min_ess_bulk": 314.2531487208736,
+      "min_ess_tail": 146.2218768274946,
+      "min_tail_ess_per_1000_grad": 1.766071342804452,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5180,
+      "wall_seconds": 0.213334118
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        0.05696982253635837,
+        -0.031356271642772014,
+        0.028087954437350293,
+        -0.025705797823582635
+      ],
+      "common_sd": [
+        1.14412010776982,
+        1.3539376528963232,
+        1.331779555502209,
+        1.2237777857501064
+      ],
+      "ess_bulk": [
+        1514.0446002101835,
+        2843.191059040789,
+        3620.5770116528074,
+        5227.77282486266
+      ],
+      "ess_tail": [
+        1941.5788707957356,
+        2176.11050566201,
+        2519.5163319078847,
+        3436.8969683670216
+      ],
+      "family": "student",
+      "gradient_evaluations": 38151,
+      "gradients_per_draw": 7.6302,
+      "gradients_per_transition": 7.405085403726708,
+      "min_bulk_ess_per_1000_grad": 39.68558098634855,
+      "min_ess_bulk": 1514.0446002101835,
+      "min_ess_tail": 1941.5788707957356,
+      "min_tail_ess_per_1000_grad": 50.89195226326271,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 6.217248937900877e-15,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5152,
+      "wall_seconds": 0.108956554
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        -0.0003156295383068396,
+        -0.019458936998439192,
+        0.046902873631064344,
+        0.03350604813001933
+      ],
+      "common_sd": [
+        1.2317424357684275,
+        1.2782540962440638,
+        1.3392548654680099,
+        1.235303044346156
+      ],
+      "ess_bulk": [
+        5322.930494490766,
+        4814.204448931965,
+        3733.724204045668,
+        5258.01312259561
+      ],
+      "ess_tail": [
+        3787.1093848447135,
+        2644.4775773547844,
+        2428.5879561201205,
+        3021.7405016570306
+      ],
+      "family": "student",
+      "gradient_evaluations": 28216,
+      "gradients_per_draw": 5.6432,
+      "gradients_per_transition": 5.587326732673267,
+      "min_bulk_ess_per_1000_grad": 132.32648866053546,
+      "min_ess_bulk": 3733.724204045668,
+      "min_ess_tail": 2428.5879561201205,
+      "min_tail_ess_per_1000_grad": 86.07130550468246,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.1629586182948515e-14,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5050,
+      "wall_seconds": 0.167309925
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.01660175071913671,
+        0.0383920881313286,
+        0.00410927785321633,
+        0.018389884317075274
+      ],
+      "common_sd": [
+        1.1831549457567507,
+        1.3578140991325631,
+        1.2944643067921453,
+        1.292114879796108
+      ],
+      "ess_bulk": [
+        4656.752083994389,
+        3952.089983964461,
+        3798.2708616816208,
+        4851.030904930853
+      ],
+      "ess_tail": [
+        3849.055176929836,
+        2396.744503406449,
+        2127.607227175675,
+        2921.503879671115
+      ],
+      "family": "student",
+      "gradient_evaluations": 31351,
+      "gradients_per_draw": 6.2702,
+      "gradients_per_transition": 6.208118811881188,
+      "min_bulk_ess_per_1000_grad": 121.1531007521808,
+      "min_ess_bulk": 3798.2708616816208,
+      "min_ess_tail": 2127.607227175675,
+      "min_tail_ess_per_1000_grad": 67.86409451614541,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.2878587085651816e-14,
+      "row_type": "chain",
+      "seed": 2026072815,
+      "total_transitions": 5050,
+      "wall_seconds": 0.148200459
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "common_mean": [
+        -0.045626978333153496,
+        0.0013295376228750835,
+        -0.02169140994974978,
+        -0.00033754030517151794
+      ],
+      "common_sd": [
+        1.1811259746417055,
+        1.2086430377672766,
+        1.3159759588196889,
+        1.316394266342025
+      ],
+      "ess_bulk": [
+        945.4455400369052,
+        3681.4390923058545,
+        3413.6749836790923,
+        3583.3972190296513
+      ],
+      "ess_tail": [
+        938.7727479951731,
+        2800.7601252978134,
+        2003.6310904764334,
+        2584.7324034972944
+      ],
+      "family": "student",
+      "gradient_evaluations": 38402,
+      "gradients_per_draw": 7.6804,
+      "gradients_per_transition": 7.474114441416893,
+      "min_bulk_ess_per_1000_grad": 24.619695329329335,
+      "min_ess_bulk": 945.4455400369052,
+      "min_ess_tail": 938.7727479951731,
+      "min_tail_ess_per_1000_grad": 24.445933753324645,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 7.105427357601002e-15,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5138,
+      "wall_seconds": 0.096037503
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "common_mean": [
+        0.007855671543332853,
+        -0.01841142435983251,
+        0.008279207072138976,
+        -0.0264291214902528
+      ],
+      "common_sd": [
+        1.2054456770088546,
+        1.3056004572597362,
+        1.333464962623834,
+        1.2826202982798904
+      ],
+      "ess_bulk": [
+        4855.306263470316,
+        5541.283963526163,
+        4760.1238630144535,
+        5435.882175380403
+      ],
+      "ess_tail": [
+        3690.591958726402,
+        2827.304304490437,
+        2620.002732059719,
+        2890.6982460916197
+      ],
+      "family": "student",
+      "gradient_evaluations": 28747,
+      "gradients_per_draw": 5.7494,
+      "gradients_per_transition": 5.692475247524753,
+      "min_bulk_ess_per_1000_grad": 165.5868042931246,
+      "min_ess_bulk": 4760.1238630144535,
+      "min_ess_tail": 2620.002732059719,
+      "min_tail_ess_per_1000_grad": 91.14004007582423,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.7763568394002505e-14,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5050,
+      "wall_seconds": 0.179334662
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "common_mean": [
+        0.02158717801665976,
+        -0.009263558260925646,
+        -0.01639914438009148,
+        0.01683404592454555
+      ],
+      "common_sd": [
+        1.2026101116276164,
+        1.2533825785230275,
+        1.4493494028072778,
+        1.3539025528883735
+      ],
+      "ess_bulk": [
+        4745.7710505267605,
+        4320.232011993244,
+        3843.461012269194,
+        4828.301762985666
+      ],
+      "ess_tail": [
+        3493.985338357127,
+        2669.7394931072454,
+        2219.6208219845225,
+        1435.4185146234488
+      ],
+      "family": "student",
+      "gradient_evaluations": 32666,
+      "gradients_per_draw": 6.5332,
+      "gradients_per_transition": 6.468514851485149,
+      "min_bulk_ess_per_1000_grad": 117.65937097499521,
+      "min_ess_bulk": 3843.461012269194,
+      "min_ess_tail": 1435.4185146234488,
+      "min_tail_ess_per_1000_grad": 43.942279881939896,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 2.708944180085382e-14,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5050,
+      "wall_seconds": 0.180601751
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "common_mean": [
+        0.0918501806434596,
+        -0.032112659969759545,
+        0.009776122972720147,
+        -0.01318147768859709
+      ],
+      "common_sd": [
+        1.1967819239428186,
+        1.3264398240211945,
+        1.1936091191471407,
+        1.2502551803791813
+      ],
+      "ess_bulk": [
+        175.41019472131924,
+        1561.2338806065854,
+        1999.3368441264422,
+        1955.0037604543222
+      ],
+      "ess_tail": [
+        48.97553665788687,
+        1400.3337154216167,
+        2541.0213544441294,
+        2555.68345444516
+      ],
+      "family": "student",
+      "gradient_evaluations": 69953,
+      "gradients_per_draw": 13.9906,
+      "gradients_per_transition": 13.735126644413901,
+      "min_bulk_ess_per_1000_grad": 2.5075435609812193,
+      "min_ess_bulk": 175.41019472131924,
+      "min_ess_tail": 48.97553665788687,
+      "min_tail_ess_per_1000_grad": 0.7001206046615137,
+      "n_divergent": 0,
+      "n_draws": 5000,
+      "returned_draw_roundtrip_max_abs": 1.4210854715202004e-14,
+      "row_type": "chain",
+      "seed": 2026072816,
+      "total_transitions": 5093,
+      "wall_seconds": 0.16508944
+    },
+    {
+      "arm": "exact_score_reference",
+      "c": [
+        0.2,
+        0.6,
+        0.9
+      ],
+      "ess_bulk": [
+        84135.42956622913,
+        79867.93242468475,
+        75019.87739504408,
+        79470.59751807347
+      ],
+      "ess_tail": [
+        60680.12182721949,
+        46681.47002524434,
+        42515.76623158249,
+        45374.16230970144
+      ],
+      "family": "student",
+      "max_rhat": 1.0005839109803,
+      "min_ess_bulk": 75019.87739504408,
+      "min_ess_tail": 42515.76623158249,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0001760699748659,
+        1.0002771238560337,
+        1.0002163911893565,
+        1.0005839109803
+      ],
+      "row_type": "pooled",
+      "total_divergent": 0,
+      "total_gradient_evaluations": 444548
+    },
+    {
+      "arm": "invariant_proxy",
+      "c": [
+        0.5,
+        0.7,
+        0.9
+      ],
+      "ess_bulk": [
+        80146.95220692107,
+        61659.873542531896,
+        68121.86813135471,
+        76979.62127250864
+      ],
+      "ess_tail": [
+        63703.50038256409,
+        42568.321740315834,
+        43945.728439339466,
+        44660.66166414185
+      ],
+      "family": "student",
+      "max_rhat": 1.0003712868251577,
+      "min_ess_bulk": 61659.873542531896,
+      "min_ess_tail": 42568.321740315834,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0001256702051968,
+        1.0003179177241588,
+        1.0003712868251577,
+        1.0000984466472718
+      ],
+      "row_type": "pooled",
+      "total_divergent": 0,
+      "total_gradient_evaluations": 480674
+    },
+    {
+      "arm": "whitened_noncentered",
+      "c": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "ess_bulk": [
+        2794.8294021325496,
+        14051.19337268204,
+        22240.067693323246,
+        15900.367700225557
+      ],
+      "ess_tail": [
+        1225.0426512276267,
+        5866.255609039138,
+        20094.95610495777,
+        6260.3689681461465
+      ],
+      "family": "student",
+      "max_rhat": 1.0066397167927033,
+      "min_ess_bulk": 2794.8294021325496,
+      "min_ess_tail": 1225.0426512276267,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0066397167927033,
+        1.0013361917002748,
+        1.0006282087482294,
+        1.0008853537694886
+      ],
+      "row_type": "pooled",
+      "total_divergent": 0,
+      "total_gradient_evaluations": 1645986
+    },
+    {
+      "arm": "fully_centered",
+      "c": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "ess_bulk": [
+        10536.652739579476,
+        31327.98397632716,
+        48076.96621762813,
+        64826.93392339804
+      ],
+      "ess_tail": [
+        5880.29041612674,
+        29481.12190011184,
+        33348.27768972396,
+        42604.76295233952
+      ],
+      "family": "student",
+      "max_rhat": 1.0013865728631701,
+      "min_ess_bulk": 10536.652739579476,
+      "min_ess_tail": 5880.29041612674,
+      "n_chains": 16,
+      "n_common_draws_per_chain": 5000,
+      "rhat_rank": [
+        1.0013865728631701,
+        1.0005009301265677,
+        1.0004100622664636,
+        1.0003981091863483
+      ],
+      "row_type": "pooled",
+      "total_divergent": 0,
+      "total_gradient_evaluations": 667667
+    }
+  ]
+}

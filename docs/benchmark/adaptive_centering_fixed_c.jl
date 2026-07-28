@@ -28,6 +28,8 @@ ace_fmt_range(xs; digits = 2) = begin
     string(round(lo; digits), "–", round(hi; digits))
 end
 
+ace_numeric(rows, key) = Float64[r[key] for r in rows if r[key] isa Real]
+
 function ace_summary_rows(d)
     chain_rows = ace_chain_rows(d)
     pooled_rows = ace_pooled_rows(d)
@@ -36,15 +38,17 @@ function ace_summary_rows(d)
         rs = [r for r in chain_rows if r["family"] == family && r["arm"] == arm]
         isempty(rs) && continue
         pooled = only(r for r in pooled_rows if r["family"] == family && r["arm"] == arm)
-        bulk_eff = [r["min_bulk_ess_per_1000_grad"] for r in rs]
-        tail_eff = [r["min_tail_ess_per_1000_grad"] for r in rs]
-        grad_draw = [r["gradients_per_draw"] for r in rs]
+        bulk_eff = ace_numeric(rs, "min_bulk_ess_per_1000_grad")
+        tail_eff = ace_numeric(rs, "min_tail_ess_per_1000_grad")
+        grad_draw = ace_numeric(rs, "gradients_per_draw")
         push!(out, (
             family = ace_family_label(family),
             arm = ace_arm_label(arm),
             chain_bulk_eff_median = Statistics.median(bulk_eff),
             chain_bulk_eff_range = ace_fmt_range(bulk_eff),
+            chain_bulk_eff_n = length(bulk_eff),
             chain_tail_eff_median = Statistics.median(tail_eff),
+            chain_tail_eff_n = length(tail_eff),
             chain_gradients_per_draw_median = Statistics.median(grad_draw),
             chain_gradients_per_draw_range = ace_fmt_range(grad_draw),
             divergences = sum(r["n_divergent"] for r in rs),

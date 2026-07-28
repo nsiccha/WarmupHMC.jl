@@ -4,13 +4,33 @@
 1000, Julia 1.10.11, single-threaded BLAS, on `strato2`. 184 runs per backend,
 0 failed.
 
-`5637fcf` is not the tip this landed on, so the gap is stated rather than
-assumed: from `5637fcf` to `c4e4670`, `src/Reparametrizations.jl` changes by
-**docstring text only** and `web/src/WarmupHMCWeb.jl` gains 294 lines with **zero
-deletions** (docs route rendering). Nothing under `web/src/posteriordb_reparametrizations.jl`
-— the spec table these numbers differentiate — moved at all. The gradient path
-is byte-identical across the two, which is why the tables were not re-run for
-the tip; `git diff 5637fcf..c4e4670 -- src/ web/src/` is the check.
+`5637fcf` is not the tip this landed on, and by now it is a long way behind it,
+so the gap is **checked** rather than stated. `docs/benchmark/code_identical.jl`
+parses every file under `src/` at two revisions, strips docstrings and line
+numbers, and compares the resulting ASTs:
+
+    julia docs/benchmark/code_identical.jl 5637fcf <tip>
+
+Against `04b6da9`, canonical when this paragraph was written, that reports
+**CODE-IDENTICAL across all 12 files** — the three commits that touched
+`src/Reparametrizations.jl` since the base (`fb5af1d`, `62ba171`, `dd50818`) are
+docstring edits, and the sampler defines the same methods with the same bodies.
+The gradient path cannot have moved, which is why the tables were not re-run for
+the tip. That SHA will be stale by the time you read it: **re-run the script
+against the tip you have.** What justifies these tables is the script's verdict,
+not this sentence.
+
+Reading `git diff` was the old check and it is the weak one here: those three
+commits produce a 121-line diff in a file whose docstrings are long enough to
+bury a one-line code change, and an all-prose diff looks exactly like a
+mostly-prose diff. The script exits 1 when code really does differ — verified on
+`b0a1c4f~1..b0a1c4f`, a real change to the same file — so it is a check that has
+been observed to fail, not just to pass.
+
+Outside `src/`, `web/src/WarmupHMCWeb.jl` gains 304 lines and deletes 4, all of
+them route markup for the docs pages. Nothing under
+`web/src/posteriordb_reparametrizations.jl` — the spec table these numbers
+differentiate — moved at all.
 
 This base was measured **twice, under both AD backends**, changing nothing else:
 `results/enzyme-5637fcf/` (the default, `AutoEnzyme(; function_annotation =

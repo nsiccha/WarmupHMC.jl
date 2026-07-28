@@ -147,6 +147,22 @@ is therefore rendered beside the SHA rather than dropped, and an artifact that
 does not record the flag says so — silence would be indistinguishable from a
 verified-clean tree, which is the whole defect.
 
+**`src_dirty` narrows that verdict, and is read when present.** `git_provenance`
+records two flags from the same call: `worktree_dirty` over the whole tree, and
+`src_dirty` from `git status --porcelain --untracked-files=no -- src`. Where the
+second is `false`, no tracked file under `src/` differed, so the recorded SHA
+*does* describe the package source that ran and the full-strength sentence above
+would be false about the code the numbers are a measurement of. This function
+therefore renders the narrower claim in that case, and the unqualified one only
+when `src_dirty` is `true` or absent — the pre-`src_dirty` artifacts, where
+nothing narrows it.
+
+Read a `worktree_dirty = true` beside a `src_dirty = false` with the trap
+documented on `git_provenance` in `docs/benchmark/common.jl` in mind: a harness
+that splats `git_provenance()` *inside* its own `open(path, "w")` block sees the
+output file it is truncating and records `true` over a clean tree. That shape
+dirties only the results path, never `src/`, so it produces exactly this pair.
+
 It is rendered rather than refused because a dirty measurement is not worthless,
 only unattributable, and some are kept deliberately as history: the `b5c7dee`
 boxed-spec base carries `worktree_dirty = true` and is `SUPERSEDED` on purpose.
@@ -183,9 +199,13 @@ function provenance(d::AbstractDict; harness::AbstractString)
     bt === nothing || push!(bits, "$(bt) BLAS thread$(bt == 1 ? "" : "s")")
     base = string(join(bits, ", "), ", by `", harness, "`.")
     dirty = field("worktree_dirty")
-    dirty === true && return base *
+    dirty === true && return base * (field("src_dirty") === false ?
+        " **Recorded from a worktree with uncommitted changes, though none under" *
+        " `src/`** — so the revision named above does describe the package source" *
+        " that ran. What differed was elsewhere in the tree, which this flag does" *
+        " not localise further; the harness itself is one such place." :
         " **Recorded from a worktree with uncommitted changes**, so the revision" *
-        " named above does not describe the code that ran — and no revision does."
+        " named above does not describe the code that ran — and no revision does.")
     sha === nothing || dirty !== nothing ||
         return base * " (Worktree cleanliness was not recorded.)"
     base

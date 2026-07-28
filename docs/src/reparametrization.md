@@ -105,8 +105,9 @@ you fill in.
     Mentioned because the failure was in a released state of the docs, and
     because it is the shape to expect if a future change adds a third call site:
     a backend that works for hundreds of gradients and then throws is a
-    *coverage* problem, not a user error. `web/src/test/enzyme/` exists to catch
-    exactly that and now pins this site with a plain `Const`.
+    *coverage* problem, not a user error. `web/src/test/enzyme.jl` exists to catch
+    exactly that and now pins this site with a plain `Const`. It is tagged
+    `:enzyme` and skipped by the main matrix, so run it with `--tag=enzyme`.
 
 !!! note "WarmupHMC does not depend on ForwardDiff, and does not want to"
     `Project.toml` has no ForwardDiff entry — not a direct dependency, and there
@@ -117,7 +118,8 @@ you fill in.
     `Dual`-valued parameters, which a natively-backed target such as a BridgeStan
     model could not accept. If you find `AutoForwardDiff()` named in a test or a
     benchmark here, that is a harness pinned to its own frozen baselines, not a
-    recommendation — `web/src/test/ad_backend.jl` says so at the point of use.
+    recommendation — the `ADBackend` snippet in `web/src/test/setup.jl` says so at
+    the point of use.
 
 ## A complete worked example
 

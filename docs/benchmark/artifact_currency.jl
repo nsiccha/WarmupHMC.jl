@@ -39,13 +39,27 @@
 # exact failure mode probe-schema.yml's seed step exists to prevent on the
 # other side of this. So zero checked artifacts is an explicit red.
 #
-# SHALLOW CLONES
+# WHEN THE BASE CANNOT BE USED
 #
-# `actions/checkout@v4` defaults to depth 1: the tip and nothing else, so no
-# artifact's base SHA resolves. That is reported as UNRESOLVABLE (red), never
-# skipped -- a currency check that silently passes because it could not look up
-# any base is worse than no check. A CI job hosting this needs
-# `with: fetch-depth: 0`.
+# A base that cannot be compared is reported red, never skipped -- a currency
+# check that silently passes because it could not look up any base is worse than
+# no check.
+#
+# But "cannot be used" is THREE states with three different fixes, and this
+# script used to print one message for all of them, naming the fix for only the
+# first:
+#
+#   * absent from a SHALLOW clone -- `actions/checkout@v4` defaults to depth 1,
+#     so no base resolves. `with: fetch-depth: 0` is the fix.
+#   * absent from a FULL clone -- every ref was fetched and the commit is on
+#     none of them. No checkout setting helps.
+#   * PRESENT but contained by zero refs -- resolvable here, resolvable nowhere
+#     else, and only until the next `gc`.
+#
+# The last two are real in this repo: `5637fcf` and `b5c7dee` are present as
+# objects and `git for-each-ref --contains` returns nothing for either. Telling
+# a reader to set `fetch-depth: 0` for those sends them to fix a checkout config
+# that is already correct. See `unresolvable_reason`.
 
 include(joinpath(@__DIR__, "code_identical.jl"))
 
@@ -91,6 +105,53 @@ end
 
 resolves(rev) = success(Cmd(["git", "-C", REPO, "rev-parse", "-q", "--verify", "$rev^{commit}"]))
 
+"""Is this checkout a shallow clone? The precise discriminator for the
+`fetch-depth` hint -- see `unresolvable_reason`."""
+is_shallow() = strip(git("rev-parse", "--is-shallow-repository")) == "true"
+
+"""How many refs contain `rev`. Zero means the commit is present as an object
+but reachable from nothing: it survives only until the next `gc`, and no fetch
+setting recovers it."""
+function containing_refs(rev)
+    # `String[...]`, not `[...]`: `rev` arrives as a `SubString` from the regex
+    # capture, which widens the literal to `Vector{AbstractString}` and there is
+    # no `Cmd` method for that.
+    out = read(Cmd(String["git", "-C", REPO, "for-each-ref", "--contains", rev,
+                          "--format=%(refname)"]), String)
+    count(!isempty, split(strip(out), '\n'; keepempty = false))
+end
+
+"""Why a base SHA could not be used, as a message naming the fix that applies.
+
+Three states hide behind one failed `rev-parse`, and they call for opposite
+responses -- which is the whole reason this is not one branch:
+
+  * **absent, shallow clone** -- the object was never fetched. `fetch-depth: 0`
+    fixes it, and this is the only case where saying so is correct.
+  * **absent, full clone** -- a full fetch already brought every ref, so the
+    commit is on none of them. No checkout setting recovers it; it was rebased
+    away or never published.
+  * **present, on no ref** -- the object is here and the comparison below is
+    computable, but it is unreachable: `git gc` may drop it at any time, and a
+    fresh clone will not have it at all. The artifact's provenance is therefore
+    not reproducible by anyone else, which is what the check exists to
+    establish.
+
+Reporting all three as "shallow clone?" sends a reader to fix a checkout
+setting that is already correct -- and in the third case, to fix one while the
+comparison it would enable is running fine."""
+function unresolvable_reason(sha)
+    if resolves(sha)
+        return "on NO REF — present as an object but reachable from nothing, so " *
+               "`git gc` may drop it and a fresh clone never had it. NOT a checkout " *
+               "setting: re-measure, or record why this base is unreachable"
+    end
+    is_shallow() ?
+        "NOT FETCHED — this is a shallow clone; CI needs `with: fetch-depth: 0`" :
+        "NOT FETCHED — and this is a FULL clone, so no `fetch-depth` change helps: " *
+        "the commit is on no fetched ref (rebased away, or never published)"
+end
+
 function main_currency(args)
     tip = isempty(args) ? "HEAD" : args[1]
     resolves(tip) || error("tip revision `$tip` does not resolve")
@@ -111,9 +172,23 @@ function main_currency(args)
             println(rpad(p, 56), "  NO warmuphmc_sha — cannot be checked; record one, or mark the run SUPERSEDED")
             continue
         end
-        if !resolves(sha)
+        usable = resolves(sha) && containing_refs(sha) > 0
+        if !usable
             push!(red, p)
-            println(rpad(p, 56), "  UNRESOLVABLE base $sha — shallow clone? CI needs `with: fetch-depth: 0`")
+            println(rpad(p, 56), "  UNUSABLE base $sha — ", unresolvable_reason(sha))
+            # An unreachable-but-present base can still be compared, and the
+            # answer is worth printing: it separates "the provenance is not
+            # reproducible" from "and the numbers are wrong too". It does NOT
+            # count toward `checked` -- a base nobody else can resolve is not a
+            # verified one, whatever the comparison says.
+            if resolves(sha)
+                base, head = src_reprs(sha), src_reprs(tip)
+                differing = [f for f in union(keys(base), keys(head))
+                             if get(base, f, nothing) != get(head, f, nothing)]
+                println(" "^58, "(locally: ", isempty(differing) ?
+                    "code-identical to $tip anyway" :
+                    "also differs in " * join(sort(differing), ", "), ")")
+            end
             continue
         end
 

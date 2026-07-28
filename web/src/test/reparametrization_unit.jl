@@ -83,50 +83,47 @@
                 WarmupHMC.record_leaf!(leaves, position, gradient, dH)
             end
             WarmupHMC.finalize_leaf_weights!(leaves, 2)
-            full_tree = (; depth=2, steps=3)
-
             exact = WarmupHMC.NonlinearRecorder(
-                rp; mode=:nuts_weighted, trajectory_weighting=:auto,
+                rp; mode=:nuts_weighted,
             )
-            @test exact.trajectory_weighting === :stepsize_valid_fraction_then_unit
+            @test exact.trajectory_weighting === :unit
             WarmupHMC.record_nonlinear!(
-                exact, rp, leaves, full_tree, 0.25; adapting_stepsize=true,
-            )
-            for (_, candidates) in exact.online.pairs, (_, loss) in candidates.pairs
-                @test loss.weight ≈ 0.25
-                @test loss.groups == 1
-            end
-
-            WarmupHMC.reset!(exact)
-            WarmupHMC.record_nonlinear!(
-                exact, rp, leaves, full_tree, 0.25; adapting_stepsize=false,
+                exact, rp, leaves, 0.25,
             )
             for (_, candidates) in exact.online.pairs, (_, loss) in candidates.pairs
                 @test loss.weight ≈ 1
                 @test loss.groups == 1
             end
 
-            good = WarmupHMC.NonlinearRecorder(
-                rp; mode=:all_good_leaves, trajectory_weighting=:auto,
+            exact_stepsize = WarmupHMC.NonlinearRecorder(
+                rp; mode=:nuts_weighted, trajectory_weighting=:stepsize,
             )
-            WarmupHMC.record_nonlinear!(
-                good, rp, leaves, full_tree, 0.25; adapting_stepsize=true,
-            )
-            for (_, candidates) in good.online.pairs, (_, loss) in candidates.pairs
-                @test loss.weight ≈ 3 * 0.25
+            WarmupHMC.record_nonlinear!(exact_stepsize, rp, leaves, 0.25)
+            for (_, candidates) in exact_stepsize.online.pairs, (_, loss) in candidates.pairs
+                @test loss.weight ≈ 0.25
                 @test loss.groups == 1
             end
 
-            # Only one of three evaluated noninitial steps belongs to the final valid
-            # tree, so the whole trajectory is scaled by 1/3. The acceptable-leaf
-            # mode deliberately still sees all acceptable evaluated leaves.
-            invalid_expansion = (; depth=1, steps=3)
-            WarmupHMC.reset!(good)
+            good = WarmupHMC.NonlinearRecorder(
+                rp; mode=:all_good_leaves,
+            )
+            @test good.trajectory_weighting === :unit
             WarmupHMC.record_nonlinear!(
-                good, rp, leaves, invalid_expansion, 0.25; adapting_stepsize=true,
+                good, rp, leaves, 0.25,
             )
             for (_, candidates) in good.online.pairs, (_, loss) in candidates.pairs
-                @test loss.weight ≈ 3 * 0.25 / 3
+                @test loss.weight ≈ 3
+                @test loss.groups == 1
+            end
+
+            stepsize = WarmupHMC.NonlinearRecorder(
+                rp; mode=:all_good_leaves, trajectory_weighting=:stepsize,
+            )
+            WarmupHMC.record_nonlinear!(
+                stepsize, rp, leaves, 0.25,
+            )
+            for (_, candidates) in stepsize.online.pairs, (_, loss) in candidates.pairs
+                @test loss.weight ≈ 3 * 0.25
                 @test loss.groups == 1
             end
         end
@@ -219,6 +216,9 @@
         @test_throws ArgumentError WarmupHMC.NonlinearRecorder(Funnel(3); mode=:unknown)
         @test_throws ArgumentError WarmupHMC.NonlinearRecorder(
             Funnel(3); trajectory_weighting=:unknown,
+        )
+        @test_throws ArgumentError WarmupHMC.NonlinearRecorder(
+            Funnel(3); trajectory_weighting=:auto,
         )
     end
     LogDensityProblems.dimension(m::NestedFunnel) = m.k + 2

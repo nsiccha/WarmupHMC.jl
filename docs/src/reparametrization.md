@@ -46,15 +46,34 @@ On that last point: WarmupHMC differentiates a scalar objective in the *full*
 parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
 reverse mode exists for — its cost is one pass regardless of dimension, while
 forward mode costs one pass per input. That is an argument about **operation
-counts**, not wall-clock. Reverse mode does win on every clean measurement taken
-here — but "clean" is doing work in that sentence: most of the larger targets
-were timed against reparametrization specs carrying a closure-capture defect
-that dominated the gradient, and those rows measure the defect rather than the
-backend. Only two of the swept targets are free of it, and the one large target
-that has been rebuilt without it was rebuilt for exactly that comparison. So the
-advantage is real wherever it has been measured properly, and how it *scales*
-with dimension remains untested. Both tables, and the A/B that isolates the
-defect, are under [What the backend costs, measured](@ref). Reverse mode is a
+counts**, not wall-clock. What the measurements say is a separate question, so it
+is read off them rather than asserted here:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+b = load_results("capture_boxing.json")
+boxed = Set(c["target"] for c in b["captures"] if c["boxed"])
+rows = [r for r in load_results("annotation_sweep.json")["rows"]
+        if r["ns_forwarddiff"] !== nothing && r["ns_const"] !== nothing]
+wins = count(r -> Float64(r["ns_const"]) < Float64(r["ns_forwarddiff"]), rows)
+nb = count(r -> r["target"] in boxed, rows)
+Markdown.parse(
+    (wins == length(rows) ?
+     "Reverse mode is ahead on **every one of the $(length(rows)) swept rows**" :
+     "**Reverse mode is ahead on only $(wins) of the $(length(rows)) swept " *
+     "rows**") * ", and " *
+    (nb == 0 ?
+     "no swept spec captures a `Core.Box`, so no row is measuring that defect " *
+     "in place of the backend." :
+     "**$(nb) of them capture a `Core.Box`**, so those rows measure that defect " *
+     "rather than the backend and the count above is not about reverse mode."))
+```
+
+How the advantage *scales* with dimension is a third question again, and it is
+answered from the same rows under
+[What the backend costs, measured](@ref) — which also holds both tables and the
+A/B that isolates the capture defect. Reverse mode is a
 reasonable default and what the examples below use; if the gradient is your
 bottleneck, measure both on your own model rather than reasoning from dimension.
 
@@ -158,12 +177,34 @@ Markdown.parse("*" * provenance(load_results("annotation_sweep.json");
                                 harness = "annotation_sweep.jl") * "*")
 ```
 
-Two things to read off that table, and one not to. `Duplicated` costs more than
-`Const` on every row — the shadow copy is real work. And the last column is
-below `1×` throughout, but it must not be read as a trend in `d`: the two
-`d = 10` targets sit at opposite ends of the spread, so which target it is
-matters more than how large it is. A dimension trend, if there is one, is
-visible only within a target.
+Two things to read off that table, and one not to. Both of the two are counted
+from the rows rather than by eye, so that a re-measurement which breaks either
+one says so here instead of leaving the sentence standing:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+rows = load_results("annotation_sweep.json")["rows"]
+pair = [r for r in rows if r["ns_duplicated"] !== nothing && r["ns_const"] !== nothing]
+fd = [r for r in rows if r["ns_forwarddiff"] !== nothing && r["ns_const"] !== nothing]
+ndup = count(r -> Float64(r["ns_duplicated"]) > Float64(r["ns_const"]), pair)
+nlt = count(r -> Float64(r["ns_const"]) < Float64(r["ns_forwarddiff"]), fd)
+Markdown.parse(
+    (ndup == length(pair) ?
+     "`Duplicated` costs more than `Const` on all $(length(pair)) rows — the " *
+     "shadow copy is real work." :
+     "**`Duplicated` costs more than `Const` on only $(ndup) of $(length(pair)) " *
+     "rows**, so the shadow copy is not uniformly the more expensive annotation " *
+     "here.") * " " *
+    (nlt == length(fd) ?
+     "The last column is below `1×` on all $(length(fd)) of them." :
+     "**The last column is below `1×` on only $(nlt) of $(length(fd)) rows.**"))
+```
+
+What must *not* be read off it is a trend in `d`. Which target a row is may
+matter more than how large that target is, and separating the two takes more
+than a glance down the column — so it is deferred to a measurement below rather
+than settled here.
 
 That last point is easier to see than to say. The same column, plotted against
 `d` — every point below the dashed parity line, and the vertical spread at a
@@ -309,10 +350,56 @@ Markdown.parse(isempty(crossed) ?
     "is ahead depends on where the gradient is taken.")
 ```
 
-The size of the gap moves in both directions and by different amounts per
-target, which is why a single cross-target number for "how much faster" would be
-the wrong thing to quote from this page. Where a gradient is taken is part of
-what a gradient benchmark measures.
+A single cross-target number for "how much faster" would therefore be the wrong
+thing to quote from this page. Where a gradient is taken is part of what a
+gradient benchmark measures.
+
+!!! warning "The per-target `shift` column is not a result"
+    Read the shifts as *unresolved*, not as small findings. Each cell in the
+    two ratio columns is a **median over `rounds` repeats, and only that median
+    is stored** — the spread across those repeats, which is the one number that
+    would say whether a shift of a few percent is real, was computed during the
+    run and thrown away. So this page cannot tell you whether a shift is
+    separable from run-to-run variation, and neither can you from what is
+    checked in.
+
+    That is not a hypothetical worry about clocks in general. A companion
+    end-to-end measurement timed two **code-identical** revisions with
+    **bit-identical** trajectories — no ESS, gradient count or final centering
+    moved — and its wall-clock ratios still differed by up to tens of percent,
+    with one changing sign. That was a different quantity from this page's
+    per-gradient microbenchmark and its band does not transfer numerically, so
+    treat it as a reason for caution about *small* clock differences here, not
+    as a measured error bar for this table.
+
+**What survives regardless is whatever has margin**, and how much margin there
+is depends on the numbers rather than on this sentence, so it is computed from
+them:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+t = load_results("typical_positions.json")
+margin(r) = 100 * min(abs(Float64(r["const_over_fd_randn"]) - 1),
+                      abs(Float64(r["const_over_fd_typical"]) - 1))
+shift(r) = 100 * abs(Float64(r["const_over_fd_typical"]) /
+                     Float64(r["const_over_fd_randn"]) - 1)
+mm, ms = minimum(margin, t["rows"]), maximum(shift, t["rows"])
+Markdown.parse(
+    "*The smallest distance from `1×` anywhere in the table is " *
+    "$(num(mm; sig = 2))%, while the largest shift between the two columns is " *
+    "$(num(ms; sig = 2))%. " *
+    (mm > 2 * ms ?
+     "The first is the larger by more than a factor of two, which is why the " *
+     "statement about which backend is ahead can rest on these numbers while " *
+     "the individual shifts cannot." :
+     "**Those are now comparable, so the sign statement above no longer has " *
+     "margin over the shifts and should not be relied on until the harness " *
+     "records its per-round spread.**") * "*")
+```
+
+A gradient *count* elsewhere in this manual carries weight these timings do not:
+a count is provenance, a clock is a measurement of the machine that took it.
 
 ## A complete worked example
 

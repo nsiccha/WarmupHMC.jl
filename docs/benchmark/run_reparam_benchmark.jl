@@ -136,14 +136,35 @@ jsonsafe(x::AbstractVector) = [jsonsafe(v) for v in x]
 jsonsafe(x::NamedTuple) = Dict(string(k) => jsonsafe(v) for (k, v) in pairs(x))
 jsonsafe(x) = x
 
+# Provenance travels WITH the numbers, in the file, not in prose that can drift
+# away from them. `warmuphmc_sha` because a benchmark measured against a
+# regression is indistinguishable from a good one by inspection; `ad_backend`
+# because forward vs reverse mode moved the wrapper-overhead figures enough to
+# invert a wall-clock verdict. Both are provenance, and neither is recoverable
+# after the fact.
+whmc_sha() = try
+    readchomp(`git -C $(REPO_ROOT) rev-parse HEAD`)
+catch
+    "unknown"
+end
+whmc_dirty() = try
+    !isempty(readchomp(`git -C $(REPO_ROOT) status --porcelain`))
+catch
+    missing
+end
+
+const PROVENANCE = Dict("n_seeds" => N_SEEDS, "n_draws_floor" => N_DRAWS,
+                        "julia" => string(VERSION),
+                        "blas_threads" => BLAS.get_num_threads(),
+                        "ad_backend" => AD_BACKEND_NAME,
+                        "warmuphmc_sha" => whmc_sha(),
+                        "worktree_dirty" => whmc_dirty())
+
 open(joinpath(OUT_DIR, "runs.json"), "w") do io
-    JSON.print(io, jsonsafe(Dict("n_seeds" => N_SEEDS, "n_draws_floor" => N_DRAWS,
-                                 "julia" => string(VERSION),
-                                 "blas_threads" => BLAS.get_num_threads(),
-                                 "runs" => rows)), 2)
+    JSON.print(io, jsonsafe(merge(PROVENANCE, Dict("runs" => rows))), 2)
 end
 open(joinpath(OUT_DIR, "gradient_overhead.json"), "w") do io
-    JSON.print(io, jsonsafe(overheads), 2)
+    JSON.print(io, jsonsafe(merge(PROVENANCE, Dict("overheads" => overheads))), 2)
 end
 
 const ARM_ORDER = ["plain", "fixed_centered", "adaptive", "fixed_noncentered", "sibling_plain"]

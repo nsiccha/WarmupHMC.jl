@@ -49,7 +49,64 @@ using LinearAlgebra
 BLAS.set_num_threads(1)   # required for run-to-run reproducibility at a fixed seed
 
 using WarmupHMC, PosteriorDB, LogDensityProblems, StanLogDensityProblems, BridgeStan
-using DifferentiationInterface, ForwardDiff
+using DifferentiationInterface, ForwardDiff, Enzyme
+
+"""
+    bench_ad_backend()
+
+The DifferentiationInterface backend the `ReparametrizedProblem` wrapper
+differentiates the transform with, from `WHMC_BENCH_AD`.
+
+Reverse mode is the rule. The objective is `x -> ljac(x) + dot(g_y, y(x))` —
+scalar in the *full* parameter vector, with the inner gradient `g_y` frozen — so
+forward mode costs `ceil(d / chunksize)` sweeps of the transform per gradient
+where reverse mode costs one, and the gap opens exactly on the high-dimensional
+hierarchical models this benchmark targets.
+
+`forwarddiff` is kept ONLY so the two can be measured against each other on one
+base. It is not a supported configuration; it is the control that shows how much
+of the wrapper's cost was the backend rather than the method. Note the backend
+package must be loaded for the ADTypes object to work at all, which is why both
+are `using`ed above.
+
+# Why `function_annotation = Enzyme.Const`, and not the bare `AutoEnzyme()`
+
+**A bare `AutoEnzyme()` does not work here.** It raises
+
+    EnzymeMutabilityException: Function argument passed to autodiff cannot be
+    proven readonly
+
+because the differentiated objective is a *closure* over the
+`ReparametrizedProblem` — capturing the reparametrizer and the frozen inner
+gradient `g_y` — and Enzyme cannot prove that captured state is only read.
+
+`Const` says the closure carries no derivative information, which is exactly
+true: `g_y` is held fixed by construction and the reparametrizer's parameters
+are not what we are differentiating with respect to. Measured on the funnel,
+2000 gradients:
+
+| backend | ns/gradient |
+|---|---|
+| `AutoForwardDiff()` | 931 |
+| `AutoEnzyme(; function_annotation = Enzyme.Const)` | **545** |
+| `AutoEnzyme(; function_annotation = Enzyme.Duplicated)` | 4786 |
+
+All three agree to 3.3e-16, so this is purely a cost choice — but note that
+**Enzyme's own error message suggests `Duplicated`**, which is 5.1× slower than
+the ForwardDiff it was meant to replace. `Duplicated` allocates and propagates a
+shadow copy of the closure on every call; `Const` does not. Take the hint as a
+diagnosis of the problem, not as the fix.
+"""
+function bench_ad_backend()
+    name = lowercase(get(ENV, "WHMC_BENCH_AD", "enzyme"))
+    name == "enzyme"      && return AutoEnzyme(; function_annotation = Enzyme.Const)
+    name == "forwarddiff" && return AutoForwardDiff()
+    error("WHMC_BENCH_AD must be \"enzyme\" or \"forwarddiff\", got $(repr(name))")
+end
+
+const AD_BACKEND = bench_ad_backend()
+const AD_BACKEND_NAME = lowercase(get(ENV, "WHMC_BENCH_AD", "enzyme"))
+
 using WarmupHMC: ReparametrizedProblem, IndexedReparametrization, PartiallyCentered,
                  Reparametrization, reparametrize!
 using Random, Statistics, Printf
@@ -231,7 +288,7 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
                  n_draws::Int, model = nothing)
     rng = Xoshiro(seed)
     lpdf = isnothing(spec) ? problem :
-           ReparametrizedProblem(spec, problem, AutoForwardDiff())
+           ReparametrizedProblem(spec, problem, AD_BACKEND)
     c_before = isnothing(spec) ? Float64[] : source_cs(spec)
 
     local res, wall
@@ -306,8 +363,8 @@ function gradient_overhead(problem, spec; n::Int = 2000, seed::Int = 1)
     xs = [randn(rng, dim) for _ in 1:n]
 
     bare = problem
-    noop = ReparametrizedProblem(with_source(spec, target_cs(spec)[1]), problem, AutoForwardDiff())
-    live = ReparametrizedProblem(with_source(spec, opposite_c(spec)), problem, AutoForwardDiff())
+    noop = ReparametrizedProblem(with_source(spec, target_cs(spec)[1]), problem, AD_BACKEND)
+    live = ReparametrizedProblem(with_source(spec, opposite_c(spec)), problem, AD_BACKEND)
 
     time_it(p) = begin
         LogDensityProblems.logdensity_and_gradient(p, xs[1])          # warm the JIT

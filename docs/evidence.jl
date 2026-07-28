@@ -204,14 +204,32 @@ Escape markdown inline syntax in text that is INTERPOLATED into a string this
 file then parses — file keys and column names, which come from filenames and
 JSON keys and so are not under this file's control.
 
-Two underscores in one word are emphasis, so `n_draws_floor` rendered as
-n*draws*floor. This was **not** hypothetical and was not caught by looking at
-file keys — those happen to carry one underscore each. Column and provenance
-names do not, and eight of them shipped mangled on the page:
-`n_draws_floor`, `max_grad_diff`, `ab_max_grad_diff`, `bare_ns_median`,
-`reuse_grad_diff`, `const_over_fd_randn`, `const_over_fd_typical`,
-`first_window_gradient_budget`. It surfaced from diffing the rendered output
-across the change, not from reading the code.
+On `_` this function is **defence, not repair** — an earlier version of this
+docstring claimed intraword underscores shipped mangled, and that claim was
+wrong. Corrected after `WarmupHMC:reparam-docs` built a `md_table` guard on it,
+found the guard firing on text that renders fine, and dropped it. Re-measured
+here end to end; each step is checkable:
+
+  * Julia's `Markdown.parse` really does emphasise intraword `_` —
+    `arm_vs_halo` parses to arm + Emph(vs) + halo.
+  * But the DocumenterVitepress writer emits emphasis as `_…_`, so it writes
+    that AST back out as `arm_vs_halo`, byte-identical. `docs/build/.documenter/`
+    carries 20 clean `arm_vs_halo` and no mangled one — from `md_table`, which
+    does not escape.
+  * VitePress is CommonMark, which has no intraword `_` emphasis at all, so the
+    literal survives to HTML.
+
+Julia mangles it and the writer un-mangles it, by the accident of both choosing
+`_` — Julia's OWN markdown writer chooses `*` and emits `arm*vs*halo`. So the
+escaping stays for two reasons that are real: CommonMark does emphasise a
+LEADING underscore at a word boundary (`_private_ field`), and the round-trip
+above survives only while those two writers agree on the delimiter.
+
+The verification rule this cost us twice, both directions: **check
+`docs/build/1/*.html`.** Never a local `show()`. Julia's `text/html` writer
+gives `arm<em>vs</em>halo` and its `text/markdown` writer gives `arm*vs*halo`;
+both are real output, neither is the shipped path, and each independently
+invites a fix for a bug that is not there.
 
 The escape is consumed by the parser, so the rendered text and the anchor
 VitePress derives from it are unchanged — for every character in the class

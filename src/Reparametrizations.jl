@@ -60,69 +60,51 @@ mode costs one.
 
 !!! warning "That argument is an operation count, and how it scales here is untested"
     It is tempting to conclude that the gap widens with dimension — exactly where
-    reparametrization is worth doing. That has **not** been measured. Enzyme with
-    `Const` divided by ForwardDiff, per wrapped gradient (below 1.0 = Enzyme
-    faster), across five processes with the backend order rotated per round:
+    reparametrization is worth doing. That has **not** been established.
 
-    | target | `d` | Enzyme ÷ ForwardDiff |
-    |---|---|---|
-    | `funnel`        | 10 | 0.31–0.67× |
-    | `eight_schools` | 10 | 0.43–0.66× |
+    **This docstring deliberately carries no benchmark figures.** It used to, and
+    they went stale three times: a point estimate that no aggregation reproduced,
+    then a range that spanned nothing in the repository, then a range correctly
+    derived from every checked-in source that a re-measurement invalidated within
+    minutes. Each fix addressed how the number was *chosen*; none addressed the
+    actual cause, which is that a docstring is a string evaluated at package load
+    and so cannot read the results JSON the way the manual's tables do. It is the
+    one surface here with no build-time seam, so any figure typed into it is
+    dated silently by the next regeneration and nothing in the build can tell.
 
-    Those ranges span **every** Enzyme-`Const`-over-ForwardDiff figure checked
-    into this repository for these two targets — `annotation_sweep`,
-    `backend_replication` (7 rounds), `typical_positions`, and the
-    `gradient_overhead` pair — which is what makes them re-derivable. They
-    replace a narrower `0.35–0.42` / `0.44–0.92` that was **not**: swept against
-    the checked-in JSON by `WarmupHMC:reparam-docs`, `eight_schools`' upper bound
-    of `0.92` exceeded every value in every file (the maximum anywhere is 0.660),
-    and `funnel`'s band excluded two figures that are in the repo. The five-
-    process run those came from was never checked in, so the table asserted a
-    precision the evidence could not support while the surrounding paragraph
-    invited the reader to trust it specifically. Reported as "not reproducible",
-    not as "wrong" — the distinction is right, and widening is the fix either way.
+    For every current number — per-target Enzyme-over-ForwardDiff ratios, the
+    `Duplicated` cost, and the boxed/unboxed A/B — read
+    [What the backend costs, measured](@ref). Those tables are generated from
+    `docs/benchmark/results/` at build time, so they move when the data moves.
 
-    Those are the only two rows this table can carry. The larger targets —
-    `seeds`, `radon_partially_pooled`, `radon_variable_intercept` — were measured
-    against reparametrization specs whose accessor closures captured a `Core.Box`
-    (fixed in `f639bb1`; see `_index_getter` in
-    `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly correlated
-    with the apparent backend ranking — five for five, every boxed spec a spec
-    where Enzyme lost — so those numbers measure the defect, not the backend and
-    not dimension. De-boxed, `radon_partially_pooled` reverses to **2.5–2.8× in
-    Enzyme's favour** (the spread across five rounds), the same target where it
-    had measured 1.25–1.52× slower.
+    What is stable enough to state here, and why:
 
-    Since exactly the larger models were the boxed ones, nothing measured here
-    separates dimension from the boxing. **Reverse mode wins on every clean
-    measurement to date**; whether that advantage grows, holds or shrinks with
-    dimension is an open question awaiting a re-run on the fixed specs.
-
-    Sampling is unaffected either way — ESS per 1000 gradients, gradient counts,
-    the fitted `c` and stuck-adaptation counts are identical across backends; the
-    backend sets the cost of a gradient, not how many are needed.
+      * **Reverse mode wins on every clean measurement to date.** A direction,
+        not a magnitude; it has replicated across every harness in the repo.
+      * **The boxing confound is fixed.** The larger targets — `seeds`,
+        `radon_partially_pooled`, `radon_variable_intercept` — were once measured
+        against specs whose accessor closures captured a `Core.Box` (fixed in
+        `e9bcfd0`; see `_index_getter` in
+        `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly
+        correlated with the apparent ranking — five for five, every boxed spec
+        one where Enzyme lost — so those rows measured the defect, not the
+        backend. The probe now reports no boxed spec at all.
+      * **Scaling with dimension is still unresolved**, but no longer because of
+        that confound. On the current data, target identity accounts for
+        essentially all of the spread and `d` for very little, so these targets
+        do not settle a slope either way.
+      * **Sampling is unaffected.** ESS per 1000 gradients, gradient counts, the
+        fitted `c` and stuck-adaptation counts are identical across backends; the
+        backend sets the cost of a gradient, not how many are needed.
+      * **DifferentiationInterface re-prepares on every call**, and reusing a
+        prep object measured neutral-to-worse. That conclusion has replicated;
+        the share of the call it represents has not, so it is not quoted here.
+      * Running a sampler before timing warms the ForwardDiff path enough to
+        flatter it in a naive microbenchmark.
 
     So: pick the backend by measuring your own target. This docstring has twice
     claimed a universal default and been wrong both times, most recently by
     publishing the boxing artifact as a property of the backend.
-
-    Measured at `b5c7dee` — which predates `f639bb1` — 184 runs per backend,
-    results checked in at `068cdeb`. Two known artifacts beyond the boxing:
-    DifferentiationInterface re-prepares on every call (10–16% of the call at
-    `d ≈ 88`, and equal under both backends — reusing a prep object measured
-    neutral-to-worse), and running a sampler before timing warms the ForwardDiff
-    path enough to make a naive microbenchmark ~2× kinder to it.
-
-    Every figure above is quoted as a **range**, and deliberately. A docstring is
-    a string evaluated at package load, so it cannot read the results JSON the way
-    the manual's tables do — it is the last hand-copied data source in this
-    package, and a point estimate here silently disagrees with the generated table
-    the moment anyone picks a different aggregation (a `2.85×` did exactly that:
-    the rounds give 2.477, 2.828, 2.577, 2.601, 2.732, so ratio-of-medians renders
-    2.58 and nothing renders 2.85). A range spans the aggregations and stays true.
-    For an exact figure, read the tables in the manual — they are generated from
-    `docs/benchmark/results/` at build time, and the whole of that directory is
-    rendered on the *Benchmark evidence* page.
 
 !!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
     A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
@@ -137,36 +119,28 @@ mode costs one.
     is with respect to the *parameter vector*, never with respect to the problem.
 
     Enzyme's own error text suggests `function_annotation = Enzyme.Duplicated`.
-    **Do not take that hint.** It is correct — it agrees with `Const` to ≤9.1e-13
-    — but it allocates and propagates a shadow copy of the closure on every call.
-    The hint diagnoses the problem; it is not the fix.
+    **Do not take that hint.** It is correct — it agrees with `Const` to within
+    floating-point noise — but it allocates and propagates a shadow copy of the
+    closure on every call. The hint diagnoses the problem; it is not the fix.
 
-    How much that costs is **target-dependent**, and earlier revisions of this
-    docstring published a single ratio that does not generalize. `Duplicated`
-    divided by `Const`, per wrapped gradient:
+    How much that costs is **target-dependent** and is not quoted here, for the
+    reason given in the previous warning: earlier revisions published first a
+    single ratio and then a two-row table, and both were dated by the next
+    regeneration. The current per-target figures are in the generated table under
+    [What the backend costs, measured](@ref). The funnel is the extreme case
+    rather than a representative one, which is why no single number belongs here
+    in any revision.
 
-    | target | `d` | `Duplicated` ÷ `Const` |
-    |---|---|---|
-    | `funnel`        | 10 | 11.3–13.6× |
-    | `eight_schools` | 10 | 3.8–4.9×   |
-
-    The funnel is the extreme case, not a representative one; funnel measurements
-    at different `c` have landed anywhere from ~10× to ~22×, which is why no
-    single number belongs here.
-
-    The larger targets measured ≈1.0× — but on the boxed specs described in the
-    previous warning, where the boxing dominated the call. That says the boxing
-    cost more than the shadow copy, **not** that the shadow copy is cheap at high
-    dimension. Do not read those rows as "`Const` only helps on small targets":
-    that framing was inferred from them and does not survive the fix.
+    One reading to avoid: the larger targets once measured ≈1.0×, and that was
+    taken to mean `Const` only helps on small targets. It was an artifact of the
+    boxed specs, where the boxing dominated the call — it says boxing cost more
+    than the shadow copy, not that the shadow copy is cheap at high dimension.
+    That framing does not survive the fix, and the de-boxed table no longer shows
+    a row where `Duplicated` is free.
 
     None of that changes the recommendation. `Const` is the right annotation on
     **correctness** grounds everywhere — `g_y` is frozen by construction — and it
-    is never slower. How much faster is target-dependent and, above `d = 10`,
-    currently unmeasured.
-
-    Measured at `b5c7dee` — which predates `f639bb1` — 184 runs per backend,
-    results checked in at `068cdeb`.
+    is never slower.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which

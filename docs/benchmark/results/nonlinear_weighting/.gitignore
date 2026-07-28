@@ -1,0 +1,11 @@
+# `rows.json` is the ONLY stored fact of this study. Every table, every ratio
+# and the conclusion itself is derived from it at read time by
+# `nonlinear_weighting.jl`.
+#
+# `nonlinear_weighting_report.jl` writes its derived summary here for
+# convenience, and this line is what stops it ever being committed. A stored
+# summary beside the rows is a second representation of one fact with nothing
+# keeping the two in step: a reader who finds a stale ratio here, next to rows
+# that now disagree, cannot tell which is current — and the stale one is the one
+# that looks authoritative. Regenerate it; do not track it.
+nonlinear_weighting_summary.json

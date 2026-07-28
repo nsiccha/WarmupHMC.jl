@@ -633,13 +633,13 @@ which would each have silently corrupted the fixed-parametrization arms:
   where possible and Enzyme where not; Mooncake and ForwardDiff are excluded as
   package defaults, and ForwardDiff appears here only as the comparison baseline.
   `AutoForwardDiff()` in `web/src/test/` is a deliberate frozen-baseline harness
-  pin, documented at the point of use in `web/src/test/ad_backend.jl` — not a
+  pin, documented at the point of use in `web/src/test/ad_backend_gate.jl` — not a
   recommendation and not a site to change. The one place still selecting forward
   mode for real work is the shipped consumer, `web/src/WarmupHMCWeb.jl:148`.
-  Measured against the specs as they stand today, switching it makes
-  `seeds`-shaped targets **slower** — but that is the boxed-capture defect
-  talking, not reverse mode, and the sensible order is to fix the captures first
-  and then measure the switch rather than to decide it on these numbers.
+  Against the boxed specs, switching it made `seeds`-shaped targets **slower** —
+  that was the boxed-capture defect talking, not reverse mode. The captures are
+  fixed as of `e9bcfd0`, so that switch is now a decision this benchmark can
+  actually inform; see § *Which AD backend*.
 
   **Two claims in `src/Reparametrizations.jl`'s docstring are not supported by
   these measurements**, and both are load-bearing for a 1.0 manual:

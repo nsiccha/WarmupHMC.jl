@@ -47,13 +47,16 @@ parameter vector (see [`ReparametrizedProblem`](@ref)), which is the shape
 reverse mode exists for — its cost is one pass regardless of dimension, while
 forward mode costs one pass per input. That is an argument about **operation
 counts**, not wall-clock. Reverse mode does win on every clean measurement taken
-here, but only the two smallest targets have one: the larger targets were timed
-against reparametrization specs carrying a closure-capture defect that dominated
-the gradient, so how the advantage scales with dimension is currently untested.
-The table, and what happened to the rows that used to sit under it, are in the
-[`ReparametrizedProblem`](@ref) docstring. Reverse mode is a reasonable default
-and what the examples below use; if the gradient is your bottleneck, measure
-both on your own model rather than reasoning from dimension.
+here — but "clean" is doing work in that sentence: most of the larger targets
+were timed against reparametrization specs carrying a closure-capture defect
+that dominated the gradient, and those rows measure the defect rather than the
+backend. Only two of the swept targets are free of it, and the one large target
+that has been rebuilt without it was rebuilt for exactly that comparison. So the
+advantage is real wherever it has been measured properly, and how it *scales*
+with dimension remains untested. Both tables, and the A/B that isolates the
+defect, are under [What the backend costs, measured](@ref). Reverse mode is a
+reasonable default and what the examples below use; if the gradient is your
+bottleneck, measure both on your own model rather than reasoning from dimension.
 
 **The interface ships; the backend is yours to bring.**
 `DifferentiationInterface` is a hard dependency of WarmupHMC, so
@@ -85,10 +88,10 @@ you fill in.
     **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
     the same answer, but it allocates a shadow copy of the closure on every
     call. That hint diagnoses the problem; it is not the fix. How much the
-    shadow copy costs depends strongly on the target — ~11× per gradient on a
-    10-dimensional funnel, ~4× on eight schools, and unmeasured above that;
-    [`ReparametrizedProblem`](@ref) carries the table and the caveat. `Const` is
-    the right annotation regardless, because it is the *correct* one.
+    shadow copy costs depends strongly on the target, and the per-target figures
+    are tabulated under [What the backend costs, measured](@ref) rather than
+    summarised into one multiplier here — no single number generalizes. `Const`
+    is the right annotation regardless, because it is the *correct* one.
 
 !!! note "`set_runtime_activity` used to be required as well — it no longer is"
     There is a *second* call site on your backend: the joint halo transport
@@ -120,6 +123,78 @@ you fill in.
     benchmark here, that is a harness pinned to its own frozen baselines, not a
     recommendation — the `ADBackend` snippet in `web/src/test/setup.jl` says so at
     the point of use.
+
+## What the backend costs, measured
+
+Everything above about reverse mode is an operation count. The numbers below are
+the measurements, and they are **generated from the checked-in result files at
+docs-build time** — `docs/benchmark/` holds the harnesses, `docs/benchmark/results/`
+the JSON they write, and this page reads that JSON rather than restating it. No
+figure here is typed by hand, and if a result file goes missing or changes shape
+the docs build fails instead of rendering a stale table.
+
+Per wrapped gradient, with the backend order rotated between rounds. `spec` is
+whether that target's accessor closures capture a `Core.Box` — read from the
+boxing probe's own output, not asserted here:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+sweep = load_results("annotation_sweep.json")
+boxed = Set(c["target"] for c in load_results("capture_boxing.json")["captures"] if c["boxed"])
+ratio(a, b) = (a === nothing || b === nothing) ? "—" : num(Float64(a) / Float64(b); sig = 3) * "×"
+md_table(
+    ["target", "`d`", "`c`", "spec", "`Const` ns/grad",
+     "`Duplicated` ÷ `Const`", "`Const` ÷ ForwardDiff"],
+    [["`" * r["target"] * "`", r["dim"], num(r["c_source"]),
+      r["target"] in boxed ? "**boxed**" : "clean", num(r["ns_const"]),
+      ratio(r["ns_duplicated"], r["ns_const"]),
+      ratio(r["ns_const"], r["ns_forwarddiff"])] for r in sweep["rows"]])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+Markdown.parse("*" * provenance(load_results("annotation_sweep.json");
+                                harness = "annotation_sweep.jl") * "*")
+```
+
+Two things to read off that table, and one not to. `Duplicated` costs several
+times `Const` on the two targets whose specs are clean, and about nothing on the
+boxed ones — because on those the boxing already dominates the call, not because
+the shadow copy became cheap. For the same reason the last column cannot be read
+as a trend in `d`: every boxed spec is also one of the larger models, so the two
+are perfectly confounded, and the boxed rows measure the defect.
+
+The A/B that separates them rebuilds one spec with unboxed captures and asserts
+bit-identical gradients, so the difference is pure overhead:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Statistics
+b = load_results("capture_boxing.json")
+m(k) = Statistics.median(Float64.(b["timings_ns"][k]))
+md_table(
+    ["`" * b["ab_target"] * "`", "Enzyme `Const`", "ForwardDiff", "Enzyme ÷ ForwardDiff"],
+    [["shipped spec (boxed)", num(m("shipped/const")), num(m("shipped/fd")),
+      num(m("shipped/const") / m("shipped/fd"); sig = 3) * "×"],
+     ["same spec, de-boxed", num(m("deboxed/const")), num(m("deboxed/fd")),
+      num(m("deboxed/const") / m("deboxed/fd"); sig = 3) * "×"]])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown
+b = load_results("capture_boxing.json")
+d = Float64(b["ab_max_grad_diff"])
+agree = d == 0 ? "bit-identical" : "agree to $(num(d; sig = 2))"
+Markdown.parse("*" * provenance(b; harness = "capture_boxing.jl") *
+               " Gradients across the A/B are $(agree).*")
+```
+
+The ranking inverts. Whether reverse mode's advantage grows, holds or shrinks
+with dimension is still open — answering it needs the sweep re-run against the
+fixed specs, and when that JSON lands these tables pick it up without anyone
+retyping a number.
 
 ## A complete worked example
 
@@ -381,12 +456,13 @@ arithmetic, `exp`/`log`; not `Float64`-annotated code, not anything that mutates
 **Three construction mistakes fail late rather than at construction.** Each builds
 a perfectly valid-looking object and blows up further in:
 
-* **An under-specified Enzyme backend**, which fails late *twice*. A bare
-  `AutoEnzyme()` constructs, `logdensity` works on the result, and the first
-  `logdensity_and_gradient` throws `EnzymeMutabilityException`. Add
-  `function_annotation=Enzyme.Const` and it gets further — all the way to the
-  first restarting window — before throwing `EnzymeRuntimeActivityError`. Both
-  options are needed; see the warning at the top of this page.
+* **An under-specified Enzyme backend.** A bare `AutoEnzyme()` constructs,
+  `logdensity` works on the result, and the first `logdensity_and_gradient`
+  throws `EnzymeMutabilityException`. Pass `function_annotation=Enzyme.Const`;
+  see the warning at the top of this page. Until `aac6489` this one failed late
+  *twice* — `Const` alone then died at the first restarting window with
+  `EnzymeRuntimeActivityError` — which is why an older script may carry a
+  `mode=` argument it no longer needs.
 * **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
   form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
   so nothing looks wrong until the first `logdensity_and_gradient`, which hands

@@ -1,9 +1,4 @@
-# READY-TO-MOVE WORKFLOW TEMPLATE — copy to `.github/workflows/` to activate.
-#
-# It sits here, not in `.github/workflows/`, because activating a workflow is
-# the repo owner's call, not this benchmark's. GitHub only reads
-# `.github/workflows/*.yml`, so this file is inert where it is. Move it, do not
-# copy-and-diverge.
+# Nonlinear trajectory-weighting benchmark.
 #
 # WHAT IT DOES, AND WHAT IT DELIBERATELY DOES NOT
 #
@@ -33,27 +28,30 @@
 # the derivation's expectations drifting apart, which no amount of re-deriving
 # the committed rows can detect.
 #
-# THE INSTANTIATE STEP IS COPIED VERBATIM from `test.yml`'s `linear-evidence`
-# job — same environment, same four clones, same branch pins. KEEP THE TWO IN
-# STEP; two workflows resolving one environment differently is a difference that
-# shows up as an unreproducible benchmark, not as a red build.
+# THE INSTANTIATE STEP IS SHARED with `test.yml`'s `linear-evidence` job — same
+# clone, same branch pin, same develop list. KEEP THE TWO IN STEP; two workflows
+# resolving one environment differently is a difference that shows up as an
+# unreproducible benchmark, not as a red build.
 #
-# Why it is four clones and not `Pkg.instantiate()`:
+# ONE CLONE, AND NO `secrets.PAT_TOKEN`
 #
-#   * Three of the four are UNREGISTERED, so no resolve can find them, and one
-#     (HTMXObjects) is PRIVATE — hence the PAT rewrite. `[sources]` is honoured
-#     from Julia 1.11 only, and no `Manifest.toml` is committed anywhere in this
-#     repo (they are all gitignored), so nothing else supplies them to a runner.
-#   * The branch pins are not decoration: several default branches are stale.
-#     `--branch dev` on Treebars is the one that fails loudest — `Treebars.round2`,
-#     which WarmupHMC's `src/progress.jl` adds a method to AT LOAD TIME, exists on
-#     `origin/dev` and NOT on `origin/main`, so a default-branch clone dies at
-#     precompile with `UndefVarError: round2` before a single line of this
-#     benchmark runs. `test.yml` and `Docs.yml` both already carry it.
-#
-# Note that HTMX, HTMXObjects and DynamicObjects are in `[deps]` because the
-# canonical resolve develops them; no file in `docs/benchmark/` imports one. They
-# are cloned here only because the environment declares them.
+#   * `Treebars` is UNREGISTERED, so no resolve can find it: `[sources]` is
+#     honoured from Julia 1.11 only, and no `Manifest.toml` is committed
+#     anywhere in this repo (they are all gitignored). Hence the explicit clone
+#     and `Pkg.develop`.
+#   * `--branch dev` is not decoration. `Treebars.round2`, which WarmupHMC's
+#     `src/progress.jl` adds a method to AT LOAD TIME, exists on `origin/dev`
+#     and NOT on `origin/main`, so a default-branch clone dies at precompile
+#     with `UndefVarError: round2` before a single line of this benchmark runs.
+#     It fails before the job does anything, so it is invisible until it bites.
+#     `test.yml` and `Docs.yml` both carry the same pin.
+#   * This job needs NO PAT. `docs/benchmark/Project.toml` used to declare
+#     `HTMX`, `HTMXObjects` and `DynamicObjects` — inherited from the canonical
+#     resolve, never imported by any file under `docs/benchmark/` — and one of
+#     them (`HTMXObjects`) is a PRIVATE repo. They were pruned from the
+#     environment, which removes a private-token dependency from this benchmark
+#     entirely rather than making a measurement job depend on a secret. App
+#     rendering lives in `web/`, which is a different environment.
 
 name: Nonlinear weighting benchmark
 
@@ -65,7 +63,7 @@ on:
     branches: [main, dev]
     paths:
       - 'docs/benchmark/nonlinear_weighting*.jl'
-      - 'docs/benchmark/nonlinear_weighting.ci.yml'
+      - '.github/workflows/nonlinear-weighting.yml'
       - 'docs/benchmark/common.jl'
       - 'docs/benchmark/Project.toml'
       - 'docs/benchmark/results/nonlinear_weighting/**'
@@ -73,7 +71,7 @@ on:
   pull_request:
     paths:
       - 'docs/benchmark/nonlinear_weighting*.jl'
-      - 'docs/benchmark/nonlinear_weighting.ci.yml'
+      - '.github/workflows/nonlinear-weighting.yml'
       - 'docs/benchmark/common.jl'
       - 'docs/benchmark/Project.toml'
       - 'docs/benchmark/results/nonlinear_weighting/**'
@@ -122,28 +120,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure git for private repos
-        # HTMXObjects is private; this supplies read access to the clone below.
-        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
       - uses: julia-actions/cache@v2
       - name: Instantiate the benchmark environment
-        # VERBATIM from `test.yml`'s `linear-evidence` job — keep in step. The
-        # branch pins and the private clone are explained in the header.
-        # Batched into one `Pkg.develop` so the resolver sees every path at once.
+        # SHARED with `test.yml`'s `linear-evidence` job — keep in step. The
+        # branch pin and the absence of a PAT are explained in the header.
+        # Batched into one `Pkg.develop` so the resolver sees both paths at once.
         run: |
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
-          git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
-          git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
-          git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
           julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
-            PackageSpec(path="DynamicObjects.jl"),
-            PackageSpec(path="HTMX.jl"),
-            PackageSpec(path="HTMXObjects.jl"),
           ]); Pkg.instantiate()'
       - name: Run the smoke configuration
         # The two ANALYTIC targets only. `radon_mn-radon_partially_pooled_centered`

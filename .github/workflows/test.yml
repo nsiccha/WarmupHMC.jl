@@ -137,28 +137,30 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
       - uses: julia-actions/cache@v2
       - name: Instantiate the benchmark environment
-        # These are the unregistered local dependencies developed by the
-        # benchmark environment's canonical resolve. Pin their active branches
-        # explicitly: several default branches are stale, and HTMXObjects is
-        # private (the PAT rewrite above supplies read access).
+        # `Treebars` is unregistered, so no resolve can find it and no
+        # `Manifest.toml` is committed anywhere in this repo — hence the clone.
+        # `--branch dev` is load-bearing: `Treebars.round2`, which
+        # `src/progress.jl` adds a method to AT LOAD TIME, is on `origin/dev`
+        # and not on `origin/main`, so a default-branch clone dies at precompile
+        # with `UndefVarError: round2` before this job runs anything.
+        #
+        # No PAT: `docs/benchmark/Project.toml` no longer declares `HTMX`,
+        # `HTMXObjects` or `DynamicObjects`. They were inherited from the
+        # canonical resolve and imported by no file under `docs/benchmark/`, and
+        # one of them is private — pruning them removed a private-token
+        # dependency from this job rather than leaving a measurement gated on a
+        # secret. SHARED with `.github/workflows/nonlinear-weighting.yml`; keep
+        # the two in step.
         run: |
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
-          git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
-          git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
-          git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
           julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
-            PackageSpec(path="DynamicObjects.jl"),
-            PackageSpec(path="HTMX.jl"),
-            PackageSpec(path="HTMXObjects.jl"),
           ]); Pkg.instantiate()'
       - name: Run the linear evidence smoke
         env:

@@ -125,6 +125,99 @@ benchmark_table(rows) = begin
 end
 
 """
+    benchmark_semantic(key) -> SemanticSection
+    benchmark_index_semantic(link) -> SemanticSection
+
+Build the evidence presentation ONCE, as HTMXObjects semantic nodes, so the app
+and the documentation render the same value rather than two implementations of
+the same table.
+
+This is what makes the docs independent of the static-HTML recorder. A semantic
+node carries peer HTML, Markdown and plain-text projections, so
+`web/generate_evidence_docs.jl` writes `to_markdown_string(…)` straight into
+`docs/src/` at build time. The docs get real markdown tables — searchable,
+diffable, and styled by VitePress — instead of an `htmxo-embed` div loading a
+recorded fragment through a Vite proxy.
+
+That matters beyond tidiness: `record!` cannot currently record a parameterised
+route at all (every key collapses into one file named after the stringified
+route descriptor — HTMXObjects snag `record-cannot-re-15d1af12`), which is also
+why `docs/src/gallery.md`'s per-posterior recordings have never worked. Going
+through the markdown projection needs none of that machinery.
+
+`link` maps a results key to whatever a link should point at in the current
+medium — a mounted route in the app, a relative markdown path in the docs.
+"""
+benchmark_semantic(key; max_rows=nothing) = begin
+    loaded = benchmark_load(key)
+    body = Any[]
+    for (name, table) in loaded.tables
+        nrows = length(first(table))
+        node = if !isnothing(max_rows) && nrows > max_rows
+            # NOT a truncation. The four `runs` files are raw per-run sampler
+            # logs — 184 rows of 28 columns, several of them 10-element vectors,
+            # ~420kB of markdown each. Showing the first N rows of a raw log is
+            # neither the data nor a summary of it, so the honest projection is
+            # to decline and say where the rows actually are. The app serves them
+            # sorted and scrollable, which is the medium that suits them.
+            SemanticUnavailable("$nrows rows × $(length(table)) columns — too \
+                large to inline. The rows are in \
+                `docs/benchmark/results/$(replace(String(key), '~' => '/')).json`, \
+                and the app renders them at `/benchmark/$key`.")
+        else
+            SemanticTable(table)
+        end
+        # A named sub-section only when there is more than one table to tell
+        # apart. Nested `SemanticSection`s both project to `##`, so for the
+        # single-table files (all of them, today) the inner heading would sit at
+        # the same level as the file's own and read as a sibling.
+        push!(body, length(loaded.tables) == 1 ? node : SemanticSection(name, node))
+    end
+    SemanticSection(String(key),
+        SemanticFields(; (Symbol(k) => v for (k, v) in loaded.provenance)...),
+        body...,
+    )
+end
+
+benchmark_index_semantic(link=nothing) = begin
+    ks = benchmark_keys()
+    isempty(ks) && return SemanticSection("Benchmark evidence",
+        SemanticUnavailable("No results checked in under docs/benchmark/results/."))
+    # The links are a `SemanticGroup` beside the table, not a column inside it.
+    # `SemanticTable` delegates to `render_table`, which formats each cell as
+    # text — a `SemanticLink` in a cell would stringify to its struct repr in
+    # HTML and markdown alike. Navigation is link-shaped; keep it as links.
+    rows = map(ks) do key
+        loaded = benchmark_load(key)
+        prov = Dict(loaded.provenance)
+        (; file   = key,
+           sha    = first(get(prov, "warmuphmc_sha", ""), 7),
+           tables = join([name for (name, _) in loaded.tables], ", "),
+           rows   = sum(t -> length(first(t)), (t for (_, t) in loaded.tables); init=0))
+    end
+    SemanticSection("Benchmark evidence",
+        SemanticProse("""
+            Each row is one JSON written by a driver under `docs/benchmark/`. That
+            file is the source: the app renders it and the documentation is
+            generated from it, so a published table cannot drift from the run that
+            produced it.
+
+            **Check the SHA before citing a row.** A results file is a snapshot of
+            the tree it was measured on, and this directory keeps superseded runs
+            beside current ones on purpose — the comparison is often the point."""),
+        SemanticTable(rows),
+        # `link === nothing` drops the navigation group entirely, which is what
+        # the generated docs page passes: it renders every file inline below the
+        # index, so per-file links would point at the reader's current page and
+        # VitePress builds the outline anyway. Navigation is per-medium chrome,
+        # not part of the evidence.
+        isnothing(link) ? SemanticGroup() :
+            SemanticSection("Open a results file",
+                SemanticGroup([SemanticLink(key, link(key)) for key in ks])),
+    )
+end
+
+"""
     benchmark_load(key) -> (; provenance, tables)
 
 Read one results JSON and split it into scalar provenance and named row tables.
@@ -599,37 +692,17 @@ const APPDATA = WhmcAppData()
     # GET `/benchmarks` — index of the evidence under `docs/benchmark/results/`.
     # Enumerated from disk per request (not cached), so a driver run mid-session
     # shows up without restarting the app.
-    @get benchmarks() = begin
-        ks = benchmark_keys()
-        summaries = map(ks) do key
-            loaded = benchmark_load(key)
-            prov = Dict(loaded.provenance)
-            (; file    = key,
-               sha     = first(get(prov, "warmuphmc_sha", ""), 7),
-               tables  = join([name for (name, _) in loaded.tables], ", "),
-               rows    = sum(t -> length(first(t)), (t for (_, t) in loaded.tables); init=0),
-               note    = get(prov, "note", ""))
-        end
-        h.div(
-            htmxo_breadcrumb([("Table", "/", "/"), ("Benchmarks", nothing, nothing)]),
-            h.h2("Benchmark evidence ($(length(ks)) result files)"),
-            h.p("""Each row is one JSON written by a driver under docs/benchmark/. \
-                 That file is the source: this page renders it, and the docs build \
-                 serves a static recording of this same render. Nothing is retyped, \
-                 so a table in the documentation cannot drift from the run that \
-                 produced it."""),
-            h.p(h.strong("Check the SHA before citing a row."), """ A results file is \
-                 a snapshot of the tree it was measured on, and this directory keeps \
-                 superseded runs alongside current ones on purpose — the comparison \
-                 is often the point."""),
-            isempty(summaries) ?
-                h.p(h.em("No results checked in under docs/benchmark/results/.")) :
-                render_table(summaries; id="benchmark-index", download=false,
-                    cell=(v, c, _) -> c === :file ?
-                        h.a(string(v); href=__self__/"benchmark/$v") : string(v)),
-            sortable_table_js(), sortable_table_styles(), download_table_js(),
-        )
-    end
+    #
+    # The body is a semantic value, not hand-built markup: the same
+    # `benchmark_index_semantic` call backs the generated documentation page
+    # (`web/generate_evidence_docs.jl`), so the app and the docs cannot show
+    # different evidence. Only the breadcrumb — genuine app chrome, meaningless
+    # in a docs page — is added here. `link` is what differs between the two
+    # media, so it is a parameter rather than a branch inside the builder.
+    @get benchmarks() = h.div(
+        htmxo_breadcrumb([("Table", "/", "/"), ("Benchmarks", nothing, nothing)]),
+        benchmark_index_semantic(key -> __self__/"benchmark/$key"),
+    )
 
     # Per-file view: /benchmark/<key>, where <key> is the results path with
     # `/` flattened to `~` (see `benchmark_key`).
@@ -649,28 +722,16 @@ const APPDATA = WhmcAppData()
     @include benchmark(key::Symbol) = begin
         json_path = benchmark_path(key)
 
-        @get index() = if !isfile(json_path)
-            h.div(
-                htmxo_breadcrumb([("Table", string(__parent__), nothing),
-                                  ("Benchmarks", string(__parent__/"benchmarks"), nothing)]),
-                h.p(h.em("No results file `$(key)`.")),
-            )
-        else
-            loaded = benchmark_load(key)
-            h.div(
-                htmxo_breadcrumb([("Table", string(__parent__), nothing),
-                                  ("Benchmarks", string(__parent__/"benchmarks"), nothing),
-                                  (String(key), nothing, nothing)]),
-                h.h2(String(key)),
-                isempty(loaded.provenance) ? "" :
-                    h.dl([[h.dt(name), h.dd(value)]
-                          for (name, value) in loaded.provenance]...),
-                [[h.h3(name), render_table(table; id="benchmark-$key-$name",
-                                           download_filename="$key-$name.csv")]
-                 for (name, table) in loaded.tables]...,
-                sortable_table_js(), sortable_table_styles(), download_table_js(),
-            )
-        end
+        @get index() = h.div(
+            htmxo_breadcrumb([("Table", string(__parent__), nothing),
+                              ("Benchmarks", string(__parent__/"benchmarks"), nothing),
+                              (String(key), nothing, nothing)]),
+            # `SemanticUnavailable` rather than a 404: a stale link or a
+            # hand-typed URL can outlive the file it names, and an empty state
+            # says which file is missing where a 404 says only "no".
+            isfile(json_path) ? benchmark_semantic(key) :
+                SemanticUnavailable("No results file `$(key)` under docs/benchmark/results/."),
+        )
     end
 
     # Drop all in-memory caches on the singleton appdata. Useful after

@@ -145,6 +145,13 @@ include("posteriordb_reparametrizations.jl")
             no_spec = isempty(spec.pairs)
 
             @diskcached v"1" value = begin
+                # Harness choice, NOT a recommendation: ForwardDiff is already
+                # here transitively via Pathfinder, and no reverse-mode backend
+                # is loadable in this env. The documented backend for a
+                # ReparametrizedProblem is reverse mode, and needs BOTH
+                # `mode=set_runtime_activity(Reverse)` and
+                # `function_annotation=Const`; a bare `AutoEnzyme()` throws on
+                # the first gradient — see `docs/src/reparametrization.md`.
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
                 init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
                 WarmupHMC.count_and_time(rp) do cp

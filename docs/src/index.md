@@ -37,7 +37,7 @@ carrying a non-empty [`IndexedReparametrization`](@ref) that names the coordinat
 their location/log-scale accessors. Nothing is detected automatically.
 
 ```julia
-using WarmupHMC, DifferentiationInterface, ForwardDiff
+using WarmupHMC, DifferentiationInterface, Enzyme
 
 # Eight schools example: dims 1:8 are group effects, dim 9 = location, dim 10 = log-scale
 ir = IndexedReparametrization(
@@ -46,7 +46,9 @@ ir = IndexedReparametrization(
         x -> x[9], x -> x[10]
     ))
 )
-rp = ReparametrizedProblem(ir, my_problem, AutoForwardDiff())
+rp = ReparametrizedProblem(ir, my_problem,
+    AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
+                 function_annotation=Enzyme.Const))
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -54,10 +56,21 @@ Posterior samples are transformed back to the wrapped problem's own parametrizat
 before being returned.
 
 The third argument is a DifferentiationInterface.jl backend and is **not** optional:
-the two-argument form constructs fine and then fails on the first gradient. For a
-high-dimensional problem a reverse-mode backend such as `AutoMooncake()` will scale
-better than `AutoForwardDiff()`, at the cost of adding that dependency yourself —
-nothing in this project depends on it today.
+the two-argument form constructs fine and then fails on the first gradient. It should
+be a **reverse-mode** backend — what is differentiated is a scalar objective in the
+full parameter vector, so reverse mode costs one pass whatever the dimension, while
+forward mode costs one per coordinate.
+
+With Enzyme, pass **both** options shown above. They are not decoration: a bare
+`AutoEnzyme()` also constructs fine and then fails on the first gradient, and
+supplying only `function_annotation` gets as far as the first warm-up window
+that re-fits before failing there. See
+[Nonlinear reparametrization](@ref) for which option covers which failure.
+
+DifferentiationInterface is a hard dependency, so the interface is always available;
+the **backend package** is not, and you load it yourself (`AutoEnzyme` needs
+`using Enzyme`). WarmupHMC constructs no backend of its own and depends on no
+particular AD implementation — which one you use is your choice.
 
 See [Nonlinear reparametrization](@ref) for a runnable end-to-end example, how the
 centering is fitted, and the constraints that bite (coordinate order across a resume,

@@ -75,6 +75,7 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
     p = H.ℓ
     Δ = is_initial ? zero(π₀) : DynamicHMC.logdensity(H, z) - π₀
     record_leaf!(p.leaves, z, Δ)
+    record!(p, z; is_initial, dH=Δ)
     isdiv = Δ < min_Δ
     v = DynamicHMC.leaf_acceptance_statistic(Δ, is_initial)
     if isdiv
@@ -86,18 +87,59 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
 end
 mutable struct LimitedRecorder2
     target::Int64
-    # The remaining fields retain the serialized layout used by checkpoints
-    # written before acceptance-weighted recording. Only `outer_count` remains
-    # active: it is the next ring-buffer destination.
+    # `thin` is the number of leaf evaluations per retained state. Warm-up sets
+    # it to `n_evaluations ÷ recording_target` and RECOMPUTES it whenever the
+    # window budget doubles, so one window fills the whole `target`-slot ring.
     thin::Int64
     outer_count::Int64
     inner_count::Int64
     triggered::Bool
     written::Bool
 end
-LimitedRecorder2(target) = target > 0 ? LimitedRecorder2(target, 0, 1, 0, false, false) :
+LimitedRecorder2(target, thin=1) = target > 0 ?
+    (thin > 0 ? LimitedRecorder2(target, thin, 1, 0, false, false) :
+        throw(ArgumentError("thin must be positive, got $thin"))) :
     throw(ArgumentError("recording_target must be positive, got $target"))
 LimitedRecordingPosterior3{P,T,L,G} = RecordingPosterior2{P,T,L,LimitedRecorder2,G}
+
+# Retain intermediate NUTS leaves into the halo. One state is reservoir-sampled
+# per `thin` leaf evaluations, so the halo grows at ~`1/thin` states per
+# gradient evaluation and a warm-up window fills the ring.
+#
+# Between 34ce034 and this commit, this path was replaced by a single
+# proposal-weighted draw per TRAJECTORY, which shrank the halo by the mean tree
+# size (~1000 states per window down to ~n_evaluations/2^depth) and starved
+# both consumers: the nonlinear reparametrization loss AND the linear metric
+# adaptation, which read the same pool.
+record!(p::RecordingPosterior2, z; is_initial, dH) = begin
+    if !is_initial && dH > log(1e-2)
+        append!(p.halo_position, z.Q.q)
+        append!(p.halo_gradient, z.Q.∇ℓq)
+    end
+end
+record!(p::LimitedRecordingPosterior3, z; is_initial, dH) = begin
+    r = p.recorder::LimitedRecorder2
+    if !r.triggered
+        if !is_initial && dH > log(1e-2)
+            r.written = true
+            if size(p.halo_position, 2) < r.outer_count
+                append!(p.halo_position, z.Q.q)
+                append!(p.halo_gradient, z.Q.∇ℓq)
+            else
+                p.halo_position[:, r.outer_count] .= z.Q.q
+                p.halo_gradient[:, r.outer_count] .= z.Q.∇ℓq
+            end
+            r.triggered = rand(p.rng) <= 1/(r.thin-r.inner_count)
+        end
+    end
+    r.inner_count += 1
+    if r.inner_count == r.thin
+        r.written && (r.outer_count = 1 + (r.outer_count % r.target))
+        r.inner_count = 0
+        r.triggered = false
+        r.written = false
+    end
+end
 
 function _store_leaf!(p::RecordingPosterior2, leaf_index, destination)
     if size(p.halo_position, 2) < destination
@@ -124,9 +166,13 @@ function record_weighted_leaf!(p::LimitedRecordingPosterior3)
     p
 end
 
+# Finalize the exact marginal proposal weights for the trajectory's leaves.
+# The halo itself is filled by `record!` during the traversal (see above); this
+# does NOT write to it. `record_weighted_leaf!` remains available for callers
+# that want a proposal-weighted draw, but the warm-up halo must not be reduced
+# to one state per trajectory.
 function finalize_leaf_recording!(p::RecordingPosterior2, depth)
     finalize_leaf_weights!(p.leaves, depth)
-    record_weighted_leaf!(p)
 end
 
 reset!(x::ElasticArray) = resize!(x, Base.front(size(x))..., 0)

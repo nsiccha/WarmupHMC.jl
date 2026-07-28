@@ -136,10 +136,21 @@ LogDensityProblems.logdensity_and_gradient(::StandardNormalLogDensity, q) =
     @test length(recording.leaves) == stats.steps + 1
     @test sum(recording.leaves.weights) ≈ 1
     @test all(iszero, recording.leaves.weights[(1 << stats.depth) + 1:end])
-    @test size(recording.halo_position, 2) == 1
-    @test any(eachindex(recording.leaves.weights)) do i
-        recording.leaves.weights[i] > 0 &&
-            recording.halo_position[:, 1] == recording.leaves.position[:, i] &&
-            recording.halo_gradient[:, 1] == recording.leaves.gradient[:, i]
+    # The halo must NOT be reduced to one state per trajectory: `record!` retains
+    # one state per `thin` leaf evaluations during the traversal. With `thin=1`
+    # that is every leaf whose Hamiltonian error clears `log(1e-2)`, capped by
+    # the ring. Regressing this to a single draw per trajectory shrinks the pool
+    # by the mean tree size and starves both halo consumers.
+    n_eligible = count(2:length(recording.leaves)) do i
+        recording.leaves.dH[i] > log(1e-2)
+    end
+    @test size(recording.halo_position, 2) == min(n_eligible, recording.recorder.target)
+    @test size(recording.halo_position, 2) > 1
+    # Every retained halo column is one of the leaves actually visited.
+    @test all(axes(recording.halo_position, 2)) do col
+        any(axes(recording.leaves.position, 2)) do i
+            recording.halo_position[:, col] == recording.leaves.position[:, i] &&
+                recording.halo_gradient[:, col] == recording.leaves.gradient[:, i]
+        end
     end
 end

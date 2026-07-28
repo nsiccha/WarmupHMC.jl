@@ -132,7 +132,8 @@ cooperative_chain(
     stepsize_adaptation = DynamicHMC.DualAveraging(δ=target_acceptance_rate)
     algorithm = DynamicHMC.NUTS(;max_depth=max_tree_depth)
     dimension = LogDensityProblems.dimension(lpdf)
-    recorder = LimitedRecorder2(recording_target)
+    # One retained halo state per `thin` leaf evaluations, so a window fills the ring.
+    recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;
@@ -250,6 +251,8 @@ advance_window!(chain::CooperativeChain) = begin
     chain.status == :done && return chain.status
 
     chain.n_evaluations = min(chain.n_evaluations * 2, chain.max_window_evaluations)
+    # Keep the halo filling the whole ring as the window budget grows.
+    chain.recording_lpdf.recorder.thin = max(1, chain.n_evaluations ÷ chain.recording_target)
     chain.restart || return chain.status
 
     # Restart the warm-up window: re-adapt the transformation, drop prior draws.

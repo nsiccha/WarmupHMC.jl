@@ -194,7 +194,13 @@ init_state(
     # The dimension of the posterior
     dimension = LogDensityProblems.dimension(lpdf)
     # A thin wrapper around the posterior that enables us to record the intermediate positions and gradients
-    recorder = LimitedRecorder2(recording_target)
+    recorder = LimitedRecorder2(
+        recording_target,
+        # The initial "thinning" of intermediate positions and gradients: one
+        # retained state per `thin` leaf evaluations, so a window of
+        # `n_evaluations` gradient evaluations fills the whole ring.
+        max(1, n_evaluations ÷ recording_target),
+    )
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
@@ -350,6 +356,9 @@ run_outer_iteration!(state::AWMState) = begin
     state.n_samples < state.n_draws || return state
     # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
     state.n_evaluations *= 2
+    # Recompute the thinning factor for the intermediate positions and gradients,
+    # so the larger window still fills exactly the `recording_target`-slot ring.
+    recording_lpdf.recorder.thin = max(1, state.n_evaluations ÷ state.recording_target)
     state.restart || return state
     # Preserve what this restart is about to throw away, BEFORE any counter is
     # zeroed or `reset!(recording_lpdf)` runs at the end of this function. The

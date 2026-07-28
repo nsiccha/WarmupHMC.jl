@@ -21,11 +21,27 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     strategy:
+      # `fail-fast: false` so one red row in a nine-row matrix does not hide the
+      # other eight; part of this suite is statistical and seeing every platform
+      # at once is the point.
       fail-fast: false
       matrix:
         julia-version: ['lts', '1', 'pre']
         julia-arch: [x64]
         os: [ubuntu-latest, windows-latest, macOS-latest]
+        # IF A WINDOWS OR macOS ROW GOES RED ON `n_adapted == length(rows)` IN
+        # `web/src/test/reparametrized_e2e.jl`, SCOPE THAT GATE TO LINUX — DO NOT
+        # LOOSEN IT.
+        #
+        # The RNG is deterministic, but per-platform BLAS reduction order is not,
+        # and the linear-algebra path feeds the sampler's trajectories, so a
+        # non-Linux row can legitimately land on different draws. That assertion
+        # is nonetheless the one guard that catches the regression this suite was
+        # built for: between 34ce034 and 095efb0 the halo pool was starved, which
+        # made `variance_cond` noisy, which meant funnel seeds 3 and 4 never
+        # restarted and ran BYTE-IDENTICAL to the plain sampler. The medians
+        # stayed green throughout — the adapting seeds carried them. Relaxing
+        # this back to `>= 3` restores exactly that blind spot.
     steps:
       - uses: actions/checkout@v4
       - name: Configure git for private repos

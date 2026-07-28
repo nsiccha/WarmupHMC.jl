@@ -28,7 +28,7 @@
 #
 # The frozen-baseline comparison is added on top whenever the file exists.
 
-using WarmupHMC, Random, LogDensityProblems, LinearAlgebra, Serialization, Statistics
+using WarmupHMC, Random, LogDensityProblems, LinearAlgebra, Serialization, Statistics, Test
 using WarmupHMC: reparam_sources, reparametrizer
 
 include(joinpath(@__DIR__, "ad_backend.jl"))
@@ -40,6 +40,7 @@ include(joinpath(@__DIR__, "targets.jl"))
 BLAS.set_num_threads(1)
 
 const SEED = 20260718
+const N_DRAWS = 200
 const GOLDEN_PATH = joinpath(@__DIR__, "golden_awm.jls")
 # `DiagGaussian` has a wide enough scale spread that the marginal-scale
 # condition number exceeds `variance_cond_target` (2.0); the funnel's linear
@@ -61,7 +62,7 @@ reparam_funnel(k=5) = ReparametrizedProblem(
 
 function run_sampler(lpdf)
     rng = Xoshiro(SEED)
-    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=200, progress=nothing)
+    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=N_DRAWS, progress=nothing)
     (; result, rng_final=copy(rng))
 end
 
@@ -74,7 +75,7 @@ function run_with_callback(lpdf)
     rng = Xoshiro(SEED)
     stages = Symbol[]
     cb = (state, stage) -> (push!(stages, stage); state.outer_counter; nothing)
-    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=200, progress=nothing, callback=cb)
+    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=N_DRAWS, progress=nothing, callback=cb)
     (; result, rng_final=copy(rng), stages)
 end
 
@@ -82,7 +83,7 @@ end
 # the written checkpoints must deserialize cleanly.
 function run_with_checkpoint(lpdf, dir)
     rng = Xoshiro(SEED)
-    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=200, progress=nothing, checkpoint_dir=dir)
+    result = adaptive_warmup_mcmc(rng, lpdf; n_draws=N_DRAWS, progress=nothing, checkpoint_dir=dir)
     (; result, rng_final=copy(rng))
 end
 
@@ -140,11 +141,19 @@ function golden_report()
     dck = diffs(canon(out), canon(ckout))
     cpfiles = sort(unique(reduce(vcat, [filter(f -> endswith(f, ".jls"), readdir(d))
                                         for d in dirs])))
+    # The consumer-facing payload contract. `:stage` was in this list until
+    # `0a4a7bc` made the payload pure sampler state and dropped it; the check
+    # silently went red and stayed there. These are the keys a consumer that
+    # renders a running fit actually reads.
+    cpkeys = (:schema_version, :sampler, :dimension, :rng, :reparam_sources,
+              :position_and_gradient, :posterior_position, :halo_position,
+              :dropped_posterior_position, :n_divergent_samples, :n_samples,
+              :outer_counter, :stepsize)
     cpok = !isempty(cpfiles) && all(dirs) do d
         fs = filter(f -> endswith(f, ".jls"), readdir(d))
         !isempty(fs) && all(fs) do f
             p = deserialize(joinpath(d, f))
-            p isa NamedTuple && haskey(p, :stage) && haskey(p, :rng) && haskey(p, :reparam_sources)
+            p isa NamedTuple && all(k -> haskey(p, k), cpkeys) && p.sampler === :adaptive
         end
     end
 
@@ -152,8 +161,12 @@ function golden_report()
     # reproduce the full straight-through result byte-for-byte.
     rdir = mktempdir()
     run_with_checkpoint(TARGETS.funnel, rdir)
+    # `n_draws` MUST be re-passed. Since `0a4a7bc` config is no longer read from
+    # the payload, so the wrapper's own default (1000) applies — comparing a
+    # resumed 1000-draw run against a 200-draw straight-through run, which is
+    # what this leg was silently doing.
     resume_diffs = map(["cp_init.jls", "cp_window_2.jls", "cp_latest.jls"]) do cp
-        rr = resume_warmup_mcmc(TARGETS.funnel, joinpath(rdir, cp); progress=nothing)
+        rr = resume_warmup_mcmc(TARGETS.funnel, joinpath(rdir, cp); n_draws=N_DRAWS, progress=nothing)
         cp => diffs(canon_result(out.funnel.result), canon_result(rr))
     end
 
@@ -163,7 +176,7 @@ function golden_report()
     rpdir = mktempdir()
     rpfull = run_with_checkpoint(reparam_funnel(), rpdir)
     rp_diffs = map(["cp_init.jls", "cp_latest.jls"]) do cp
-        rr = resume_warmup_mcmc(reparam_funnel(), joinpath(rpdir, cp); progress=nothing)
+        rr = resume_warmup_mcmc(reparam_funnel(), joinpath(rpdir, cp); n_draws=N_DRAWS, progress=nothing)
         cp => diffs(canon_result(rpfull.result), canon_result(rr))
     end
 
@@ -222,10 +235,14 @@ function main(mode)
     end
 end
 
-if abspath(PROGRAM_FILE) == (@__FILE__)
+# NB: `abspath` BOTH sides. `@__FILE__` is the path as Julia was handed it, so
+# `julia --project web/src/test/golden_awm.jl` leaves it relative and the naive
+# comparison silently falls through to the testset branch. And `using Test` has
+# to be at top level (above), not inside this `if`: the whole `if` is one
+# top-level expression, so `@testset` is macro-expanded before any branch runs.
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
     main(get(ARGS, 1, "check"))
 else
-    using Test
     @testset "golden adaptive_warmup_mcmc" begin
         r = golden_report()
 
@@ -304,8 +321,8 @@ else
             # `nonlinear_adapt=true` on a bare target must be an exact no-op, so
             # the funnel run above and a `nonlinear_adapt=false` run must agree
             # byte-for-byte.
-            a = adaptive_warmup_mcmc(Xoshiro(SEED), TARGETS.funnel; n_draws=200, progress=nothing)
-            b = adaptive_warmup_mcmc(Xoshiro(SEED), TARGETS.funnel; n_draws=200, progress=nothing,
+            a = adaptive_warmup_mcmc(Xoshiro(SEED), TARGETS.funnel; n_draws=N_DRAWS, progress=nothing)
+            b = adaptive_warmup_mcmc(Xoshiro(SEED), TARGETS.funnel; n_draws=N_DRAWS, progress=nothing,
                                      nonlinear_adapt=false)
             @test isempty(diffs(canon_result(a), canon_result(b)))
         end

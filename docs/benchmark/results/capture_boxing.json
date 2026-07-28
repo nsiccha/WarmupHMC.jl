@@ -1,0 +1,99 @@
+{
+  "ab_max_grad_diff": 0.0,
+  "ab_target": "radon_mn-radon_partially_pooled_centered",
+  "bare_ns_median": 26028.293,
+  "blas_threads": 1,
+  "captures": [
+    {
+      "arg": 1,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "target": "eight_schools-eight_schools_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": true,
+      "captures": "(Core.Box,)",
+      "dim": 88,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": true,
+      "captures": "(Core.Box,)",
+      "dim": 88,
+      "target": "radon_mn-radon_partially_pooled_centered"
+    },
+    {
+      "arg": 1,
+      "boxed": true,
+      "captures": "(Core.Box,)",
+      "dim": 89,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": true,
+      "captures": "(Core.Box,)",
+      "dim": 89,
+      "target": "radon_mn-radon_variable_intercept_centered"
+    },
+    {
+      "arg": 2,
+      "boxed": true,
+      "captures": "(Core.Box,)",
+      "dim": 26,
+      "target": "seeds_data-seeds_centered_model"
+    },
+    {
+      "arg": 2,
+      "boxed": false,
+      "captures": "()",
+      "dim": 10,
+      "target": "funnel"
+    }
+  ],
+  "julia": "1.10.11",
+  "n_calls": 1000,
+  "note": "Which posteriordb specs capture a Core.Box, and what it costs on the gradient path. The A/B rebuilds one spec with unboxed captures and asserts bit-identical gradients, so the delta is pure overhead.",
+  "rounds": 5,
+  "timings_ns": {
+    "deboxed/const": [
+      28303.513,
+      33954.129,
+      29401.338,
+      29857.437,
+      27561.98
+    ],
+    "deboxed/fd": [
+      70117.547,
+      96006.109,
+      75774.163,
+      77658.292,
+      75292.838
+    ],
+    "shipped/const": [
+      440225.0,
+      441732.95,
+      446507.588,
+      491256.803,
+      433387.334
+    ],
+    "shipped/fd": [
+      358934.346,
+      380652.332,
+      366010.839,
+      374705.678,
+      324955.171
+    ]
+  },
+  "warmuphmc_sha": "068cdeb761c8253af116dd058341b15af94acb3c"
+}

@@ -74,24 +74,32 @@ Two things about that default are easy to get wrong:
   differentiated objective is a closure capturing the reparametrizer and the
   frozen inner gradient. Enzyme's own error text suggests `Duplicated`, which is
   correct but costs up to 13× more on small targets.
-- **Reverse mode is not uniformly faster on these targets, and the theoretical
-  argument for it does not survive measurement.** The objective is scalar in `d`
-  inputs with the inner gradient held fixed, so forward mode should cost
-  `ceil(d / chunksize)` sweeps where reverse costs one, with the gap widening in
-  `d`. Measured, Enzyme/`Const` wins only on the two `d = 10` targets and loses
-  on all three larger ones. See `RESULTS.md` § *Which AD backend*. Pick the
-  backend per target from the numbers, not from the argument.
+- **Enzyme/`Const` loses on three of five targets here — because of a defect in
+  the spec table, not because of reverse mode.** `reparametrization()` in
+  `web/src/posteriordb_reparametrizations.jl` closes over indices assigned in
+  several branches of one long `if`/`elseif`, so Julia captures a `Core.Box`
+  instead of an `Int` on `radon_partially_pooled`, `radon_variable_intercept`
+  and `seeds`. That costs ForwardDiff ~4.8× and Enzyme ~15× per wrapped
+  gradient, which is enough to invert which backend looks faster (1.21× slower
+  → 0.39×, i.e. 2.6× faster, on de-boxed `radon_partially_pooled`, with
+  bit-identical gradients). `funnel` and `eight_schools` close over literals and
+  are unaffected — they are the only two rows that currently say anything about
+  the backend, and both favour Enzyme. Run `capture_boxing.jl` (below) before
+  drawing any backend conclusion, and treat the `d`-scaling question as **open**:
+  dimension and boxing are perfectly confounded across these five targets.
 
 ### Backend probes
 
-Three standalone scripts, each answering one question and writing one JSON. They
-are separate from the driver because none of them samples — they time the
-gradient path directly and finish in minutes.
+Standalone scripts, each answering one question and writing one JSON. They are
+separate from the driver because none of them samples — they time the gradient
+path directly and finish in minutes. **Start with `capture_boxing.jl`**: it
+explains the others' headline result.
 
 ```bash
 julia --project=docs/benchmark docs/benchmark/replicate_backends.jl   # ROUNDS, NCALLS
 julia --project=docs/benchmark docs/benchmark/prep_cost.jl            # NCALLS
 julia --project=docs/benchmark docs/benchmark/typical_positions.jl    # ROUNDS
+julia --project=docs/benchmark docs/benchmark/capture_boxing.jl       # ROUNDS, NCALLS
 ```
 
 | script | question | output |
@@ -100,6 +108,7 @@ julia --project=docs/benchmark docs/benchmark/typical_positions.jl    # ROUNDS
 | `prep_cost.jl` | how much of the per-gradient cost is DI preparation, which the hot path redoes on every call | `results/prep_cost.json` |
 | `typical_positions.jl` | whether the verdict depends on evaluating at `randn(d)` rather than where the sampler actually goes | `results/typical_positions.json` |
 | `annotation_sweep.jl` | superseded first pass at `Const` vs `Duplicated`, one shot per configuration; kept because `replicate_backends.jl` was written to check it | `results/annotation_sweep.json` |
+| `capture_boxing.jl` | **why the backend comparison says what it says** — which specs capture a `Core.Box`, read off `fieldtypes`, and an A/B of one spec rebuilt with unboxed captures and bit-identical gradients | `results/capture_boxing.json` |
 
 **Run these in a process that has not just sampled.** Running a full sampler
 first warms the ForwardDiff path enough to make its subsequent microbenchmark
@@ -166,7 +175,7 @@ verdict can be checked against that list rather than against a global maximum.
 | `run_reparam_benchmark.jl` | driver — runs everything, writes a results dir, prints the table |
 | `summarize.jl` | regenerates `RESULTS.md`'s tables from one results dir |
 | `compare.jl` | before/after diff across two results dirs |
-| `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl` | backend probes (above) |
+| `replicate_backends.jl`, `prep_cost.jl`, `typical_positions.jl`, `annotation_sweep.jl`, `capture_boxing.jl` | backend probes (above) |
 | `results/<run>/runs.json` | one record per run, every measurement kept |
 | `results/<run>/gradient_overhead.json` | per-call cost of the transform on the gradient path |
 | `results/*.json` | backend-probe outputs, not tied to a sampling run |

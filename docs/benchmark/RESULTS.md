@@ -23,6 +23,17 @@ reported in [Effect of the halo-recording regression](#effect-of-the-halo-record
 > `src/` drift did not alter sampling, so the sampling verdict below is
 > continuous across all three bases.
 
+> ⚠ **Every wall-clock and per-gradient number in this document was measured
+> against reparametrization specs whose closures capture a `Core.Box`** on
+> `radon_partially_pooled`, `radon_variable_intercept` and `seeds`. That costs
+> ForwardDiff ~4× and Enzyme ~15× on the gradient path, and it is enough to
+> invert which backend looks faster. The **sampling** results — ESS per gradient
+> evaluation, where adaptation settles, divergences — are unaffected, because the
+> defect changes only the cost of a gradient and not its value (gradients agree
+> to 0.0). The **backend** and **wall-clock** sections are affected and are
+> flagged in place. Details and the fix in
+> [Which AD backend](#which-ad-backend).
+
 ## Verdict
 
 **Adaptive partial centering, started from the centered parametrization, beats
@@ -75,9 +86,15 @@ two of the three **worse** and leaves the third where it was:
 
 Reverse mode helps where the wrapper was already winning (the two `d = 10`
 targets) and does not help where it was already losing. On `seeds` it more than
-triples the loss. See [Which AD backend](#which-ad-backend) — the expectation
-that reverse mode would close this gap is the one clearly refuted claim in this
-document.
+triples the loss.
+
+**Do not read that as a verdict on reverse mode.** The three targets it fails on
+are exactly the three whose reparametrization specs capture a `Core.Box`, which
+costs Enzyme ~15× on the gradient path and is enough to invert the ordering by
+itself — see [Which AD backend](#which-ad-backend). These wall-clock losses are
+measured correctly and they are real *for the specs as currently written*; what
+causes them is a defect in the spec table, and the rows above should be
+re-measured once it is fixed.
 
 So the claim the package can support is about gradient evaluations, not seconds:
 
@@ -108,16 +125,16 @@ large `d`.
 **Measured, it does not.** Per wrapped `logdensity_and_gradient` call, ratio of
 Enzyme/`Const` to ForwardDiff — below 1.0 means Enzyme is faster:
 
-| target | `d` | Enzyme/Const ÷ ForwardDiff | |
-|---|---|---|---|
-| `funnel` | 10 | **0.35–0.42×** | Enzyme ~2.5× faster |
-| `eight_schools` | 10 | **0.44–0.92×** | Enzyme faster, margin varies |
-| `radon_variable_intercept` | 89 | 1.21–1.39× | Enzyme slower |
-| `radon_partially_pooled` | 88 | 1.25–1.52× | Enzyme slower |
-| `seeds` | 26 | 2.31–5.42× | Enzyme 2–5× slower |
+| target | `d` | Enzyme/Const ÷ ForwardDiff | | spec closure captures |
+|---|---|---|---|---|
+| `funnel` | 10 | **0.35–0.42×** | Enzyme ~2.5× faster | `()` — a literal |
+| `eight_schools` | 10 | **0.44–0.92×** | Enzyme faster, margin varies | `()` — a literal |
+| `radon_variable_intercept` | 89 | 1.21–2.37× | Enzyme slower | `(Core.Box,)` |
+| `radon_partially_pooled` | 88 | 1.25–2.67× | Enzyme slower | `(Core.Box,)` |
+| `seeds` | 26 | 2.31–5.42× | Enzyme 2–5× slower | `(Core.Box,)` |
 
 Ranges span **every measurement taken**: four independent Julia processes at 3
-rounds × 1000 calls, plus one at 7 rounds × 1000 calls, each with both a
+rounds × 1000 calls, plus two at 7 rounds × 1000 calls, each with both a
 centering endpoint and an interior `c = 0.5`, and with the backend order rotated
 per round so no backend keeps the warm slot. Within a process the spread is
 8–14% on the radon targets and much wider on the two `d = 10` targets, where the
@@ -125,11 +142,63 @@ whole call is ~1 µs and GC dominates — which is why `eight_schools` spans 0.4
 to 0.92. The direction never changes on any target, in any process, at either
 `c`.
 
-The dimension argument is not merely unsupported, it points the wrong way: the
-two targets where reverse mode wins are the two smallest (`d = 10`), and it
-loses on all three larger ones. Whatever governs this, it is not `d`.
+*Between* processes the two radon ratios are much less stable than that
+within-process spread suggests: a later replication put them at 2.31–2.67×
+against the 1.21–1.52× of the earlier ones, roughly doubling the apparent
+penalty on the same base with the same script. Only the direction replicates;
+the magnitude on the boxed targets should not be quoted to two significant
+figures. The clean targets (`funnel`, `eight_schools`) reproduced within their
+stated ranges every time.
 
-Three things were checked and none of them explains it:
+### These numbers measure a defect in the spec table, not the backend
+
+**Read the last column before reading the ratios.** It predicts the verdict
+perfectly, five targets out of five, and `d` does not.
+
+`reparametrization()` in `web/src/posteriordb_reparametrizations.jl` is one long
+`if`/`elseif` chain, and `l`, `s`, `o` are assigned in many of its branches
+inside that single scope. The per-pair closures capture them:
+
+```julia
+(l, s, o) = (J+1, J+2, 0)              # :41, radon_partially_pooled
+map(1:J) do i
+    idx => Reparametrization(..., x->x[l], x->x[s])
+end
+```
+
+Julia's closure conversion cannot prove single assignment across those branches,
+so it captures a **`Core.Box`** — a mutable heap cell read as `Any` — rather than
+an `Int`. `funnel` and `eight_schools` close over literals (`x->x[1]`,
+`x->x[9]`) and capture nothing. Confirmed with `fieldtypes`, not inferred from
+timings.
+
+Rebuilding the identical spec so the captures are plain `Int`s — same 85 pairs,
+same indices, same centerings, closures reading the same `x[86]`/`x[87]`, and
+**gradients agreeing to exactly 0.0** — gives, on `radon_partially_pooled`:
+
+| spec | ForwardDiff | Enzyme/`Const` |
+|---|---|---|
+| as shipped (boxed) | 339590 ns | 429477 ns |
+| de-boxed | 79567 ns | **27911 ns** |
+| speedup | 4.3× | **15.4×** |
+
+Both backends are hurt; Enzyme is hurt ~4× harder, which is enough to **invert
+the ordering**. De-boxed, Enzyme is 2.85× *faster* than ForwardDiff on the target
+this document reports it 1.25–1.52× slower on.
+
+So the dimension argument is not refuted in the opposite direction, as an earlier
+revision of this section claimed — it is **untested**. Dimension and boxing are
+perfectly confounded in the current spec table: the three boxed specs are the
+three larger models. Nothing here separates them, and no claim about how this
+backend scales in `d` should be drawn from this table until the captures are
+fixed. The two clean rows (`funnel`, `eight_schools`) are the only ones that
+currently say anything about the backend, and both favour Enzyme.
+
+This is a fixable performance bug worth ~15× on the wrapper's gradient path, not
+a property of reverse mode. `web/src/posteriordb_reparametrizations.jl` is
+outside this directory's ownership; it has been reported rather than edited here.
+
+Three other things were checked, and none of them explains the ratios either:
 
 - **Correctness.** All three backends agree on the gradient to ≤ 9.1e-13 (max
   absolute deviation, every target × both endpoints × interior `c = 0.5`). This
@@ -178,9 +247,17 @@ marginally *ahead*, which is the signature of a difference below the noise floor
 Both gradients are equally correct.
 
 So the honest statement is: **`Const` is the right annotation on correctness
-grounds everywhere, and a large speedup only on small, cheap targets.** A
-recommendation calibrated on the funnel overstates the stakes by an order of
-magnitude for the models this method is actually aimed at.
+grounds everywhere, and its measured speedup is large on the two targets whose
+specs are clean.** A recommendation calibrated on the funnel alone overstates the
+stakes by an order of magnitude.
+
+Note what this table cannot currently tell you. The three targets where
+`Duplicated` looks free are exactly the three whose specs capture a `Core.Box`
+(above) — where a boxed capture already costs Enzyme ~15×, so a further shadow
+copy is lost in the noise. "Free on large targets" is therefore not established;
+it is what a fixed per-call cost looks like when it is added to a much larger
+defect. Re-measure after the captures are fixed before quoting this table as a
+property of `Duplicated`.
 
 ### One thing the two methods disagree about
 
@@ -196,6 +273,13 @@ An additive per-iteration sampler cost cannot invert an ordering, so this is not
 simply "the sampler does other work too". The `seeds` and `d = 10` results are
 **not** affected — there both methods agree in direction and roughly in
 magnitude, which is why those carry the verdict above and radon does not.
+
+There is now a candidate explanation, untested: radon is one of the boxed specs,
+and reading a `Core.Box` is a dynamic load whose cost depends on what else is
+resident. A tight 1000-call loop and a running sampler stress that differently,
+which is exactly the shape of defect that can disagree between the two methods
+without either being mismeasured. If the disagreement dissolves once the captures
+are fixed, that was the cause; if it survives, it is cleanly separated from it.
 
 One measurement artifact was identified and excluded while chasing this: running
 a full sampler before timing warms the ForwardDiff path enough to make its
@@ -524,8 +608,14 @@ which would each have silently corrupted the fixed-parametrization arms:
   in it.
 - **Five targets.** Every posteriordb posterior with a ready non-empty spec in
   `web/src/posteriordb_reparametrizations.jl`, plus one synthetic funnel because
-  posteriordb ships none. Five targets is enough to refute a universal claim —
-  which is what the backend section does — and not enough to establish one.
+  posteriordb ships none. Five targets is enough to refute a universal claim and
+  not enough to establish one — and for the *backend* question the effective
+  count is **two**, since the other three specs carry the `Core.Box` defect.
+- **How either backend scales in `d`.** Dimension and the boxed-capture defect
+  are perfectly confounded across these five targets: the three boxed specs are
+  the three larger models. No claim about backend scaling in `d` — in either
+  direction — can be drawn from this document until the captures are fixed and
+  the comparison re-run.
 - **One sampler.** Single-chain `adaptive_warmup_mcmc` only.
   `clustered_warmup_mcmc` has no reparametrization hooks at all and
   `cooperative_warmup_mcmc` was not measured.
@@ -537,8 +627,10 @@ which would each have silently corrupted the fixed-parametrization arms:
   pin, documented at the point of use in `web/src/test/ad_backend.jl` — not a
   recommendation and not a site to change. The one place still selecting forward
   mode for real work is the shipped consumer, `web/src/WarmupHMCWeb.jl:148`.
-  Switch it and `seeds`-shaped targets get **slower**, so that is a decision to
-  make on measurement, not on the general argument for reverse mode.
+  Measured against the specs as they stand today, switching it makes
+  `seeds`-shaped targets **slower** — but that is the boxed-capture defect
+  talking, not reverse mode, and the sensible order is to fix the captures first
+  and then measure the switch rather than to decide it on these numbers.
 
   **Two claims in `src/Reparametrizations.jl`'s docstring are not supported by
   these measurements**, and both are load-bearing for a 1.0 manual:

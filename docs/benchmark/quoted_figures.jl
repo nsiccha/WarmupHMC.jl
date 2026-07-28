@@ -163,6 +163,42 @@ end
 literal("paired rounds putting the wrapper above bare",
         "$paired_above of the $paired_total paired rounds")
 
+# -------------------------------------------------------------------- prep_cost
+#
+# The DI-preparation bullet. This artifact is the one whose generator was fixed
+# for measuring each cell ONCE: two runs of identical code disagreed by a factor
+# of thirty on `eight_schools`/`fd` (113% of the call, then 3629%), and the prose
+# was quoting it to three significant figures. It now takes ROUNDS repeats with
+# the block order rotated and keeps the raw rounds. The figures below were
+# retyped from the repaired artifact and verified by hand once; checking them
+# here is what stops that hand-verification from being a one-day property.
+let pc = live_json("docs/benchmark/results/prep_cost.json")
+    row(t, be) = only(r for r in pc["rows"] if r["target"] == t && r["backend"] == be)
+    us(x) = string(round(x / 1000, digits = 1)) * " µs"
+
+    big = ("radon_mn-radon_partially_pooled_centered" => "radon_partially_pooled",
+           "radon_mn-radon_variable_intercept_centered" => "radon_variable_intercept",
+           "seeds_data-seeds_centered_model" => "seeds")
+
+    # "26.5 of 28.5 µs" — the prose drops the unit on the first figure, so the
+    # check follows the prose rather than demanding a unit it does not use.
+    for (t, name) in big
+        r = row(t, "const")
+        literal("prep_cost $name prep-of-call",
+                string(round(r["prep_ns"] / 1000, digits = 1), " of ", us(r["unprepped_ns"])))
+    end
+
+    # The band across those three, as a range. Written the way a range is
+    # written; both orderings would be wrong to accept, so only the sorted one is.
+    shares = sort([round(Int, 100 * row(t, "const")["prep_share"]) for (t, _) in big])
+    literal("prep_cost Enzyme prep share band",
+            string(first(shares), "–", last(shares), "% of the whole unprepped Enzyme"))
+
+    # The cross-backend comparison the bullet closes on.
+    literal("prep_cost prepped-ForwardDiff vs unprepped-Enzyme",
+            us(row("radon_mn-radon_partially_pooled_centered", "fd")["prepped_ns"]))
+end
+
 # ------------------------------------------------------------------------- run
 function main_figures()
     isfile(RESULTS_MD) || (println("FAILED: $RESULTS_MD is missing."); return 1)

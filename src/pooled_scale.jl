@@ -133,6 +133,18 @@ reset!(v::RegularizedVariances) = (reset!(v.variances); v)
 # which equals `adaptive_warmup_mcmc`'s `sqrt(std(pos)/std(grad))`.
 # Pool chains by `merge!`; drop a chain from a pool by `unmerge!`.
 # ---------------------------------------------------------------------------
+"""
+    NutpieScaleAdaptation(dim::Int; regularizing_n=5.0, regularizing_var=1e-3)
+
+nutpie-style diagonal mass-matrix estimator: regularized running variances of
+BOTH the positions and the gradients, from which the marginal scale is
+`(var_pos / var_grad)^(1/4)` (see [`marginal_scales`](@ref)).
+
+Fit it with `fit!(a, position, gradient)`. Two estimators over disjoint draws
+pool exactly, via `merge!`, and a pooled estimator can give a chain back with
+`unmerge!` — which is what makes the cluster search in [`assign_clusters`](@ref)
+cheap.
+"""
 struct NutpieScaleAdaptation{T}
     position_variances::RegularizedVariances{T}
     gradient_variances::RegularizedVariances{T}

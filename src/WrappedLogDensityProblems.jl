@@ -46,6 +46,22 @@ function count_and_time(f, problem)
     (elapsed = time() - t0, n_evaluations = cp.count[], result)
 end
 
+"""
+    RecordingPosterior2(posterior; rng, recorder=nothing)
+
+The log density the sampler actually runs against during warm-up: `posterior`,
+plus the four matrices adaptation reads from.
+
+`posterior_position` / `posterior_gradient` collect the accepted draws.
+`halo_position` / `halo_gradient` collect the **halo** — one intermediate state
+per NUTS trajectory, sampled from the exact marginal proposal probabilities over
+that trajectory's leaves (`sample_leaf`, called by `finalize_leaf_recording!`),
+which is what both the linear-transformation selection and
+`find_reparametrization!` are fitted on. A `LimitedRecorder2` in `recorder`
+caps the halo at `recording_target` columns by overwriting in a ring.
+
+`reset!` empties all four and is what a restarting warm-up window does.
+"""
 struct RecordingPosterior2{P,T,L,R,G} <: WrappedLogDensityProblem{P}
     posterior::P
     halo_position::ElasticMatrix{T,Vector{T}}

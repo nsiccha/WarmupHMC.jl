@@ -28,14 +28,13 @@ The warm-up procedure is windowed and inspired by [Stan](https://mc-stan.org/doc
 WarmupHMC supports adaptive **partial centering** for hierarchical models. For parameters
 with a location-scale hierarchy (e.g. `x ~ Normal(mu, sigma)`), the centering parameter
 `c ∈ [0, 1]` interpolates between the centered (`c = 1`) and non-centered (`c = 0`)
-parametrizations.
+parametrizations, and is re-fitted per coordinate at warm-up window boundaries against
+the recorded intermediate positions and gradients.
 
-During warmup, the system tries multiple candidate centering values and selects the one
-minimizing a correlation-based loss. This happens at the end of each warmup window using
-the accumulated intermediate positions and gradients.
-
-To use reparametrizations, wrap your log density problem in a
-[`ReparametrizedProblem`](@ref) with an [`IndexedReparametrization`](@ref):
+This is **opt-in and entirely caller-driven**: `nonlinear_adapt=true` is the default, but
+it adapts nothing unless you wrap your problem in a [`ReparametrizedProblem`](@ref)
+carrying a non-empty [`IndexedReparametrization`](@ref) that names the coordinates and
+their location/log-scale accessors. Nothing is detected automatically.
 
 ```julia
 using WarmupHMC, DifferentiationInterface, Mooncake
@@ -51,8 +50,12 @@ rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
-Reparametrization is controlled by the `nonlinear_adapt` keyword (default `true`).
-Posterior samples are automatically transformed back to the original parametrization.
+Posterior samples are transformed back to the wrapped problem's own parametrization
+before being returned.
+
+See [Nonlinear reparametrization](@ref) for a runnable end-to-end example, how the
+centering is fitted, and the constraints that bite (coordinate order across a resume,
+what a checkpoint does and does not store, and the cost on the gradient hot path).
 
 ## Checkpoints, Callbacks and Resume
 

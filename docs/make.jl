@@ -20,6 +20,7 @@ makedocs(
         "Reparametrization" => "reparametrization.md",
         "Linear restart evidence" => "linear-restart.md",
         "Gallery"         => "gallery.md",
+        "Evidence"        => "evidence.md",
         "API"             => "api.md",
     ],
     # Every docstring on an exported name must appear in the manual, and every

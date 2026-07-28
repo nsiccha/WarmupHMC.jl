@@ -76,8 +76,9 @@ mode costs one.
     `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly correlated
     with the apparent backend ranking — five for five, every boxed spec a spec
     where Enzyme lost — so those numbers measure the defect, not the backend and
-    not dimension. De-boxed, `radon_partially_pooled` reverses to **2.85× in
-    Enzyme's favour**, the same target where it had measured 1.25–1.52× slower.
+    not dimension. De-boxed, `radon_partially_pooled` reverses to **2.5–2.8× in
+    Enzyme's favour** (the spread across five rounds), the same target where it
+    had measured 1.25–1.52× slower.
 
     Since exactly the larger models were the boxed ones, nothing measured here
     separates dimension from the boxing. **Reverse mode wins on every clean
@@ -98,6 +99,17 @@ mode costs one.
     `d ≈ 88`, and equal under both backends — reusing a prep object measured
     neutral-to-worse), and running a sampler before timing warms the ForwardDiff
     path enough to make a naive microbenchmark ~2× kinder to it.
+
+    Every figure above is quoted as a **range**, and deliberately. A docstring is
+    a string evaluated at package load, so it cannot read the results JSON the way
+    the manual's tables do — it is the last hand-copied data source in this
+    package, and a point estimate here silently disagrees with the generated table
+    the moment anyone picks a different aggregation (a `2.85×` did exactly that:
+    the rounds give 2.477, 2.828, 2.577, 2.601, 2.732, so ratio-of-medians renders
+    2.58 and nothing renders 2.85). A range spans the aggregations and stays true.
+    For an exact figure, read the tables in the manual — they are generated from
+    `docs/benchmark/results/` at build time, and the whole of that directory is
+    rendered on the *Benchmark evidence* page.
 
 !!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
     A bare `AutoEnzyme()` **does not work here**. The differentiated objective is

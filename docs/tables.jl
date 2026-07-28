@@ -118,6 +118,19 @@ One sentence naming what produced the numbers, built from the result file's own
 metadata rather than from prose. A result file that records no `warmuphmc_sha`
 says so instead of silently rendering an unattributed table.
 
+`harness` is the **repo-relative path** of the script that wrote the file —
+`"docs/benchmark/annotation_sweep.jl"`, not `"annotation_sweep.jl"`. It used to
+be a bare filename with `docs/benchmark/` prepended here, which encoded an
+assumption nobody had checked: that every harness lives in that one directory.
+`bench/sampler_comparison.jl` does not, and cannot — it pulls in AdvancedHMC,
+which `docs/benchmark/Project.toml` must not carry. A hardcoded prefix does not
+go red when its assumption breaks; it renders a plausible path to a file that
+is not there, which is the same shape as a caption that names the wrong script.
+Note the deliberate mismatch with [`load_harness`](@ref), whose argument stays
+relative to `docs/benchmark/`: that one has to *find* a file, so its base
+directory is a real constraint rather than an assumption about where authors
+put things.
+
 Two artifact shapes are supported, because a harness should not have to repeat
 itself to satisfy this function. If the file has a `config` object, provenance is
 read from there — the preferred shape, since a single copy of `warmuphmc_sha`
@@ -168,7 +181,7 @@ function provenance(d::AbstractDict; harness::AbstractString)
     jl === nothing || push!(bits, "Julia $(jl)")
     bt = field("blas_threads")
     bt === nothing || push!(bits, "$(bt) BLAS thread$(bt == 1 ? "" : "s")")
-    base = string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
+    base = string(join(bits, ", "), ", by `", harness, "`.")
     dirty = field("worktree_dirty")
     dirty === true && return base *
         " **Recorded from a worktree with uncommitted changes**, so the revision" *

@@ -37,6 +37,7 @@ makedocs(
     ),
     pages = [
         "Home"            => "index.md",
+        "Sampler comparison" => "sampler-comparison.md",
         "Reparametrization" => "reparametrization.md",
         "Linear restart evidence" => "linear-restart.md",
         "Nonlinear weighting evidence" => "nonlinear-weighting.md",

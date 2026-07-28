@@ -62,7 +62,7 @@ nw_aggregate_table(load_results("nonlinear_weighting/rows.json")["rows"])
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 d = load_results("nonlinear_weighting/rows.json")
-Markdown.parse("*" * provenance(d; harness = "nonlinear_weighting_run.jl") *
+Markdown.parse("*" * provenance(d; harness = "docs/benchmark/nonlinear_weighting_run.jl") *
                " $(length(d["rows"])) runs; summaries derived by " *
                "`docs/benchmark/nonlinear_weighting.jl` at build time.*")
 ```

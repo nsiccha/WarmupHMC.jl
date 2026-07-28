@@ -54,7 +54,7 @@ md_table(
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
 Markdown.parse("*" * provenance(load_results("linear_restart.json");
-                                harness = "run_linear_restart_benchmark.jl") * "*")
+                                harness = "docs/benchmark/run_linear_restart_benchmark.jl") * "*")
 ```
 
 Paired ratios below are test arm ÷ baseline. Larger is better for ESS

@@ -27,23 +27,39 @@
 # file where nothing can tell it has stopped being true. So the check stops being
 # a reading pass.
 #
-# There is a SECOND shape, and defect 3 is really an instance of it: figures that
-# are individually correct and wrong in RELATION to one another. `27431` and
-# `25863` were each a real measurement; what was false was presenting both as the
-# same run's bare gradient. It recurred as a `16x tax` beside an `11% overhead` --
-# both computable, different denominators, neither wrong on its own.
+# There is a SECOND shape, and it is NOT what defect 3 was: figures that are
+# individually correct and wrong only in RELATION to one another. The `16x tax`
+# beside the `11% overhead` is the clean example -- one artifact, one moment, two
+# denominators, neither figure stale, only the relation false.
 #
-# Deriving a figure does not close this shape, and that is the part worth
-# internalising: A COMPUTED NUMBER VOUCHES FOR ITSELF AND FOR NOTHING AROUND IT.
-# The operator, the units, the direction of the comparison and the label beside
-# it are all hand-written text, and the correct value is precisely what stops a
-# reviewer re-reading them. Generating the number moves the risk rather than
-# removing it. (Paid for twice: once by the `16x`, and once by a line in this
-# file's own history whose bound was computed and whose `>` was typed.)
+# THE TEST THAT SEPARATES THEM: WERE BOTH FIGURES CORRECT AT THE SAME TIME?
 #
-# So the checks that earn their place here are the ones that pin a RELATIONSHIP --
-# `:pattern`, where every mention of one quantity must agree, and encoding the
-# denominator a sentence intends -- not one more independently-derived figure.
+#   `16x` / `11%`  -- yes. Same artifact, same instant. Shape 2.
+#   `27431`/`25863` -- no. `176a061` measured `bare_ns_median = 27430.907`, so
+#                      `27431 ns` was right when typed; `2f39099` re-measured to
+#                      `25862.969` and updated ONE of the two mentions (its diff
+#                      shows line 353 change and line 338 left alone). At the
+#                      moment of the defect `27431` described a run that no
+#                      longer existed. That is shape 1 verbatim.
+#
+# The distinction decides which check you need, which is why it is worth the
+# paragraph:
+#
+#   shape 1 -> `:pattern`. Deriving DOES close it, provided the check requires
+#              every mention to AGREE rather than one to be PRESENT: a
+#              containment check passes happily on a document carrying both
+#              `27431` and `25863`.
+#   shape 2 -> encode the denominator the sentence intends. Deriving each figure
+#              independently CANNOT close it, because each one already checks out.
+#
+# That second row is where the general lesson lives: A COMPUTED NUMBER VOUCHES
+# FOR ITSELF AND FOR NOTHING AROUND IT. The operator, the units, the direction of
+# the comparison and the label beside it are all hand-written, and the correct
+# value is precisely what stops a reviewer re-reading them -- so deriving the
+# figure moves the risk rather than removing it. (Paid for twice: the `16x`, and
+# a line in this file's own history whose bound was computed and whose `>` was
+# typed.) It does not extend to shape 1, and an earlier revision of this comment
+# claimed it did -- crediting `:pattern` to the shape it does not fix.
 #
 # WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT. It checks figures that are
 # MECHANICALLY DERIVABLE from a live artifact. It does not check prose judgements

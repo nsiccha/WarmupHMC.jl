@@ -107,14 +107,20 @@ the funnel is the model it was looking at.
 parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
-Two knobs decide whether anything happens at all in a short run: the
-reparametrization is re-fitted only at warm-up windows that **restart**, and a
-window restarts only while the marginal-scale condition number is at or above
-`variance_cond_target` (default `2.0`). In the run above the first restart after
-initialization is window 4; a 200-draw run of the same model finishes in three
-non-restarting windows and the centerings never move off `1.0`. If you are
-testing that your spec is wired up correctly, sample long enough to reach a
-restart, or watch for one with a `callback`:
+The reparametrization is re-fitted only at warm-up windows that **restart**, and
+a window restarts only while the marginal-scale condition number is at or above
+`variance_cond_target` (default `2.0`). In the run above, windows 1 and 2 restart
+(condition number `2.08`, then `3.44`) and windows 3 and 4 do not (`1.0`) — so
+all five centerings are already at `0.0` by the end of the *first* window, and
+the remaining windows sample at the parametrization that was found. Shortening
+the run does not change that here: at `n_draws=200`, and even at `100`, this
+model still restarts on windows 1 and 2 and still lands on `0.0`.
+
+Do not read that timing as a guarantee. It is a property of this funnel, not of
+the method — on a model whose condition number starts below the target, no
+window restarts and the centerings never move at all. If you are checking that
+your spec is wired up correctly, watch the boundaries rather than assuming a
+re-fit happened:
 
 ```julia
 adaptive_warmup_mcmc(rng, rp; n_draws=1000, progress=nothing,
@@ -232,9 +238,19 @@ transform, and one AD pass over it. Your location and log-scale accessors run
 under AD on every one of those, so keep them cheap and type-generic — indexing,
 arithmetic, `exp`/`log`; not `Float64`-annotated code, not anything that mutates.
 
-**Use `Float64` centerings.** `PartiallyCentered(1)` type-parameterizes the pair
-on `Int`, and the fitted `Float64` centering cannot be written back into it:
-adaptation dies with `MethodError: Cannot convert`. Write `PartiallyCentered(1.0)`.
+**Two construction mistakes fail late rather than at construction.** Both build a
+perfectly valid-looking object and blow up further in:
+
+* **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
+  form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
+  so nothing looks wrong until the first `logdensity_and_gradient`, which hands
+  `nothing` to `value_and_gradient` and `MethodError`s. Always pass a backend.
+* **Integer centerings.** `PartiallyCentered(1)` type-parameterizes the pair
+  vector on `Int`, and the fitted `Float64` centering cannot be written back into
+  it: `MethodError: Cannot convert`. This does not fire at construction or on the
+  first gradient — it fires at the **end of the first restarting warm-up window**,
+  the first time adaptation writes a centering back. Write
+  `PartiallyCentered(1.0)`.
 
 **One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)` hands
 the *same* object to every chain, and warm-up mutates the reparametrization in

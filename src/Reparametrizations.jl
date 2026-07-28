@@ -47,17 +47,27 @@ the transform, per gradient evaluation. The transform is therefore on the
 gradient hot path, and the accessor closures in each
 [`Reparametrization`](@ref) run under AD.
 
-`ad_backend` is a DifferentiationInterface.jl backend — `AutoMooncake()`,
-`AutoForwardDiff()`, and so on; the objective is scalar in the full parameter
-vector, so a reverse-mode backend scales better with dimension. It is required
-in practice: the two-argument constructor stores `nothing`, which is not a
-backend, and the gradient call then fails. If DifferentiationInterface is not
-loaded at all, the error says so by name.
+`ad_backend` is a DifferentiationInterface.jl backend. DifferentiationInterface
+is a hard dependency of WarmupHMC, so the *interface* is always there, but a
+backend object only works once you load the AD package behind it — `AutoEnzyme()`
+needs `using Enzyme`, `AutoMooncake()` needs `using Mooncake`.
+
+Prefer a reverse-mode backend. The objective differentiated here is scalar in the
+*full* parameter vector, so forward mode costs `ceil(n / chunksize)` sweeps of the
+transform per gradient while reverse mode costs one, and the gap opens up exactly
+where reparametrization is worth doing — high-dimensional hierarchical models.
+`AutoEnzyme()` is what this project benchmarks against.
+
+A backend is required in practice, and omitting it fails *late*: the
+two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
+is not a backend, so `logdensity` keeps working on that object and the first
+`logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
+Construction itself never complains.
 
 # Example
 
 ```julia
-using WarmupHMC, DifferentiationInterface, Mooncake
+using WarmupHMC, DifferentiationInterface, Enzyme
 
 # Coordinates 2:11 are the group effects; their location is fixed at 0 and their
 # log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
@@ -66,7 +76,7 @@ ir = IndexedReparametrization([
                            0., x -> x[1] / 2)
     for i in 2:11
 ])
-rp = ReparametrizedProblem(ir, my_problem, AutoMooncake())
+rp = ReparametrizedProblem(ir, my_problem, AutoEnzyme())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -98,16 +108,46 @@ end
 """
     WarmupHMC._logdensity_and_gradient_reparam(p::ReparametrizedProblem, x)
 
-The gradient of a [`ReparametrizedProblem`](@ref). Implemented by the
-`DifferentiationInterfaceExt` extension, which is loaded as soon as
-DifferentiationInterface.jl is; the method below is the fallback that says so.
+The gradient of a [`ReparametrizedProblem`](@ref); see that docstring for the
+user-facing contract.
 
-Split out as its own function purely so the AD dependency stays weak: the
-reparametrization machinery itself is plain Julia and needs no AD, only the
-gradient does.
+Differentiate ONLY through the reparametrization transform (pure Julia) and reuse
+the inner problem's own `logdensity_and_gradient` — which may be an FFI call
+(BridgeStan) that no Julia AD backend could differentiate through anyway.
+
+    L(x)   = ljac(x) + ld(y(x))
+    ∂L/∂x  = ∂ljac/∂x + (∂y/∂x)' ∂ld/∂y
+
+`∂ld/∂y` comes from the inner problem; the rest comes from AD over the transform.
+The trick is that the whole right-hand side is the gradient of the SCALAR
+`x -> ljac(x) + dot(g_y, y(x))` with `g_y` frozen at its value at the current `y`
+— one reverse pass, not a full Jacobian. Freezing `g_y` is exactly what makes
+that identity hold: it is a constant of the differentiation, not a function of
+`x_`.
+
+Because the objective is built by applying the block's own `args` closures to the
+AD-traced `x_` (see [`Reparametrization`](@ref) and `reparam_rargs`), a location
+or log-scale that depends on other parameters is differentiated through as well —
+the chain-rule term through `∂args/∂x` is picked up automatically, and no
+accessor has to be told about it. A closure that captures a value instead of
+reading it from `x_` is a genuine constant and contributes nothing, which is the
+intended meaning of a fixed centering.
+
+Cost per gradient evaluation: one inner `logdensity_and_gradient`, one extra
+forward evaluation of the transform, and one AD pass over it. This is the
+gradient hot path, so the accessor closures inside each `Reparametrization` have
+to be AD-friendly.
 """
-_logdensity_and_gradient_reparam(p::ReparametrizedProblem, x) =
-    error("ReparametrizedProblem requires DifferentiationInterface to compute gradients. Load DifferentiationInterface and pass an AD backend to ReparametrizedProblem.")
+function _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x::AbstractVector)
+    ljac, y = p.reparametrizer(x)
+    ld, g_y = LogDensityProblems.logdensity_and_gradient(p.problem, y)
+    function reparam_objective(x_)
+        ljac_, y_ = p.reparametrizer(x_)
+        ljac_ + dot(g_y, y_)
+    end
+    _, g_x = value_and_gradient(reparam_objective, p.ad_backend, x)
+    ljac + ld, g_x
+end
 
 # --- Abstract reparametrization interface ---
 
@@ -136,7 +176,9 @@ the textbook non-centering — subtract the location, divide by the scale.
 
 Use `Float64` centerings (`PartiallyCentered(1.0)`, not `PartiallyCentered(1)`):
 warm-up writes the fitted value back into the same `pairs` vector it read, and an
-`Int`-parameterized element cannot hold a `Float64` centering.
+`Int`-parameterized element cannot hold a `Float64` centering. This fails *late* —
+not at construction, but with `MethodError: Cannot convert` at the end of the
+first restarting warm-up window, the first time a centering is written back.
 
 # How the value gets chosen
 
@@ -258,13 +300,16 @@ ir = IndexedReparametrization(
 `pairs` is mutated IN PLACE by warm-up: at every restarting window each entry is
 replaced by one carrying the newly fitted `source` centering. Two consequences:
 
-* **One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)`
-  hands the SAME object to every chain, so a shared `IndexedReparametrization`
-  has all chains adapting — and, under the default `parallel=true`, concurrently
-  writing — one shared set of centerings. Pass a vector of independently built
-  problems instead: `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])`.
-  (`cooperative_warmup_mcmc` and `clustered_warmup_mcmc` `deepcopy` per chain and
-  are not affected.)
+* **One reparametrized problem per chain.** Every multi-chain sampler gives chain
+  `i` its own `deepcopy` of the `lpdf` you pass, so no two chains ever write the
+  same `IndexedReparametrization` and the object you built is not mutated. (Of the
+  three, `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc` are the ones that
+  adapt a reparametrization at all; `clustered_warmup_mcmc` has no hooks for it
+  and does not accept `nonlinear_adapt`.) `adaptive_warmup_mcmc`'s
+  `lpdfs::AbstractArray` method is used exactly as given, so
+  `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])` is the explicit
+  spelling of the default and `fill(lpdf, length(rngs))` is how you deliberately
+  opt back into sharing one.
 * **The order of `pairs` is load-bearing across a checkpoint/resume.** A
   checkpoint stores only the fitted `source` centerings, as a bare positional
   list; on resume they are zipped back onto the freshly supplied problem's

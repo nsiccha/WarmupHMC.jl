@@ -107,14 +107,32 @@ the funnel is the model it was looking at.
 parametrization — warm-up applies the fitted transform to the draws before
 returning them, so nothing downstream has to know a reparametrization happened.
 
-Two knobs decide whether anything happens at all in a short run: the
-reparametrization is re-fitted only at warm-up windows that **restart**, and a
-window restarts only while the marginal-scale condition number is at or above
-`variance_cond_target` (default `2.0`). In the run above the first restart after
-initialization is window 4; a 200-draw run of the same model finishes in three
-non-restarting windows and the centerings never move off `1.0`. If you are
-testing that your spec is wired up correctly, sample long enough to reach a
-restart, or watch for one with a `callback`:
+!!! note "Every number on this page was measured at `36256d3`"
+    Adaptation behaviour is not fixed across commits — these same figures were
+    materially different a few commits earlier. If you are on a different tip,
+    re-run rather than assume.
+
+The reparametrization is re-fitted only at warm-up windows that **restart**, and
+a window restarts only while the marginal-scale condition number is at or above
+`variance_cond_target` (default `2.0`). In the run above, windows 1 and 2 restart
+(condition number `2.08`, then `3.44`) and windows 3 and 4 do not (`1.0`), so all
+five centerings are already at `0.0` by the end of the *first* window and the
+remaining windows sample at the parametrization that was found.
+
+### How long a run does adaptation need?
+
+**On this model, not a long one.** Re-running the example unchanged at
+`n_draws=200`, and again at `n_draws=100`, gives the same two restarting windows
+and the same final `[0.0, 0.0, 0.0, 0.0, 0.0]`. So the centerings here are settled
+well inside a run short enough to use as a smoke test — you do not have to budget
+a long run just to find out whether your spec does anything.
+
+Do not read that as a guarantee about the method. It is a property of this
+funnel: on a model whose condition number starts below `variance_cond_target`, no
+window restarts and the centerings never move at all, however long you sample.
+What generalizes is the *mechanism*, not the window count — so if you are
+checking that your spec is wired up correctly, watch the boundaries rather than
+assuming a re-fit happened:
 
 ```julia
 adaptive_warmup_mcmc(rng, rp; n_draws=1000, progress=nothing,
@@ -206,6 +224,27 @@ own convergence behaviour to reason about. Resolution finer than `0.1` is not
 what decides how the sampler behaves. The grid size is fixed and no sampler
 keyword exposes it.
 
+All of that rewrites the reparametrization **in place**, so a multi-chain run
+must not let two chains share one problem. It does not: every sampler gives chain
+`i` its own `deepcopy` of the `lpdf` you pass. The two that adapt a
+reparametrization at all are [`adaptive_warmup_mcmc`](@ref) and
+[`cooperative_warmup_mcmc`](@ref) — [`clustered_warmup_mcmc`](@ref) has no
+reparametrization hooks and does not accept `nonlinear_adapt` — and for those two
+the chains adapt independently, chain `i` is the same run as that chain on its
+own, and the object you constructed is never mutated. Pass
+`lpdfs::AbstractArray` instead to control the per-chain problems yourself; that
+method is used exactly as given, so
+
+```julia
+# independently built problems — same effect as the default, spelled out
+adaptive_warmup_mcmc(rngs, [ReparametrizedProblem(build_ir(), problem, backend) for _ in rngs])
+
+# one object every chain shares — deliberate opt-in, not the default
+adaptive_warmup_mcmc(rngs, fill(lpdf, length(rngs)))
+```
+
+both do what they say.
+
 ## Constraints that bite
 
 **Coordinate order is load-bearing across a checkpoint/resume.** A checkpoint
@@ -232,22 +271,38 @@ transform, and one AD pass over it. Your location and log-scale accessors run
 under AD on every one of those, so keep them cheap and type-generic — indexing,
 arithmetic, `exp`/`log`; not `Float64`-annotated code, not anything that mutates.
 
-**Use `Float64` centerings.** `PartiallyCentered(1)` type-parameterizes the pair
-on `Int`, and the fitted `Float64` centering cannot be written back into it:
-adaptation dies with `MethodError: Cannot convert`. Write `PartiallyCentered(1.0)`.
+**Two construction mistakes fail late rather than at construction.** Both build a
+perfectly valid-looking object and blow up further in:
 
-**One reparametrized problem per chain.** `adaptive_warmup_mcmc(rngs, lpdf)` hands
-the *same* object to every chain, and warm-up mutates the reparametrization in
-place — so all chains adapt, and under the default `parallel=true` concurrently
-write, one shared set of centerings. Pass a vector of independently built
-problems instead:
+* **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
+  form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
+  so nothing looks wrong until the first `logdensity_and_gradient`, which hands
+  `nothing` to `value_and_gradient` and `MethodError`s. Always pass a backend.
+* **Integer centerings.** `PartiallyCentered(1)` type-parameterizes the pair
+  vector on `Int`, and the fitted `Float64` centering cannot be written back into
+  it: `MethodError: Cannot convert`. This does not fire at construction or on the
+  first gradient — it fires at the **end of the first restarting warm-up window**,
+  the first time adaptation writes a centering back. Write
+  `PartiallyCentered(1.0)`.
 
-```julia
-adaptive_warmup_mcmc(rngs, [ReparametrizedProblem(build_ir(), problem, backend) for _ in rngs])
-```
+**The per-chain `deepcopy` descends into the wrapped problem.** It has to — the
+`ReparametrizedProblem` owns the `IndexedReparametrization` that warm-up rewrites,
+and nothing can copy that without copying the struct holding it. What that costs
+depends on what your inner problem is made of, and the two cases differ sharply:
 
-`cooperative_warmup_mcmc` and `clustered_warmup_mcmc` `deepcopy` the problem per
-chain and are not affected.
+* **Native handles are aliased, not duplicated.** A `StanProblem` holds raw
+  pointers to one `bs_model_construct`ed model; `deepcopy` copies the pointers
+  verbatim, so every chain's copy addresses that same native model and no chain
+  reconstructs or re-`dlopen`s anything. Only the object you built carries the
+  destructor, so the copies being collected does not invalidate it. It also means
+  the chains still share the model's *native* state: running them with
+  `parallel=true` needs a model compiled `make_args=["STAN_THREADS=true"]`, the
+  same as it always did.
+* **Julia-side data is genuinely copied.** An inner problem holding a large
+  read-only array pays for that array once per chain, and one that cannot be
+  `deepcopy`ed at all fails here rather than in your own code. Either is a reason
+  to build the `lpdfs` vector yourself and share the parts you know are safe to
+  share.
 
 **`cooperative_warmup_mcmc` accepts `progress=` and drops it.** The keyword is on
 the signature and passes keyword validation, but the top-level function never

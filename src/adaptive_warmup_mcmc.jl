@@ -800,6 +800,20 @@ For the multi-chain method, pass either a scalar to broadcast or a
 `Vector` of length `length(rngs)` for per-chain initial values. There is
 no separate `initial_params` kwarg.
 
+# The multi-chain method and `lpdf`
+
+`adaptive_warmup_mcmc(rngs, lpdf)` gives each chain its own `deepcopy(lpdf)`,
+exactly as [`cooperative_warmup_mcmc`](@ref) and [`clustered_warmup_mcmc`](@ref)
+do, so chain `i` is byte-identical to running that chain on its own and the
+`lpdf` you pass is never mutated. This matters when the lpdf carries adaptation
+state — a [`ReparametrizedProblem`](@ref)'s
+[`IndexedReparametrization`](@ref) is optimised in place at every window
+boundary — and it is why the chains do not have to share one centering.
+
+Pass `lpdfs::AbstractArray` instead (`adaptive_warmup_mcmc(rngs, lpdfs)`) to
+control the per-chain problems yourself: independently built problems for
+independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
+
 # Selected keyword arguments
 
 * `n_draws=1000` — number of posterior draws to collect.
@@ -1007,7 +1021,22 @@ end
 _chain_dir(::Nothing, i) = nothing
 _chain_dir(dir, i) = joinpath(dir, "chain_$i")
 
-adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) = adaptive_warmup_mcmc(rngs, fill(lpdf, size(rngs)); kwargs...)
+# Scalar-lpdf multi-chain entry point: each chain gets its OWN `deepcopy(lpdf)`,
+# matching `cooperative_warmup_mcmc` and `clustered_warmup_mcmc`.
+#
+# This used to be a `fill`, which stores the SAME object in every slot. A stateful
+# lpdf was then shared by every chain — notably a `ReparametrizedProblem`, whose
+# `IndexedReparametrization` is mutated IN PLACE (`optimize!`: `pairs .= ...`) at
+# every window boundary while `logdensity`/`logdensity_and_gradient` read those same
+# pairs on the gradient hot path. Under the default `parallel=true` that is a data
+# race; even single-threaded, chain i>1 sampled under whatever centering chain i-1
+# last wrote, and every chain's `reparam_sources` checkpoint recorded the same
+# last-writer values. Both were silent.
+#
+# Callers that genuinely want the chains to share one object can still say so
+# explicitly by passing `fill(lpdf, n)` to the `lpdfs::AbstractArray` method.
+adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) =
+    adaptive_warmup_mcmc(rngs, map(_ -> deepcopy(lpdf), rngs); kwargs...)
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing,
 monitor_ess=!isnothing(progress), description="MCMC", init=missing, checkpoint_dir=nothing, kwargs...) = with_progress(progress, length(rngs); description) do progress
     n_chains = length(rngs)

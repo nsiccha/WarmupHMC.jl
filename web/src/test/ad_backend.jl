@@ -1,21 +1,22 @@
 # Shared loader for the AD stack the reparametrization tests need.
 #
-# `ReparametrizedProblem` computes gradients through `WarmupHMC`'s
-# `DifferentiationInterfaceExt` extension, which only exists once
-# DifferentiationInterface is loaded; the backend itself (`AutoForwardDiff`)
-# additionally needs ForwardDiff in-session. Neither is a dependency of
-# `WarmupHMC` proper — DifferentiationInterface is a `[weakdeps]` entry and
-# ForwardDiff arrives transitively via Pathfinder — so a plain
-# `using ForwardDiff` fails under `--project=.`, which is how this suite is
-# actually run:
+# `ReparametrizedProblem` computes gradients through DifferentiationInterface,
+# which IS a direct dependency of WarmupHMC. The *backend* is not: these tests
+# pin `AutoForwardDiff`, which needs ForwardDiff in-session, and ForwardDiff
+# arrives only transitively (via Pathfinder), so a plain `using ForwardDiff`
+# fails under `--project=.`, which is how this suite is actually run:
 #
 #     ERROR: ArgumentError: Package ForwardDiff not found in current path.
 #
 # That is why `golden_awm.jl` could not be included from `runtests.jl` as
-# written. Loading by UUID goes through the same machinery as `using` (so the
-# extension is triggered normally) but resolves against the *manifest* rather
-# than the project's direct dependencies, which works under both `--project=.`
-# and `Pkg.test()`.
+# written. Loading by UUID goes through the same machinery as `using` but
+# resolves against the *manifest* rather than the project's direct dependencies,
+# which works under both `--project=.` and `Pkg.test()`.
+#
+# ForwardDiff is the backend the FROZEN GOLDEN BASELINES were recorded against,
+# which is the only reason it is pinned here — it is not a recommendation. New
+# code should use a reverse-mode backend (`AutoEnzyme()`); see the
+# `ReparametrizedProblem` docstring.
 #
 # It is deliberately NOT tolerant: a missing backend must abort the suite, not
 # quietly skip the tests that need it. A reparametrization suite that silently
@@ -35,9 +36,7 @@ catch err
         $(sprint(showerror, err))
 
     `$name` should be reachable through the resolved manifest. Re-resolve this
-    worktree (see the repo's canonical resolve) and try again. Do NOT `Pkg.add`
-    DifferentiationInterface into this project — it is a `[weakdeps]` entry and
-    promoting it deletes the `[weakdeps]` section, orphaning `[extensions]`.
+    worktree (see the repo's canonical resolve) and try again.
     """)
 end
 
@@ -55,20 +54,26 @@ LogDensityProblems.logdensity_and_gradient(::_ADGateTarget, x) = (-sum(abs2, x) 
 
 # The gradient path must actually WORK. Assert the BEHAVIOUR, not the mechanism.
 #
-# This gate used to read
-# `isnothing(Base.get_extension(WarmupHMC, :DifferentiationInterfaceExt)) && error(...)`,
-# which pins the suite to WHERE the method is defined rather than to whether it
-# exists. Moving `_logdensity_and_gradient_reparam` out of `ext/` and into `src/`
-# changes nothing observable, but would abort the WHOLE suite on this line —
-# `runtests.jl` includes this file before any testset — with a message blaming
-# the AD backend.
+# Two structural checks have stood here and both were unfalsifiable, in opposite
+# directions — worth recording, because the third one will look reasonable too:
 #
-# `hasmethod` is no better: `src/Reparametrizations.jl` defines a fallback
-# `_logdensity_and_gradient_reparam` that throws "requires DifferentiationInterface",
-# so a method always exists and the check can never fail. Both structural checks
-# are wrong for the same reason. Calling it is the only thing that distinguishes
-# a working gradient path from a missing one — and it is strictly stronger, since
-# it also catches an extension that loads but returns the wrong shape.
+#   `isnothing(Base.get_extension(WarmupHMC, :DifferentiationInterfaceExt))`
+#       pinned the suite to WHERE the method lives. When the method moved from
+#       `ext/` into `src/` — no observable change — this line aborted the WHOLE
+#       suite (`runtests.jl` includes this file before any testset) with a
+#       message blaming the AD backend. It failed on a non-event.
+#
+#   `hasmethod(WarmupHMC._logdensity_and_gradient_reparam, ...)`
+#       has the opposite defect: it can never fail. That method is now defined
+#       unconditionally in `src/Reparametrizations.jl`, with
+#       DifferentiationInterface a hard `[deps]` entry — no weakdep, no
+#       conditional compilation. Asking whether it exists is asking whether the
+#       file we just loaded loaded. It cannot distinguish a working gradient
+#       path from a broken one, which is the only thing worth knowing here.
+#
+# So: call it. That is strictly stronger than either — it catches a method that
+# resolves but computes the wrong thing, and it is indifferent to which module
+# the method ends up in, which is precisely the axis that has already churned.
 let rp = WarmupHMC.ReparametrizedProblem(
         WarmupHMC.IndexedReparametrization([
             2 => WarmupHMC.Reparametrization(
@@ -85,10 +90,9 @@ let rp = WarmupHMC.ReparametrizedProblem(
             $(sprint(showerror, err))
 
         ForwardDiff and DifferentiationInterface both loaded above, so the AD
-        stack itself is fine — the reparametrized gradient METHOD is unreachable.
-        Either WarmupHMC's `DifferentiationInterfaceExt` did not activate, or the
-        method it provides moved and nothing replaced it. Every reparametrization
-        testset below would fail; aborting here so the cause is legible.
+        stack itself is fine — it is the reparametrized gradient path that is
+        broken. Every reparametrization testset below would fail; aborting here
+        so the cause is legible rather than arriving as a wall of red.
         """)
     end
     length(g) == 2 && all(isfinite, g) || error(

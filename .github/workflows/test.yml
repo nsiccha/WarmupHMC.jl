@@ -72,11 +72,10 @@ jobs:
         # `web/src/test/runtests.jl`, not the `test/runtests.jl` the action and
         # `Pkg.test` assume. Running against `--project=.` rather than the test
         # target is deliberate and sufficient — the suite needs neither
-        # TestModules nor Documenter, and it needs `DifferentiationInterface`
-        # (a `[weakdeps]` entry) and `ForwardDiff` (transitive, via Pathfinder)
-        # to be in the manifest, which they are only in the package env.
-        # `web/src/test/ad_backend.jl` loads both by UUID and aborts loudly if
-        # either is missing or if `DifferentiationInterfaceExt` did not
-        # activate, so a broken AD setup fails the job instead of silently
-        # skipping every reparametrization testset.
+        # TestModules nor Documenter, and it needs `ForwardDiff` (transitive,
+        # via Pathfinder) to be in the manifest, which it is only in the package
+        # env. `web/src/test/ad_backend.jl` loads it by UUID and aborts loudly
+        # if it is missing or if the reparametrization gradient method is gone,
+        # so a broken AD setup fails the job instead of silently skipping every
+        # reparametrization testset.
         run: julia --project=. -e 'include("web/src/test/runtests.jl")'

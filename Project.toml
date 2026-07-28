@@ -4,6 +4,7 @@ authors = ["Nikolas Siccha and contributors"]
 version = "0.2.1"
 
 [deps]
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DynamicHMC = "bbc10e6e-7c05-544b-b16e-64fede858acb"
 ElasticArrays = "fdbdab4c-e67f-52f5-8c3f-e7b388dad3d4"
@@ -20,12 +21,6 @@ Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
 Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
-
-[weakdeps]
-DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
-
-[extensions]
-DifferentiationInterfaceExt = "DifferentiationInterface"
 
 [compat]
 DifferentiationInterface = "0.6, 0.7"

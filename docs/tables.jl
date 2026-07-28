@@ -50,9 +50,22 @@ that guard exists to prevent. Refusing blank closes it independent of step
 order.
 
 Mirrors `env_dir` in `docs/benchmark/common.jl`. Duplicated rather than shared
-on purpose: the docs environment may only depend on what `docs/Project.toml`
-has, and including `common.jl` would drag BridgeStan and PosteriorDB into the
-docs build. Keep the two in lockstep — one variable, one meaning.
+on purpose: `common.jl` pulls PosteriorDB, BridgeStan and
+StanLogDensityProblems, none of which `docs/Project.toml` has, so including it
+would drag the whole measurement stack into `makedocs`.
+
+**Four sites implement this one rule.** `env_dir` serves every generator that
+can afford `common.jl`; the other three stand alone — `results_dir` here, plus
+inlined guards in `docs/benchmark/nonlinear_weighting_report.jl` and
+`docs/benchmark/run_linear_restart_benchmark.jl`, each of which documents its
+own reason for being separate. Change the rule and change all four.
+
+**Do not anchor that search on the variable name.** One rule guards three
+variables — `WHMC_BENCH_OUT` here and in most generators, `WHMC_NW_OUT` in
+`nonlinear_weighting_run.jl`, and `WHMC_LINEAR_BENCH_OUT` in
+`run_linear_restart_benchmark.jl` — so `grep WHMC_BENCH_OUT` returns neither
+all of the sites nor only the sites. `grep -rl 'is set but blank' docs/`
+returns exactly the four, and is the anchor to use.
 """
 function results_dir()
     haskey(ENV, "WHMC_BENCH_OUT") ||

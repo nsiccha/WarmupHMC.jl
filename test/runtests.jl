@@ -37,4 +37,5 @@ end
     @testset "adaptive_warmup_mcmc (end-to-end)" begin
         include("adaptive_warmup.jl")
     end
+    include("readme.jl")
 end

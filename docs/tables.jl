@@ -29,8 +29,15 @@ already honour that variable; without it on this side there is no job that can
 run a probe and `makedocs` against the same files, and a generator is free to
 change its output keys next to a stale checked-in JSON indefinitely. That is not
 hypothetical — `655218e` changed `capture_boxing.jl`'s keys and nothing surfaced
-it until the results were regenerated months later, which took the docs build
-red.
+it until `176a061` regenerated the results and took the docs build red.
+
+Measured, that gap was **2 h 12 m on one day**, not the months an earlier draft
+of this docstring claimed. The duration was never what made it dangerous. Two
+other things did, and they are what this seam is actually for: the renaming
+landed in one owner's file and the breakage surfaced in another's, and
+`evidence.md` — which enumerates `results/` rather than naming keys — absorbed
+the new shape in silence, so only the page that NAMED a removed key went red.
+An enumerating consumer cannot fail; a naming one is the whole gate.
 
 **An empty value is treated as unset, deliberately.** `get(ENV, k, default)`
 returns `""` for an exported-but-empty variable, and `joinpath("", "x")` is

@@ -56,8 +56,7 @@ would drag the whole measurement stack into `makedocs`.
 
 This is not the only such copy. `env_dir` serves every generator that can
 afford `common.jl`, and the scripts that cannot afford it inline their own
-guard, each documenting its own reason. Change the rule and you must change all
-of them, so find them with:
+guard. Change the rule and you must change all of them, so find them with:
 
     grep -rl 'is set but blank' docs/
 
@@ -125,6 +124,23 @@ read from there — the preferred shape, since a single copy of `warmuphmc_sha`
 cannot disagree with a duplicate of itself. Otherwise, or for any field `config`
 omits, it falls back to the top level, which is the older flat shape.
 
+**A SHA recorded from a DIRTY worktree is not provenance at all**, and it is the
+one failure here with no detector but the flag itself. `warmuphmc_sha` renders
+identically whether the tree was clean or carried uncommitted changes, so it
+reads as full attribution while pointing at code that never ran. Unlike a stale
+SHA, this cannot be discharged afterwards: there is no revision to compare
+against, so `code_identical.jl` structurally cannot answer it. `worktree_dirty`
+is therefore rendered beside the SHA rather than dropped, and an artifact that
+does not record the flag says so — silence would be indistinguishable from a
+verified-clean tree, which is the whole defect.
+
+It is rendered rather than refused because a dirty measurement is not worthless,
+only unattributable, and some are kept deliberately as history: the `b5c7dee`
+boxed-spec base carries `worktree_dirty = true` and is `SUPERSEDED` on purpose.
+Erroring would take the build red on artifacts nobody intends to re-run. Zero
+rows is the opposite case — no information at all — which is why
+[`md_table`](@ref) refuses that one instead.
+
 **The SHA this renders is provenance, not currency.** It says which revision was
 measured, which stays true forever; it says nothing about whether that revision
 still describes the sampler. Those come apart silently and in the reassuring
@@ -152,7 +168,14 @@ function provenance(d::AbstractDict; harness::AbstractString)
     jl === nothing || push!(bits, "Julia $(jl)")
     bt = field("blas_threads")
     bt === nothing || push!(bits, "$(bt) BLAS thread$(bt == 1 ? "" : "s")")
-    string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
+    base = string(join(bits, ", "), ", by `docs/benchmark/", harness, "`.")
+    dirty = field("worktree_dirty")
+    dirty === true && return base *
+        " **Recorded from a worktree with uncommitted changes**, so the revision" *
+        " named above does not describe the code that ran — and no revision does."
+    sha === nothing || dirty !== nothing ||
+        return base * " (Worktree cleanliness was not recorded.)"
+    base
 end
 
 """

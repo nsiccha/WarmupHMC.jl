@@ -1,0 +1,3 @@
+base b5c7dee, the BOXED-spec base — superseded by results/forwarddiff-5637fcf/
+The ForwardDiff half of the boxed-spec pair; see results/enzyme-b5c7dee/SUPERSEDED
+for why it is kept and why differing from the tip is the point.

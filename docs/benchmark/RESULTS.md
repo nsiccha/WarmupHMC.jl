@@ -20,6 +20,14 @@ the tip. That SHA will be stale by the time you read it: **re-run the script
 against the tip you have.** What justifies these tables is the script's verdict,
 not this sentence.
 
+The same question asked of every artifact at once is
+`docs/benchmark/artifact_currency.jl`, which reads each checked-in result's own
+recorded `warmuphmc_sha` and holds it to the tip. It reports **12 live artifacts
+current** and 8 superseded (the boxed-spec base and the halo-regression
+before/after pair, each carrying a `SUPERSEDED` file saying why it is kept).
+That is the statement worth having: not "this document's base is fine" but
+"nothing checked in has quietly gone stale".
+
 Reading `git diff` was the old check and it is the weak one here: those three
 commits produce a 121-line diff in a file whose docstrings are long enough to
 bury a one-line code change, and an all-prose diff looks exactly like a

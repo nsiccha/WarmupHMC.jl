@@ -55,19 +55,62 @@ const INVENTORY_DIR = joinpath(pkgdir_of(BRM), "research", "historical_model_inv
 const TRANSLATIONS = joinpath(INVENTORY_DIR, "translations.tsv")
 const MODEL_MATRIX = joinpath(INVENTORY_DIR, "model_matrix.tsv")
 
-struct InventorySpec
+"""
+One benchmarked inventory row and the consumer-side data adapter it needs.
+
+Only `adapter_note`, `adapt` and the receipt fields are authored here: the model
+body, its grouping factors and every support/fidelity label come from BRM's
+inventory. `coverage` records WHY the row is in the published set — the
+structural feature it contributes that no other benchmarked row does — so the
+set can be audited for coverage rather than only for cheapness.
+
+`sha256` pins the RAW upstream file. It is not decoration: three of the tranche
+datasets are served by redirecting hosts (OSF, figshare, an ndownloader alias),
+where a silently re-published file would otherwise change the posterior without
+changing anything recorded in the artifact.
+"""
+Base.@kwdef struct InventorySpec
     source::String
     key::String
     dataset::String
     url::String
     adapter_note::String
     adapt::Function
+    sha256::String = ""
+    coverage::String = ""
+    # `CSV.read` keywords. Needed because the historical receipts are not all
+    # comma-separated: the two `bruno.nicenboim.me` OSF downloads are tab- and
+    # semicolon-separated respectively.
+    read_options::NamedTuple = NamedTuple()
+    # Second file some historical loaders join against, recorded verbatim in the
+    # artifact so the join input carries a checksum of its own.
+    auxiliary::Dict{String,String} = Dict{String,String}()
+    # Departures from the cited source's own coding that the verbatim BRM
+    # surface forces on the consumer. Empty when there are none.
+    categorical_departures::String = ""
 end
 
 function dense_int(v)
     levels = sort(unique(v))
     code = Dict(x => i for (i, x) in enumerate(levels))
     [code[x] for x in v]
+end
+
+"""
+Two-level factor as a 0/1 treatment contrast on the sorted levels.
+
+`dense_int` is right for grouping factors, where `1:n_levels` is exactly what
+BRM wants, and wrong for a two-level *predictor*: it emits 1/2, which relocates
+the intercept away from the reference level the historical `brm` call reported.
+The reference level is the first in sorted order, which is also R's default for
+an unordered factor.
+"""
+function treatment_contrast(v)
+    levels = sort(unique(v))
+    length(levels) == 2 || error(
+        "treatment_contrast expects a two-level factor, got $(length(levels)) levels",
+    )
+    [x == first(levels) ? 0.0 : 1.0 for x in v]
 end
 
 parse_int(x) = parse(Int, strip(string(x)))
@@ -101,71 +144,267 @@ function radon_adapter(srrs2)
        county=dense_int(strip.(String.(merged.county))))
 end
 
+const RADON_ADAPTER_NOTE =
+    "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
+    "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
+    "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
+    RADON_CTY_SHA256
+const RADON_AUXILIARY = Dict("url" => RADON_CTY_URL, "sha256" => RADON_CTY_SHA256)
+
+# ---------------------------------------------------------------------------
+# Historical-gallery tranche adapters.
+#
+# Each of these reproduces the filtering its cited source performs before
+# fitting. They are deliberately written as plain, total functions over the raw
+# file: no sampling, no random subsetting, no `first(n)` convenience that would
+# depend on file order unless the source itself does (baseball, which does).
+# ---------------------------------------------------------------------------
+
+"""
+Baseball batting rows exactly as the bambi hierarchical-binomial notebook
+selects them.
+
+The notebook nulls out `AB == 0` (a plate-appearance-free row carries no
+binomial information), drops the nulled rows, keeps `yearID >= 2016`, and then
+takes the first fifteen remaining rows. The 1:15 slice is the source's own
+choice, not a runtime budget: the notebook is about partial pooling across a
+handful of players. File order is Lahman's, which is stable for a pinned file,
+and the pinned `sha256` is what makes that reproducible.
+"""
+function baseball_adapter(df)
+    keep = [i for i in 1:size(df, 1)
+            if !ismissing(df.AB[i]) && df.AB[i] != 0 &&
+               !ismissing(df.H[i]) && !ismissing(df.yearID[i]) &&
+               df.yearID[i] >= 2016]
+    length(keep) >= 15 || error("baseball filter left only $(length(keep)) rows")
+    selected = df[keep[1:15], :]
+    (; H=Int.(selected.H), AB=Int.(selected.AB),
+       playerID=dense_int(String.(selected.playerID)))
+end
+
+"""
+The twelve number-nonagreement studies of the interference meta-analysis.
+
+`Effect` and `SE` are already on a common millisecond scale in the source file,
+so nothing is rescaled. Every study contributes exactly one observation: the
+random intercept is identified only because the response SE is known and fixed,
+which is precisely the structure this row is here to cover.
+"""
+function meta_sbi_adapter(df)
+    selected = df[(String.(df.TargetType) .== "Match") .&
+                  (String.(df.DepType) .== "nonagreement"), :]
+    size(selected, 1) == 12 || error(
+        "meta_sbi filter selected $(size(selected, 1)) rows, expected 12")
+    (; effect=Float64.(selected.Effect), SE=Float64.(selected.SE),
+       study_id=dense_int(String.(selected.Publication)))
+end
+
+"""
+Nieuwland et al. N400 amplitudes, all nine laboratories.
+
+`c_cloze` is the cited book's predictor: cloze probability as a proportion,
+grand-mean centred. The receipt file stores cloze as a percentage, so it is
+divided by 100 first — that reproduces the book's predictor SCALE, which is what
+its reported coefficient is expressed in, and keeps the predictor O(1).
+
+The book's own worked example restricts to the Edinburgh laboratory (2,827 rows
+here, 37 subjects) to speed up computation. This benchmark deliberately keeps
+all 25,848 rows and all 334 subjects: the whole point of carrying this row is the
+crossed subject-by-item structure at a scale nothing else in the set reaches.
+"""
+function n400_adapter(df)
+    cloze = Float64.(df.cloze) ./ 100
+    (; n400=Float64.(df.n400), c_cloze=cloze .- mean(cloze),
+       subj=dense_int(String.(df.subject)), item=dense_int(Int.(df.item)))
+end
+
 const SPECS = InventorySpec[
+    # ---- The eight already-published rows, unchanged. ------------------------
     InventorySpec(
-        "lme4", "dyestuff_re", "dyestuff",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/Dyestuff.csv",
-        "Yield copied as Float64; Batch deterministically recoded to dense integers",
-        df -> (; Yield=Float64.(df.Yield), Batch=dense_int(df.Batch)),
+        source="lme4", key="dyestuff_re", dataset="dyestuff",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/lme4/Dyestuff.csv",
+        sha256="7a0c76e36c68aad3bddeff58811b89a07fb7a88cbf9ccf5d2b6fa6c30f6ca578",
+        coverage="gaussian intercept-only hierarchy, smallest target",
+        adapter_note="Yield copied as Float64; Batch deterministically recoded to dense integers",
+        adapt=df -> (; Yield=Float64.(df.Yield), Batch=dense_int(df.Batch)),
     ),
     InventorySpec(
-        "lme4", "sleepstudy_slope", "sleepstudy",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
-        "Reaction and Days copied as Float64 without response scaling; Subject " *
-        "deterministically recoded to dense integers",
-        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
-               Subject=dense_int(df.Subject)),
+        source="lme4", key="sleepstudy_slope", dataset="sleepstudy",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+        sha256="20922ddc87d538bf2344f73d49000eeb2d7e14934b6191a3e071fefc329942c4",
+        coverage="gaussian varying-slope hierarchy; the historical formula's " *
+            "implicit random intercept is not generated, so the block is width one",
+        adapter_note="Reaction and Days copied as Float64 without response scaling; Subject " *
+            "deterministically recoded to dense integers",
+        adapt=df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
+                     Subject=dense_int(df.Subject)),
     ),
     InventorySpec(
-        "bambi", "sleepstudy", "sleepstudy",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
-        "Reaction and Days copied as Float64 without response scaling; Subject " *
-        "deterministically recoded to dense integers",
-        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
-               Subject=dense_int(df.Subject)),
+        source="bambi", key="sleepstudy", dataset="sleepstudy",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+        sha256="20922ddc87d538bf2344f73d49000eeb2d7e14934b6191a3e071fefc329942c4",
+        coverage="duplicate-card control: a second source's transcription of the same model",
+        adapter_note="Reaction and Days copied as Float64 without response scaling; Subject " *
+            "deterministically recoded to dense integers",
+        adapt=df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
+                     Subject=dense_int(df.Subject)),
     ),
     InventorySpec(
-        "mixed_models_jl", "penicillin_crossed", "penicillin",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/Penicillin.csv",
-        "diameter copied as Float64; plate and sample converted to String and " *
-        "deterministically recoded to dense integers",
-        df -> (; diameter=Float64.(df.diameter),
-               plate=dense_int(String.(df.plate)),
-               sample=dense_int(String.(df.sample))),
+        source="mixed_models_jl", key="penicillin_crossed", dataset="penicillin",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/lme4/Penicillin.csv",
+        sha256="0caff3b1bf332fcb8cc0e410ce3f5e49c390b3bc10beda1bc4587fee1c3a466d",
+        coverage="two crossed intercept-only grouping factors",
+        adapter_note="diameter copied as Float64; plate and sample converted to String and " *
+            "deterministically recoded to dense integers",
+        adapt=df -> (; diameter=Float64.(df.diameter),
+                     plate=dense_int(String.(df.plate)),
+                     sample=dense_int(String.(df.sample))),
     ),
     InventorySpec(
-        "bambi", "radon_partial", "radon",
-        RADON_SRRS2_URL,
-        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
-        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
-        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
-        RADON_CTY_SHA256,
-        radon_adapter,
+        source="bambi", key="radon_partial", dataset="radon",
+        url=RADON_SRRS2_URL, sha256=RADON_SRRS2_SHA256,
+        coverage="gaussian partial pooling with a group-level covariate",
+        adapter_note=RADON_ADAPTER_NOTE, adapt=radon_adapter,
+        auxiliary=RADON_AUXILIARY,
     ),
     InventorySpec(
-        "bambi", "radon_floor", "radon",
-        RADON_SRRS2_URL,
-        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
-        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
-        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
-        RADON_CTY_SHA256,
-        radon_adapter,
+        source="bambi", key="radon_floor", dataset="radon",
+        url=RADON_SRRS2_URL, sha256=RADON_SRRS2_SHA256,
+        coverage="gaussian varying intercept with a binary fixed effect",
+        adapter_note=RADON_ADAPTER_NOTE, adapt=radon_adapter,
+        auxiliary=RADON_AUXILIARY,
     ),
     InventorySpec(
-        "bambi", "radon_slopes", "radon",
-        RADON_SRRS2_URL,
-        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
-        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
-        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
-        RADON_CTY_SHA256,
-        radon_adapter,
+        source="bambi", key="radon_slopes", dataset="radon",
+        url=RADON_SRRS2_URL, sha256=RADON_SRRS2_SHA256,
+        coverage="gaussian varying slopes over many small groups",
+        adapter_note=RADON_ADAPTER_NOTE, adapt=radon_adapter,
+        auxiliary=RADON_AUXILIARY,
     ),
     InventorySpec(
-        "bambi", "dietox", "dietox",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/geepack/dietox.csv",
-        "Weight and Time copied as Float64; Pig deterministically recoded to dense integers",
-        df -> (; Weight=Float64.(df.Weight), Time=Float64.(df.Time),
-               Pig=dense_int(df.Pig)),
+        source="bambi", key="dietox", dataset="dietox",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/geepack/dietox.csv",
+        sha256="4d32f92a38aa031b20319dfd959f2503ca261ad6938060cdb809e7a679b2ba88",
+        coverage="gaussian longitudinal growth curve, moderate dimension",
+        adapter_note="Weight and Time copied as Float64; Pig deterministically recoded to dense integers",
+        adapt=df -> (; Weight=Float64.(df.Weight), Time=Float64.(df.Time),
+                     Pig=dense_int(df.Pig)),
+    ),
+
+    # ---- Historical-gallery tranche, ordered cheapest-first. -----------------
+    InventorySpec(
+        source="vasishth", key="meta_sbi", dataset="meta_sbi",
+        url="https://osf.io/du3qp/?action=download",
+        sha256="f4d3c311dd4dc3c418f2c76cceeacb3289e0a4637b6951333fa91737aa49eacf",
+        coverage="known-response-SE random-effects meta-analysis: the residual scale is " *
+            "DATA, not a sampled parameter, and each group holds one observation",
+        read_options=(; delim=';'),
+        adapter_note="Semicolon-separated OSF receipt. Rows with TargetType==\"Match\" and " *
+            "DepType==\"nonagreement\" retained (12 of 77); Effect and SE copied as Float64 on " *
+            "the source's millisecond scale; Publication densely recoded as study_id",
+        adapt=meta_sbi_adapter,
+    ),
+    InventorySpec(
+        source="kruschke", key="fruitfly_anhecova", dataset="fruitfly",
+        url="https://raw.githubusercontent.com/ASKurz/Doing-Bayesian-Data-Analysis-in-brms-" *
+            "and-the-tidyverse/master/data.R/FruitflyDataReduced.csv",
+        sha256="8d9575b76856558b1f244348d63080da3a0bd1d57d3fd3ff05c12f51ef51699e",
+        coverage="correlated intercept-and-slope block over only FIVE groups — the " *
+            "regime where the group-level covariance is worst identified",
+        adapter_note="Longevity copied as Float64 without response scaling; " *
+            "thorax_c = Thorax - mean(Thorax); CompanionNumber densely recoded",
+        adapt=df -> (; Longevity=Float64.(df.Longevity),
+                     thorax_c=Float64.(df.Thorax) .- mean(Float64.(df.Thorax)),
+                     CompanionNumber=dense_int(String.(df.CompanionNumber))),
+    ),
+    InventorySpec(
+        source="burkner_papers", key="epilepsy_simple", dataset="epilepsy",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/MASS/epil.csv",
+        sha256="6d4aded9dda1c8cd051d370ce77816264c972e773417e62cfad3d061d3083a99",
+        coverage="Poisson log-link GLMM — first non-gaussian likelihood in the set",
+        adapter_note="count = y (integer seizure counts, 0-102); Trt = a 0/1 treatment " *
+            "contrast over the sorted trt levels (placebo=0, progabide=1); patient = " *
+            "densely recoded subject. 236 rows / 59 patients",
+        adapt=df -> (; count=Int.(df.y), Trt=treatment_contrast(String.(df.trt)),
+                     patient=dense_int(Int.(df.subject))),
+    ),
+    InventorySpec(
+        source="kruschke", key="therapeutic_touch", dataset="therapeutic_touch",
+        url="https://raw.githubusercontent.com/ASKurz/Doing-Bayesian-Data-Analysis-in-brms-" *
+            "and-the-tidyverse/master/data.R/TherapeuticTouchData.csv",
+        sha256="8c196a3e124a649fe2df5e5446db1331b5af0c6041dfed4db8557c1f2267c64a",
+        coverage="Bernoulli-logit intercept-only GLMM: the binary-response analogue of " *
+            "dyestuff, and the control that separates the link from the structure",
+        adapter_note="y parsed as 0/1 integers; s densely recoded. 280 trials / 28 subjects",
+        adapt=df -> (; y=Int.(df.y), s=dense_int(String.(df.s))),
+    ),
+    InventorySpec(
+        source="bambi", key="hierarchical_binomial_partial", dataset="baseball",
+        url="https://ndownloader.figshare.com/files/29749140",
+        sha256="bbbc9459632c738a07bbe0877970a7bbd1f4c2448193979337fe5bc3a4ab0228",
+        coverage="aggregated BinomialLogit with a per-row trials count, and a hierarchy " *
+            "over 15 groups of 1 observation each",
+        adapter_note="Rows with AB==0 or missing AB/H/yearID dropped, then yearID>=2016, " *
+            "then the first 15 remaining rows in file order — the notebook's own " *
+            "selection. H and AB copied as Int; playerID densely recoded",
+        adapt=baseball_adapter,
+    ),
+    InventorySpec(
+        source="mixed_models_jl", key="contraception_glmm", dataset="contraception",
+        url="https://vincentarelbundock.github.io/Rdatasets/csv/mlmRev/Contraception.csv",
+        sha256="dd76de5f4f1fb57081b01ef0f81581cd928ad545d13feb8bf7d337d71e690034",
+        coverage="Bernoulli-logit GLMM at scale: 1,934 observations over 60 districts, " *
+            "with a quadratic fixed effect evaluated inside the generated formula",
+        adapter_note="use Y/N mapped to 1/0; age copied as Float64 (already centred " *
+            "upstream) with abs2(age) supplied by the generated formula itself; urban " *
+            "Y/N mapped to a 0/1 contrast; livch and district densely recoded. " *
+            "1,934 rows / 60 districts",
+        categorical_departures="livch is a four-level factor (0, 1, 2, 3+) in the source. " *
+            "BRM's verbatim surface carries it as ONE term, so it enters as the monotone " *
+            "integer code 1-4 rather than three contrast columns. The source's grouping " *
+            "column dist is the RDatasets mirror's district (BRM records this as " *
+            "adapted-but-defensible).",
+        adapt=df -> (; use=Int.(String.(df.use) .== "Y"),
+                     age=Float64.(df.age),
+                     livch=Float64.(dense_int(String.(df.livch))),
+                     urban=treatment_contrast(String.(df.urban)),
+                     district=dense_int(Int.(df.district))),
+    ),
+    InventorySpec(
+        source="bambi", key="predict_new_groups", dataset="pulmonary",
+        url="https://gist.githubusercontent.com/ucals/2cf9d101992cb1b78c2cdd6e3bac6a4b/raw/" *
+            "43034c39052dcf97d4b894d2ec1bc3f90f3623d9/osic_pulmonary_fibrosis.csv",
+        sha256="45aa8d255d4c26476d6ba1bd4ba38823752420a716b75cf3ec24f2fab93f7270",
+        coverage="SLOPE-ONLY random-effect block with no random intercept and no " *
+            "population intercept — the one structural shape the rest of the set " *
+            "never exercises, over 176 groups",
+        adapter_note="Source columns lowercased to the body's names: FVC->fvc, " *
+            "Weeks->weeks, SmokingStatus->smoking_status, Patient->patient. fvc and " *
+            "weeks copied as Float64 without response scaling; smoking_status and " *
+            "patient densely recoded. 1,549 rows / 176 patients",
+        categorical_departures="smoking_status is a three-level factor (Currently smokes, " *
+            "Ex-smoker, Never smoked). The historical `0 + ... + smoking_status` term relies " *
+            "on the factor expanding to three dummy columns; BRM's verbatim surface carries " *
+            "one term, so it enters as the monotone integer code 1-3. The random-effect " *
+            "structure under test — (0 + weeks | patient) — is unaffected.",
+        adapt=df -> (; fvc=Float64.(df.FVC), weeks=Float64.(df.Weeks),
+                     smoking_status=Float64.(dense_int(String.(df.SmokingStatus))),
+                     patient=dense_int(String.(df.Patient))),
+    ),
+    InventorySpec(
+        source="vasishth", key="n400_crossed", dataset="n400",
+        url="https://osf.io/q7dsk/?action=download",
+        sha256="c5a023fa9cf6a8d30ab6877a7e220aa8dbf7a03d89339c80440c711fa348fb38",
+        coverage="the stress case: TWO crossed varying-slope blocks over 334 subjects " *
+            "and 80 items, 25,848 observations, 181k shared constrained coordinates " *
+            "— an order of magnitude past anything else in the set on data size and " *
+            "on the cost of the ESS reduction itself",
+        read_options=(; delim='\t'),
+        adapter_note="Tab-separated OSF receipt, all nine laboratories retained. " *
+            "n400 copied as Float64; c_cloze = cloze/100 - mean(cloze/100) (the cited " *
+            "book's centred proportion-scale predictor); subject and item densely " *
+            "recoded to subj and item. 25,848 rows / 334 subjects / 80 items",
+        adapt=n400_adapter,
     ),
 ]
 
@@ -209,8 +448,86 @@ function inventory_row(spec)
 end
 
 function dataset(spec)
-    expected = spec.dataset == "radon" ? RADON_SRRS2_SHA256 : nothing
+    expected = isempty(spec.sha256) ? nothing : spec.sha256
     cached_download(spec.dataset * ".csv", spec.url; expected_sha256=expected)
+end
+
+read_dataset(spec) = CSV.read(dataset(spec), DataFrame; spec.read_options...)
+
+"""
+The grouping factors that actually appear in the generated body.
+
+`group_columns` in `translations.tsv` is a lexical scrape of the historical
+formula's grouping and addition terms, so a response-side addition term can land
+in it. `vasishth:meta_sbi` is the live case: its historical formula is
+`effect | resp_se(SE, sigma = FALSE) ~ 1 + (1 | study_id)`, and the scrape
+returns `resp_se,study_id`. Handing `resp_se` to `centered_groups` would ask BRM
+to centre a grouping factor the generated body does not have.
+
+This returns the tokens on the right of a `|` or `||` inside a random-effect
+term of `current_brm_body`. The caller keeps the inventory's ORDER and records
+both sets in the artifact, so the reconciliation is visible rather than implied.
+"""
+function body_group_columns(body)
+    pattern = r"\(([^()]*(?:\([^()]*\)[^()]*)*)\|\|?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+    unique(m.captures[2] for m in eachmatch(pattern, body))
+end
+
+const RE_BLOCK_PATTERN =
+    r"\(([^()|]*(?:\([^()]*\)[^()|]*)*)\|(\|?)\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"
+
+block_terms(inner) = filter(!isempty, strip.(split(inner, '+')))
+
+"""
+Width K of each random-effect block in the GENERATED body, in source order.
+
+K is the number of coefficients sharing one group-level covariance — the
+structural quantity a reparametrization benchmark is actually varying — and it is
+counted LITERALLY from the terms BRM's verbatim surface was given. `(1 | g)` is
+K=1 and `(1 + x | g)` is K=2.
+
+That literal count is BRM's real block width, and it is NOT lme4's reading of the
+same text. `lme4` and `brms` treat `(x | g)` as an implicit intercept plus a slope
+(K=2); BRM's verbatim surface takes the terms as written, so the generated body
+fits one random coefficient per group (K=1). The published dimensions confirm it:
+`loc ~ Days + (Days | Subject)` over 18 subjects lowers to 21 unconstrained
+coordinates — one fixed slope, one `log(sigma)`, 18 subject coefficients, one
+group scale — with no intercept vector and no correlation. `historical_block_widths`
+below computes the lme4 reading of the same formula so the difference is recorded
+per row instead of being silently absorbed.
+
+`run_brm_high_k_preflight.jl` parses the same shape out of the HISTORICAL formula
+of cards that never reach this runner. Deliberately a separate implementation:
+its input is the catalogue's `formula_claim` (brms/lme4 surface syntax, `I(...)`,
+`zerocorr(...)`), not a generated BRM body.
+"""
+function random_effect_blocks(body)
+    [Dict("k" => count(t -> t != "0", block_terms(m.captures[1])),
+          "terms" => strip(m.captures[1]),
+          "group" => m.captures[3],
+          "correlated" => isempty(m.captures[2]))
+     for m in eachmatch(RE_BLOCK_PATTERN, body)]
+end
+
+"""
+Width of each random-effect block under the HISTORICAL `lme4`/`brms` convention.
+
+An intercept is implied unless the block suppresses it with `0` or `-1`, so
+`(x | g)` is width two there while `random_effect_blocks` reports the generated
+body's one. Returned in the same source order so the two lists zip.
+"""
+function historical_block_widths(formula)
+    out = Any[]
+    for m in eachmatch(RE_BLOCK_PATTERN, formula)
+        terms = block_terms(m.captures[1])
+        suppressed = any(t -> t in ("0", "-1"), terms)
+        slopes = count(t -> !(t in ("0", "1", "-1")), terms)
+        push!(out, Dict("k" => slopes + (suppressed ? 0 : 1),
+                        "terms" => strip(m.captures[1]),
+                        "group" => m.captures[3],
+                        "correlated" => isempty(m.captures[2])))
+    end
+    out
 end
 
 function materialize(row, data; centered_groups=Symbol[])
@@ -424,6 +741,13 @@ function main()
             "adaptive_warmup_mcmc vs DynamicHMC.mcmc_with_warmup" :
             "adaptive_warmup_mcmc",
         "runner" => "docs/benchmark/run_brm_inventory_benchmark.jl",
+        # The consumer-side adapters live in the runner, so `warmuphmc_sha` alone
+        # does not pin them: a sweep is normally launched from a worktree whose
+        # HEAD is the sampler revision it measures, with the runner edit still
+        # uncommitted. This checksums the runner's own bytes, which is what makes
+        # "the same adapters produced these rows" checkable independently of which
+        # commit they eventually landed in.
+        "runner_sha256" => bytes2hex(open(sha256, @__FILE__)),
         "reproduction" => reproduction,
         "warmuphmc_sha" => gitsha(whmc_dir),
         "dynamichmc_version" => string(Base.pkgversion(WarmupHMC.DynamicHMC)),
@@ -460,9 +784,14 @@ function main()
         started = time()
         row, matrix = inventory_row(spec)
         path = dataset(spec)
-        df = CSV.read(path, DataFrame)
+        df = read_dataset(spec)
         data = spec.adapt(df)
-        groups = Symbol.(filter(value -> !isempty(value), split(row["group_columns"], ',')))
+        inventory_groups = filter(!isempty, split(row["group_columns"], ','))
+        present = body_group_columns(row["current_brm_body"])
+        issubset(present, inventory_groups) || error(
+            "$(spec.source):$(spec.key) body groups $(present) are not all listed in " *
+            "the inventory's group_columns $(inventory_groups)")
+        groups = Symbol.(filter(in(present), inventory_groups))
 
         built_nc = materialize(row, data)
         built_c = materialize(row, data; centered_groups=groups)
@@ -501,15 +830,21 @@ function main()
             "current_brm_body" => row["current_brm_body"],
             "current_brm_body_sha256" => bytes2hex(sha256(row["current_brm_body"])),
             "grouping_factors" => string.(groups),
+            "inventory_group_columns" => string.(inventory_groups),
+            "random_effect_blocks" => random_effect_blocks(row["current_brm_body"]),
+            "historical_random_effect_blocks" =>
+                historical_block_widths(row["formula_claim"]),
             "dataset" => spec.dataset,
             "data_url" => spec.url,
             "data_sha256" => bytes2hex(open(sha256, path)),
-            "auxiliary_data" => spec.dataset == "radon" ? Dict(
-                "url" => RADON_CTY_URL,
-                "sha256" => RADON_CTY_SHA256,
-            ) : Dict{String,String}(),
+            "data_sha256_pinned" => spec.sha256,
+            "auxiliary_data" => spec.auxiliary,
             "data_adapter" => spec.adapter_note,
+            "categorical_departures" => spec.categorical_departures,
+            "coverage" => spec.coverage,
             "n_obs" => length(first(data)),
+            "n_groups" => Dict(string(g) => length(unique(getproperty(data, g)))
+                               for g in groups),
             "descriptor_operations" => string.(getproperty.(built_nc.descriptor.operations, :name)),
             "descriptor_stan_sha256" => bytes2hex(sha256(descriptor_code)),
             "dim_noncentered" => LogDensityProblems.dimension(problem_nc),

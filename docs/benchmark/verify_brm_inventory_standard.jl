@@ -6,7 +6,12 @@
 
 using JSON, SHA
 
-const EXPECTED_SPECS = Set([
+# The eight controls the published matrix started with, then the
+# historical-gallery tranche. Spelling the set out is the point: a spec that
+# silently stops being benchmarked — because its download broke, or an inventory
+# edit dropped it below the readiness gate — must fail this gate rather than
+# shrink the published matrix without saying so.
+const EXPECTED_CONTROL_SPECS = Set([
     "lme4:dyestuff_re",
     "lme4:sleepstudy_slope",
     "bambi:sleepstudy",
@@ -16,6 +21,19 @@ const EXPECTED_SPECS = Set([
     "bambi:radon_slopes",
     "bambi:dietox",
 ])
+
+const EXPECTED_TRANCHE_SPECS = Set([
+    "vasishth:meta_sbi",
+    "kruschke:fruitfly_anhecova",
+    "burkner_papers:epilepsy_simple",
+    "kruschke:therapeutic_touch",
+    "bambi:hierarchical_binomial_partial",
+    "mixed_models_jl:contraception_glmm",
+    "bambi:predict_new_groups",
+    "vasishth:n400_crossed",
+])
+
+const EXPECTED_SPECS = union(EXPECTED_CONTROL_SPECS, EXPECTED_TRANCHE_SPECS)
 
 const EXPECTED_ARMS = Set([
     "warmuphmc_noncentered",
@@ -38,6 +56,20 @@ const EXPECTED_PARAMETERIZATION = Dict(
 
 const EXPECTED_RADON_AUX_SHA256 =
     "5aa648547b9b565d77b9f55defd2f292520441cc6df7a27206802006dade7b63"
+
+# Read back from BRM's own matrix, not invented here. The closed set is asserted
+# for every row so a blank or newly-spelled verdict fails rather than rendering
+# as an empty cell; the three `adapted-but-defensible` rows are named because the
+# documentation page reports that caveat per row, so an upstream re-verdict has
+# to force a look at the prose rather than silently contradict it.
+const EXPECTED_FIDELITY_VERDICTS =
+    Set(["confirmed", "adapted-but-defensible", "unverifiable"])
+
+const EXPECTED_ADAPTED_SPECS = Set([
+    "bambi:radon_floor",
+    "bambi:radon_slopes",
+    "mixed_models_jl:contraception_glmm",
+])
 
 function require(condition, message)
     condition || error(message)
@@ -65,8 +97,13 @@ function verify(path)
     require(finite_positive(config["total_elapsed_s"]),
             "artifact lacks a positive total elapsed time")
 
+    require(haskey(config, "runner_sha256"), "artifact does not pin the runner")
+    require(length(config["runner_sha256"]) == 64 &&
+            all(c -> c in "0123456789abcdef", config["runner_sha256"]),
+            "artifact runner_sha256 is not a sha256 digest")
+
     require(Set(model["spec"] for model in models) == EXPECTED_SPECS,
-            "artifact model set does not match the eight audited rows")
+            "artifact model set does not match the audited rows")
     require(length(models) == length(EXPECTED_SPECS),
             "artifact contains duplicate model metadata")
     for model in models
@@ -80,13 +117,64 @@ function verify(path)
         require(bytes2hex(sha256(model["current_brm_body"])) ==
                     model["current_brm_body_sha256"],
                 "$spec generated-body hash is inconsistent")
-        if spec in ("bambi:radon_floor", "bambi:radon_slopes")
-            require(model["source_fidelity_verdict"] == "adapted-but-defensible",
-                    "$spec lost its adapted-but-defensible source label")
-        end
+
+        require(model["source_fidelity_verdict"] in EXPECTED_FIDELITY_VERDICTS,
+                "$spec carries an unrecognised source-fidelity verdict " *
+                repr(model["source_fidelity_verdict"]))
+        require((model["source_fidelity_verdict"] == "adapted-but-defensible") ==
+                    (spec in EXPECTED_ADAPTED_SPECS),
+                "$spec changed its adapted-but-defensible source label; the " *
+                "documentation reports this per row")
         if startswith(spec, "bambi:radon_")
             require(model["auxiliary_data"]["sha256"] == EXPECTED_RADON_AUX_SHA256,
                     "$spec has the wrong pinned cty.dat checksum")
+        end
+
+        # The data pin. `data_sha256` is what the file on disk actually hashed to
+        # and `data_sha256_pinned` is what the spec demanded; the runner already
+        # refuses a mismatch, so this is the checked-in evidence that it did.
+        require(!isempty(model["data_sha256_pinned"]),
+                "$spec has no pinned upstream data checksum")
+        require(model["data_sha256_pinned"] == model["data_sha256"],
+                "$spec data checksum does not match its pin")
+
+        require(!isempty(model["coverage"]),
+                "$spec has no coverage rationale; every published row must say " *
+                "what it is there to cover")
+        require(!isempty(model["data_adapter"]),
+                "$spec has no adapter note")
+
+        # Block widths under both readings. These are what the page's
+        # narrower-than-historical annotation is computed from, so an artifact
+        # that lost them would render that section empty and say nothing.
+        for field in ("random_effect_blocks", "historical_random_effect_blocks")
+            blocks = model[field]
+            require(blocks isa AbstractVector && !isempty(blocks),
+                    "$spec recorded no $field")
+            for block in blocks
+                for key in ("k", "terms", "group", "correlated")
+                    require(haskey(block, key),
+                            "$spec $field entry is missing `$key`")
+                end
+                require(block["k"] isa Integer && block["k"] >= 0,
+                        "$spec $field entry has a nonsensical width")
+            end
+        end
+        require(length(model["random_effect_blocks"]) ==
+                    length(model["historical_random_effect_blocks"]),
+                "$spec generated and historical block counts disagree, so the " *
+                "per-block comparison cannot be positional")
+
+        groups = model["grouping_factors"]
+        require(!isempty(groups), "$spec has no grouping factor")
+        require(issubset(Set(groups), Set(model["inventory_group_columns"])),
+                "$spec fits a grouping factor the inventory body does not name")
+        require(Set(keys(model["n_groups"])) == Set(groups),
+                "$spec group-level counts do not cover its grouping factors")
+        for (group, count) in model["n_groups"]
+            require(count isa Integer && count >= 2,
+                    "$spec grouping factor `$group` has $count level(s); a " *
+                    "hierarchy over fewer than two is not one")
         end
     end
 
@@ -143,7 +231,10 @@ function verify(path)
     divergences = sum(row["n_divergent"] for row in rows)
     failures = [row for row in rows if !row["ok"]]
     println("generated-BRM standard artifact OK")
-    println("  design: 8 models × 6 arms × 12 seeds = $(length(rows)) rows")
+    println("  design: $(length(models)) models × $(length(EXPECTED_ARMS)) arms " *
+            "× $(config["n_seeds"]) seeds = $(length(rows)) rows")
+    println("  controls: $(length(EXPECTED_CONTROL_SPECS)), " *
+            "historical-gallery tranche: $(length(EXPECTED_TRANCHE_SPECS))")
     println("  successful rows: $(length(rows) - length(failures))/$(length(rows))")
     for row in failures
         println("  explicit failure: $(row["spec"]) / $(row["arm"]) / " *
@@ -153,6 +244,21 @@ function verify(path)
     println("  summed sampling wall time: $(round(total_wall; digits=3)) s")
     println("  process elapsed time: $(config["total_elapsed_s"]) s")
     println("  divergences: $divergences")
+
+    # Per-spec degeneracy, so a report can name which rows were degenerate rather
+    # than quote one pooled total. `n_constant` is the count of constrained
+    # coordinates that were dropped from the ESS minimum for being constant or
+    # non-finite — a nonzero value is not a failure (a `sigma` pinned at a
+    # boundary still samples), but it narrows what the published ESS is a
+    # minimum over, so it is reported per row rather than summed away.
+    println("  per-model degeneracy (divergences / max dropped coords / failed cells):")
+    for spec in sort(collect(EXPECTED_SPECS))
+        spec_rows = [row for row in rows if row["spec"] == spec]
+        println("    $(rpad(spec, 38)) " *
+                "$(sum(row["n_divergent"] for row in spec_rows)) / " *
+                "$(maximum(row["n_constant"] for row in spec_rows)) / " *
+                "$(count(row -> !row["ok"], spec_rows))")
+    end
     println("  sha256: $digest")
 end
 

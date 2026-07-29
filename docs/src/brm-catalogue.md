@@ -11,6 +11,15 @@ output is retained only as accessor-regression evidence. Every result below
 instead starts with the exact executable body stored in BRM's
 `research/historical_model_inventory/translations.tsv`.
 
+The matrix now spans a deliberate coverage tranche rather than only the cheapest
+rows: crossed high-dimensional hierarchy, correlated random slopes, Poisson and
+Bernoulli and binomial GLMMs, a known-standard-error meta-analysis, and a
+slope-only hierarchy with no group intercept. Rows were selected for the
+structures they exercise. Runtime, block width, crossed structure, and known
+upstream quirks are recorded as annotations, not used as silent exclusion
+filters, so a row that is expensive or awkward is present and labelled rather
+than missing and unexplained.
+
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("brm_catalogue.jl")
@@ -57,6 +66,11 @@ real-data catalogue loader, so the consumer still supplies a small, recorded
 column adapter: continuous columns become `Float64`, and grouping labels are
 densely recoded in sorted order. The raw responses are not rescaled.
 
+Each adapter also pins the SHA-256 of the upstream file it read. The pin is on
+the raw bytes rather than on the URL, because several receipts are OSF, figshare
+and `ndownloader` links that redirect, so a URL alone cannot tell a rerun that it
+silently picked up different data.
+
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("brm_catalogue.jl")
@@ -64,10 +78,116 @@ d = load_results("brm_inventory_standard/rows.json")
 md_table(
     ["inventory row", "source fidelity", "historical formula", "data", "n",
      "parameters", "probe evidence", "data adapter"],
-    [[m["spec"], m["source_fidelity_verdict"],
+    [[brmc_spec_cell(m["spec"]), m["source_fidelity_verdict"],
       "`" * m["historical_formula"] * "`", m["dataset"],
       m["n_obs"], m["dim_noncentered"], m["probe_evidence_kind"],
       m["data_adapter"]] for m in brmc_models(d)],
+)
+```
+
+## What each row is here to cover
+
+Coverage is stated per row, next to the structure that justifies it. The
+grouping-factor level counts are counted on the adapted data actually sampled,
+and the block widths are parsed from the generated body, so neither is a claim
+about the upstream dataset that this benchmark did not check.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+d = load_results("brm_inventory_standard/rows.json")
+models = brmc_models(d)
+missing_coverage = [m["spec"] for m in models if isempty(get(m, "coverage", ""))]
+isempty(missing_coverage) ||
+    error("generated BRM models without a recorded coverage rationale: " *
+          join(missing_coverage, ", "))
+md_table(
+    ["inventory row", "inferred family", "grouping factors (levels)",
+     "random-effect blocks", "n", "unconstrained dimension", "why this row"],
+    [[brmc_spec_cell(m["spec"]), m["inferred_family"], brmc_group_summary(m),
+      brmc_block_summary(m), m["n_obs"], m["dim_noncentered"], m["coverage"]]
+     for m in models],
+)
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+load_harness("brm_plots.jl")
+import Markdown
+d = load_results("brm_inventory_standard/rows.json")
+models = brmc_models(d)
+ks = [brmc_max_k(m) for m in models]
+unlabelled = brmc_plot_unlabelled_specs(d)
+families = sort(unique(m["inferred_family"] for m in models))
+Markdown.parse(
+    "**Structural span of the published matrix:** " *
+    "$(length(models)) models over " *
+    "$(length(unique(m["dataset"] for m in models))) real datasets; inferred " *
+    "response families " * join("`" .* families .* "`", ", ") * "; " *
+    "$(count(m -> length(get(m, "grouping_factors", String[])) > 1, models)) " *
+    "row(s) with more than one grouping factor; widest random-effect block " *
+    "K=$(maximum(ks)); observation counts " *
+    "$(minimum(m["n_obs"] for m in models))–$(maximum(m["n_obs"] for m in models)); " *
+    "unconstrained dimensions " *
+    "$(minimum(m["dim_noncentered"] for m in models))–" *
+    "$(maximum(m["dim_noncentered"] for m in models))." *
+    (isempty(unlabelled) ? "" :
+     " Figures below render these rows by raw inventory key because they have " *
+     "no short axis label yet: " *
+     join("`" .* unlabelled .* "`", ", ") * "."))
+```
+
+### Where the generated block is narrower than the historical one
+
+`lme4` and `brms` read `(x | g)` as a correlated random intercept *and* slope.
+BRM's verbatim surface takes the terms as written, so the same text generates one
+random coefficient per group and no correlation. The published dimensions are the
+proof rather than the assumption: `loc ~ Days + (Days | Subject)` over 18 subjects
+lowers to 21 unconstrained coordinates — one fixed slope, one `log(sigma)`, 18
+subject coefficients, one group scale.
+
+This is a real fidelity gap in the row, not a bug in the measurement, and it
+predates the coverage tranche: it affects rows that were already published here.
+It is reported per row because it changes what "random slopes" means on this page.
+A block written `(1 + x | g)` is unaffected — it is width two in both readings,
+and it is why the widest block below is two rather than one.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d = load_results("brm_inventory_standard/rows.json")
+dep = brmc_block_width_departures(d)
+isempty(dep) ? Markdown.parse(
+    "Every generated random-effect block has the same width as the historical " *
+    "formula's."
+) : md_table(
+    ["inventory row", "departure", "detail"],
+    [[brmc_spec_cell(x.spec), x.kind, x.detail] for x in dep],
+)
+```
+
+### Where an adapter departs from the historical coding
+
+BRM's verbatim surface takes one column per model term, so a multi-level factor
+predictor cannot yet be expanded into contrast columns inside the generated body.
+Where the historical fit used a factor, the adapter therefore supplies a single
+monotone integer column and the row below says so. This changes what the
+coefficient means relative to the historical publication; it does not change what
+the sampler is being asked to do, which is what this benchmark measures.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d = load_results("brm_inventory_standard/rows.json")
+dep = brmc_categorical_departures(d)
+isempty(dep) ? Markdown.parse(
+    "No adapter in this matrix departs from its historical categorical coding."
+) : md_table(
+    ["inventory row", "departure from the historical coding"],
+    [[brmc_spec_cell(m["spec"]), m["categorical_departures"]] for m in dep],
 )
 ```
 
@@ -77,6 +197,29 @@ constrained-name sets can differ, so ESS is reduced only over names both
 programs report. That shared set includes the random effects themselves while
 excluding parameterization-specific scaffolding. Structurally constant
 coordinates are dropped and counted before taking the minimum.
+
+Dropping them is necessary — a coordinate that never moves has no effective
+sample size, and keeping it would drive every headline ESS to zero — but it does
+narrow what the published minimum is a minimum over, so the size of that
+narrowing is shown rather than promised.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown, Printf
+d = load_results("brm_inventory_standard/rows.json")
+dropped = brmc_dropped_coordinates(d)
+isempty(dropped) ? Markdown.parse(
+    "No row dropped a constrained coordinate: every shared name contributed to " *
+    "the reported minimum."
+) : md_table(
+    ["inventory row", "shared constrained names", "most dropped in any cell",
+     "share", "cells with a drop"],
+    [[brmc_spec_cell(x.spec), string(x.shared), string(x.max_dropped),
+      Printf.@sprintf("%.1f%%", 100x.share), "$(x.cells)/$(x.n_cells)"]
+     for x in dropped],
+)
+```
 
 ## Gradient sampling efficiency
 
@@ -105,7 +248,7 @@ table_rows = []
 for m in brmc_models(d), (arm, adapt) in shown
     x = only(v for v in s if v.spec == m["spec"] && v.arm == arm && v.adapt == adapt)
     push!(table_rows, [
-        m["spec"], brmc_arm_label(arm), adapt ? "on" : "off",
+        brmc_spec_cell(m["spec"]), brmc_arm_label(arm), adapt ? "on" : "off",
         string(round(Int, x.grad)), Printf.@sprintf("%.1f", x.ess),
         Printf.@sprintf("%.2f", 1000x.per_grad), string(x.ndiv),
     ])
@@ -145,7 +288,7 @@ table_rows = []
 for m in brmc_models(d), (arm, adapt) in shown
     x = only(v for v in s if v.spec == m["spec"] && v.arm == arm && v.adapt == adapt)
     push!(table_rows, [
-        m["spec"], brmc_arm_label(arm), adapt ? "on" : "off",
+        brmc_spec_cell(m["spec"]), brmc_arm_label(arm), adapt ? "on" : "off",
         Printf.@sprintf("%.3f s", x.wall), Printf.@sprintf("%.1f", x.per_s),
     ])
 end
@@ -251,7 +394,7 @@ d = load_results("brm_inventory_standard/rows.json")
 bad = brmc_failures(d)
 isempty(bad) ? Markdown.parse("No failed trajectories were recorded.") : md_table(
     ["model", "arm", "seed", "divergences", "diagnostic"],
-    [[r["spec"], brmc_standard_arm_label(r["arm"]), r["seed"],
+    [[brmc_spec_cell(r["spec"]), brmc_standard_arm_label(r["arm"]), r["seed"],
       r["n_divergent"], r["error"]] for r in bad],
 )
 ```
@@ -270,7 +413,7 @@ table_rows = []
 for m in brmc_models(d), arm in brmc_standard_arm_order()
     x = only(v for v in s if v.spec == m["spec"] && v.arm == arm)
     push!(table_rows, [
-        m["spec"], brmc_standard_arm_label(arm), "$(x.n)/$(x.n_total)",
+        brmc_spec_cell(m["spec"]), brmc_standard_arm_label(arm), "$(x.n)/$(x.n_total)",
         string(round(Int, x.draws)),
         string(round(Int, x.grad)), Printf.@sprintf("%.1f", x.ess),
         Printf.@sprintf("%.2f", 1000x.per_grad),
@@ -298,8 +441,9 @@ load_harness("brm_plots.jl")
 d = load_results("brm_inventory_standard/rows.json")
 aov_figure(brmc_gradient_efficiency_plot(d);
     caption="Points and nested intervals summarise the 12 seed-level minimum " *
-            "shared constrained-space ESS values per 1,000 gradients. The y " *
-            "axis is logarithmic.")
+            "shared constrained-space ESS values per 1,000 gradients. One band " *
+            "row per model, six arms dodged within it; the metric runs along " *
+            "the horizontal axis, which is logarithmic.")
 ```
 
 ```@eval
@@ -309,7 +453,8 @@ load_harness("brm_plots.jl")
 d = load_results("brm_inventory_standard/rows.json")
 aov_figure(brmc_runtime_efficiency_plot(d);
     caption="The same seed-level runs expressed as minimum shared constrained-" *
-            "space ESS per measured sampling second. The y axis is logarithmic.")
+            "space ESS per measured sampling second. Same layout; the " *
+            "horizontal axis is logarithmic.")
 ```
 
 The ratios below are paired by seed before taking the median. Above one is
@@ -355,16 +500,86 @@ BridgeStan compilation, and one dedicated preflight per arm; arm order rotates
 cyclically by seed. As elsewhere on this page, per-gradient results are the
 portable comparison and wall-clock results describe this exact host.
 
+## How wide a random-effect block the inventory can reach
+
+The widest block in the published matrix is two coefficients sharing one
+group-level covariance. That is a property of the inventory, not a rule this
+benchmark applied: no row was excluded for its block width. The question was
+answered by scanning every catalogue card under both width readings and then
+taking each qualifying candidate as far as it would go on its real data.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d = load_results("brm_inventory_high_k/rows.json")
+c = d["config"]
+cands = brmc_high_k_candidates(d)
+sampled = [x for x in cands if x["sampled"]]
+Markdown.parse(
+    "**K>2 probe:** $(c["n_cards_scanned"]) catalogue cards scanned; " *
+    "$(c["n_high_k_cards"]) carry a block of three or more coefficients under at " *
+    "least one reading; $(length(sampled)) reached a real sample. " *
+    "Among rows that pass the publishable gate (`ready` + " *
+    "`already-expressible-verbatim` + finite BridgeStan gradient) the widest " *
+    "block is K=$(c["max_historical_k_among_publishable_rows"]) under the " *
+    "historical reading and K=$(c["max_generated_k_among_publishable_rows"]) as " *
+    "BRM actually lowers it.\n\n" *
+    "*Method.* " * c["method"])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+d = load_results("brm_inventory_high_k/rows.json")
+md_table(
+    ["catalogue card", "historical K", "generated K",
+     "furthest stage reached on real data", "what stopped it",
+     "the inventory's own note"],
+    [[brmc_spec_cell(c["spec"]), string(c["historical_max_k"]), string(c["generated_max_k"]),
+      "`" * brmc_high_k_reached(c) * "`",
+      isempty(c["blocker"]) ? "nothing" : c["blocker"],
+      "`" * c["translation_status"] * "`" *
+      (isempty(c["translation_note"]) ? "" : " — " * c["translation_note"])]
+     for c in brmc_high_k_candidates(d)],
+)
+```
+
+The one candidate with a fetchable historical dataset was carried onto that data
+and stopped at a specific, reported exception rather than at a status field: it
+downloaded, adapted, parsed through `BRM._brm`, and then failed to lower because
+the Student-t degrees-of-freedom symbol its translation leaves open has no value.
+That is the same limitation the inventory records for it, confirmed by execution
+instead of quoted.
+
+The finding is a statement about the inventory rather than about cost: the
+historical gallery does contain wider blocks, and each one currently sits behind
+an unresolved translation, a synthetic dataset receipt, or a surface gap — not
+behind a runtime ceiling or an eligibility rule imposed here. When one becomes
+`ready` and verbatim-expressible it belongs in the matrix above, and nothing in
+the publishing runner would keep it out.
+
 ## Scope and provenance
 
 The three-model nonlinear flag A/B is the first real-data consumer receipt for
 BRM's generated historical inventory bodies. The standard-warmup matrix expands
-that receipt to the additional audited models listed above. Both remain a
-benchmark of cheap, ready, verbatim hierarchical rows—not a claim that every
-historical card has an executable translation or a generic real-data loader.
+that receipt across the coverage tranche listed above: multiple response
+families, crossed and nested grouping structures, correlated slopes, known
+observation standard errors, and a slope-only hierarchy. It remains a benchmark
+of `ready`, verbatim-expressible rows with a finite BridgeStan gradient — not a
+claim that every historical card has an executable translation or that BRM has a
+generic real-data catalogue loader.
+
+Two limits are worth stating plainly rather than leaving to be inferred. Row
+selection is not a random sample of the inventory, so the ratios on this page
+describe these structures and should not be read as an expected effect over the
+gallery as a whole. And the adapters are consumer code checked in here, not BRM
+exports; the inventory pins what model is run, while this repository pins what
+data it is run on.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
 import Markdown
 using SHA
 d = load_results("brm_inventory_standard/rows.json")
@@ -388,7 +603,12 @@ Markdown.parse(
       "sampling: " * string(round(sampling_seconds; digits=3)) * " s\n" *
     "* result SHA-256: `" * standard_sha * "`\n" *
     "* untimed preflight draws per arm: " *
-      string(c["timing_preflight_draws"]) * "\n\n" *
+      string(c["timing_preflight_draws"]) * "\n" *
+    "* runner + adapters SHA-256: `" *
+      get(c, "runner_sha256", "not recorded")[1:12] * "…`\n" *
+    "* upstream data files pinned by SHA-256: " *
+      string(count(m -> !isempty(get(m, "data_sha256_pinned", "")),
+                   brmc_models(d))) * "/" * string(length(brmc_models(d))) * "\n\n" *
     "**Earlier focused nonlinear-flag receipt**\n\n" *
     "```\n" * c0["reproduction"] * "\n```\n\n" *
     "* WarmupHMC `" * c0["warmuphmc_sha"][1:10] * "`\n" *
@@ -397,6 +617,14 @@ Markdown.parse(
     "* host `" * c0["host"] * "`, Julia " * c0["julia"] *
       ", BLAS threads " * string(c0["blas_threads"]) * "\n")
 ```
+
+The focused receipt predates both the runner SHA-256 pin and the coverage
+tranche, so its reproduction line describes the spec list as it stood when it ran
+— three models — rather than the sixteen the runner now carries. Its inventory
+translation and model-matrix checksums are byte-identical to the expanded
+matrix's, which is the part the two artifacts have to agree on for the comparison
+above to be about the same generated bodies; the docs build asserts that equality
+rather than assuming it.
 
 The documentation build imports neither BRM nor StanBlocks. It reads the
 checked-in JSON and computes every table from the raw rows; missing fields,

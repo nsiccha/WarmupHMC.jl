@@ -1,0 +1,176 @@
+{
+  "candidates": [
+    {
+      "blocker": "stopped after `sbbrmi-lowered`: StanBlocksError [transpile]: model — Caused by: Could not find nu in model, builtin, Main or Main!",
+      "capability_tier": "semantic-rewrite",
+      "current_brm_body": "loc ~ 1 + family_size_z + protect(family_size_z^2) + (1 + family_size_z + protect(family_size_z^2) || State)\nlog(sigma) ~ 1\nmedian_income_z ~ LocationScale(loc, sqrt(se_z * se_z + sigma * sigma), TDist(nu))",
+      "data_adapter": "Leading census-URL comment line skipped. median_income_z and family_size_z are z-scores; se_z = SampErr / sd(MedianIncome) so the known response SE shares the response's scale; State densely recoded",
+      "data_sha256": "",
+      "dataset_claim": "income_famsize",
+      "dataset_is_synthetic": false,
+      "dataset_receipt_urls": "https://raw.githubusercontent.com/ASKurz/Doing-Bayesian-Data-Analysis-in-brms-and-the-tidyverse/master/data.R/IncomeFamszState3yr.csv",
+      "dataset_support": "reachable_data_file",
+      "dimension": 0,
+      "error": "StanBlocksError [transpile]: model\n  Caused by: Could not find nu in model, builtin, Main or Main!\nStacktrace:\n  [1] error(s::String)\n    @ Base ./error.jl:35\n  [2] forward!(x::Symbol; info::StanBlocks.StanModel)\n    @ StanBlocks ~/github/nsiccha/StanBlocks.jl/src/slic_stan/tracing.jl:461\n  [3] forward!\n    @ ~/github/nsiccha/StanBlocks.jl/src/slic_stan/tracing.jl:437 [inlined]\n  [4] forwards!(x::Symbol; info::StanBlocks.StanModel)\n    @ StanBlocks ~/github/nsiccha/StanBlocks.jl/src/slic_stan/tracing.jl:408\n  [5] forwards!\n    @ ~/github/nsiccha/StanBlocks.jl/src/slic_stan/tracing.jl:408 [inlined]\n  [6] #78\n    @ ~/github/nsiccha/StanBlocks.jl/src/slic_stan/tracing.jl:407 [inlined]\n  [7] MappingRF\n    @ ./reduce.jl:100 [inlined]\n  [8] afoldl(::Base.MappingRF{StanBlocks.var\"#78#79\"{StanBlocks.StanModel}, Base.BottomRF{typeof(vcat)}}, ::Vector{Any}, ::Symbol, ::Symbol, ::StanBlocks.CanonicalExpr{typeof(sqrt), Tuple{StanBlocks.CanonicalExpr{typeof(+), Tuple{StanBlocks.CanonicalExpr{Base.Broadcast.BroadcastFunction{typeof(*)}, Tuple{Symbol, Symbol}}, StanBlocks.CanonicalExpr{Base.Broadcast.BroadcastFunction{typeof(*)}, Tuple{Symbol, Symbol}}}}}})\n    @ Base ./operators.jl:544\n  [9] _foldl_impl(op::Base.MappingRF{StanBlocks.var\"#78#79\"{StanBlocks.StanModel}, Base.BottomRF{typeof(vcat)}}, init::Vector{Any}, itr::Tuple{Symbol, Symbol, StanBlocks.CanonicalExpr{typeof(sqrt), Tuple{StanBlocks.CanonicalExpr{typeof(+), Tuple{StanBlocks.CanonicalExpr{Base.Broadcast.BroadcastFunction{typeof(*)}, Tuple{Symbol, Symbol}}, StanBlocks.CanonicalExpr{Base.Broadcast.BroadcastFunction{typeof(*)}, Tuple{Symbol, Symbol}}}}}}})\n    @ Base ./reduce.jl:68\n [10] foldl_impl(op::Base.MappingRF{StanBlocks.var\"#78#79\"{StanBlocks.StanModel}, Base.BottomRF{typeof(vcat)}}, nt::Vector{Any}, itr::Tuple{Symbol, Symbol, StanBlocks.CanonicalExpr{typeof(sqrt), Tuple{StanBlocks.CanonicalExpr{typeof(+), Tuple{StanBlocks.CanonicalExpr{Base.Broadcast.BroadcastFunction{typeof(*)}, Tuple{Symbol, Symbol}}, StanBlo",
+      "generated_blocks": [
+        {
+          "group": "State",
+          "k": 3,
+          "terms": "1 + family_size_z + protect(family_size_z^2)"
+        }
+      ],
+      "generated_max_k": 3,
+      "gradient_finite": null,
+      "historical_blocks": [
+        {
+          "group": "State",
+          "k": 3,
+          "terms": "1 + family_size_z + I(family_size_z^2)"
+        }
+      ],
+      "historical_formula": "median_income_z | se(se_z, sigma = TRUE) ~ 1 + family_size_z + I(family_size_z^2) + (1 + family_size_z + I(family_size_z^2) || State)",
+      "historical_max_k": 3,
+      "inventory_group_columns": [
+        "se",
+        "State"
+      ],
+      "log_density": null,
+      "max_k": 3,
+      "n_obs": 0,
+      "publishable_by_main_runner": false,
+      "reached": "after-sbbrmi-lowered",
+      "row_source_claim": "https://raw.githubusercontent.com/ASKurz/Doing-Bayesian-Data-Analysis-in-brms-and-the-tidyverse/master/data.R/IncomeFamszState3yr.csv",
+      "sampled": false,
+      "semantic_route": "ordinary_brm",
+      "source_fidelity_verdict": "unverifiable",
+      "spec": "kruschke:income_famsize",
+      "stages_completed": [
+        "data-adapted",
+        "brm-parsed",
+        "sbbrmi-lowered"
+      ],
+      "surface_secondary_gap": "",
+      "surface_support_class": "already-expressible-via-semantic-rewrite",
+      "translation_note": "row-varying known response SE composes with the fitted residual sigma inside the LocationScale Student-t scale; the surface is executable, but `nu` remains symbolic until the historical degrees-of-freedom value/prior is recovered",
+      "translation_status": "semantic-rewrite"
+    },
+    {
+      "blocker": "dataset receipt is synthetic, so there is no row-level historical data to run; translation is `route-specific`: requires a faithful stanblocks_plate implementation; no ordinary-formula substitute",
+      "capability_tier": "route-specific",
+      "current_brm_body": "",
+      "data_adapter": "",
+      "data_sha256": "",
+      "dataset_claim": "fd_rep_varying",
+      "dataset_is_synthetic": true,
+      "dataset_receipt_urls": "synthetic",
+      "dataset_support": "name_or_key_present",
+      "dimension": 0,
+      "error": "",
+      "generated_blocks": [],
+      "generated_max_k": 0,
+      "gradient_finite": null,
+      "historical_blocks": [
+        {
+          "group": "species",
+          "k": 2,
+          "terms": "1 + uc1"
+        },
+        {
+          "group": "species",
+          "k": 3,
+          "terms": "1 + uc1 + ec1"
+        }
+      ],
+      "historical_formula": "occ: ~ uc1 + (1 + uc1 | species); det: ~ uc1 + ec1 + (1 + uc1 + ec1 | species)",
+      "historical_max_k": 3,
+      "inventory_group_columns": [
+        "species"
+      ],
+      "log_density": null,
+      "max_k": 3,
+      "n_obs": 0,
+      "publishable_by_main_runner": false,
+      "reached": "no-real-data-adapter",
+      "row_source_claim": "https://jsocolar.github.io/flocker/articles/flocker_tutorial.html",
+      "sampled": false,
+      "semantic_route": "stanblocks_plate",
+      "source_fidelity_verdict": "confirmed",
+      "spec": "flocker:single_season_repvarying",
+      "stages_completed": [],
+      "surface_secondary_gap": "kernel/plate substrate control is separately probed",
+      "surface_support_class": "historical-semantics-unresolved",
+      "translation_note": "requires a faithful stanblocks_plate implementation; no ordinary-formula substitute",
+      "translation_status": "route-specific"
+    },
+    {
+      "blocker": "dataset receipt is synthetic, so there is no row-level historical data to run; translation is `route-specific`: requires a faithful stanblocks_plate implementation; no ordinary-formula substitute",
+      "capability_tier": "route-specific",
+      "current_brm_body": "",
+      "data_adapter": "",
+      "data_sha256": "",
+      "dataset_claim": "fd_augmented",
+      "dataset_is_synthetic": true,
+      "dataset_receipt_urls": "synthetic",
+      "dataset_support": "name_or_key_present",
+      "dimension": 0,
+      "error": "",
+      "generated_blocks": [],
+      "generated_max_k": 0,
+      "gradient_finite": null,
+      "historical_blocks": [
+        {
+          "group": "ff_species",
+          "k": 1,
+          "terms": "1"
+        },
+        {
+          "group": "ff_species",
+          "k": 3,
+          "terms": "1 + uc1 + ec1"
+        }
+      ],
+      "historical_formula": "occ: ~ (1 | ff_species); det: ~ uc1 + ec1 + (1 + uc1 + ec1 | ff_species)",
+      "historical_max_k": 3,
+      "inventory_group_columns": [
+        "ff_species"
+      ],
+      "log_density": null,
+      "max_k": 3,
+      "n_obs": 0,
+      "publishable_by_main_runner": false,
+      "reached": "no-real-data-adapter",
+      "row_source_claim": "https://jsocolar.github.io/flocker/articles/flocker_tutorial.html",
+      "sampled": false,
+      "semantic_route": "stanblocks_plate",
+      "source_fidelity_verdict": "confirmed",
+      "spec": "flocker:augmented_multispecies",
+      "stages_completed": [],
+      "surface_secondary_gap": "kernel/plate substrate control is separately probed",
+      "surface_support_class": "historical-semantics-unresolved",
+      "translation_note": "requires a faithful stanblocks_plate implementation; no ordinary-formula substitute",
+      "translation_status": "route-specific"
+    }
+  ],
+  "config": {
+    "brm_sha": "d452e97a90974d5bef5472978f3d2379255fbfbc",
+    "generated_at": "2026-07-29T22:13:07.577",
+    "host": "strato2",
+    "julia": "1.10.11",
+    "max_generated_k_among_publishable_rows": 2,
+    "max_historical_k_among_publishable_rows": 2,
+    "method": "every catalogue card is scanned under BOTH block-width readings — the historical lme4/brms one, where `(x | g)` implies an intercept, and the literal one BRM's verbatim surface lowers — and a card qualifies if EITHER is at least three. Each hit is then taken as far as it goes on ACTUAL data: download, adapter, BRM._brm, SBBRMI, BridgeStan instantiation, log density, gradient, a short sample. The stage it stopped at is recorded. No K-based exclusion is applied before testing.",
+    "model_matrix_sha256": "1e76f72dd7ec518e29c7e6fd0875a51f959842059453228c1d0146be4a6bc9d3",
+    "n_cards_scanned": 359,
+    "n_high_k_cards": 3,
+    "probe_draws": 50,
+    "question": "Does any historical-gallery card carry a random-effect block with three or more coefficient terms that this stack can benchmark on real data?",
+    "reproduction": "julia --startup-file=no --project=/path/to/pinned/environment docs/benchmark/run_brm_high_k_preflight.jl",
+    "runner": "docs/benchmark/run_brm_high_k_preflight.jl",
+    "runner_sha256": "9ac61aef1a1733654839ebcc306ab606f7332c7fdc5fc0e2933bce9b9ff777e5",
+    "stanblocks_sha": "7a02d30ffb28215e79470ce9689c0f65902b10df",
+    "total_elapsed_s": 19.068,
+    "translations_sha256": "8443c0a15bfe22bee55bd241dbf9b26c4ffe3de6596ddb71d2213d632a597f25",
+    "warmuphmc_sha": "dc9636f8e8cdf6437e69980b3336d2e5659fecbf",
+    "warmuphmc_src_dirty": false
+  }
+}

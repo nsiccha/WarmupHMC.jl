@@ -264,6 +264,11 @@ verdict can be checked against that list rather than against a global maximum.
 | `nonlinear_weighting_run.jl` | that study's measurement driver |
 | `nonlinear_weighting_report.jl` | prints its tables, writes a derived summary |
 | `results/nonlinear_weighting/rows.json` | its rows — the only stored fact of that study |
+| `run_brm_inventory_benchmark.jl` | the **published** generated-BRM driver: reads each model's executable body out of BRM's `research/historical_model_inventory/translations.tsv`, cross-checks it against `model_matrix.tsv`, and measures it. `BRMI_MODE=standard` writes the six-arm matrix under `results/brm_inventory_standard/`; `BRMI_MODE=inventory` writes the three-arm × two-flag design under `results/brm_inventory_generated/`. No model formula is written here |
+| `run_brm_catalogue_benchmark.jl` | the superseded predecessor — hand-transcribed `@brm` blocks. Retained as accessor-regression evidence only; it does not exercise the catalogue-to-model translation path |
+| `run_brm_high_k_preflight.jl` | asks how wide a random-effect block the inventory can reach, by carrying every wide-block candidate as far as it goes on real data rather than screening on width. Writes `results/brm_inventory_high_k/` |
+| `brm_catalogue.jl`, `brm_plots.jl` | derivations only — the tables and the two AlgebraOfVega figures `docs/src/brm-catalogue.md` builds. Loaded by `load_harness`, so they may use the docs stack and nothing from the measurement stack |
+| `verify_brm_inventory_standard.jl` | acceptance gate for the published artifact: the exact model set, the complete model × arm × seed grid, per-arm parameterization labels, the upstream data checksum pins, and the block widths under both readings |
 
 ## The nonlinear trajectory-weighting study
 

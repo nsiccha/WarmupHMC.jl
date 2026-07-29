@@ -356,7 +356,8 @@ const MODEL_META = Any[]
 
 function flush_out(config)
     mkpath(dirname(OUT))
-    open(OUT, "w") do io
+    temporary = OUT * ".tmp"
+    open(temporary, "w") do io
         JSON.print(io, Dict(
             "config" => sanitize(config),
             "models" => sanitize(MODEL_META),
@@ -364,9 +365,12 @@ function flush_out(config)
                        for row in ROWS],
         ), 2)
     end
+    mv(temporary, OUT; force=true)
 end
 
 function main()
+    overall_started = time()
+    run_started_at = now()
     brm_dir = pkgdir_of(BRM)
     whmc_dir = pkgdir_of(WarmupHMC)
     reproduction = MODE == "standard" ?
@@ -420,7 +424,8 @@ function main()
             "sampler defaults: DynamicHMC uses its default 1000-step Stan-style " *
             "warmup; WarmupHMC chooses its own gradient-targeted windows" : nothing,
         "seeds" => collect(1:N_SEEDS),
-        "generated_at" => string(now()),
+        "generated_at" => string(run_started_at),
+        "run_started_at" => string(run_started_at),
     )
 
     for spec in selected_specs()
@@ -571,13 +576,16 @@ function main()
             end
         end
 
-        flush_out(config)
         completed = [r for r in ROWS if r.spec == spec_key]
         elapsed_seconds = round(time() - started; digits=1)
+        config["elapsed_so_far_s"] = round(time() - overall_started; digits=3)
+        flush_out(config)
         @info "inventory spec done" spec=spec_key seconds=elapsed_seconds rows=length(completed) failed=count(!r.ok for r in completed)
         flush(stderr)
     end
 
+    config["run_finished_at"] = string(now())
+    config["total_elapsed_s"] = round(time() - overall_started; digits=3)
     flush_out(config)
     @info "wrote inventory-generated benchmark" OUT rows=length(ROWS)
 end

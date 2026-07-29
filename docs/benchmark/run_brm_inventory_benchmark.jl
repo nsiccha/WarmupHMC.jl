@@ -117,22 +117,6 @@ const SPECS = InventorySpec[
                Subject=dense_int(df.Subject)),
     ),
     InventorySpec(
-        "lme4", "sleepstudy_uncorr", "sleepstudy",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
-        "Reaction and Days copied as Float64 without response scaling; Subject " *
-        "deterministically recoded to dense integers",
-        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
-               Subject=dense_int(df.Subject)),
-    ),
-    InventorySpec(
-        "mixed_models_jl", "sleepstudy_zerocorr", "sleepstudy",
-        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
-        "Reaction and Days copied as Float64 without response scaling; Subject " *
-        "deterministically recoded to dense integers",
-        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
-               Subject=dense_int(df.Subject)),
-    ),
-    InventorySpec(
         "bambi", "sleepstudy", "sleepstudy",
         "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
         "Reaction and Days copied as Float64 without response scaling; Subject " *
@@ -148,6 +132,15 @@ const SPECS = InventorySpec[
         df -> (; diameter=Float64.(df.diameter),
                plate=dense_int(String.(df.plate)),
                sample=dense_int(String.(df.sample))),
+    ),
+    InventorySpec(
+        "bambi", "radon_partial", "radon",
+        RADON_SRRS2_URL,
+        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
+        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
+        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
+        RADON_CTY_SHA256,
+        radon_adapter,
     ),
     InventorySpec(
         "bambi", "radon_floor", "radon",
@@ -589,4 +582,4 @@ function main()
     @info "wrote inventory-generated benchmark" OUT rows=length(ROWS)
 end
 
-main()
+abspath(PROGRAM_FILE) == abspath(@__FILE__) && main()

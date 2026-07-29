@@ -6,10 +6,9 @@ using AlgebraOfVega
 brmc_plot_model_label(spec) = get(Dict(
     "lme4:dyestuff_re" => "dyestuff",
     "lme4:sleepstudy_slope" => "sleepstudy slope",
-    "lme4:sleepstudy_uncorr" => "sleepstudy uncorrelated",
-    "mixed_models_jl:sleepstudy_zerocorr" => "sleepstudy zero-correlation",
     "bambi:sleepstudy" => "sleepstudy (Bambi)",
     "mixed_models_jl:penicillin_crossed" => "penicillin crossed",
+    "bambi:radon_partial" => "radon partial pooling",
     "bambi:radon_floor" => "radon floor",
     "bambi:radon_slopes" => "radon slopes",
     "bambi:dietox" => "dietox",

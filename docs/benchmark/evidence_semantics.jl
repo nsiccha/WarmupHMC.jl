@@ -72,12 +72,24 @@ numeric_series(x) = x isa AbstractVector && !isempty(x) &&
 is_series(x::AbstractDict) = !isempty(x) && all(numeric_series, values(x))
 is_series(_) = false
 
+function series_rows(series)
+    rows = Dict{String,Any}[]
+    for (name, values) in sort(collect(series); by=first)
+        for (index, value) in enumerate(values)
+            push!(rows, Dict("series" => string(name), "index" => index,
+                             "value" => value))
+        end
+    end
+    rows
+end
+
 """
 Load one result file into provenance plus named semantic-table sources.
 
-The classification is structural: arrays of objects are row tables; objects
-whose values are all non-empty numeric arrays are measurement-series tables;
-other objects are flattened provenance; everything else is scalar provenance.
+The classification is structural: arrays of objects are row tables; numeric
+arrays are collected into long `series/index/value` measurement tables;
+objects whose values are all numeric arrays are measurement tables; other
+objects are flattened provenance; everything else is scalar provenance.
 """
 function benchmark_load(key)
     parsed = JSON.parsefile(benchmark_path(key))
@@ -89,15 +101,16 @@ function benchmark_load(key)
     tables = Pair{String,Any}[]
     scalars = Pair{String,Any}[]
     nested = Pair{String,Any}[]
+    top_level_series = Pair{String,Any}[]
     for key in sort(collect(keys(parsed)))
         value = parsed[key]
         if value isa AbstractVector && !isempty(value) &&
                 all(row -> row isa AbstractDict, value)
             push!(tables, key => benchmark_table(value))
         elseif is_series(value)
-            rows = [Dict("series" => series, "values" => value[series])
-                    for series in sort(collect(keys(value)))]
-            push!(tables, key => benchmark_table(rows))
+            push!(tables, key => benchmark_table(series_rows(value)))
+        elseif numeric_series(value)
+            push!(top_level_series, key => value)
         elseif value isa AbstractDict
             append!(nested, [string(nested_key) => value[nested_key]
                              for nested_key in sort(collect(keys(value)))])
@@ -105,6 +118,9 @@ function benchmark_load(key)
             push!(scalars, key => value)
         end
     end
+    isempty(top_level_series) ||
+        push!(tables, "series" => benchmark_table(series_rows(top_level_series)))
+    sort!(tables; by=first)
     nested_names = Set(first.(nested))
     flattened = vcat(nested, [pair for pair in scalars
                               if !(first(pair) in nested_names)])

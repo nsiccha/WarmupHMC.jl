@@ -347,9 +347,16 @@ historical card has an executable translation or a generic real-data loader.
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 import Markdown
-d = load_results("brm_inventory_generated/rows.json")
+using SHA
+d = load_results("brm_inventory_standard/rows.json")
 c = d["config"]
+d0 = load_results("brm_inventory_generated/rows.json")
+c0 = d0["config"]
+standard_path = joinpath(results_dir(), "brm_inventory_standard", "rows.json")
+standard_sha = bytes2hex(open(sha256, standard_path))
+sampling_seconds = sum(r["wall_s"] for r in d["rows"])
 Markdown.parse(
+    "**Expanded standard-warmup matrix**\n\n" *
     "```\n" * c["reproduction"] * "\n```\n\n" *
     "* WarmupHMC `" * c["warmuphmc_sha"][1:10] * "`\n" *
     "* BayesianRegressionModels `" * c["brm_sha"][1:10] * "` (unregistered)\n" *
@@ -358,8 +365,18 @@ Markdown.parse(
     "* inventory model matrix `" * c["model_matrix_sha256"][1:12] * "…`\n" *
     "* host `" * c["host"] * "`, Julia " * c["julia"] * ", BLAS threads " *
       string(c["blas_threads"]) * "\n" *
-    "* untimed preflight draws per arm/flag: " *
-      string(c["timing_preflight_draws"]) * "\n")
+    "* process elapsed: " * string(c["total_elapsed_s"]) * " s; summed timed " *
+      "sampling: " * string(round(sampling_seconds; digits=3)) * " s\n" *
+    "* result SHA-256: `" * standard_sha * "`\n" *
+    "* untimed preflight draws per arm: " *
+      string(c["timing_preflight_draws"]) * "\n\n" *
+    "**Earlier focused nonlinear-flag receipt**\n\n" *
+    "```\n" * c0["reproduction"] * "\n```\n\n" *
+    "* WarmupHMC `" * c0["warmuphmc_sha"][1:10] * "`\n" *
+    "* BayesianRegressionModels `" * c0["brm_sha"][1:10] * "` (unregistered)\n" *
+    "* StanBlocks `" * c0["stanblocks_sha"][1:10] * "` (unregistered)\n" *
+    "* host `" * c0["host"] * "`, Julia " * c0["julia"] *
+      ", BLAS threads " * string(c0["blas_threads"]) * "\n")
 ```
 
 The documentation build imports neither BRM nor StanBlocks. It reads the

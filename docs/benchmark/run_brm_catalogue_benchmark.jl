@@ -50,6 +50,21 @@
 # run was fine. They are filtered, and `n_constant` records how many were
 # dropped, so "constant" can never be mistaken for "broken".
 
+# WHY THE BLAS PIN IS LOAD-BEARING
+#
+# It is not hygiene. BLAS thread count CHANGES THE SAMPLED CHAIN on at least one
+# of these targets. Measured: the `centered` sleepstudy arm run at the box's
+# default 8 threads returns different per-seed gradient counts and a different
+# min-ESS than the same seed at 1 thread; pinned to 1 it reproduces exactly
+# (seeds 1-3 give 10662 / 16062 / 16838 both times). Unpinned, this benchmark
+# would not be reproducible at all, and two runs of it would not be comparable.
+#
+# It shows on the centered arm and not on `noncentered` or `adaptive_centering`,
+# which are bit-identical across both settings. That asymmetry is NOT explained
+# — the two parametrizations are different generated Stan programs and so do not
+# perform the same linear algebra, but which call is thread-order-sensitive has
+# not been established. `blas_threads` is recorded in the artifact config so any
+# future comparison is against a known setting rather than an assumed one.
 using LinearAlgebra
 BLAS.set_num_threads(1)
 

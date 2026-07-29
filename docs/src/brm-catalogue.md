@@ -127,6 +127,11 @@ systematically run earlier on the shared host.
 end-to-end sampling throughput for this exact host and package stack. Unlike
 gradient counts, it is not portable across machines.
 
+These are the timings from BRM's corrected bit-exact adaptive-centering
+accessor. A superseded generated run had a last-bit arithmetic drift that made
+the wrapper appear much faster; it is retained only as rejected regression
+evidence and is excluded from every table on this page.
+
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("brm_catalogue.jl")

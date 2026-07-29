@@ -3,13 +3,13 @@
     "ad_backend": "AutoEnzyme(Reverse, runtime_activity, Const), used by BRM.adaptive_centering_problem",
     "blas_threads": 1,
     "brm_inventory_dirty": false,
-    "brm_sha": "aed667cfdb304718978750251547819bf5120bda",
+    "brm_sha": "79cc4a75906445d925db810c45c3384c262fb313",
     "controls": "generated bare non-centered and centered models carry no reparametrizer, so their nonlinear_adapt flag pairs must be identical",
-    "generated_at": "2026-07-29T10:15:08.172",
+    "generated_at": "2026-07-29T08:51:26.989",
     "host": "strato2",
     "inventory_contract": "model bodies are read from translations.tsv and cross-checked against model_matrix.tsv; real-data adapters are consumer-side",
     "julia": "1.10.11",
-    "model_matrix_sha256": "1e76f72dd7ec518e29c7e6fd0875a51f959842059453228c1d0146be4a6bc9d3",
+    "model_matrix_sha256": "79e5390e7f01df950dcd325cd006ef7b0940184a563eda4515e6a6d5b39e23a2",
     "n_draws": 500,
     "n_seeds": 12,
     "reproduction": "BRMI_SEEDS=12 BRMI_DRAWS=500 BRMI_PREFLIGHT_DRAWS=50 julia --startup-file=no --project=/path/to/pinned/environment docs/benchmark/run_brm_inventory_benchmark.jl",
@@ -32,7 +32,7 @@
     ],
     "stanblocks_sha": "329a178a7ad7877da0b58ad2c360d417ddd663f9",
     "timing_preflight_draws": 50,
-    "translations_sha256": "8443c0a15bfe22bee55bd241dbf9b26c4ffe3de6596ddb71d2213d632a597f25",
+    "translations_sha256": "d466f33bb411bac3bc0318e6b8da0614946ab537f9cbf854e3dcce75d5f79852",
     "warmuphmc_sha": "9039668d8ce1f1f62c7eb3d235ac7dac19a12d5a",
     "warmuphmc_src_dirty": false
   },
@@ -161,7 +161,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.040782718
+      "wall_s": 0.054320327
     },
     {
       "arm": "noncentered",
@@ -177,7 +177,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.033781003
+      "wall_s": 0.032486164
     },
     {
       "arm": "noncentered",
@@ -193,7 +193,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.031356657
+      "wall_s": 0.032103816
     },
     {
       "arm": "noncentered",
@@ -209,7 +209,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.046814112
+      "wall_s": 0.034227386
     },
     {
       "arm": "noncentered",
@@ -225,7 +225,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.03392376
+      "wall_s": 0.030055479
     },
     {
       "arm": "noncentered",
@@ -241,7 +241,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.034551808
+      "wall_s": 0.029267942
     },
     {
       "arm": "noncentered",
@@ -257,7 +257,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.031862777
+      "wall_s": 0.030750037
     },
     {
       "arm": "noncentered",
@@ -273,7 +273,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.03042315
+      "wall_s": 0.031268222
     },
     {
       "arm": "noncentered",
@@ -289,7 +289,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.026341256
+      "wall_s": 0.039939619
     },
     {
       "arm": "noncentered",
@@ -305,7 +305,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.025820227
+      "wall_s": 0.021698116
     },
     {
       "arm": "noncentered",
@@ -321,7 +321,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.036518201
+      "wall_s": 0.023299806
     },
     {
       "arm": "noncentered",
@@ -337,7 +337,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.03067118
+      "wall_s": 0.02321611
     },
     {
       "arm": "noncentered",
@@ -353,7 +353,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.0361046
+      "wall_s": 0.036894807
     },
     {
       "arm": "noncentered",
@@ -369,7 +369,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.037491575
+      "wall_s": 0.03094774
     },
     {
       "arm": "noncentered",
@@ -385,7 +385,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.03488008
+      "wall_s": 0.031815979
     },
     {
       "arm": "noncentered",
@@ -401,7 +401,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.040412827
+      "wall_s": 0.033239323
     },
     {
       "arm": "noncentered",
@@ -417,7 +417,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.034194985
+      "wall_s": 0.035740013
     },
     {
       "arm": "noncentered",
@@ -433,7 +433,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.037076943
+      "wall_s": 0.029747002
     },
     {
       "arm": "noncentered",
@@ -449,7 +449,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.035286041
+      "wall_s": 0.027809319
     },
     {
       "arm": "noncentered",
@@ -465,7 +465,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.03520546
+      "wall_s": 0.028197414
     },
     {
       "arm": "noncentered",
@@ -481,7 +481,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.040625501
+      "wall_s": 0.030276574
     },
     {
       "arm": "noncentered",
@@ -497,7 +497,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.034055083
+      "wall_s": 0.030062028
     },
     {
       "arm": "noncentered",
@@ -513,7 +513,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.034820928
+      "wall_s": 0.028849194
     },
     {
       "arm": "noncentered",
@@ -529,7 +529,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.033653818
+      "wall_s": 0.028548258
     },
     {
       "arm": "centered",
@@ -545,7 +545,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.078635051
+      "wall_s": 0.062120862
     },
     {
       "arm": "centered",
@@ -561,7 +561,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.089255668
+      "wall_s": 0.058785498
     },
     {
       "arm": "centered",
@@ -577,7 +577,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.083746335
+      "wall_s": 0.066698007
     },
     {
       "arm": "centered",
@@ -593,7 +593,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.076348905
+      "wall_s": 0.057455403
     },
     {
       "arm": "centered",
@@ -609,7 +609,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.048582883
+      "wall_s": 0.049351429
     },
     {
       "arm": "centered",
@@ -625,7 +625,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.054607317
+      "wall_s": 0.039716141
     },
     {
       "arm": "centered",
@@ -641,7 +641,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 1.353861875
+      "wall_s": 1.054642386
     },
     {
       "arm": "centered",
@@ -657,7 +657,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.105084485
+      "wall_s": 0.086846885
     },
     {
       "arm": "centered",
@@ -673,7 +673,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.055587591
+      "wall_s": 0.05606289
     },
     {
       "arm": "centered",
@@ -689,7 +689,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.034308872
+      "wall_s": 0.037144923
     },
     {
       "arm": "centered",
@@ -705,7 +705,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.248460298
+      "wall_s": 0.232157154
     },
     {
       "arm": "centered",
@@ -721,7 +721,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.252382752
+      "wall_s": 0.230962236
     },
     {
       "arm": "centered",
@@ -737,7 +737,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.062496316
+      "wall_s": 0.072525922
     },
     {
       "arm": "centered",
@@ -753,7 +753,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.086518651
+      "wall_s": 0.059510389
     },
     {
       "arm": "centered",
@@ -769,7 +769,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.036702336
+      "wall_s": 0.044894418
     },
     {
       "arm": "centered",
@@ -785,7 +785,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.033127462
+      "wall_s": 0.03487453
     },
     {
       "arm": "centered",
@@ -801,7 +801,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.071696574
+      "wall_s": 0.063948604
     },
     {
       "arm": "centered",
@@ -817,7 +817,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.052935219
+      "wall_s": 0.060761035
     },
     {
       "arm": "centered",
@@ -833,7 +833,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.039441887
+      "wall_s": 0.036934904
     },
     {
       "arm": "centered",
@@ -849,7 +849,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.050756333
+      "wall_s": 0.041474137
     },
     {
       "arm": "centered",
@@ -865,7 +865,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.039832436
+      "wall_s": 0.040364025
     },
     {
       "arm": "centered",
@@ -881,7 +881,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.040345193
+      "wall_s": 0.040895588
     },
     {
       "arm": "centered",
@@ -897,7 +897,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.04662511
+      "wall_s": 0.045799276
     },
     {
       "arm": "centered",
@@ -913,7 +913,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.039035366
+      "wall_s": 0.038370555
     },
     {
       "arm": "adaptive_centering",
@@ -929,7 +929,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.347533417
+      "wall_s": 0.10251613
     },
     {
       "arm": "adaptive_centering",
@@ -945,7 +945,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.343987492
+      "wall_s": 0.101257703
     },
     {
       "arm": "adaptive_centering",
@@ -961,7 +961,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.347632594
+      "wall_s": 0.093880362
     },
     {
       "arm": "adaptive_centering",
@@ -977,7 +977,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.307234818
+      "wall_s": 0.073765753
     },
     {
       "arm": "adaptive_centering",
@@ -993,7 +993,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.300171549
+      "wall_s": 0.068937619
     },
     {
       "arm": "adaptive_centering",
@@ -1009,7 +1009,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.316916521
+      "wall_s": 0.085747779
     },
     {
       "arm": "adaptive_centering",
@@ -1025,7 +1025,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.400387875
+      "wall_s": 0.091543987
     },
     {
       "arm": "adaptive_centering",
@@ -1041,7 +1041,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.434826336
+      "wall_s": 0.069880189
     },
     {
       "arm": "adaptive_centering",
@@ -1057,7 +1057,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.6377384
+      "wall_s": 0.260612515
     },
     {
       "arm": "adaptive_centering",
@@ -1073,7 +1073,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.598036214
+      "wall_s": 0.209303815
     },
     {
       "arm": "adaptive_centering",
@@ -1089,7 +1089,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.541740506
+      "wall_s": 0.156620028
     },
     {
       "arm": "adaptive_centering",
@@ -1105,7 +1105,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.36627947
+      "wall_s": 0.068306739
     },
     {
       "arm": "adaptive_centering",
@@ -1121,7 +1121,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.319272923
+      "wall_s": 0.07514808
     },
     {
       "arm": "adaptive_centering",
@@ -1137,7 +1137,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.344791813
+      "wall_s": 0.10440672
     },
     {
       "arm": "adaptive_centering",
@@ -1153,7 +1153,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.319839384
+      "wall_s": 0.104354016
     },
     {
       "arm": "adaptive_centering",
@@ -1169,7 +1169,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.325189148
+      "wall_s": 0.078468952
     },
     {
       "arm": "adaptive_centering",
@@ -1185,7 +1185,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.305465416
+      "wall_s": 0.073100824
     },
     {
       "arm": "adaptive_centering",
@@ -1201,7 +1201,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.337251846
+      "wall_s": 0.091306961
     },
     {
       "arm": "adaptive_centering",
@@ -1217,7 +1217,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.324058347
+      "wall_s": 0.092193884
     },
     {
       "arm": "adaptive_centering",
@@ -1233,7 +1233,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.391536719
+      "wall_s": 0.078775266
     },
     {
       "arm": "adaptive_centering",
@@ -1249,7 +1249,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.407674251
+      "wall_s": 0.071807009
     },
     {
       "arm": "adaptive_centering",
@@ -1265,7 +1265,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.41269428
+      "wall_s": 0.090329732
     },
     {
       "arm": "adaptive_centering",
@@ -1281,7 +1281,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.420250749
+      "wall_s": 0.089481292
     },
     {
       "arm": "adaptive_centering",
@@ -1297,7 +1297,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:dyestuff_re",
-      "wall_s": 0.390339777
+      "wall_s": 0.077431551
     },
     {
       "arm": "noncentered",
@@ -1313,7 +1313,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.092151225
+      "wall_s": 0.090390616
     },
     {
       "arm": "noncentered",
@@ -1329,7 +1329,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.105657215
+      "wall_s": 0.104158988
     },
     {
       "arm": "noncentered",
@@ -1345,7 +1345,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.088416161
+      "wall_s": 0.09016175
     },
     {
       "arm": "noncentered",
@@ -1361,7 +1361,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.109342871
+      "wall_s": 0.080409811
     },
     {
       "arm": "noncentered",
@@ -1377,7 +1377,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.113853227
+      "wall_s": 0.091633601
     },
     {
       "arm": "noncentered",
@@ -1393,7 +1393,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.125137691
+      "wall_s": 0.093914088
     },
     {
       "arm": "noncentered",
@@ -1409,7 +1409,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.167099315
+      "wall_s": 0.149044313
     },
     {
       "arm": "noncentered",
@@ -1425,7 +1425,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.150438342
+      "wall_s": 0.147838538
     },
     {
       "arm": "noncentered",
@@ -1441,7 +1441,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.095660158
+      "wall_s": 0.091525812
     },
     {
       "arm": "noncentered",
@@ -1457,7 +1457,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.111242434
+      "wall_s": 0.088316954
     },
     {
       "arm": "noncentered",
@@ -1473,7 +1473,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.113987082
+      "wall_s": 0.088243523
     },
     {
       "arm": "noncentered",
@@ -1489,7 +1489,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.090739086
+      "wall_s": 0.087394122
     },
     {
       "arm": "noncentered",
@@ -1505,7 +1505,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.09051754
+      "wall_s": 0.085000006
     },
     {
       "arm": "noncentered",
@@ -1521,7 +1521,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.088468712
+      "wall_s": 0.088083372
     },
     {
       "arm": "noncentered",
@@ -1537,7 +1537,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.082794309
+      "wall_s": 0.082647229
     },
     {
       "arm": "noncentered",
@@ -1553,7 +1553,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.082280681
+      "wall_s": 0.082795895
     },
     {
       "arm": "noncentered",
@@ -1569,7 +1569,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.077428064
+      "wall_s": 0.07984395
     },
     {
       "arm": "noncentered",
@@ -1585,7 +1585,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.08217125
+      "wall_s": 0.076909701
     },
     {
       "arm": "noncentered",
@@ -1601,7 +1601,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.099819378
+      "wall_s": 0.084989402
     },
     {
       "arm": "noncentered",
@@ -1617,7 +1617,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.101070405
+      "wall_s": 0.089445192
     },
     {
       "arm": "noncentered",
@@ -1633,7 +1633,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.122307185
+      "wall_s": 0.082876115
     },
     {
       "arm": "noncentered",
@@ -1649,7 +1649,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.088932843
+      "wall_s": 0.084145346
     },
     {
       "arm": "noncentered",
@@ -1665,7 +1665,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.095255559
+      "wall_s": 0.085136305
     },
     {
       "arm": "noncentered",
@@ -1681,7 +1681,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.103191422
+      "wall_s": 0.084048122
     },
     {
       "arm": "centered",
@@ -1697,7 +1697,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.225912069
+      "wall_s": 0.189288813
     },
     {
       "arm": "centered",
@@ -1713,7 +1713,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.243549761
+      "wall_s": 0.20870649
     },
     {
       "arm": "centered",
@@ -1729,7 +1729,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.25438023
+      "wall_s": 0.222681788
     },
     {
       "arm": "centered",
@@ -1745,7 +1745,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.283606577
+      "wall_s": 0.245387233
     },
     {
       "arm": "centered",
@@ -1761,7 +1761,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.397062976
+      "wall_s": 0.297327173
     },
     {
       "arm": "centered",
@@ -1777,7 +1777,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.31967748
+      "wall_s": 0.297433891
     },
     {
       "arm": "centered",
@@ -1793,7 +1793,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.538209604
+      "wall_s": 0.502409304
     },
     {
       "arm": "centered",
@@ -1809,7 +1809,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.529504809
+      "wall_s": 0.483037989
     },
     {
       "arm": "centered",
@@ -1825,7 +1825,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.441317985
+      "wall_s": 0.388035889
     },
     {
       "arm": "centered",
@@ -1841,7 +1841,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.543826225
+      "wall_s": 0.373589681
     },
     {
       "arm": "centered",
@@ -1857,7 +1857,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.63556486
+      "wall_s": 0.480047643
     },
     {
       "arm": "centered",
@@ -1873,7 +1873,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.799168171
+      "wall_s": 0.470110748
     },
     {
       "arm": "centered",
@@ -1889,7 +1889,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.709749999
+      "wall_s": 0.476319907
     },
     {
       "arm": "centered",
@@ -1905,7 +1905,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.675035427
+      "wall_s": 0.490180866
     },
     {
       "arm": "centered",
@@ -1921,7 +1921,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.378138491
+      "wall_s": 0.587891004
     },
     {
       "arm": "centered",
@@ -1937,7 +1937,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.033898159
+      "wall_s": 0.636343352
     },
     {
       "arm": "centered",
@@ -1953,7 +1953,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.226437935
+      "wall_s": 0.163224673
     },
     {
       "arm": "centered",
@@ -1969,7 +1969,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.23880254
+      "wall_s": 0.173687511
     },
     {
       "arm": "centered",
@@ -1985,7 +1985,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.387920517
+      "wall_s": 0.291987184
     },
     {
       "arm": "centered",
@@ -2001,7 +2001,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.437525432
+      "wall_s": 0.290963532
     },
     {
       "arm": "centered",
@@ -2017,7 +2017,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.559867806
+      "wall_s": 0.436954309
     },
     {
       "arm": "centered",
@@ -2033,7 +2033,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.461699837
+      "wall_s": 0.416152331
     },
     {
       "arm": "centered",
@@ -2049,7 +2049,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.363709183
+      "wall_s": 0.36786405
     },
     {
       "arm": "centered",
@@ -2065,7 +2065,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.381179845
+      "wall_s": 0.376002562
     },
     {
       "arm": "adaptive_centering",
@@ -2081,7 +2081,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.947926043
+      "wall_s": 0.209313759
     },
     {
       "arm": "adaptive_centering",
@@ -2097,7 +2097,7 @@
       "ok": true,
       "seed": 1,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.096653283
+      "wall_s": 0.280632234
     },
     {
       "arm": "adaptive_centering",
@@ -2113,7 +2113,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 2.102018391
+      "wall_s": 0.394831417
     },
     {
       "arm": "adaptive_centering",
@@ -2129,7 +2129,7 @@
       "ok": true,
       "seed": 2,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.388426869
+      "wall_s": 0.215606214
     },
     {
       "arm": "adaptive_centering",
@@ -2145,7 +2145,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.165175891
+      "wall_s": 0.223642665
     },
     {
       "arm": "adaptive_centering",
@@ -2161,7 +2161,7 @@
       "ok": true,
       "seed": 3,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.392989659
+      "wall_s": 0.290415775
     },
     {
       "arm": "adaptive_centering",
@@ -2177,7 +2177,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 2.914300553
+      "wall_s": 0.565778041
     },
     {
       "arm": "adaptive_centering",
@@ -2193,7 +2193,7 @@
       "ok": true,
       "seed": 4,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 2.102198722
+      "wall_s": 0.345439739
     },
     {
       "arm": "adaptive_centering",
@@ -2209,7 +2209,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.194611066
+      "wall_s": 0.222414042
     },
     {
       "arm": "adaptive_centering",
@@ -2225,7 +2225,7 @@
       "ok": true,
       "seed": 5,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.201398407
+      "wall_s": 0.275618739
     },
     {
       "arm": "adaptive_centering",
@@ -2241,7 +2241,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.213798166
+      "wall_s": 0.257668316
     },
     {
       "arm": "adaptive_centering",
@@ -2257,7 +2257,7 @@
       "ok": true,
       "seed": 6,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.138982207
+      "wall_s": 0.192745878
     },
     {
       "arm": "adaptive_centering",
@@ -2273,7 +2273,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.209666932
+      "wall_s": 0.195923603
     },
     {
       "arm": "adaptive_centering",
@@ -2289,7 +2289,7 @@
       "ok": true,
       "seed": 7,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.28168719
+      "wall_s": 0.280636264
     },
     {
       "arm": "adaptive_centering",
@@ -2305,7 +2305,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.040636295
+      "wall_s": 0.285873221
     },
     {
       "arm": "adaptive_centering",
@@ -2321,7 +2321,7 @@
       "ok": true,
       "seed": 8,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 0.969911136
+      "wall_s": 0.185284589
     },
     {
       "arm": "adaptive_centering",
@@ -2337,7 +2337,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.162978968
+      "wall_s": 0.221187999
     },
     {
       "arm": "adaptive_centering",
@@ -2353,7 +2353,7 @@
       "ok": true,
       "seed": 9,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.945048287
+      "wall_s": 0.37893855
     },
     {
       "arm": "adaptive_centering",
@@ -2369,7 +2369,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.979561705
+      "wall_s": 0.282912645
     },
     {
       "arm": "adaptive_centering",
@@ -2385,7 +2385,7 @@
       "ok": true,
       "seed": 10,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.891556389
+      "wall_s": 0.217246311
     },
     {
       "arm": "adaptive_centering",
@@ -2401,7 +2401,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.410674906
+      "wall_s": 0.202708778
     },
     {
       "arm": "adaptive_centering",
@@ -2417,7 +2417,7 @@
       "ok": true,
       "seed": 11,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.501781652
+      "wall_s": 0.255639266
     },
     {
       "arm": "adaptive_centering",
@@ -2433,7 +2433,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.530992951
+      "wall_s": 0.25470128
     },
     {
       "arm": "adaptive_centering",
@@ -2449,7 +2449,7 @@
       "ok": true,
       "seed": 12,
       "spec": "lme4:sleepstudy_slope",
-      "wall_s": 1.410913674
+      "wall_s": 0.202694838
     },
     {
       "arm": "noncentered",
@@ -2465,7 +2465,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 0.484715737
+      "wall_s": 0.444375149
     },
     {
       "arm": "noncentered",
@@ -2481,7 +2481,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 0.457150451
+      "wall_s": 0.459794478
     },
     {
       "arm": "noncentered",
@@ -2497,7 +2497,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 0.806991547
+      "wall_s": 0.669301027
     },
     {
       "arm": "noncentered",
@@ -2513,7 +2513,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 0.878457459
+      "wall_s": 0.634364461
     },
     {
       "arm": "noncentered",
@@ -2529,7 +2529,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 0.61993225
+      "wall_s": 0.488975702
     },
     {
       "arm": "noncentered",
@@ -2545,7 +2545,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 0.612118744
+      "wall_s": 0.478819504
     },
     {
       "arm": "noncentered",
@@ -2561,7 +2561,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 0.676539201
+      "wall_s": 0.547707466
     },
     {
       "arm": "noncentered",
@@ -2577,7 +2577,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 0.649944083
+      "wall_s": 0.584711376
     },
     {
       "arm": "noncentered",
@@ -2593,7 +2593,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 0.583574647
+      "wall_s": 0.53693602
     },
     {
       "arm": "noncentered",
@@ -2609,7 +2609,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 0.606976875
+      "wall_s": 0.511623708
     },
     {
       "arm": "noncentered",
@@ -2625,7 +2625,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 0.551030618
+      "wall_s": 0.507961394
     },
     {
       "arm": "noncentered",
@@ -2641,7 +2641,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 0.553095879
+      "wall_s": 0.507080768
     },
     {
       "arm": "noncentered",
@@ -2657,7 +2657,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 0.525123051
+      "wall_s": 0.478390263
     },
     {
       "arm": "noncentered",
@@ -2673,7 +2673,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 0.499673046
+      "wall_s": 0.465198227
     },
     {
       "arm": "noncentered",
@@ -2689,7 +2689,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 0.457179902
+      "wall_s": 0.419772174
     },
     {
       "arm": "noncentered",
@@ -2705,7 +2705,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 0.445692734
+      "wall_s": 0.393078696
     },
     {
       "arm": "noncentered",
@@ -2721,7 +2721,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 1.40804083
+      "wall_s": 0.521621916
     },
     {
       "arm": "noncentered",
@@ -2737,7 +2737,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 0.725233946
+      "wall_s": 0.531833879
     },
     {
       "arm": "noncentered",
@@ -2753,7 +2753,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 0.704084507
+      "wall_s": 0.427793815
     },
     {
       "arm": "noncentered",
@@ -2769,7 +2769,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 0.606295734
+      "wall_s": 0.404891799
     },
     {
       "arm": "noncentered",
@@ -2785,7 +2785,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 0.808317156
+      "wall_s": 0.530539372
     },
     {
       "arm": "noncentered",
@@ -2801,7 +2801,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 0.979964545
+      "wall_s": 0.526252095
     },
     {
       "arm": "noncentered",
@@ -2817,7 +2817,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 0.702525374
+      "wall_s": 0.557248123
     },
     {
       "arm": "noncentered",
@@ -2833,7 +2833,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 1.585942011
+      "wall_s": 0.519127113
     },
     {
       "arm": "centered",
@@ -2849,7 +2849,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 0.751656124
+      "wall_s": 0.633500268
     },
     {
       "arm": "centered",
@@ -2865,7 +2865,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 0.662249372
+      "wall_s": 0.590600262
     },
     {
       "arm": "centered",
@@ -2881,7 +2881,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 0.592958903
+      "wall_s": 0.549694969
     },
     {
       "arm": "centered",
@@ -2897,7 +2897,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 0.632428192
+      "wall_s": 0.552693437
     },
     {
       "arm": "centered",
@@ -2913,7 +2913,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 0.415733063
+      "wall_s": 0.43669564
     },
     {
       "arm": "centered",
@@ -2929,7 +2929,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 0.411010763
+      "wall_s": 0.573926592
     },
     {
       "arm": "centered",
@@ -2945,7 +2945,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 0.464097722
+      "wall_s": 0.551503315
     },
     {
       "arm": "centered",
@@ -2961,7 +2961,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 0.461731296
+      "wall_s": 0.563520851
     },
     {
       "arm": "centered",
@@ -2977,7 +2977,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 0.452521241
+      "wall_s": 0.603459409
     },
     {
       "arm": "centered",
@@ -2993,7 +2993,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 0.482663313
+      "wall_s": 0.460196002
     },
     {
       "arm": "centered",
@@ -3009,7 +3009,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 0.62468375
+      "wall_s": 0.589195314
     },
     {
       "arm": "centered",
@@ -3025,7 +3025,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 0.645517372
+      "wall_s": 0.614131589
     },
     {
       "arm": "centered",
@@ -3041,7 +3041,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 3.137894127
+      "wall_s": 3.013484725
     },
     {
       "arm": "centered",
@@ -3057,7 +3057,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 3.502986157
+      "wall_s": 3.800887883
     },
     {
       "arm": "centered",
@@ -3073,7 +3073,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 0.492101433
+      "wall_s": 0.580442413
     },
     {
       "arm": "centered",
@@ -3089,7 +3089,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 0.498467202
+      "wall_s": 0.568422435
     },
     {
       "arm": "centered",
@@ -3105,7 +3105,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 0.690653787
+      "wall_s": 0.946130056
     },
     {
       "arm": "centered",
@@ -3121,7 +3121,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 0.662725929
+      "wall_s": 0.757940638
     },
     {
       "arm": "centered",
@@ -3137,7 +3137,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 0.473757359
+      "wall_s": 0.47808476
     },
     {
       "arm": "centered",
@@ -3153,7 +3153,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 0.475600663
+      "wall_s": 0.537752667
     },
     {
       "arm": "centered",
@@ -3169,7 +3169,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 0.638215842
+      "wall_s": 0.666516884
     },
     {
       "arm": "centered",
@@ -3185,7 +3185,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 0.756562586
+      "wall_s": 0.664652301
     },
     {
       "arm": "centered",
@@ -3201,7 +3201,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 0.842354357
+      "wall_s": 0.717733508
     },
     {
       "arm": "centered",
@@ -3217,7 +3217,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 0.80820389
+      "wall_s": 0.777008323
     },
     {
       "arm": "adaptive_centering",
@@ -3233,7 +3233,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 8.752250137
+      "wall_s": 1.054636285
     },
     {
       "arm": "adaptive_centering",
@@ -3249,7 +3249,7 @@
       "ok": true,
       "seed": 1,
       "spec": "bambi:dietox",
-      "wall_s": 12.091332004
+      "wall_s": 2.397646852
     },
     {
       "arm": "adaptive_centering",
@@ -3265,7 +3265,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 12.239733401
+      "wall_s": 2.282493449
     },
     {
       "arm": "adaptive_centering",
@@ -3281,7 +3281,7 @@
       "ok": true,
       "seed": 2,
       "spec": "bambi:dietox",
-      "wall_s": 11.572065588
+      "wall_s": 1.955991618
     },
     {
       "arm": "adaptive_centering",
@@ -3297,7 +3297,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 8.870256711
+      "wall_s": 1.164442106
     },
     {
       "arm": "adaptive_centering",
@@ -3313,7 +3313,7 @@
       "ok": true,
       "seed": 3,
       "spec": "bambi:dietox",
-      "wall_s": 12.714475439
+      "wall_s": 2.037214272
     },
     {
       "arm": "adaptive_centering",
@@ -3329,7 +3329,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 14.398234973
+      "wall_s": 2.3317515
     },
     {
       "arm": "adaptive_centering",
@@ -3345,7 +3345,7 @@
       "ok": true,
       "seed": 4,
       "spec": "bambi:dietox",
-      "wall_s": 12.824067406
+      "wall_s": 1.718590582
     },
     {
       "arm": "adaptive_centering",
@@ -3361,7 +3361,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 11.138727542
+      "wall_s": 1.322905792
     },
     {
       "arm": "adaptive_centering",
@@ -3377,7 +3377,7 @@
       "ok": true,
       "seed": 5,
       "spec": "bambi:dietox",
-      "wall_s": 15.080523309
+      "wall_s": 2.120725875
     },
     {
       "arm": "adaptive_centering",
@@ -3393,7 +3393,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 10.052274162
+      "wall_s": 1.562950423
     },
     {
       "arm": "adaptive_centering",
@@ -3409,7 +3409,7 @@
       "ok": true,
       "seed": 6,
       "spec": "bambi:dietox",
-      "wall_s": 8.677250585
+      "wall_s": 1.203019847
     },
     {
       "arm": "adaptive_centering",
@@ -3425,7 +3425,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 7.831695649
+      "wall_s": 1.078522829
     },
     {
       "arm": "adaptive_centering",
@@ -3441,7 +3441,7 @@
       "ok": true,
       "seed": 7,
       "spec": "bambi:dietox",
-      "wall_s": 9.745810542
+      "wall_s": 1.693569501
     },
     {
       "arm": "adaptive_centering",
@@ -3457,7 +3457,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 12.307932015
+      "wall_s": 2.674623226
     },
     {
       "arm": "adaptive_centering",
@@ -3473,7 +3473,7 @@
       "ok": true,
       "seed": 8,
       "spec": "bambi:dietox",
-      "wall_s": 6.709942567
+      "wall_s": 1.010617294
     },
     {
       "arm": "adaptive_centering",
@@ -3489,7 +3489,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 10.35872916
+      "wall_s": 1.433654494
     },
     {
       "arm": "adaptive_centering",
@@ -3505,7 +3505,7 @@
       "ok": true,
       "seed": 9,
       "spec": "bambi:dietox",
-      "wall_s": 8.848081018
+      "wall_s": 1.377192832
     },
     {
       "arm": "adaptive_centering",
@@ -3521,7 +3521,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 10.701713799
+      "wall_s": 2.343983421
     },
     {
       "arm": "adaptive_centering",
@@ -3537,7 +3537,7 @@
       "ok": true,
       "seed": 10,
       "spec": "bambi:dietox",
-      "wall_s": 7.052933245
+      "wall_s": 1.05216165
     },
     {
       "arm": "adaptive_centering",
@@ -3553,7 +3553,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 8.948349442
+      "wall_s": 1.197600479
     },
     {
       "arm": "adaptive_centering",
@@ -3569,7 +3569,7 @@
       "ok": true,
       "seed": 11,
       "spec": "bambi:dietox",
-      "wall_s": 12.458621698
+      "wall_s": 2.518581342
     },
     {
       "arm": "adaptive_centering",
@@ -3585,7 +3585,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 11.95198618
+      "wall_s": 2.018684659
     },
     {
       "arm": "adaptive_centering",
@@ -3601,7 +3601,7 @@
       "ok": true,
       "seed": 12,
       "spec": "bambi:dietox",
-      "wall_s": 9.132252981
+      "wall_s": 1.213735947
     }
   ]
 }

@@ -32,13 +32,12 @@ negative controls.
 - Host: `strato2`
 - Julia: 1.10.11; BLAS threads: 1
 - WarmupHMC: `9039668d8ce1f1f62c7eb3d235ac7dac19a12d5a`
-- BRM integrated fix tree: `79cc4a75906445d925db810c45c3384c262fb313`
-  (the same Git tree subsequently merged into canonical `7052605a...`)
+- BRM canonical bit-exact fix merge: `aed667cfdb304718978750251547819bf5120bda`
 - StanBlocks: `329a178a7ad7877da0b58ad2c360d417ddd663f9`
 - 12 seeds × 500 retained draws × 3 arms × 2 flag values × 3 models = 216 rows
 - Every arm/flag path received a 50-draw untimed preflight; recorded flag order
   alternated by seed to remove systematic JIT/order bias from wall comparisons
-- Process exit: 0; elapsed: 259 seconds; summed in-row sampling time: 96.43 seconds
+- Process exit: 0; elapsed: 641 seconds; summed in-row sampling time: 353.86 seconds
 - Result: 216/216 rows completed; zero exceptions or crashes
 - Controls: all 6 `(model, bare arm)` flag pairs were identical for all 12 seeds
   on gradient count and constrained-space minimum ESS
@@ -50,14 +49,22 @@ trajectories rather than representing additional distinct failures.
 
 Adaptive centering selected a different trajectory only for dietox, in all 12
 seeds. Its paired median constrained-space ESS per gradient improved by 1.25×,
-but the added runtime made paired ESS per second 0.63× the flag-off value.
+but the added runtime made paired ESS per second 0.87× the flag-off value.
 Dyestuff and sleepstudy remained at the non-centered endpoint: their ESS per
 gradient ratios were exactly 1.0, while wrapper/adaptation runtime reduced ESS
-per second to 0.80× and 0.75× respectively. The docs page derives the full
+per second to 0.97× and 0.93× respectively. The docs page derives the full
 gradient and runtime comparison tables from the raw rows.
 
+The earlier generated run against BRM tree `79cc4a7` is preserved under
+`regression_79cc4a7/`, not as supported performance evidence. That accessor was
+stable in this run but changed the legacy floating-point operation tree by one
+ULP. The corrected bit-exact accessor kept every non-timing benchmark field
+identical here, while making the adaptive wrapper 3.7×–7.4× slower than the
+invalid implementation. Keeping that rejected artifact makes the performance
+cost auditable without allowing its timings into the headline tables.
+
 `rows.json` is the source of truth. Its SHA-256 is
-`bdaad8b27bd1b07e57ea2e8a4e88bd7c9c3f80a81e15cff6d6284da199a0ee05`.
+`3e92a1e66112592c0b70ae92a9e438ff3da7b0a5afe5a7ffb5421269dcaa0875`.
 
 ## Reproduction
 

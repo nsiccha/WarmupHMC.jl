@@ -651,7 +651,8 @@ reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(
 #
 # Both are in the sampler's WORKING parametrization — `finalize_warmup!` is what
 # applies the back-transform, and it never runs for a checkpoint; `reparam_sources`
-# is in the payload for exactly that. The dropped draws are legitimate MCMC draws
+# is in the payload for exactly that, and `back_transform(payload, lpdf, draws)`
+# is the entry point that applies it. The dropped draws are legitimate MCMC draws
 # for a shorter run under a less-adapted metric: within an epoch the kernel is
 # fixed (metric and step size frozen once `stepsize_adaptation_limit` is passed),
 # which is precisely why the sampler recorded them.
@@ -828,21 +829,140 @@ end
 _fire_callback(::Nothing, state::AWMState, stage::Symbol) = false
 _fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage) === true
 
+# The pair vector `sources` implies for `ir`'s structure: every
+# `Reparametrization` keeps the `target` and the accessor closures it was built
+# with, and takes its `source` centering from `sources`.
+#
+# Shared by `restore_reparam_sources!`, which writes it back into a live
+# reparametrizer, and `back_transform`, which builds a throwaway reparametrizer
+# out of it. Deliberately one function: these two are the only readers of a
+# payload's `reparam_sources`, and a divergence between how RESUME interprets a
+# payload and how a BACK-TRANSFORM interprets the same payload would not be an
+# error anywhere — it would be two different sets of plausible numbers.
+_reparam_pairs_with_sources(ir, sources) = [
+    idx => Reparametrization(value.target, src, value.args...)
+    for ((idx, value), (_, src)) in zip(ir.pairs, sources)
+]
+
 # Restore the reparametrizer's scalar `source` centerings (from `reparam_sources`)
 # onto a freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
 # structure (targets + index-extraction closures); only the mutated `source`
 # scalars are overwritten. No-op for a plain lpdf (empty `sources`).
 restore_reparam_sources!(lpdf, sources) = begin
     ir = reparametrizer(lpdf)
-    if !isempty(sources)
-        ir.pairs .= [
-            idx => Reparametrization(value.target, src, value.args...)
-            for ((idx, value), (_, src)) in zip(ir.pairs, sources)
-        ]
-    end
+    isempty(sources) || (ir.pairs .= _reparam_pairs_with_sources(ir, sources))
     _synchronize_scoring!(lpdf)
     lpdf
 end
+
+# Validate a payload/lpdf pair for `back_transform` and build the reparametrizer
+# that boundary's draws were sampled under. Returns `nothing` when there is
+# nothing to apply, which is the plain-lpdf case.
+#
+# The mismatch checks are the whole point of the function existing. Applying the
+# WRONG spec to source-frame draws does not error and does not produce NaN — it
+# produces a different, plausible posterior. So a spec that cannot be the one
+# that wrote the payload is refused here rather than silently honoured.
+_back_transform_reparametrizer(payload, lpdf, n_rows) = begin
+    hasproperty(payload, :reparam_sources) || throw(ArgumentError(
+        "this object has no `reparam_sources` field, so it is not a WarmupHMC " *
+        "checkpoint payload. Pass the NamedTuple deserialized from `cp_latest.jls` " *
+        "or `cp_window_<n>.jls`, not the file path and not the sampler's result."
+    ))
+    sources = payload.reparam_sources
+    ir = reparametrizer(lpdf)
+    n_rows == payload.dimension || throw(DimensionMismatch(
+        "checkpoint holds a $(payload.dimension)-dimensional problem but the supplied " *
+        "positions have $n_rows rows. Positions are dimension × ndraws — draws are COLUMNS."
+    ))
+    lpdf_dimension = LogDensityProblems.dimension(lpdf)
+    lpdf_dimension == payload.dimension || throw(DimensionMismatch(
+        "checkpoint holds a $(payload.dimension)-dimensional problem but the supplied " *
+        "lpdf has dimension $lpdf_dimension."
+    ))
+    length(ir.pairs) == length(sources) || throw(ArgumentError("""
+    the supplied log density's reparametrization cannot be the one that wrote this
+    checkpoint: it reparametrizes $(length(ir.pairs)) coordinate(s), the checkpoint
+    recorded $(length(sources)).
+
+    Build the log density exactly as the run was given it — same reparametrization
+    spec, same coordinates. A plain log density reparametrizes none at all.
+    """))
+    first.(ir.pairs) == first.(sources) || throw(ArgumentError("""
+    the supplied log density reparametrizes different coordinates than the run that
+    wrote this checkpoint:
+
+      supplied:   $(first.(ir.pairs))
+      checkpoint: $(first.(sources))
+    """))
+    isempty(sources) && return nothing
+    # Through a copy of the live pairs, so the element type — and therefore the
+    # `IndexedReparametrization` concreteness check — is exactly the one the
+    # sampler itself ran under. `lpdf` is left untouched.
+    pairs = copy(ir.pairs)
+    pairs .= _reparam_pairs_with_sources(ir, sources)
+    IndexedReparametrization(pairs)
+end
+
+"""
+    back_transform(payload, lpdf, positions::AbstractMatrix) -> Matrix
+    back_transform(payload, lpdf, position::AbstractVector) -> Vector
+
+Map raw checkpoint coordinates into the model's own parametrization — the frame
+`adaptive_warmup_mcmc` returns, and the frame a downstream transform such as
+BridgeStan's `param_constrain!` expects.
+
+Every position in a checkpoint payload is in the sampler's WORKING (source)
+frame: `posterior_position`, `dropped_posterior_position`, `halo_position` and
+`position_and_gradient.q` alike. The back-transform runs in `finalize_warmup!`,
+which a checkpoint never reaches, so a consumer materializing a running fit's
+partial results owes it. This is that entry point.
+
+`lpdf` supplies what the payload does not carry: the reparametrization
+STRUCTURE — each block's `target` and its location/log-scale accessors. The
+payload supplies the `source` centerings learned up to that boundary. So build
+`lpdf` exactly as the run was given it; a spec that cannot be the one that wrote
+the payload raises rather than returning plausible wrong numbers. `lpdf` is
+read, never mutated, and its own current centerings are ignored in favour of the
+payload's — but do not hand this the LIVE object a running sampler is still
+adapting, since reading a spec mid-mutation is a data race like any other.
+
+Returns a fresh array; `positions` is not modified. For a plain log density, or
+any problem whose reparametrizer is empty, the result is a copy — so it is safe
+to call unconditionally in code that handles both arms.
+
+```julia
+payload = deserialize(joinpath(checkpoint_dir, "cp_latest.jls"))
+raw = isempty(payload.posterior_position) ?
+    get(payload, :dropped_posterior_position, payload.posterior_position) :
+    payload.posterior_position
+draws = WarmupHMC.back_transform(payload, lpdf, raw)   # ready to constrain
+```
+
+Works on any of the three samplers' payloads. It is *not* the right call for
+draws a sampler already returned: `adaptive_warmup_mcmc` and
+`cooperative_warmup_mcmc` back-transform theirs at finalization, and applying
+this on top double-transforms them. For the source-frame draws
+`clustered_warmup_mcmc` returns — and `nonlinear_adapt=false` on the other two —
+the live reparametrizer already holds the right centerings, so `reparametrize!`
+is the in-place call to make there.
+"""
+function back_transform(payload, lpdf, positions::AbstractMatrix)
+    ir = _back_transform_reparametrizer(payload, lpdf, size(positions, 1))
+    out = Matrix{eltype(positions)}(undef, size(positions))
+    copyto!(out, positions)
+    isnothing(ir) && return out
+    for col in eachcol(out)
+        _, y = ir(col)
+        col .= y
+    end
+    out
+end
+
+# The single-position case — `position_and_gradient.q`, or one column pulled out
+# of a draw matrix. Same contract, same validation; a vector in, a vector out.
+back_transform(payload, lpdf, position::AbstractVector) =
+    vec(back_transform(payload, lpdf, reshape(collect(position), :, 1)))
 
 """
     checkpoint_sampler(payload) -> Symbol

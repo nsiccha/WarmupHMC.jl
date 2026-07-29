@@ -110,7 +110,7 @@ ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diago
 grad_cov_ev(p, g) = try
     tsvd(g; initvec=ones(size(g, 1)))[1][:, 1]
 catch e
-    @error "tsvd(...) failed, falling back to eigen(cov(...))"
+    @error "tsvd(...) failed, falling back to eigen(cov(...))" size(g) exception=(e, catch_backtrace())
     eigen(Symmetric(cov(g')), size(g,1):size(g,1)).vectors[:, 1]
     # rethrow()
 end

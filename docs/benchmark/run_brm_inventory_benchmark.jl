@@ -7,7 +7,7 @@
 # executable probe currently supplies synthetic data and has no generic
 # real-data loader.
 #
-#   BRMI_SEEDS=3 BRMI_DRAWS=500 julia --startup-file=no \
+#   BRMI_SEEDS=12 BRMI_DRAWS=500 julia --startup-file=no \
 #     --project=/path/to/pinned/environment \
 #     docs/benchmark/run_brm_inventory_benchmark.jl
 
@@ -24,8 +24,9 @@ const BS = StanBlocks.BridgeStan
 const AD_BACKEND = AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse),
                                 function_annotation=Enzyme.Const)
 
-const N_SEEDS = parse(Int, get(ENV, "BRMI_SEEDS", "3"))
+const N_SEEDS = parse(Int, get(ENV, "BRMI_SEEDS", "12"))
 const N_DRAWS = parse(Int, get(ENV, "BRMI_DRAWS", "500"))
+const PREFLIGHT_DRAWS = parse(Int, get(ENV, "BRMI_PREFLIGHT_DRAWS", "50"))
 const OUT = get(ENV, "BRMI_OUT", joinpath(
     @__DIR__, "results", "brm_inventory_generated", "rows.json"))
 const DATA_CACHE = get(ENV, "BRMI_DATA_CACHE", joinpath(tempdir(), "brm-inventory-data"))
@@ -218,7 +219,8 @@ function main()
         "blas_threads" => BLAS.get_num_threads(),
         "sampler" => "adaptive_warmup_mcmc",
         "runner" => "docs/benchmark/run_brm_inventory_benchmark.jl",
-        "reproduction" => "BRMI_SEEDS=$(N_SEEDS) BRMI_DRAWS=$(N_DRAWS) julia " *
+        "reproduction" => "BRMI_SEEDS=$(N_SEEDS) BRMI_DRAWS=$(N_DRAWS) " *
+                          "BRMI_PREFLIGHT_DRAWS=$(PREFLIGHT_DRAWS) julia " *
                           "--startup-file=no --project=/path/to/pinned/environment " *
                           "docs/benchmark/run_brm_inventory_benchmark.jl",
         "warmuphmc_sha" => gitsha(whmc_dir),
@@ -236,6 +238,9 @@ function main()
             "reparametrizer, so their nonlinear_adapt flag pairs must be identical",
         "n_seeds" => N_SEEDS,
         "n_draws" => N_DRAWS,
+        "timing_preflight_draws" => PREFLIGHT_DRAWS,
+        "run_order" => "one untimed preflight per arm/flag; recorded flag order " *
+                       "alternates by seed to avoid systematic temporal bias",
         "seeds" => collect(1:N_SEEDS),
         "generated_at" => string(now()),
     )
@@ -287,20 +292,39 @@ function main()
             "n_names_shared" => length(shared),
         ))
 
+        problem_for(arm) = if arm == "noncentered"
+            (problem_nc, problem_nc.model, names_nc)
+        elseif arm == "centered"
+            (problem_c, problem_c.model, names_c)
+        else
+            # Rebuild the wrapper for every run so one seed's adaptive
+            # centering cannot become the next seed's starting point.
+            (BRM.adaptive_centering_problem(
+                built_nc.sb, problem_nc, AD_BACKEND), problem_nc.model, names_nc)
+        end
+
+        # Keep Julia/Enzyme compilation out of the sampling-time comparison.
+        # Both Boolean paths are exercised because the runtime flag controls a
+        # different warm-up branch even though its type is the same.
         for arm in ("noncentered", "centered", "adaptive_centering"),
-            adapt in (false, true), seed in 1:N_SEEDS
-            problem, model, names = if arm == "noncentered"
-                (problem_nc, problem_nc.model, names_nc)
-            elseif arm == "centered"
-                (problem_c, problem_c.model, names_c)
-            else
-                # Rebuild the wrapper for every run so one seed's adaptive
-                # centering cannot become the next seed's starting point.
-                (BRM.adaptive_centering_problem(
-                    built_nc.sb, problem_nc, AD_BACKEND), problem_nc.model, names_nc)
+            adapt in (false, true)
+            problem, _, _ = problem_for(arm)
+            adaptive_warmup_mcmc(
+                Xoshiro(0x6b625000 + 10 * findfirst(==(arm),
+                    ("noncentered", "centered", "adaptive_centering")) + adapt),
+                problem; n_draws=PREFLIGHT_DRAWS,
+                nonlinear_adapt=adapt, progress=nothing,
+            )
+        end
+
+        for arm in ("noncentered", "centered", "adaptive_centering"),
+            seed in 1:N_SEEDS
+            adapt_order = isodd(seed) ? (false, true) : (true, false)
+            for adapt in adapt_order
+                problem, model, names = problem_for(arm)
+                push!(ROWS, run_arm(; spec_key, arm, problem, model, names, shared,
+                                    adapt, seed))
             end
-            push!(ROWS, run_arm(; spec_key, arm, problem, model, names, shared,
-                                adapt, seed))
         end
 
         flush_out(config)

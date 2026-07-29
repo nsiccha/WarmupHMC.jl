@@ -46,9 +46,40 @@ function brmc_summary(d)
                             if r["ess_min_shared_constrained"] !== nothing]),
             per_grad = brmc_med([r["ess_min_per_grad"] for r in rs
                                  if r["ess_min_per_grad"] !== nothing]),
+            per_s = brmc_med([r["ess_min_shared_constrained"] / r["wall_s"] for r in rs
+                              if r["ess_min_shared_constrained"] !== nothing &&
+                                 r["wall_s"] !== nothing && r["wall_s"] > 0]),
             wall = brmc_med([r["wall_s"] for r in rs if r["wall_s"] !== nothing]),
             ndiv = sum(r["n_divergent"] for r in rs),
             nconst = maximum(r["n_constant"] for r in rs; init = 0),
+        ))
+    end
+    out
+end
+
+"""Paired adaptive-on/off ratios for both gradient and wall-time efficiency."""
+function brmc_paired_efficiency(d)
+    out = []
+    for m in brmc_models(d)
+        off = Dict(r["seed"] => r for r in
+                   brmc_select(d, m["spec"], "adaptive_centering", false))
+        on = Dict(r["seed"] => r for r in
+                  brmc_select(d, m["spec"], "adaptive_centering", true))
+        seeds = sort(collect(intersect(keys(off), keys(on))))
+        isempty(seeds) && continue
+        ess_per_s(r) = r["ess_min_shared_constrained"] / r["wall_s"]
+        push!(out, (
+            spec = m["spec"], n = length(seeds),
+            grad_ratio = brmc_med([on[s]["grad_evals"] / off[s]["grad_evals"]
+                                   for s in seeds]),
+            ess_per_grad_ratio = brmc_med([on[s]["ess_min_per_grad"] /
+                                           off[s]["ess_min_per_grad"] for s in seeds]),
+            wall_ratio = brmc_med([on[s]["wall_s"] / off[s]["wall_s"] for s in seeds]),
+            ess_per_s_ratio = brmc_med([ess_per_s(on[s]) / ess_per_s(off[s])
+                                        for s in seeds]),
+            changed = count(s -> on[s]["grad_evals"] != off[s]["grad_evals"] ||
+                                 on[s]["ess_min_shared_constrained"] !=
+                                 off[s]["ess_min_shared_constrained"], seeds),
         ))
     end
     out

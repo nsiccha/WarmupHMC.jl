@@ -38,6 +38,14 @@ The resolved manifests otherwise differ only in the absolute checkout paths.
 4. `prefix_sleepstudy.json` and `prefix_sleepstudy.log`: with only BRM restored
    to `7847129`, the identical 12-seed process completes 72/72 rows with zero
    failures in 588 seconds.
+5. `postfix_full_79cc4a7_rejected.json`: the non-recursive replacement at
+   integrated tree `79cc4a7` completes the hand-authored 576-row process with
+   zero failures, but changes 91 adaptive-on gradient counts, 92 ESS values,
+   and 19 divergence counts relative to the stable baseline. BRM subsequently
+   isolated a last-bit accessor/Enzyme arithmetic drift that can redirect the
+   discrete window winner. This file is preserved as a rejected regression
+   receipt, not installed as the canonical benchmark and not presented as an
+   inventory-generated catalogue result.
 
 Every non-wall field in the 72-row positive control is bit-identical to the
 corresponding `sleepstudy` rows in the checked-in 576-row artifact: `arm`,
@@ -46,11 +54,15 @@ corresponding `sleepstudy` rows in the checked-in 576-row artifact: `arm`,
 `spec` each have zero mismatches.
 
 The checked-in `rows.json` was compared before and after both candidate crashes
-and remained byte-identical:
+and remained byte-identical at the time:
 
 ```text
 e1a3201d42298689bdffbfac44e39314aa3fb7f4b16ef9b3c9d394a9fc284870  rows.json
 ```
+
+Relocating the later rejected receipt normalized the legacy file's missing
+final newline. Its JSON payload is unchanged; the post-normalization SHA-256 is
+`155f987007af5aac9f9bdc9ac4fb12d571e6a94999f0f4867faad22de33d9fed`.
 
 ## Commands
 
@@ -89,6 +101,7 @@ All long commands ran under `nice -n 19` and `ionice -c 3`.
 c4367e8118852040e0c1103761f0faf656fbe0ad38ed46fe14c36092a696175d  prefix_sleepstudy.log
 4d3493ed2f3bc393cc5c5e9065675fe5b1c30864b110da5b89302227eb744778  postfix_seed1.json
 2a1981dec7a8e3208db7d639fb6c340a64aebd88a3c97d777be32cd93ff75090  prefix_sleepstudy.json
+c81446e42ce3cecd143fe6cb319f87dfc42fcbeda83e56ad8f995fee11a2de1d  postfix_full_79cc4a7_rejected.json
 ```
 
 Upstream tracking: BayesianRegressionModels snag `adaptive-centeri-298729a2`.

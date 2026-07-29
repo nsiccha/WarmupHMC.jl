@@ -182,6 +182,8 @@ brmc_failures(d) = [r for r in brmc_rows(d) if !r["ok"]]
 
 brmc_standard_arm_order() = [
     "warmuphmc_noncentered",
+    "warmuphmc_centered",
+    "warmuphmc_fixed_centering",
     "warmuphmc_adaptive_centering",
     "dynamichmc_noncentered",
     "dynamichmc_centered",
@@ -189,6 +191,8 @@ brmc_standard_arm_order() = [
 
 brmc_standard_arm_label(a) = get(Dict(
     "warmuphmc_noncentered" => "WarmupHMC — generated non-centered",
+    "warmuphmc_centered" => "WarmupHMC — generated centered",
+    "warmuphmc_fixed_centering" => "WarmupHMC — nonlinear wrapper fixed at c=0",
     "warmuphmc_adaptive_centering" => "WarmupHMC — adaptive centering",
     "dynamichmc_noncentered" => "DynamicHMC — generated non-centered",
     "dynamichmc_centered" => "DynamicHMC — generated centered",

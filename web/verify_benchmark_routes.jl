@@ -14,14 +14,13 @@
 #
 # WHAT IT PROTECTS
 # ----------------
-# `docs/benchmark/results/*.json` is the single source for the evidence tables in
-# the documentation: this app renders it, and `@include record_gallery` freezes
-# those renders into `docs/src/public/live-whmc/` for the VitePress build. A
-# driver that writes a shape the renderer cannot parse would therefore break the
-# published docs, and it would do it silently — the recording step would emit a
-# page with a missing table rather than fail. This asserts the whole chain:
-# every checked-in file loads, every file is reachable at a route, every route
-# is listed for recording, and the index links to each one.
+# `docs/benchmark/results/*.json` is the single source for the evidence tables.
+# The app and docs both project the shared semantic value; the app also records
+# its interactive routes for the static gallery. A driver that writes a shape
+# the renderer cannot parse would therefore break both consumers. This asserts
+# the app half of the chain: every checked-in file loads, every file is reachable
+# at a route, every route is listed for recording, and the index links to each
+# one. The production docs build separately exercises the Markdown projection.
 
 using WarmupHMCWeb
 using HTMXObjects: HTTP

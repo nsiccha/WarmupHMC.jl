@@ -14,7 +14,8 @@
 # Set `BRMI_MODE=standard` to compare WarmupHMC with DynamicHMC's default,
 # Stan-style warmup on the same generated non-centered/centered targets. That
 # mode counts gradients at one shared LogDensityProblems boundary for every
-# sampler instead of comparing sampler-specific internal counters.
+# sampler and runs the full six-arm linear/nonlinear comparison matrix instead
+# of comparing sampler-specific internal counters.
 
 using LinearAlgebra
 BLAS.set_num_threads(1)
@@ -40,6 +41,14 @@ const OUT = get(ENV, "BRMI_OUT", joinpath(
     MODE == "standard" ? "brm_inventory_standard" : "brm_inventory_generated",
     "rows.json"))
 const DATA_CACHE = get(ENV, "BRMI_DATA_CACHE", joinpath(tempdir(), "brm-inventory-data"))
+const RADON_SRRS2_URL = "https://raw.githubusercontent.com/pymc-devs/pymc-examples/" *
+    "5ae7aab3113eb8caa7b95faddb2ecefeaa0f7c9f/examples/data/srrs2.dat"
+const RADON_CTY_URL = "https://raw.githubusercontent.com/pymc-devs/pymc-examples/" *
+    "5ae7aab3113eb8caa7b95faddb2ecefeaa0f7c9f/examples/data/cty.dat"
+const RADON_SRRS2_SHA256 =
+    "241219ed05d4bf7dc171ca279c69db7f8d87ae666feae86161c973483a054877"
+const RADON_CTY_SHA256 =
+    "5aa648547b9b565d77b9f55defd2f292520441cc6df7a27206802006dade7b63"
 
 pkgdir_of(m) = dirname(dirname(pathof(m)))
 const INVENTORY_DIR = joinpath(pkgdir_of(BRM), "research", "historical_model_inventory")
@@ -61,6 +70,37 @@ function dense_int(v)
     [code[x] for x in v]
 end
 
+parse_int(x) = parse(Int, strip(string(x)))
+
+function cached_download(filename, url; expected_sha256=nothing)
+    mkpath(DATA_CACHE)
+    path = joinpath(DATA_CACHE, filename)
+    isfile(path) || Downloads.download(url, path)
+    actual = bytes2hex(open(sha256, path))
+    isnothing(expected_sha256) || actual == expected_sha256 || error(
+        "dataset checksum mismatch for $url: expected $expected_sha256, got $actual",
+    )
+    path
+end
+
+function radon_adapter(srrs2)
+    cty_path = cached_download("radon_cty.dat", RADON_CTY_URL;
+                               expected_sha256=RADON_CTY_SHA256)
+    cty = CSV.read(cty_path, DataFrame)
+
+    mn = copy(srrs2[strip.(String.(srrs2.state)) .== "MN", :])
+    mn.log_radon = log.(Float64.(mn.activity) .+ 0.1)
+    mn.fips = parse_int.(mn.stfips) .* 1000 .+ parse_int.(mn.cntyfips)
+    cty.fips = parse_int.(cty.stfips) .* 1000 .+ parse_int.(cty.ctfips)
+    cty.log_u = log.(Float64.(cty.Uppm))
+    merged = innerjoin(mn, select(cty, :fips, :log_u); on=:fips)
+    unique!(merged, :idnum)
+
+    (; log_radon=Float64.(merged.log_radon),
+       floor=dense_int(Int.(merged.floor)),
+       county=dense_int(strip.(String.(merged.county))))
+end
+
 const SPECS = InventorySpec[
     InventorySpec(
         "lme4", "dyestuff_re", "dyestuff",
@@ -75,6 +115,57 @@ const SPECS = InventorySpec[
         "deterministically recoded to dense integers",
         df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
                Subject=dense_int(df.Subject)),
+    ),
+    InventorySpec(
+        "lme4", "sleepstudy_uncorr", "sleepstudy",
+        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+        "Reaction and Days copied as Float64 without response scaling; Subject " *
+        "deterministically recoded to dense integers",
+        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
+               Subject=dense_int(df.Subject)),
+    ),
+    InventorySpec(
+        "mixed_models_jl", "sleepstudy_zerocorr", "sleepstudy",
+        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+        "Reaction and Days copied as Float64 without response scaling; Subject " *
+        "deterministically recoded to dense integers",
+        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
+               Subject=dense_int(df.Subject)),
+    ),
+    InventorySpec(
+        "bambi", "sleepstudy", "sleepstudy",
+        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+        "Reaction and Days copied as Float64 without response scaling; Subject " *
+        "deterministically recoded to dense integers",
+        df -> (; Reaction=Float64.(df.Reaction), Days=Float64.(df.Days),
+               Subject=dense_int(df.Subject)),
+    ),
+    InventorySpec(
+        "mixed_models_jl", "penicillin_crossed", "penicillin",
+        "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/Penicillin.csv",
+        "diameter copied as Float64; plate and sample converted to String and " *
+        "deterministically recoded to dense integers",
+        df -> (; diameter=Float64.(df.diameter),
+               plate=dense_int(String.(df.plate)),
+               sample=dense_int(String.(df.sample))),
+    ),
+    InventorySpec(
+        "bambi", "radon_floor", "radon",
+        RADON_SRRS2_URL,
+        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
+        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
+        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
+        RADON_CTY_SHA256,
+        radon_adapter,
+    ),
+    InventorySpec(
+        "bambi", "radon_slopes", "radon",
+        RADON_SRRS2_URL,
+        "Pinned historical two-file loader: Minnesota rows from srrs2.dat; " *
+        "log_radon=log(activity+0.1); FIPS join to cty.dat; unique idnum; " *
+        "floor and stripped county densely recoded. Auxiliary cty.dat sha256=" *
+        RADON_CTY_SHA256,
+        radon_adapter,
     ),
     InventorySpec(
         "bambi", "dietox", "dietox",
@@ -125,10 +216,8 @@ function inventory_row(spec)
 end
 
 function dataset(spec)
-    mkpath(DATA_CACHE)
-    path = joinpath(DATA_CACHE, spec.dataset * ".csv")
-    isfile(path) || Downloads.download(spec.url, path)
-    path
+    expected = spec.dataset == "radon" ? RADON_SRRS2_SHA256 : nothing
+    cached_download(spec.dataset * ".csv", spec.url; expected_sha256=expected)
 end
 
 function materialize(row, data; centered_groups=Symbol[])
@@ -201,10 +290,10 @@ function run_arm(; spec_key, arm, problem, model, names, shared, adapt, seed)
     end
 end
 
-function sample_standard(sampler, rng, problem, n_draws)
+function sample_standard(sampler, rng, problem, n_draws; nonlinear_adapt=true)
     if sampler == "warmuphmc"
         result = adaptive_warmup_mcmc(
-            rng, problem; n_draws, progress=nothing,
+            rng, problem; n_draws, nonlinear_adapt, progress=nothing,
         )
         Matrix{Float64}(result.posterior_position),
             Int(result.n_divergent_samples)
@@ -233,18 +322,20 @@ the same inner logdensity-and-gradient boundary.
 """
 function run_standard_arm(; spec_key, arm, sampler, parameterization,
                             base_problem, build_problem, model, names, shared,
-                            seed, n_draws=N_DRAWS)
+                            nonlinear_adapt, seed, n_draws=N_DRAWS)
     try
         timed = WarmupHMC.count_and_time(base_problem) do counted
             problem = build_problem(counted)
-            sample_standard(sampler, Xoshiro(seed), problem, n_draws)
+            sample_standard(sampler, Xoshiro(seed), problem, n_draws;
+                            nonlinear_adapt)
         end
         draws, ndiv = timed.result
         ess_unc, _ = finite_min(ess_vec(draws))
         ess_con, n_ok, n_constant = shared_constrained_ess(
             model, names, shared, draws)
         grad = Int(timed.n_evaluations)
-        (; spec=spec_key, arm, sampler, parameterization, seed, ok=true,
+        (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
+         seed, ok=true,
          wall_s=timed.elapsed, grad_evals=grad,
          n_draws_actual=size(draws, 2),
          ess_min_unconstrained=ess_unc,
@@ -253,7 +344,8 @@ function run_standard_arm(; spec_key, arm, sampler, parameterization,
          n_draws_constrained=n_ok, n_constant,
          n_divergent=Int(ndiv), error="")
     catch err
-        (; spec=spec_key, arm, sampler, parameterization, seed, ok=false,
+        (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
+         seed, ok=false,
          wall_s=NaN, grad_evals=0, n_draws_actual=0,
          ess_min_unconstrained=NaN,
          ess_min_shared_constrained=NaN, ess_min_per_grad=NaN,
@@ -294,7 +386,7 @@ function main()
         "--project=/path/to/pinned/environment " *
         "docs/benchmark/run_brm_inventory_benchmark.jl"
     run_order = MODE == "standard" ?
-        "one untimed preflight per comparison arm; the four recorded arms " *
+        "one untimed preflight per comparison arm; the six recorded arms " *
         "rotate cyclically by seed to avoid systematic temporal bias" :
         "one untimed preflight per arm/flag; recorded flag order alternates " *
         "by seed to avoid systematic temporal bias"
@@ -320,8 +412,9 @@ function main()
             "cross-checked against model_matrix.tsv; real-data adapters are consumer-side",
         "ad_backend" => "AutoEnzyme(Reverse, runtime_activity, Const), used by " *
                         "BRM.adaptive_centering_problem",
-        "controls" => "generated bare non-centered and centered models carry no " *
-            "reparametrizer, so their nonlinear_adapt flag pairs must be identical",
+        "controls" => "the six-arm standard matrix separates WarmupHMC's " *
+            "linear adaptation on generated non-centered/centered targets from " *
+            "the fixed and fitted nonlinear-wrapper paths",
         "n_seeds" => N_SEEDS,
         "n_draws" => N_DRAWS,
         "timing_preflight_draws" => PREFLIGHT_DRAWS,
@@ -367,6 +460,17 @@ function main()
             "capability_tier" => matrix["inferred_capability_tier"],
             "probe_evidence_kind" => matrix["probe_evidence_kind"],
             "probe_id" => matrix["probe_id"],
+            "source_fidelity_verdict" => get(matrix, "source_fidelity_verdict", ""),
+            "source_fidelity_reason" => get(matrix, "source_fidelity_reason", ""),
+            "source_fidelity_manual_reviewed" =>
+                get(matrix, "source_fidelity_manual_reviewed", ""),
+            "inferred_family" => get(matrix, "inferred_family", ""),
+            "inferred_family_provenance" =>
+                get(matrix, "inferred_family_provenance", ""),
+            "family_support" => get(matrix, "family_support", ""),
+            "dataset_support" => get(matrix, "dataset_support", ""),
+            "dataset_receipt_urls" => get(matrix, "dataset_receipt_urls", ""),
+            "row_source_claim" => get(matrix, "row_source_claim", ""),
             "historical_formula" => row["formula_claim"],
             "current_brm_body" => row["current_brm_body"],
             "current_brm_body_sha256" => bytes2hex(sha256(row["current_brm_body"])),
@@ -374,6 +478,10 @@ function main()
             "dataset" => spec.dataset,
             "data_url" => spec.url,
             "data_sha256" => bytes2hex(open(sha256, path)),
+            "auxiliary_data" => spec.dataset == "radon" ? Dict(
+                "url" => RADON_CTY_URL,
+                "sha256" => RADON_CTY_SHA256,
+            ) : Dict{String,String}(),
             "data_adapter" => spec.adapter_note,
             "n_obs" => length(first(data)),
             "descriptor_operations" => string.(getproperty.(built_nc.descriptor.operations, :name)),
@@ -428,19 +536,28 @@ function main()
                 (; arm="warmuphmc_noncentered", sampler="warmuphmc",
                  parameterization="noncentered", base_problem=problem_nc,
                  build_problem=identity_problem, model=problem_nc.model,
-                 names=names_nc),
+                 names=names_nc, nonlinear_adapt=false),
+                (; arm="warmuphmc_centered", sampler="warmuphmc",
+                 parameterization="centered", base_problem=problem_c,
+                 build_problem=identity_problem, model=problem_c.model,
+                 names=names_c, nonlinear_adapt=false),
+                (; arm="warmuphmc_fixed_centering", sampler="warmuphmc",
+                 parameterization="adaptive_wrapper_fixed_at_generated_endpoint",
+                 base_problem=problem_nc, build_problem=adaptive_problem,
+                 model=problem_nc.model, names=names_nc,
+                 nonlinear_adapt=false),
                 (; arm="warmuphmc_adaptive_centering", sampler="warmuphmc",
                  parameterization="adaptive_centering", base_problem=problem_nc,
                  build_problem=adaptive_problem, model=problem_nc.model,
-                 names=names_nc),
+                 names=names_nc, nonlinear_adapt=true),
                 (; arm="dynamichmc_noncentered", sampler="dynamichmc",
                  parameterization="noncentered", base_problem=problem_nc,
                  build_problem=identity_problem, model=problem_nc.model,
-                 names=names_nc),
+                 names=names_nc, nonlinear_adapt=false),
                 (; arm="dynamichmc_centered", sampler="dynamichmc",
                  parameterization="centered", base_problem=problem_c,
                  build_problem=identity_problem, model=problem_c.model,
-                 names=names_c),
+                 names=names_c, nonlinear_adapt=false),
             ]
 
             for (i, a) in enumerate(standard_arms)

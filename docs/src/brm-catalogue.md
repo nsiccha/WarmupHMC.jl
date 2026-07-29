@@ -60,11 +60,12 @@ densely recoded in sorted order. The raw responses are not rescaled.
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
 load_harness("brm_catalogue.jl")
-d = load_results("brm_inventory_generated/rows.json")
+d = load_results("brm_inventory_standard/rows.json")
 md_table(
-    ["inventory row", "historical formula", "data", "n", "parameters",
-     "probe evidence", "data adapter"],
-    [[m["spec"], "`" * m["historical_formula"] * "`", m["dataset"],
+    ["inventory row", "source fidelity", "historical formula", "data", "n",
+     "parameters", "probe evidence", "data adapter"],
+    [[m["spec"], m["source_fidelity_verdict"],
+      "`" * m["historical_formula"] * "`", m["dataset"],
       m["n_obs"], m["dim_noncentered"], m["probe_evidence_kind"],
       m["data_adapter"]] for m in brmc_models(d)],
 )
@@ -194,10 +195,12 @@ adaptive centering, the reparametrizer is built *over* that counted inner
 density so its WarmupHMC hooks remain active.
 
 This is a defaults comparison, not a fixed-budget ablation: each sampler
-chooses its own warmup budget. Four arms make the attribution explicit:
-WarmupHMC and DynamicHMC on the identical generated non-centered target,
-WarmupHMC with adaptive centering, and DynamicHMC on BRM's separately generated
-centered target.
+chooses its own warmup budget. Six arms make the attribution explicit:
+WarmupHMC and DynamicHMC each run BRM's generated non-centered and centered
+targets; WarmupHMC also runs BRM's nonlinear wrapper both fixed at its generated
+`c=0` endpoint and with centering adaptation enabled. The fixed-wrapper arm
+separates wrapper cost from the effect of fitting nonlinear centerings, while
+the two bare WarmupHMC arms expose its ordinary linear-transformation adaptation.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -218,13 +221,16 @@ Set(r["arm"] for r in rows) == expected_arms ||
     error("generated BRM standard-warmup artifact has an unexpected arm set")
 all(r -> r["n_draws_actual"] >= d["config"]["n_draws"], rows) ||
     error("a standard-warmup arm returned fewer draws than requested")
-d["config"]["brm_sha"] == d0["config"]["brm_sha"] &&
 d["config"]["translations_sha256"] == d0["config"]["translations_sha256"] &&
 d["config"]["model_matrix_sha256"] == d0["config"]["model_matrix_sha256"] ||
     error("standard-warmup and nonlinear artifacts do not use the same BRM inventory")
-Dict(m["spec"] => m["current_brm_body_sha256"] for m in brmc_models(d)) ==
-Dict(m["spec"] => m["current_brm_body_sha256"] for m in brmc_models(d0)) ||
-    error("standard-warmup and nonlinear artifacts do not use the same generated bodies")
+standard_bodies = Dict(m["spec"] => m["current_brm_body_sha256"]
+                       for m in brmc_models(d))
+focused_bodies = Dict(m["spec"] => m["current_brm_body_sha256"]
+                      for m in brmc_models(d0))
+all(pair -> get(standard_bodies, first(pair), nothing) == last(pair),
+    focused_bodies) ||
+    error("the expanded standard artifact changed a focused generated body")
 Markdown.parse(
     "**Checked standard-warmup artifact:** $(length(brmc_models(d))) generated " *
     "models × $(length(expected_arms)) arms × $(d["config"]["n_seeds"]) seeds = " *
@@ -260,11 +266,39 @@ md_table(
 )
 ```
 
+The table compresses each arm to a median. The figures below are actual
+AlgebraOfVega layers over every seed row. HTMXObjects' public `SemanticPlot`
+provides each layer's accessible text summary; AoV's public Vega-Lite MIME
+projection supplies the embedded figure. There is no hand-authored Vega spec
+and no second stored summary.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+load_harness("brm_plots.jl")
+d = load_results("brm_inventory_standard/rows.json")
+aov_figure(brmc_gradient_efficiency_plot(d);
+    caption="Points and nested intervals summarise the 12 seed-level minimum " *
+            "shared constrained-space ESS values per 1,000 gradients. The y " *
+            "axis is logarithmic.")
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+load_harness("brm_plots.jl")
+d = load_results("brm_inventory_standard/rows.json")
+aov_figure(brmc_runtime_efficiency_plot(d);
+    caption="The same seed-level runs expressed as minimum shared constrained-" *
+            "space ESS per measured sampling second. The y axis is logarithmic.")
+```
+
 The ratios below are paired by seed before taking the median. Above one is
 better for ESS/gradient and ESS/second; below one is faster for wall time. The
-first comparison isolates the warmup algorithm on the identical non-centered
-target. The other two show what adaptive centering costs relative to each
-standard static parameterization.
+first two comparisons isolate the warmup algorithm on identical generated
+targets. The fixed-wrapper comparison measures wrapper overhead at unchanged
+geometry; the fitted/fixed comparison isolates nonlinear adaptation; the final
+two compare the fitted nonlinear path with DynamicHMC's static endpoints.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
@@ -273,6 +307,9 @@ import Printf
 d = load_results("brm_inventory_standard/rows.json")
 pairs = [
     ("warmuphmc_noncentered", "dynamichmc_noncentered"),
+    ("warmuphmc_centered", "dynamichmc_centered"),
+    ("warmuphmc_fixed_centering", "warmuphmc_noncentered"),
+    ("warmuphmc_adaptive_centering", "warmuphmc_fixed_centering"),
     ("warmuphmc_adaptive_centering", "dynamichmc_noncentered"),
     ("warmuphmc_adaptive_centering", "dynamichmc_centered"),
 ]
@@ -301,10 +338,11 @@ portable comparison and wall-clock results describe this exact host.
 
 ## Scope and provenance
 
-This is the first real-data consumer receipt for BRM's generated historical
-inventory bodies. It is intentionally a focused benchmark of cheap, ready,
-verbatim hierarchical rows—not a claim that every historical card has an
-executable translation or a generic real-data loader.
+The three-model nonlinear flag A/B is the first real-data consumer receipt for
+BRM's generated historical inventory bodies. The standard-warmup matrix expands
+that receipt to the additional audited models listed above. Both remain a
+benchmark of cheap, ready, verbatim hierarchical rows—not a claim that every
+historical card has an executable translation or a generic real-data loader.
 
 ```@eval
 Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))

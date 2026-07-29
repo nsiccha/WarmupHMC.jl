@@ -18,7 +18,7 @@
 # `@__DIR__` inside an `@eval` block is `docs/build`, so `joinpath(@__DIR__,
 # "..")` is `docs/` in both a local and a CI build. Do not use `pwd()`.
 
-import JSON, Markdown, Printf
+import HTMXObjects, JSON, Markdown, Printf
 
 """
 Directory holding the checked-in benchmark result JSON.
@@ -254,9 +254,10 @@ the benchmark environment:
   * **It must only define things.** Anything that runs at include time — reading
     `ARGS`, writing output — runs during the docs build. Keep the driver and the
     derivation in separate files, as `summarize.jl` already does.
-  * **It may only depend on what `docs/Project.toml` has**: `JSON`, `Markdown`,
-    `Printf`, `Statistics`. Pulling in BridgeStan or PosteriorDB to render a
-    table would make the docs build depend on the whole measurement stack.
+  * **It may only depend on what `docs/Project.toml` has.** The docs environment
+    includes the result/rendering stack (`JSON`, `Markdown`, `Statistics`,
+    HTMXObjects, and AlgebraOfVega), but not BridgeStan, BRM, or
+    PosteriorDB. Rendering evidence must not pull in the measurement stack.
 """
 function load_harness(relpath::AbstractString)
     path = normpath(joinpath(@__DIR__, "benchmark", relpath))
@@ -308,6 +309,25 @@ on the page.
 function vega_figure(spec; caption::AbstractString = "")
     parts = Any[Markdown.Code("vega-lite", JSON.json(spec))]
     isempty(caption) || append!(parts, Markdown.parse("*" * caption * "*").content)
+    Markdown.MD(parts)
+end
+
+"""
+    aov_figure(layer; caption="") -> Markdown.MD
+
+Project one AlgebraOfVega layer through its public Vega-Lite MIME representation
+for the VitePress figure runtime, then project the same layer through
+HTMXObjects' public `SemanticPlot` Markdown representation as an accessible text
+summary. Both views come from the layer at build time: there is no hand-authored
+or stored Vega specification.
+"""
+function aov_figure(layer; caption::AbstractString="")
+    plot = HTMXObjects.SemanticPlot(layer)
+    spec = String(repr(MIME"application/vnd.vegalite.v5+json"(), layer))
+    summary = repr(MIME"text/markdown"(), plot)
+    parts = Any[Markdown.Code("vega-lite", spec)]
+    isempty(caption) || append!(parts, Markdown.parse("*$caption*").content)
+    append!(parts, Markdown.parse(summary).content)
     Markdown.MD(parts)
 end
 

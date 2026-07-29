@@ -24,8 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure git for private repos
-        run: git config --global url."https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - uses: julia-actions/setup-julia@v2
         with:
           version: '1'
@@ -35,6 +33,7 @@ jobs:
           git clone --branch pre-inference https://github.com/nsiccha/DynamicObjects.jl.git
           git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
           git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
+          git clone --branch dev https://github.com/nsiccha/AlgebraOfVega.jl.git
           git clone --branch dev https://github.com/nsiccha/TestModules.jl.git
           git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
           julia --project=web -e 'using Pkg; Pkg.develop([
@@ -47,6 +46,10 @@ jobs:
           ]); Pkg.instantiate()'
           julia --project=docs -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
+            PackageSpec(path="DynamicObjects.jl"),
+            PackageSpec(path="HTMX.jl"),
+            PackageSpec(path="HTMXObjects.jl"),
+            PackageSpec(path="AlgebraOfVega.jl"),
             PackageSpec(path="TestModules.jl"),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'

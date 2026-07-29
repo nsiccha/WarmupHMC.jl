@@ -86,7 +86,10 @@ public surface since then; `README.md` lists what the total now is, and
 - **On-disk checkpointing** across all three samplers, on a shared contract:
   `checkpoint_dir`, `resume`, `overwrite`, plus an observational `callback` at
   window boundaries. Checkpoints are written atomically, hold pure sampler
-  state, and keep the draws a restart would otherwise discard.
+  state, and keep the draws a restart would otherwise discard. A payload's
+  positions are in the sampler's working frame, and `WarmupHMC.back_transform`
+  maps them into the model's own — so a consumer can materialize a running
+  reparametrized fit's partial results, which previously had no entry point.
 - **Keyword validation.** Unknown keywords raise `ArgumentError` instead of
   being silently forwarded and ignored.
 - Online estimators for the linear restart source and for nonlinear leaf

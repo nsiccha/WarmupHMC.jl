@@ -18,7 +18,7 @@
 # `@__DIR__` inside an `@eval` block is `docs/build`, so `joinpath(@__DIR__,
 # "..")` is `docs/` in both a local and a CI build. Do not use `pwd()`.
 
-import JSON, Markdown, Printf
+import HTMXObjects, JSON, Markdown, Printf
 
 """
 Directory holding the checked-in benchmark result JSON.
@@ -254,9 +254,10 @@ the benchmark environment:
   * **It must only define things.** Anything that runs at include time — reading
     `ARGS`, writing output — runs during the docs build. Keep the driver and the
     derivation in separate files, as `summarize.jl` already does.
-  * **It may only depend on what `docs/Project.toml` has**: `JSON`, `Markdown`,
-    `Printf`, `Statistics`. Pulling in BridgeStan or PosteriorDB to render a
-    table would make the docs build depend on the whole measurement stack.
+  * **It may only depend on what `docs/Project.toml` has.** The docs environment
+    includes the result/rendering stack (`JSON`, `Markdown`, `Statistics`,
+    HTMXObjects, and AlgebraOfVega), but not BridgeStan, BRM, or
+    PosteriorDB. Rendering evidence must not pull in the measurement stack.
 """
 function load_harness(relpath::AbstractString)
     path = normpath(joinpath(@__DIR__, "benchmark", relpath))
@@ -312,6 +313,25 @@ function vega_figure(spec; caption::AbstractString = "")
 end
 
 """
+    aov_figure(layer; caption="") -> Markdown.MD
+
+Project one AlgebraOfVega layer through its public Vega-Lite MIME representation
+for the VitePress figure runtime, then project the same layer through
+HTMXObjects' public `SemanticPlot` Markdown representation as an accessible text
+summary. Both views come from the layer at build time: there is no hand-authored
+or stored Vega specification.
+"""
+function aov_figure(layer; caption::AbstractString="")
+    plot = HTMXObjects.SemanticPlot(layer)
+    spec = String(repr(MIME"application/vnd.vegalite.v5+json"(), layer))
+    summary = repr(MIME"text/markdown"(), plot)
+    parts = Any[Markdown.Code("vega-lite", spec)]
+    isempty(caption) || append!(parts, Markdown.parse("*$caption*").content)
+    append!(parts, Markdown.parse(summary).content)
+    Markdown.MD(parts)
+end
+
+"""
     md_table(headers, rows) -> Markdown.MD
 
 Build a markdown table. Cells are passed through `string`, so pre-format
@@ -332,6 +352,28 @@ happened to compute, which is not a guarantee.
 If an empty result is meaningful somewhere, branch on `isempty` in the `@eval`
 block and emit prose saying so — the derived blocks in `adaptive-centering.md`
 do exactly that, and prose is the honest rendering of "there is nothing here".
+
+**The `Markdown.Table` node is built directly, not by printing pipe-delimited
+text and re-parsing it.** That is not a style preference; printing the table is
+what makes a cell containing `|` corrupt the table. `|` is the delimiter, so a
+cell holding one silently splits into extra columns — the build stays green,
+the table renders, and the text is wrong. Every random-effects formula contains
+`|`, so this was not hypothetical: measured through `docs/build/1/*.html`,
+`Reaction ~ 1 + Days + (1 + Days | Subject)` shipped as `(1 + Days Subject)`,
+`incidence | trials(size) ~ period + (1|herd)` shipped split across three
+columns, and the `n obs` / `dim` figures beside them were pushed a column right.
+
+Constructing the node removes the class of bug rather than escaping one
+character out of it: cell content never passes through delimiter syntax at all,
+and Julia's own markdown writer emits `\\|` when it serialises a cell that
+contains one. The stdlib already knows how to write this table; the previous
+code re-implemented the syntax and inherited its collision.
+
+Cells are still parsed as markdown, so a caller can pass `` `code` `` or
+`**bold**` — that is existing behaviour several pages rely on. `Markdown.parse`
+is a BLOCK parser, so a cell is taken as inline content only when it parses to
+exactly one paragraph; anything else (`- x`, `# y`, `---`, empty) is kept as a
+literal string rather than silently becoming a list or a rule inside a cell.
 """
 function md_table(headers::AbstractVector, rows::AbstractVector)
     isempty(rows) && error("""
@@ -342,13 +384,28 @@ function md_table(headers::AbstractVector, rows::AbstractVector)
         succeed. If the underlying artifact can legitimately be empty, branch on
         `isempty` in the @eval block and emit prose instead of a table.
         """)
-    io = IOBuffer()
-    println(io, "| ", join(string.(headers), " | "), " |")
-    println(io, "|", join(fill("---", length(headers)), "|"), "|")
     for r in rows
         length(r) == length(headers) ||
             error("row has $(length(r)) cells, expected $(length(headers)): $(r)")
-        println(io, "| ", join(string.(r), " | "), " |")
     end
-    Markdown.parse(String(take!(io)))
+    cells = [md_cell.(headers)]
+    for r in rows
+        push!(cells, md_cell.(r))
+    end
+    # `:r` for every column, matching what `|---|---|` parsed to before.
+    Markdown.MD([Markdown.Table(cells, fill(:r, length(headers)))])
+end
+
+"""
+    md_cell(x) -> Vector{Any}
+
+One table cell as markdown inline content. Parsed so `` `code` `` and
+`**bold**` keep working, but only when the cell is exactly one paragraph — see
+[`md_table`](@ref) for why anything else is kept literal.
+"""
+function md_cell(x)
+    s = string(x)
+    md = Markdown.parse(s)
+    (length(md.content) == 1 && md.content[1] isa Markdown.Paragraph) ?
+        md.content[1].content : Any[s]
 end

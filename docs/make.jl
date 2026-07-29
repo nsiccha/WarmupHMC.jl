@@ -42,6 +42,7 @@ makedocs(
         "Linear restart evidence" => "linear-restart.md",
         "Nonlinear weighting evidence" => "nonlinear-weighting.md",
         "Adaptive centering at fixed c" => "adaptive-centering.md",
+        "BRM generated posteriors" => "brm-catalogue.md",
         "Gallery"         => "gallery.md",
         "Evidence"        => "evidence.md",
         "API"             => "api.md",

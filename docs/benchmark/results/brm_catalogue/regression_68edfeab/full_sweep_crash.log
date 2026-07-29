@@ -1,0 +1,115 @@
+
+[21] signal (11.1): Segmentation fault
+in expression starting at /home/n/github/nsiccha/WarmupHMC.jl/catalogue-rerun-wt/docs/benchmark/run_brm_catalogue_benchmark.jl:304
+gc_setmark_pool_ at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:875 [inlined]
+gc_setmark_pool at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:895 [inlined]
+gc_setmark at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:902 [inlined]
+gc_mark_outrefs at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:2617 [inlined]
+gc_mark_loop_serial_ at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:2690
+gc_mark_loop_serial at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:2713
+gc_mark_loop at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:2894 [inlined]
+_jl_gc_collect at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:3227
+ijl_gc_collect at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:3524
+maybe_collect at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:937 [inlined]
+jl_gc_pool_alloc_inner at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:1293 [inlined]
+ijl_gc_pool_alloc at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gc.c:1341
+_recursive_block_location at /tmp/whmc-brief/brm-fixed/ext/BayesianRegressionModelsWarmupHMCExt.jl:78
+_recursive_block_location at /tmp/whmc-brief/brm-fixed/ext/BayesianRegressionModelsWarmupHMCExt.jl:83
+_block_location at /tmp/whmc-brief/brm-fixed/ext/BayesianRegressionModelsWarmupHMCExt.jl:115 [inlined]
+BRMAdaptiveCenteringArgument at /tmp/whmc-brief/brm-fixed/ext/BayesianRegressionModelsWarmupHMCExt.jl:120
+#maybecall#30 at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:4 [inlined]
+maybecall at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:4 [inlined]
+Fix2 at ./operators.jl:1135 [inlined]
+map at ./tuple.jl:292 [inlined]
+reparam_rargs at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:470 [inlined]
+reparam at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:472 [inlined]
+with_logabsdet_jacobian! at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:553
+AbstractReparametrization at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:358 [inlined]
+reparam_objective at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:348 [inlined]
+reparam_objective at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:0 [inlined]
+diffejulia_reparam_objective_17867_inner_1wrap at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:0
+macro expansion at /home/n/.julia/packages/Enzyme/Pu5MU/src/compiler.jl:7089 [inlined]
+enzyme_call at /home/n/.julia/packages/Enzyme/Pu5MU/src/compiler.jl:6559 [inlined]
+CombinedAdjointThunk at /home/n/.julia/packages/Enzyme/Pu5MU/src/compiler.jl:6441 [inlined]
+autodiff at /home/n/.julia/packages/Enzyme/Pu5MU/src/Enzyme.jl:539 [inlined]
+macro expansion at /home/n/.julia/packages/Enzyme/Pu5MU/src/sugar.jl:337 [inlined]
+gradient at /home/n/.julia/packages/Enzyme/Pu5MU/src/sugar.jl:274 [inlined]
+value_and_gradient at /home/n/.julia/packages/DifferentiationInterface/qwb0w/ext/DifferentiationInterfaceEnzymeExt/reverse_onearg.jl:253 [inlined]
+value_and_gradient at /home/n/.julia/packages/DifferentiationInterface/qwb0w/src/first_order/gradient.jl:37 [inlined]
+_logdensity_and_gradient_reparam at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:351
+logdensity_and_gradient at /tmp/kb-whmc-source-9039668/src/Reparametrizations.jl:309 [inlined]
+logdensity_and_gradient at /tmp/kb-whmc-source-9039668/src/WrappedLogDensityProblems.jl:5 [inlined]
+#evaluate_ℓ#2 at /home/n/.julia/packages/DynamicHMC/1t59O/src/hamiltonian.jl:204
+evaluate_ℓ at /home/n/.julia/packages/DynamicHMC/1t59O/src/hamiltonian.jl:202 [inlined]
+leapfrog at /home/n/.julia/packages/DynamicHMC/1t59O/src/hamiltonian.jl:279
+move at /home/n/.julia/packages/DynamicHMC/1t59O/src/NUTS.jl:30 [inlined]
+adjacent_tree at /home/n/.julia/packages/DynamicHMC/1t59O/src/trees.jl:234
+adjacent_tree at /home/n/.julia/packages/DynamicHMC/1t59O/src/trees.jl:243
+adjacent_tree at /home/n/.julia/packages/DynamicHMC/1t59O/src/trees.jl:243
+adjacent_tree at /home/n/.julia/packages/DynamicHMC/1t59O/src/trees.jl:248
+sample_trajectory at /home/n/.julia/packages/DynamicHMC/1t59O/src/trees.jl:292
+#sample_tree#12 at /home/n/.julia/packages/DynamicHMC/1t59O/src/NUTS.jl:237
+sample_tree at /home/n/.julia/packages/DynamicHMC/1t59O/src/NUTS.jl:232
+unknown function (ip: 0x7f2e4a7adc22)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+run_outer_iteration! at /tmp/kb-whmc-source-9039668/src/adaptive_warmup_mcmc.jl:441
+unknown function (ip: 0x7f2e4a7a41c5)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+#115 at /tmp/kb-whmc-source-9039668/src/adaptive_warmup_mcmc.jl:1260
+#with_progress#62 at /tmp/kb-whmc-treebars-c02aa16/src/convenience.jl:9
+with_progress at /tmp/kb-whmc-treebars-c02aa16/src/convenience.jl:6 [inlined]
+#adaptive_warmup_mcmc#114 at /tmp/kb-whmc-source-9039668/src/adaptive_warmup_mcmc.jl:1222 [inlined]
+adaptive_warmup_mcmc at /tmp/kb-whmc-source-9039668/src/adaptive_warmup_mcmc.jl:1170 [inlined]
+macro expansion at ./timing.jl:395 [inlined]
+#run_arm#37 at /home/n/github/nsiccha/WarmupHMC.jl/catalogue-rerun-wt/docs/benchmark/run_brm_catalogue_benchmark.jl:161
+run_arm at /home/n/github/nsiccha/WarmupHMC.jl/catalogue-rerun-wt/docs/benchmark/run_brm_catalogue_benchmark.jl:158
+unknown function (ip: 0x7f2e4a765713)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+main at /home/n/github/nsiccha/WarmupHMC.jl/catalogue-rerun-wt/docs/benchmark/run_brm_catalogue_benchmark.jl:288
+unknown function (ip: 0x7f2e7bbe9762)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+jl_apply at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/julia.h:1982 [inlined]
+do_call at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:126
+eval_value at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:223
+eval_stmt_value at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:174 [inlined]
+eval_body at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:617
+jl_interpret_toplevel_thunk at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:775
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:934
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:877
+ijl_toplevel_eval_in at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:985
+eval at ./boot.jl:385 [inlined]
+include_string at ./loading.jl:2160
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+_include at ./loading.jl:2220
+include at ./client.jl:487
+unknown function (ip: 0x7f2eba2fe125)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+jl_apply at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/julia.h:1982 [inlined]
+do_call at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:126
+eval_value at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:223
+eval_stmt_value at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:174 [inlined]
+eval_body at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:617
+jl_interpret_toplevel_thunk at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/interpreter.c:775
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:934
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:877
+ijl_toplevel_eval_in at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/toplevel.c:985
+eval at ./boot.jl:385 [inlined]
+exec_options at ./client.jl:289
+_start at ./client.jl:550
+jfptr__start_83197.1 at /home/n/.julia/juliaup/julia-1.10.11+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+_jl_invoke at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:2897 [inlined]
+ijl_apply_generic at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/gf.c:3079
+jl_apply at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/julia.h:1982 [inlined]
+true_main at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/jlapi.c:582
+jl_repl_entrypoint at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/src/jlapi.c:731
+main at /cache/build/builder-amdci4-2/julialang/julia-release-1-dot-10/cli/loader_exe.c:58
+unknown function (ip: 0x7f2ec162a600)
+__libc_start_main at /usr/lib/x86_64-linux-gnu/libc.so.6 (unknown line)
+unknown function (ip: 0x4010b8)
+Allocations: 242808854 (Pool: 241867379; Big: 941475); GC: 257

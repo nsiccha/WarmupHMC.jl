@@ -1,0 +1,188 @@
+{
+  "config": {
+    "ad_backend": "AutoEnzyme(Reverse, runtime_activity, Const) — used only to differentiate the reparametrization in the adaptive_centering arm; the bare arms use BridgeStan's own gradient",
+    "blas_threads": 1,
+    "brm_sha": "68edfeab8ec465364488e37ed5c2c8fb6be94346",
+    "catalogue": "https://juliabayes.github.io/BayesianRegressionModels.jl/",
+    "controls": "the noncentered and centered arms carry no reparametrizer, so their nonlinear_adapt=true rows MUST equal their nonlinear_adapt=false rows; that equality is the check that the flag is wired to what the third arm claims",
+    "efficiency_denominator": "full-run gradient evaluations, including adaptation",
+    "ess_reduction": "minimum over the constrained names the centered and non-centered models SHARE, structurally-constant coordinates dropped and counted in n_constant",
+    "generated_at": "2026-07-29T06:04:28.247",
+    "host": "strato2",
+    "julia": "1.10.11",
+    "n_draws": 500,
+    "n_seeds": 1,
+    "representativeness": "gaussian hierarchical models transcribed by hand from cards in the published BayesianRegressionModels catalogue; every card is parseable=false, so no model here is machine-derived from the catalogue",
+    "reproduction": "BRMB_SEEDS=1 BRMB_DRAWS=500 julia --startup-file=no --project=docs/benchmark/brm docs/benchmark/run_brm_catalogue_benchmark.jl",
+    "runner": "docs/benchmark/run_brm_catalogue_benchmark.jl",
+    "sampler": "adaptive_warmup_mcmc",
+    "seeds": [
+      1
+    ],
+    "src_dirty": false,
+    "stanblocks_sha": "329a178a7ad7877da0b58ad2c360d417ddd663f9",
+    "unreached": [
+      {
+        "dataset": "cbpp",
+        "formula": "incidence | trials(size) ~ period + (1|herd)",
+        "reason": "binomial with a trials() term; the card's `gaussian` tag is wrong"
+      },
+      {
+        "dataset": "epilepsy",
+        "formula": "count ~ zBase * Trt + (1 | patient)",
+        "reason": "counts; the card's `gaussian` tag is wrong"
+      },
+      {
+        "dataset": "kidney",
+        "formula": "time | cens(censored) ~ age * sex + disease + (1 | patient)",
+        "reason": "censored survival; the card's `gaussian` tag is wrong"
+      },
+      {
+        "dataset": "contraception",
+        "formula": "use ~ age + I(age^2) + livch + urban + (urban | district)",
+        "reason": "bernoulli/binomial — correctly tagged, but outside this gaussian benchmark"
+      },
+      {
+        "dataset": "verbagg",
+        "formula": "r2 ~ Anger + Gender + btype + situ + (1 | id) + (1 | item)",
+        "reason": "bernoulli/binomial — correctly tagged, but outside this gaussian benchmark"
+      },
+      {
+        "dataset": "income",
+        "formula": "ls ~ mo(income) * age + (mo(income) | city)",
+        "reason": "monotonic effects `mo()` are not expressible in the @brm surface used here"
+      },
+      {
+        "dataset": "milk",
+        "formula": "bf(k ~ 1 + mi(b) + m) + bf(b | mi() ~ 1) + set_rescor(FALSE)",
+        "reason": "multivariate with missing-data imputation; no random effect to centre either way"
+      },
+      {
+        "dataset": "cafe",
+        "formula": "wait ~ 1 + afternoon + (1 + afternoon | cafe)",
+        "reason": "McElreath's simulated data, not real data"
+      }
+    ],
+    "unregistered_dependencies": "BayesianRegressionModels and StanBlocks are not in any registry. Regenerating this artifact requires both at the SHAs above, added with Pkg.develop. The docs BUILD does not need them: it reads this checked-in JSON, like every other page.",
+    "warmuphmc_sha": "9039668d8ce1f1f62c7eb3d235ac7dac19a12d5a",
+    "worktree_dirty": false
+  },
+  "models": [
+    {
+      "catalogue_formula": "Reaction ~ 1 + Days + (1 + Days | Subject)",
+      "catalogue_source": "mixed_models_jl",
+      "data_sha256": "20922ddc87d538bf2344f73d49000eeb2d7e14934b6191a3e071fefc329942c4",
+      "data_url": "https://vincentarelbundock.github.io/Rdatasets/csv/lme4/sleepstudy.csv",
+      "dataset": "sleepstudy",
+      "dim_centered": 42,
+      "dim_noncentered": 42,
+      "grouping_factors": [
+        "Subject"
+      ],
+      "n_names_centered": 621,
+      "n_names_noncentered": 657,
+      "n_names_shared": 585,
+      "n_obs": 180,
+      "spec": "sleepstudy",
+      "transcription_note": "response divided by 100 to put it on an O(1) scale"
+    }
+  ],
+  "rows": [
+    {
+      "arm": "noncentered",
+      "error": "",
+      "ess_min_per_grad": 0.0049890868987786455,
+      "ess_min_shared_constrained": 111.1418888440919,
+      "ess_min_unconstrained": 111.1418888440919,
+      "grad_evals": 22277,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": false,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 18.573802348
+    },
+    {
+      "arm": "noncentered",
+      "error": "",
+      "ess_min_per_grad": 0.0049890868987786455,
+      "ess_min_shared_constrained": 111.1418888440919,
+      "ess_min_unconstrained": 111.1418888440919,
+      "grad_evals": 22277,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": true,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 0.297504738
+    },
+    {
+      "arm": "centered",
+      "error": "",
+      "ess_min_per_grad": 0.022009682670866296,
+      "ess_min_shared_constrained": 234.66723663677644,
+      "ess_min_unconstrained": 234.66723663677644,
+      "grad_evals": 10662,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": false,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 0.309085691
+    },
+    {
+      "arm": "centered",
+      "error": "",
+      "ess_min_per_grad": 0.022009682670866296,
+      "ess_min_shared_constrained": 234.66723663677644,
+      "ess_min_unconstrained": 234.66723663677644,
+      "grad_evals": 10662,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": true,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 0.313079353
+    },
+    {
+      "arm": "adaptive_centering",
+      "error": "",
+      "ess_min_per_grad": 0.0049890868987786455,
+      "ess_min_shared_constrained": 111.1418888440919,
+      "ess_min_unconstrained": 111.1418888440919,
+      "grad_evals": 22277,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": false,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 4.4732874
+    },
+    {
+      "arm": "adaptive_centering",
+      "error": "",
+      "ess_min_per_grad": 0.007642496019133773,
+      "ess_min_shared_constrained": 187.96718959059515,
+      "ess_min_unconstrained": 187.96718959059515,
+      "grad_evals": 24595,
+      "n_constant": 2,
+      "n_divergent": 0,
+      "n_draws_constrained": 500,
+      "nonlinear_adapt": true,
+      "ok": true,
+      "seed": 1,
+      "spec": "sleepstudy",
+      "wall_s": 3.377269284
+    }
+  ]
+}

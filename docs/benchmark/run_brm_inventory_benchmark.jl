@@ -257,6 +257,28 @@ function shared_constrained_ess(model, names, shared, draws)
     minimum_ess, count(ok), n_constant
 end
 
+function sampling_diagnostic_error(draws, n_constrained, ess_unc, ess_con,
+                                   n_constant, n_divergent)
+    problems = String[]
+    n_draws = size(draws, 2)
+    n_constrained == n_draws || push!(
+        problems,
+        "only $n_constrained/$n_draws draws could be constrained",
+    )
+    isfinite(ess_unc) && ess_unc > 0 || push!(
+        problems,
+        "unconstrained draws have no positive finite minimum ESS",
+    )
+    isfinite(ess_con) && ess_con > 0 || push!(
+        problems,
+        "shared constrained draws have no positive finite minimum ESS " *
+        "($n_constant constant/non-finite coordinates)",
+    )
+    isempty(problems) && return ""
+    "statistical sampling failure: " * join(problems, "; ") *
+        "; divergences=$n_divergent/$n_draws"
+end
+
 function run_arm(; spec_key, arm, problem, model, names, shared, adapt, seed)
     try
         wall = @elapsed result = adaptive_warmup_mcmc(
@@ -268,12 +290,16 @@ function run_arm(; spec_key, arm, problem, model, names, shared, adapt, seed)
         ess_con, n_ok, n_constant = shared_constrained_ess(
             model, names, shared, draws)
         grad = Int(result.total_evaluation_counter)
-        (; spec=spec_key, arm, nonlinear_adapt=adapt, seed, ok=true,
+        ndiv = Int(result.n_divergent_samples)
+        diagnostic = sampling_diagnostic_error(
+            draws, n_ok, ess_unc, ess_con, n_constant, ndiv)
+        (; spec=spec_key, arm, nonlinear_adapt=adapt, seed,
+         ok=isempty(diagnostic),
          wall_s=wall, grad_evals=grad, ess_min_unconstrained=ess_unc,
          ess_min_shared_constrained=ess_con,
          ess_min_per_grad=ess_con / max(grad, 1),
          n_draws_constrained=n_ok, n_constant,
-         n_divergent=Int(result.n_divergent_samples), error="")
+         n_divergent=ndiv, error=diagnostic)
     catch err
         (; spec=spec_key, arm, nonlinear_adapt=adapt, seed, ok=false,
          wall_s=NaN, grad_evals=0, ess_min_unconstrained=NaN,
@@ -327,15 +353,17 @@ function run_standard_arm(; spec_key, arm, sampler, parameterization,
         ess_con, n_ok, n_constant = shared_constrained_ess(
             model, names, shared, draws)
         grad = Int(timed.n_evaluations)
+        diagnostic = sampling_diagnostic_error(
+            draws, n_ok, ess_unc, ess_con, n_constant, ndiv)
         (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
-         seed, ok=true,
+         seed, ok=isempty(diagnostic),
          wall_s=timed.elapsed, grad_evals=grad,
          n_draws_actual=size(draws, 2),
          ess_min_unconstrained=ess_unc,
          ess_min_shared_constrained=ess_con,
          ess_min_per_grad=ess_con / max(grad, 1),
          n_draws_constrained=n_ok, n_constant,
-         n_divergent=Int(ndiv), error="")
+         n_divergent=Int(ndiv), error=diagnostic)
     catch err
         (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
          seed, ok=false,

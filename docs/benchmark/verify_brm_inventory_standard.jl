@@ -100,17 +100,6 @@ function verify(path)
 
     for row in rows
         label = "$(row["spec"]) / $(row["arm"]) / seed $(row["seed"])"
-        require(row["ok"] == true, "$label failed: $(row["error"])")
-        require(isempty(row["error"]), "$label retained a nonempty error")
-        require(row["n_draws_actual"] == 500, "$label returned the wrong draw count")
-        require(row["n_draws_constrained"] == 500,
-                "$label did not constrain all retained draws")
-        require(row["grad_evals"] > 0, "$label recorded no gradients")
-        require(finite_positive(row["wall_s"]), "$label has invalid wall time")
-        require(finite_positive(row["ess_min_shared_constrained"]),
-                "$label has invalid shared constrained-space ESS")
-        require(finite_positive(row["ess_min_per_grad"]),
-                "$label has invalid ESS/gradient")
         require(row["parameterization"] == EXPECTED_PARAMETERIZATION[row["arm"]],
                 "$label has the wrong parameterization label")
         expected_sampler = startswith(row["arm"], "dynamichmc_") ?
@@ -120,13 +109,46 @@ function verify(path)
         require(row["nonlinear_adapt"] ==
                     (row["arm"] == "warmuphmc_adaptive_centering"),
                 "$label has the wrong nonlinear-adaptation flag")
+        if row["ok"]
+            require(isempty(row["error"]), "$label retained a nonempty error")
+            require(row["n_draws_actual"] == 500,
+                    "$label returned the wrong draw count")
+            require(row["n_draws_constrained"] == 500,
+                    "$label did not constrain all retained draws")
+            require(row["grad_evals"] > 0, "$label recorded no gradients")
+            require(finite_positive(row["wall_s"]), "$label has invalid wall time")
+            require(finite_positive(row["ess_min_shared_constrained"]),
+                    "$label has invalid shared constrained-space ESS")
+            require(finite_positive(row["ess_min_per_grad"]),
+                    "$label has invalid ESS/gradient")
+        else
+            require(!isempty(row["error"]),
+                    "$label is failed without an explicit diagnostic")
+            if row["n_draws_actual"] > 0
+                require(row["n_draws_actual"] == 500,
+                        "$label retained a partial, unlabelled draw set")
+                require(row["grad_evals"] > 0,
+                        "$label retained draws but no gradient count")
+                require(finite_positive(row["wall_s"]),
+                        "$label retained draws but no wall time")
+                require(!finite_positive(row["ess_min_shared_constrained"]) ||
+                        !finite_positive(row["ess_min_per_grad"]),
+                        "$label is marked failed despite finite efficiency diagnostics")
+            end
+        end
     end
 
     digest = bytes2hex(open(sha256, path))
     total_wall = sum(row["wall_s"] for row in rows)
     divergences = sum(row["n_divergent"] for row in rows)
+    failures = [row for row in rows if !row["ok"]]
     println("generated-BRM standard artifact OK")
     println("  design: 8 models × 6 arms × 12 seeds = $(length(rows)) rows")
+    println("  successful rows: $(length(rows) - length(failures))/$(length(rows))")
+    for row in failures
+        println("  explicit failure: $(row["spec"]) / $(row["arm"]) / " *
+                "seed $(row["seed"]): $(row["error"])")
+    end
     println("  retained draws: $(sum(row["n_draws_actual"] for row in rows))")
     println("  summed sampling wall time: $(round(total_wall; digits=3)) s")
     println("  process elapsed time: $(config["total_elapsed_s"]) s")

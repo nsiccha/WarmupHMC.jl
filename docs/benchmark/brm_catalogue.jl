@@ -205,10 +205,13 @@ brmc_standard_select(d, spec, arm) =
 function brmc_standard_summary(d)
     out = []
     for m in brmc_models(d), arm in brmc_standard_arm_order()
+        attempted = [r for r in brmc_rows(d)
+                     if r["spec"] == m["spec"] && r["arm"] == arm]
         rs = brmc_standard_select(d, m["spec"], arm)
         isempty(rs) && continue
         push!(out, (
             spec = m["spec"], arm = arm, n = length(rs),
+            n_total = length(attempted), n_failed = length(attempted) - length(rs),
             draws = brmc_med([r["n_draws_actual"] for r in rs]),
             grad = brmc_med([r["grad_evals"] for r in rs]),
             ess = brmc_med([r["ess_min_shared_constrained"] for r in rs]),
@@ -216,7 +219,7 @@ function brmc_standard_summary(d)
             wall = brmc_med([r["wall_s"] for r in rs]),
             per_s = brmc_med([r["ess_min_shared_constrained"] / r["wall_s"]
                               for r in rs if r["wall_s"] > 0]),
-            ndiv = sum(r["n_divergent"] for r in rs),
+            ndiv = sum(r["n_divergent"] for r in attempted),
         ))
     end
     out

@@ -215,8 +215,9 @@ d["config"]["mode"] == "standard" ||
     error("generated BRM standard-warmup artifact has the wrong mode")
 length(rows) == expected ||
     error("generated BRM standard-warmup artifact has $(length(rows)) rows; expected $expected")
-isempty(brmc_failures(d)) ||
-    error("generated BRM standard-warmup artifact contains failed rows")
+failures = brmc_failures(d)
+all(r -> !isempty(r["error"]), failures) ||
+    error("generated BRM standard-warmup artifact has an unlabelled failed row")
 Set(r["arm"] for r in rows) == expected_arms ||
     error("generated BRM standard-warmup artifact has an unexpected arm set")
 all(r -> r["n_draws_actual"] >= d["config"]["n_draws"], rows) ||
@@ -234,8 +235,25 @@ all(pair -> get(standard_bodies, first(pair), nothing) == last(pair),
 Markdown.parse(
     "**Checked standard-warmup artifact:** $(length(brmc_models(d))) generated " *
     "models × $(length(expected_arms)) arms × $(d["config"]["n_seeds"]) seeds = " *
-    "$(length(rows))/$(expected) successful rows; DynamicHMC " *
+    "$(length(rows) - length(failures))/$(expected) successful rows and " *
+    "$(length(failures)) explicitly reported statistical/runtime failure(s); DynamicHMC " *
     "$(d["config"]["dynamichmc_version"]).")
+```
+
+Failed trajectories remain part of the experimental design and the divergence
+total, but do not contribute invented zeroes to ESS medians or plot marks.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d = load_results("brm_inventory_standard/rows.json")
+bad = brmc_failures(d)
+isempty(bad) ? Markdown.parse("No failed trajectories were recorded.") : md_table(
+    ["model", "arm", "seed", "divergences", "diagnostic"],
+    [[r["spec"], brmc_standard_arm_label(r["arm"]), r["seed"],
+      r["n_divergent"], r["error"]] for r in bad],
+)
 ```
 
 Both tables use minimum constrained-space ESS over the parameter names shared
@@ -252,7 +270,8 @@ table_rows = []
 for m in brmc_models(d), arm in brmc_standard_arm_order()
     x = only(v for v in s if v.spec == m["spec"] && v.arm == arm)
     push!(table_rows, [
-        m["spec"], brmc_standard_arm_label(arm), string(round(Int, x.draws)),
+        m["spec"], brmc_standard_arm_label(arm), "$(x.n)/$(x.n_total)",
+        string(round(Int, x.draws)),
         string(round(Int, x.grad)), Printf.@sprintf("%.1f", x.ess),
         Printf.@sprintf("%.2f", 1000x.per_grad),
         Printf.@sprintf("%.3f s", x.wall), Printf.@sprintf("%.1f", x.per_s),
@@ -260,7 +279,7 @@ for m in brmc_models(d), arm in brmc_standard_arm_order()
     ])
 end
 md_table(
-    ["model", "default-warmup arm", "draws", "gradients", "min shared ESS",
+    ["model", "default-warmup arm", "successful seeds", "draws", "gradients", "min shared ESS",
      "min ESS / 1k gradients", "wall time", "min ESS / second", "divergences"],
     table_rows,
 )

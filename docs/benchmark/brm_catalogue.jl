@@ -175,3 +175,73 @@ function brmc_verdict(d)
 end
 
 brmc_failures(d) = [r for r in brmc_rows(d) if !r["ok"]]
+
+# DynamicHMC standard-warmup comparison artifact. Kept in this definitions-only
+# harness because it shares the same generated model metadata and constrained-
+# space ESS contract as the nonlinear-centering artifact above.
+
+brmc_standard_arm_order() = [
+    "warmuphmc_noncentered",
+    "warmuphmc_adaptive_centering",
+    "dynamichmc_noncentered",
+    "dynamichmc_centered",
+]
+
+brmc_standard_arm_label(a) = get(Dict(
+    "warmuphmc_noncentered" => "WarmupHMC — generated non-centered",
+    "warmuphmc_adaptive_centering" => "WarmupHMC — adaptive centering",
+    "dynamichmc_noncentered" => "DynamicHMC — generated non-centered",
+    "dynamichmc_centered" => "DynamicHMC — generated centered",
+), a, a)
+
+brmc_standard_select(d, spec, arm) =
+    [r for r in brmc_rows(d) if r["spec"] == spec && r["arm"] == arm && r["ok"]]
+
+"""Median absolute diagnostics per generated model and standard-comparison arm."""
+function brmc_standard_summary(d)
+    out = []
+    for m in brmc_models(d), arm in brmc_standard_arm_order()
+        rs = brmc_standard_select(d, m["spec"], arm)
+        isempty(rs) && continue
+        push!(out, (
+            spec = m["spec"], arm = arm, n = length(rs),
+            draws = brmc_med([r["n_draws_actual"] for r in rs]),
+            grad = brmc_med([r["grad_evals"] for r in rs]),
+            ess = brmc_med([r["ess_min_shared_constrained"] for r in rs]),
+            per_grad = brmc_med([r["ess_min_per_grad"] for r in rs]),
+            wall = brmc_med([r["wall_s"] for r in rs]),
+            per_s = brmc_med([r["ess_min_shared_constrained"] / r["wall_s"]
+                              for r in rs if r["wall_s"] > 0]),
+            ndiv = sum(r["n_divergent"] for r in rs),
+        ))
+    end
+    out
+end
+
+"""Seed-paired numerator/denominator efficiency ratios for two sampler arms."""
+function brmc_standard_ratios(d, numerator, denominator)
+    out = []
+    for m in brmc_models(d)
+        num = Dict(r["seed"] => r for r in
+                   brmc_standard_select(d, m["spec"], numerator))
+        den = Dict(r["seed"] => r for r in
+                   brmc_standard_select(d, m["spec"], denominator))
+        seeds = sort(collect(intersect(keys(num), keys(den))))
+        isempty(seeds) && continue
+        ess_per_s(r) = r["ess_min_shared_constrained"] / r["wall_s"]
+        push!(out, (
+            spec = m["spec"], numerator = numerator, denominator = denominator,
+            n = length(seeds),
+            grad_ratio = brmc_med([num[s]["grad_evals"] / den[s]["grad_evals"]
+                                   for s in seeds]),
+            ess_per_grad_ratio = brmc_med([
+                num[s]["ess_min_per_grad"] / den[s]["ess_min_per_grad"]
+                for s in seeds]),
+            wall_ratio = brmc_med([num[s]["wall_s"] / den[s]["wall_s"]
+                                   for s in seeds]),
+            ess_per_s_ratio = brmc_med([ess_per_s(num[s]) / ess_per_s(den[s])
+                                        for s in seeds]),
+        ))
+    end
+    out
+end

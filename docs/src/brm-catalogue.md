@@ -184,6 +184,121 @@ the window scorer kept the generated non-centered endpoint. Conversely, a
 changed trajectory is not automatically an improvement; the two efficiency
 ratios report whether it paid off.
 
+## Against DynamicHMC's standard warmup
+
+The comparison below runs DynamicHMC's default `mcmc_with_warmup`—its
+Stan-style 1,000-transition warmup—on the same inventory-generated densities.
+It also reruns WarmupHMC in the same process. Every arm is measured through one
+external `count_and_time` wrapper around the generated BRM density; for
+adaptive centering, the reparametrizer is built *over* that counted inner
+density so its WarmupHMC hooks remain active.
+
+This is a defaults comparison, not a fixed-budget ablation: each sampler
+chooses its own warmup budget. Four arms make the attribution explicit:
+WarmupHMC and DynamicHMC on the identical generated non-centered target,
+WarmupHMC with adaptive centering, and DynamicHMC on BRM's separately generated
+centered target.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d0 = load_results("brm_inventory_generated/rows.json")
+d = load_results("brm_inventory_standard/rows.json")
+rows = brmc_rows(d)
+expected_arms = Set(brmc_standard_arm_order())
+expected = length(brmc_models(d)) * length(expected_arms) * d["config"]["n_seeds"]
+d["config"]["mode"] == "standard" ||
+    error("generated BRM standard-warmup artifact has the wrong mode")
+length(rows) == expected ||
+    error("generated BRM standard-warmup artifact has $(length(rows)) rows; expected $expected")
+isempty(brmc_failures(d)) ||
+    error("generated BRM standard-warmup artifact contains failed rows")
+Set(r["arm"] for r in rows) == expected_arms ||
+    error("generated BRM standard-warmup artifact has an unexpected arm set")
+all(r -> r["n_draws_actual"] >= d["config"]["n_draws"], rows) ||
+    error("a standard-warmup arm returned fewer draws than requested")
+d["config"]["brm_sha"] == d0["config"]["brm_sha"] &&
+d["config"]["translations_sha256"] == d0["config"]["translations_sha256"] &&
+d["config"]["model_matrix_sha256"] == d0["config"]["model_matrix_sha256"] ||
+    error("standard-warmup and nonlinear artifacts do not use the same BRM inventory")
+Dict(m["spec"] => m["current_brm_body_sha256"] for m in brmc_models(d)) ==
+Dict(m["spec"] => m["current_brm_body_sha256"] for m in brmc_models(d0)) ||
+    error("standard-warmup and nonlinear artifacts do not use the same generated bodies")
+Markdown.parse(
+    "**Checked standard-warmup artifact:** $(length(brmc_models(d))) generated " *
+    "models × $(length(expected_arms)) arms × $(d["config"]["n_seeds"]) seeds = " *
+    "$(length(rows))/$(expected) successful rows; DynamicHMC " *
+    "$(d["config"]["dynamichmc_version"]).")
+```
+
+Both tables use minimum constrained-space ESS over the parameter names shared
+by BRM's generated centered and non-centered programs. Medians are across 12
+seeds; divergences are totals over those seed trajectories.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Printf
+d = load_results("brm_inventory_standard/rows.json")
+s = brmc_standard_summary(d)
+table_rows = []
+for m in brmc_models(d), arm in brmc_standard_arm_order()
+    x = only(v for v in s if v.spec == m["spec"] && v.arm == arm)
+    push!(table_rows, [
+        m["spec"], brmc_standard_arm_label(arm), string(round(Int, x.draws)),
+        string(round(Int, x.grad)), Printf.@sprintf("%.1f", x.ess),
+        Printf.@sprintf("%.2f", 1000x.per_grad),
+        Printf.@sprintf("%.3f s", x.wall), Printf.@sprintf("%.1f", x.per_s),
+        string(x.ndiv),
+    ])
+end
+md_table(
+    ["model", "default-warmup arm", "draws", "gradients", "min shared ESS",
+     "min ESS / 1k gradients", "wall time", "min ESS / second", "divergences"],
+    table_rows,
+)
+```
+
+The ratios below are paired by seed before taking the median. Above one is
+better for ESS/gradient and ESS/second; below one is faster for wall time. The
+first comparison isolates the warmup algorithm on the identical non-centered
+target. The other two show what adaptive centering costs relative to each
+standard static parameterization.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Printf
+d = load_results("brm_inventory_standard/rows.json")
+pairs = [
+    ("warmuphmc_noncentered", "dynamichmc_noncentered"),
+    ("warmuphmc_adaptive_centering", "dynamichmc_noncentered"),
+    ("warmuphmc_adaptive_centering", "dynamichmc_centered"),
+]
+table_rows = []
+for (num, den) in pairs, x in brmc_standard_ratios(d, num, den)
+    push!(table_rows, [
+        x.spec,
+        brmc_standard_arm_label(num) * " / " * brmc_standard_arm_label(den),
+        string(x.n), Printf.@sprintf("%.2f×", x.ess_per_grad_ratio),
+        Printf.@sprintf("%.2f×", x.wall_ratio),
+        Printf.@sprintf("%.2f×", x.ess_per_s_ratio),
+    ])
+end
+md_table(
+    ["model", "numerator / denominator", "paired seeds",
+     "ESS/gradient ratio", "wall ratio", "ESS/second ratio"],
+    table_rows,
+)
+```
+
+The external gradient counter includes each sampler's initialization and
+warmup calls into the generated density. Wall time excludes model generation,
+BridgeStan compilation, and one dedicated preflight per arm; arm order rotates
+cyclically by seed. As elsewhere on this page, per-gradient results are the
+portable comparison and wall-clock results describe this exact host.
+
 ## Scope and provenance
 
 This is the first real-data consumer receipt for BRM's generated historical

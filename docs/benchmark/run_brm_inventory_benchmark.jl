@@ -10,6 +10,11 @@
 #   BRMI_SEEDS=12 BRMI_DRAWS=500 julia --startup-file=no \
 #     --project=/path/to/pinned/environment \
 #     docs/benchmark/run_brm_inventory_benchmark.jl
+#
+# Set `BRMI_MODE=standard` to compare WarmupHMC with DynamicHMC's default,
+# Stan-style warmup on the same generated non-centered/centered targets. That
+# mode counts gradients at one shared LogDensityProblems boundary for every
+# sampler instead of comparing sampler-specific internal counters.
 
 using LinearAlgebra
 BLAS.set_num_threads(1)
@@ -27,8 +32,13 @@ const AD_BACKEND = AutoEnzyme(; mode=Enzyme.set_runtime_activity(Enzyme.Reverse)
 const N_SEEDS = parse(Int, get(ENV, "BRMI_SEEDS", "12"))
 const N_DRAWS = parse(Int, get(ENV, "BRMI_DRAWS", "500"))
 const PREFLIGHT_DRAWS = parse(Int, get(ENV, "BRMI_PREFLIGHT_DRAWS", "50"))
+const MODE = get(ENV, "BRMI_MODE", "inventory")
+MODE in ("inventory", "standard") ||
+    error("BRMI_MODE must be inventory or standard, got $(repr(MODE))")
 const OUT = get(ENV, "BRMI_OUT", joinpath(
-    @__DIR__, "results", "brm_inventory_generated", "rows.json"))
+    @__DIR__, "results",
+    MODE == "standard" ? "brm_inventory_standard" : "brm_inventory_generated",
+    "rows.json"))
 const DATA_CACHE = get(ENV, "BRMI_DATA_CACHE", joinpath(tempdir(), "brm-inventory-data"))
 
 pkgdir_of(m) = dirname(dirname(pathof(m)))
@@ -191,6 +201,67 @@ function run_arm(; spec_key, arm, problem, model, names, shared, adapt, seed)
     end
 end
 
+function sample_standard(sampler, rng, problem, n_draws)
+    if sampler == "warmuphmc"
+        result = adaptive_warmup_mcmc(
+            rng, problem; n_draws, progress=nothing,
+        )
+        Matrix{Float64}(result.posterior_position),
+            Int(result.n_divergent_samples)
+    elseif sampler == "dynamichmc"
+        result = WarmupHMC.DynamicHMC.mcmc_with_warmup(
+            rng, problem, n_draws;
+            reporter=WarmupHMC.DynamicHMC.NoProgressReport(),
+        )
+        ndiv = count(
+            s -> WarmupHMC.DynamicHMC.is_divergent(s.termination),
+            result.tree_statistics,
+        )
+        Matrix{Float64}(result.posterior_matrix), ndiv
+    else
+        error("unknown standard-comparison sampler $(repr(sampler))")
+    end
+end
+
+"""
+Run one standard-warmup comparison arm.
+
+`base_problem` is always the generated BRM density. `build_problem` receives
+the externally counted version of that density, so the adaptive-centering arm
+keeps its `ReparametrizedProblem` outer type while every sampler is counted at
+the same inner logdensity-and-gradient boundary.
+"""
+function run_standard_arm(; spec_key, arm, sampler, parameterization,
+                            base_problem, build_problem, model, names, shared,
+                            seed, n_draws=N_DRAWS)
+    try
+        timed = WarmupHMC.count_and_time(base_problem) do counted
+            problem = build_problem(counted)
+            sample_standard(sampler, Xoshiro(seed), problem, n_draws)
+        end
+        draws, ndiv = timed.result
+        ess_unc, _ = finite_min(ess_vec(draws))
+        ess_con, n_ok, n_constant = shared_constrained_ess(
+            model, names, shared, draws)
+        grad = Int(timed.n_evaluations)
+        (; spec=spec_key, arm, sampler, parameterization, seed, ok=true,
+         wall_s=timed.elapsed, grad_evals=grad,
+         n_draws_actual=size(draws, 2),
+         ess_min_unconstrained=ess_unc,
+         ess_min_shared_constrained=ess_con,
+         ess_min_per_grad=ess_con / max(grad, 1),
+         n_draws_constrained=n_ok, n_constant,
+         n_divergent=Int(ndiv), error="")
+    catch err
+        (; spec=spec_key, arm, sampler, parameterization, seed, ok=false,
+         wall_s=NaN, grad_evals=0, n_draws_actual=0,
+         ess_min_unconstrained=NaN,
+         ess_min_shared_constrained=NaN, ess_min_per_grad=NaN,
+         n_draws_constrained=0, n_constant=0, n_divergent=0,
+         error=first(sprint(showerror, err, catch_backtrace()), 1200))
+    end
+end
+
 sanitize(x) = x isa AbstractFloat && !isfinite(x) ? nothing : x
 sanitize(x::AbstractDict) = Dict(k => sanitize(v) for (k, v) in x)
 sanitize(x::AbstractVector) = [sanitize(v) for v in x]
@@ -213,17 +284,32 @@ end
 function main()
     brm_dir = pkgdir_of(BRM)
     whmc_dir = pkgdir_of(WarmupHMC)
+    reproduction = MODE == "standard" ?
+        "BRMI_MODE=standard BRMI_SEEDS=$(N_SEEDS) BRMI_DRAWS=$(N_DRAWS) " *
+        "BRMI_PREFLIGHT_DRAWS=$(PREFLIGHT_DRAWS) julia --startup-file=no " *
+        "--project=/path/to/pinned/environment " *
+        "docs/benchmark/run_brm_inventory_benchmark.jl" :
+        "BRMI_SEEDS=$(N_SEEDS) BRMI_DRAWS=$(N_DRAWS) " *
+        "BRMI_PREFLIGHT_DRAWS=$(PREFLIGHT_DRAWS) julia --startup-file=no " *
+        "--project=/path/to/pinned/environment " *
+        "docs/benchmark/run_brm_inventory_benchmark.jl"
+    run_order = MODE == "standard" ?
+        "one untimed preflight per comparison arm; the four recorded arms " *
+        "rotate cyclically by seed to avoid systematic temporal bias" :
+        "one untimed preflight per arm/flag; recorded flag order alternates " *
+        "by seed to avoid systematic temporal bias"
     config = Dict(
         "host" => get(ENV, "KB_HOST", gethostname()),
         "julia" => string(VERSION),
         "blas_threads" => BLAS.get_num_threads(),
-        "sampler" => "adaptive_warmup_mcmc",
+        "mode" => MODE,
+        "sampler" => MODE == "standard" ?
+            "adaptive_warmup_mcmc vs DynamicHMC.mcmc_with_warmup" :
+            "adaptive_warmup_mcmc",
         "runner" => "docs/benchmark/run_brm_inventory_benchmark.jl",
-        "reproduction" => "BRMI_SEEDS=$(N_SEEDS) BRMI_DRAWS=$(N_DRAWS) " *
-                          "BRMI_PREFLIGHT_DRAWS=$(PREFLIGHT_DRAWS) julia " *
-                          "--startup-file=no --project=/path/to/pinned/environment " *
-                          "docs/benchmark/run_brm_inventory_benchmark.jl",
+        "reproduction" => reproduction,
         "warmuphmc_sha" => gitsha(whmc_dir),
+        "dynamichmc_version" => string(Base.pkgversion(WarmupHMC.DynamicHMC)),
         "brm_sha" => gitsha(brm_dir),
         "stanblocks_sha" => gitsha(pkgdir_of(StanBlocks)),
         "warmuphmc_src_dirty" => gitdirty(whmc_dir, "src"),
@@ -239,8 +325,14 @@ function main()
         "n_seeds" => N_SEEDS,
         "n_draws" => N_DRAWS,
         "timing_preflight_draws" => PREFLIGHT_DRAWS,
-        "run_order" => "one untimed preflight per arm/flag; recorded flag order " *
-                       "alternates by seed to avoid systematic temporal bias",
+        "run_order" => run_order,
+        "gradient_counter" => MODE == "standard" ?
+            "WarmupHMC.count_and_time around the generated BRM density for " *
+            "every sampler; the adaptive wrapper is built over the counted inner target" :
+            "adaptive_warmup_mcmc total_evaluation_counter",
+        "warmup_budget" => MODE == "standard" ?
+            "sampler defaults: DynamicHMC uses its default 1000-step Stan-style " *
+            "warmup; WarmupHMC chooses its own gradient-targeted windows" : nothing,
         "seeds" => collect(1:N_SEEDS),
         "generated_at" => string(now()),
     )
@@ -259,6 +351,7 @@ function main()
         problem_c = StanBlocks.stan_instantiate(built_c.sb.model)
         names_nc = BS.param_names(problem_nc.model; include_tp=true)
         names_c = BS.param_names(problem_c.model; include_tp=true)
+        unc_names_nc = BS.param_unc_names(problem_nc.model)
         shared = intersect(Set(names_nc), Set(names_c))
         descriptor_code = brm_execute(built_nc.descriptor, :transpile)
 
@@ -303,27 +396,68 @@ function main()
                 built_nc.sb, problem_nc, AD_BACKEND), problem_nc.model, names_nc)
         end
 
-        # Keep Julia/Enzyme compilation out of the sampling-time comparison.
-        # Both Boolean paths are exercised because the runtime flag controls a
-        # different warm-up branch even though its type is the same.
-        for arm in ("noncentered", "centered", "adaptive_centering"),
-            adapt in (false, true)
-            problem, _, _ = problem_for(arm)
-            adaptive_warmup_mcmc(
-                Xoshiro(0x6b625000 + 10 * findfirst(==(arm),
-                    ("noncentered", "centered", "adaptive_centering")) + adapt),
-                problem; n_draws=PREFLIGHT_DRAWS,
-                nonlinear_adapt=adapt, progress=nothing,
-            )
-        end
+        if MODE == "inventory"
+            # Keep Julia/Enzyme compilation out of the sampling-time comparison.
+            # Both Boolean paths are exercised because the runtime flag controls a
+            # different warm-up branch even though its type is the same.
+            for arm in ("noncentered", "centered", "adaptive_centering"),
+                adapt in (false, true)
+                problem, _, _ = problem_for(arm)
+                adaptive_warmup_mcmc(
+                    Xoshiro(0x6b625000 + 10 * findfirst(==(arm),
+                        ("noncentered", "centered", "adaptive_centering")) + adapt),
+                    problem; n_draws=PREFLIGHT_DRAWS,
+                    nonlinear_adapt=adapt, progress=nothing,
+                )
+            end
 
-        for arm in ("noncentered", "centered", "adaptive_centering"),
-            seed in 1:N_SEEDS
-            adapt_order = isodd(seed) ? (false, true) : (true, false)
-            for adapt in adapt_order
-                problem, model, names = problem_for(arm)
-                push!(ROWS, run_arm(; spec_key, arm, problem, model, names, shared,
-                                    adapt, seed))
+            for arm in ("noncentered", "centered", "adaptive_centering"),
+                seed in 1:N_SEEDS
+                adapt_order = isodd(seed) ? (false, true) : (true, false)
+                for adapt in adapt_order
+                    problem, model, names = problem_for(arm)
+                    push!(ROWS, run_arm(; spec_key, arm, problem, model, names, shared,
+                                        adapt, seed))
+                end
+            end
+        else
+            identity_problem = counted -> counted
+            adaptive_problem = counted -> BRM.adaptive_centering_problem(
+                built_nc.sb, counted, AD_BACKEND; unc_names=unc_names_nc)
+            standard_arms = [
+                (; arm="warmuphmc_noncentered", sampler="warmuphmc",
+                 parameterization="noncentered", base_problem=problem_nc,
+                 build_problem=identity_problem, model=problem_nc.model,
+                 names=names_nc),
+                (; arm="warmuphmc_adaptive_centering", sampler="warmuphmc",
+                 parameterization="adaptive_centering", base_problem=problem_nc,
+                 build_problem=adaptive_problem, model=problem_nc.model,
+                 names=names_nc),
+                (; arm="dynamichmc_noncentered", sampler="dynamichmc",
+                 parameterization="noncentered", base_problem=problem_nc,
+                 build_problem=identity_problem, model=problem_nc.model,
+                 names=names_nc),
+                (; arm="dynamichmc_centered", sampler="dynamichmc",
+                 parameterization="centered", base_problem=problem_c,
+                 build_problem=identity_problem, model=problem_c.model,
+                 names=names_c),
+            ]
+
+            for (i, a) in enumerate(standard_arms)
+                preflight = run_standard_arm(;
+                    spec_key, a..., shared,
+                    seed=0x6b645000 + i, n_draws=PREFLIGHT_DRAWS,
+                )
+                preflight.ok || error(
+                    "standard comparison preflight failed for $(a.arm): $(preflight.error)")
+            end
+
+            for seed in 1:N_SEEDS
+                offset = mod(seed - 1, length(standard_arms))
+                order = vcat(standard_arms[offset+1:end], standard_arms[1:offset])
+                for a in order
+                    push!(ROWS, run_standard_arm(; spec_key, a..., shared, seed))
+                end
             end
         end
 

@@ -94,3 +94,55 @@ end
     ljac, y = ir(x)
     @test LogDensityProblems.logdensity(rp, x) ≈ ljac + LogDensityProblems.logdensity(inner, y)
 end
+
+# A coordinate sitting EXACTLY on its own centered location used to lose its whole
+# gradient contribution. `reparam` computed `y` with `LogExpFunctions.xexpy(x -
+# source.c * loc, ljac)`, and `xexpy` returns a CONSTANT zero when its first
+# argument is zero and `ljac` is finite — a branch whose derivative is 0 where the
+# true derivative is `exp(ljac)`. No error and no NaN, just a silently wrong
+# gradient, so nothing here would have caught it except a finite-difference check
+# aimed at the exact trigger.
+#
+# `source.c == 0` is the case to guard: fully non-centered is an ordinary
+# configuration, and there the trigger collapses to `x_i == 0`, which is an
+# entirely plausible coordinate value. Measured before the fix at
+# `x = [0.7, 0, 0, 0, 0]`: 49% off central differences.
+@testset "gradient at a coordinate exactly on its centered location" begin
+    n = 5
+    inner = DiagGaussian(zeros(n), ones(n))
+
+    # `x_i - source.c * loc == 0` for every one of these, by construction
+    triggers = [
+        ("non-centered, one zero coordinate", 0.0, [0.7, 0.0, 0.3, 0.4, -0.1]),
+        ("non-centered, several zeros",       0.0, [0.7, 0.0, 0.0, 0.0, -0.1]),
+        # loc = x[4]; with source.c = 0.5 the trigger is x_i == 0.5 * x[4]
+        ("half-centered, x_i == 0.5 * loc",   0.5, [0.4, 0.4, 0.4, 0.8, 0.25]),
+    ]
+    for (label, c_source, x) in triggers
+        ir = IR([i => Rep(PC(1.0), PC(c_source), x -> x[4], x -> x[5]) for i in 1:3])
+        rp = RP(ir, inner, AutoEnzyme())
+        _, g = LogDensityProblems.logdensity_and_gradient(rp, x)
+        ref = fd_gradient(z -> LogDensityProblems.logdensity(rp, z), x)
+        @test g ≈ ref rtol = 1e-4
+        # the specific failure was an exact zero where the reference is not zero
+        for i in 1:3
+            abs(ref[i]) > 1e-8 && @test !iszero(g[i])
+        end
+    end
+
+    # the reparam formula itself: d/dx at x == source.c * loc must be exp(ljac),
+    # not 0
+    for (c_t, c_s, log_scale) in ((1.0, 0.0, 0.7), (1.0, 0.5, -0.4), (0.25, 1.0, 1.3))
+        loc = 0.9
+        x0 = c_s * loc                       # exactly the degenerate point
+        ljac_expected = log_scale * (c_t - c_s)
+        h = 1e-6
+        _, yp = reparam(PC(c_t), PC(c_s), x0 + h, loc, log_scale)
+        _, ym = reparam(PC(c_t), PC(c_s), x0 - h, loc, log_scale)
+        @test (yp - ym) / 2h ≈ exp(ljac_expected) rtol = 1e-6
+        # and the value at the point is still what the formula says
+        ljac, y0 = reparam(PC(c_t), PC(c_s), x0, loc, log_scale)
+        @test ljac ≈ ljac_expected
+        @test y0 ≈ c_t * loc
+    end
+end

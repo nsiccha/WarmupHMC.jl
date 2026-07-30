@@ -417,9 +417,36 @@ adapted `source`.
 struct PartiallyCentered{C}
     c::C
 end
+# Plain `* exp(ljac)`, NOT `LogExpFunctions.xexpy(u, ljac)`. `xexpy` returns a
+# CONSTANT `zero(u * exp(ljac))` whenever `iszero(u) && isfinite(ljac)`, and under
+# AD that branch has derivative 0 where the true derivative is `exp(ljac)`. Since
+# `u == x - source.c * loc`, any coordinate sitting exactly on its own centered
+# location silently lost its entire gradient contribution — no error, no NaN, just
+# a zero. With `source.c == 0` (fully non-centered, the ordinary starting
+# configuration) the trigger collapses to `x == 0`. Measured at
+# `x = [0.7, 0, 0, 0, 0]`: 49% off central differences, the three zero coordinates
+# reading 0.0 against a true -0.49328 each.
+#
+# Dropping the guard costs essentially nothing, which is why this is a plain fix
+# and not a trade:
+#
+#   * The branch that was biting is VALUE-NEUTRAL. When `u` is zero and `ljac` is
+#     finite, `u * exp(ljac)` is already exactly zero; `xexpy` only normalizes the
+#     sign of the zero. So it was destroying a derivative to change nothing.
+#   * `u == 0` with `ljac == +Inf` is NaN either way — `xexpy` takes neither branch
+#     there (it requires `isfinite(ljac)`), so this is not a regression.
+#   * The one case that genuinely differs is `u == ±Inf` with `ljac == -Inf`, where
+#     `xexpy` gave 0 and this gives NaN. That needs an infinite coordinate AND an
+#     infinite log-scale; the density is already unusable, and DynamicHMC treats a
+#     non-finite value as a divergence, which is the correct response. Trading a
+#     silently wrong gradient at ordinary points for a NaN in an already-broken
+#     state is the right direction.
+#
+# The `g`-carrying method below has always used plain multiplication, so the two
+# were inconsistent with each other; they now agree.
 reparam(target::PartiallyCentered, source::PartiallyCentered, x::Real, loc::Real, log_scale::Real) = begin
     ljac = log_scale * (target.c - source.c)
-    ljac, target.c * loc + xexpy(x - source.c * loc, ljac)
+    ljac, target.c * loc + (x - source.c * loc) * exp(ljac)
 end
 reparam(target::PartiallyCentered, source::PartiallyCentered, x::Real, g::Real, loc::Real, log_scale::Real) = begin
     ljac = log_scale * (target.c - source.c)

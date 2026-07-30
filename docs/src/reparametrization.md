@@ -93,52 +93,58 @@ only works once you have loaded the package behind it, and `AutoEnzyme` needs
 `using Enzyme`. Nothing in `src/` ever constructs one: `ad_backend` is a field
 you fill in.
 
-!!! warning "A bare `AutoEnzyme()` does not work — it needs `function_annotation`"
-    Pass it:
-
+!!! tip "A bare `AutoEnzyme()` is all you need"
     ```julia
-    AutoEnzyme(; function_annotation=Enzyme.Const)
+    AutoEnzyme()
     ```
 
-    **`function_annotation=Enzyme.Const`** — without it, the run dies on the
-    **first gradient**:
+    Nothing else. This page used to say the opposite in the strongest terms — that
+    `function_annotation=Enzyme.Const` was mandatory and a bare `AutoEnzyme()`
+    died on the **first gradient** with
 
     ```
     EnzymeMutabilityException: Function argument passed to autodiff cannot be
     proven readonly.
     ```
 
-    What gets differentiated is a closure capturing the frozen inner gradient
-    `g_y` and the reparametrizer (see [`ReparametrizedProblem`](@ref)), and
-    Enzyme will not assume on its own that captured state holds no derivative
-    data. `Const` states what is already true here: `g_y` is frozen by
-    construction — a constant of the differentiation, not a function of `x`.
-    **Do not take Enzyme's own suggestion of `Enzyme.Duplicated`**; it computes
-    the same answer, but it allocates a shadow copy of the closure on every
-    call. That hint diagnoses the problem; it is not the fix. How much the
-    shadow copy costs depends strongly on the target, and the per-target figures
-    are tabulated under [What the backend costs, measured](@ref) rather than
-    summarised into one multiplier here — no single number generalizes. `Const`
-    is the right annotation regardless, because it is the *correct* one.
+    That was true, and the cause was on WarmupHMC's side. Both AD call sites — the
+    gradient path and the joint halo transport — used to hand Enzyme a *callable
+    carrying mutable data*: the gradient objective was a closure over the freshly
+    allocated inner gradient `g_y`, and the transport objective was a struct with
+    an `Array` field. Enzyme differentiates the callable itself, so it could prove
+    neither read-only. `function_annotation=Enzyme.Const` fixed that by marking
+    the callable inactive.
 
-!!! note "`set_runtime_activity` used to be required as well — it no longer is"
-    There is a *second* call site on your backend: the joint halo transport
-    described under [What warm-up actually does](@ref). It ran a closure Enzyme
-    could not statically prove, so a plain `Const` got past construction and past
-    the first gradient and then died at the **first restarting window** with
-    `EnzymeRuntimeActivityError` — partway into a run, rather than at setup.
+    Both sites now pass their non-differentiated operands as
+    DifferentiationInterface `Constant` contexts to a top-level function, so there
+    is nothing mutable on the callable left to annotate.
 
-    The objective was made statically provable, so the workaround is no longer
-    needed and this page no longer recommends it. Passing
-    `mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` anyway is harmless — it
-    measured free — so an existing script that carries it does not need editing.
+!!! note "If you are carrying `function_annotation` or `mode`, drop them"
+    Both are still **accepted and still correct** — no script breaks. They are
+    simply no longer free.
 
-    Mentioned because the failure was in a released state of the docs, and
-    because it is the shape to expect if a future change adds a third call site:
-    a backend that works for hundreds of gradients and then throws is a
-    *coverage* problem, not a user error. `web/src/test/enzyme.jl` exists to catch
-    exactly that and now pins this site with a plain `Const`. It is tagged
-    `:enzyme` and skipped by the main matrix, so run it with `--tag=enzyme`.
+    `function_annotation` is a property of the **whole backend**, so the
+    annotation those two sites needed was charged to every gradient in the run.
+    Measured on a 11-dimensional funnel, with every arm agreeing with central
+    differences to `1.98e-11`:
+
+    | backend | µs/gradient | vs. the wrapped model's own gradient |
+    |---|---|---|
+    | `AutoEnzyme()` | **0.385** | **4.61×** |
+    | `AutoEnzyme(; function_annotation=Enzyme.Const)` | 0.627 | 7.49× |
+    | ` ⋯ + mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` | 0.656 | 7.85× |
+
+    So `Const` is now a ~1.7× pessimization rather than a requirement.
+
+    `mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` has its own history worth
+    knowing, because it is the shape to expect if a future change adds a third
+    call site. The halo transport is only reached at a **restarting window**, so
+    when it was the unfixed site a run got past construction, past the first
+    gradient, and through hundreds more before throwing
+    `EnzymeRuntimeActivityError` partway in. A backend that works for hundreds of
+    gradients and then throws is a *coverage* problem, not a user error.
+    `web/src/test/enzyme.jl` exists to catch exactly that. It is tagged `:enzyme`
+    and skipped by the main matrix, so run it with `--tag=enzyme`.
 
 !!! note "WarmupHMC does not depend on ForwardDiff, and does not want to"
     `Project.toml` has no ForwardDiff entry — not a direct dependency, and there
@@ -480,8 +486,7 @@ ir = IndexedReparametrization([
     for i in 2:(k + 1)
 ])
 
-rp = ReparametrizedProblem(ir, funnel,
-    AutoEnzyme(; function_annotation=Enzyme.Const))
+rp = ReparametrizedProblem(ir, funnel, AutoEnzyme())
 result = adaptive_warmup_mcmc(Xoshiro(20260728), rp; n_draws=1000, progress=nothing)
 ```
 
@@ -718,13 +723,14 @@ arithmetic, `exp`/`log`; not `Float64`-annotated code, not anything that mutates
 **Three construction mistakes fail late rather than at construction.** Each builds
 a perfectly valid-looking object and blows up further in:
 
-* **An under-specified Enzyme backend.** A bare `AutoEnzyme()` constructs,
-  `logdensity` works on the result, and the first `logdensity_and_gradient`
-  throws `EnzymeMutabilityException`. Pass `function_annotation=Enzyme.Const`;
-  see the warning at the top of this page. Until `aac6489` this one failed late
-  *twice* — `Const` alone then died at the first restarting window with
-  `EnzymeRuntimeActivityError` — which is why an older script may carry a
-  `mode=` argument it no longer needs.
+* **An under-specified Enzyme backend — fixed, listed because older scripts
+  still carry the workaround.** A bare `AutoEnzyme()` used to construct fine, work
+  under `logdensity`, and then throw `EnzymeMutabilityException` on the first
+  `logdensity_and_gradient`; `Const` alone then died at the first restarting
+  window with `EnzymeRuntimeActivityError`. Both call sites were rewritten to take
+  `Constant` contexts, so a bare `AutoEnzyme()` is now correct and is the fastest
+  spelling — see the tip at the top of this page. A `function_annotation=` or
+  `mode=` argument in an older script still works; it just costs.
 * **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
   form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
   so nothing looks wrong until the first `logdensity_and_gradient`, which hands

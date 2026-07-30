@@ -159,7 +159,7 @@ end
     ])
     target = DiagGaussian(zeros(1 + groups * ACE_K), ones(1 + groups * ACE_K))
     rp = WarmupHMC.ReparametrizedProblem(
-        many_ir, target, AutoForwardDiff(); scoring_plan=plan,
+        many_ir, target, AutoEnzyme(); scoring_plan=plan,
     )
     recorder = WarmupHMC.NonlinearRecorder(rp; mode=:linear_pool)
     @test WarmupHMC._effective_nonlinear_evidence(recorder, rp) === :all_good_leaves
@@ -167,7 +167,7 @@ end
           11groups * ACE_K
 
     ordinary = WarmupHMC.ReparametrizedProblem(ace_ir(ACE_CSTAR),
-        DiagGaussian(zeros(4), ones(4)), AutoForwardDiff())
+        DiagGaussian(zeros(4), ones(4)), AutoEnzyme())
     @test_throws ArgumentError WarmupHMC._check_candidate_scoring_compatible(
         (; custom_candidate_scoring=true), ordinary,
     )

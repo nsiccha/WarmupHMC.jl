@@ -4,23 +4,17 @@ using Random, LinearAlgebra, Statistics
 using LogDensityProblems
 using Pkg, TOML
 using Distributions
-# `ForwardDiff` is NOT an idle import, and the reason it used to give was wrong:
-# it said "loads WarmupHMC's DifferentiationInterfaceExt". There is no such
-# extension. `53f82ea` made DifferentiationInterface a hard dependency and
-# deleted it, leaving a comment that named a mechanism the package no longer has
-# — an invitation to drop the import as vestigial.
-#
-# The real reason is that `AutoForwardDiff()` is a BACKEND HANDLE, not a
-# backend: DifferentiationInterface can only differentiate through it when
-# ForwardDiff is loaded in the session. `invariant_scoring.jl` and
-# `wrapped_logdensity.jl` construct one directly, and Pathfinder's own default
-# initialization path is `AutoForwardDiff()` too. Remove this and those testsets
+# `Enzyme` is NOT an idle import. `AutoEnzyme()` is a BACKEND HANDLE, not a
+# backend: DifferentiationInterface can only differentiate through it when Enzyme
+# itself is loaded in the session. `invariant_scoring.jl` and
+# `wrapped_logdensity.jl` construct one directly. Remove this and those testsets
 # do not go quiet — they error.
 #
-# This is the deliberate exception to the repo's "DifferentiationInterface where
-# possible, Enzyme directly where not" rule: it is confined to test code that
-# names the backend explicitly, and to the frozen `golden_awm.jl` baseline pin.
-using DifferentiationInterface, ForwardDiff
+# Enzyme is the only backend this suite exercises, deliberately. The initializer
+# does not need one: `mypathfinder` pins `adtype = NoAD()` precisely so
+# Optimization never synthesizes a gradient of its own, so no second AD package
+# is reachable from the tested paths.
+using DifferentiationInterface, Enzyme
 
 include("test_problems.jl")
 

@@ -41,6 +41,86 @@ end
 
 label(spec) = get(PLOT_LABELS, spec, spec)
 
+# A per-gradient comparison attributes a cost change to whatever moved between
+# the two artifacts, so EVERY pin has to be on screen — not just WarmupHMC's.
+#
+# This block exists because it wasn't. On 2026-07-30 this report's own table was
+# read as a 2.0–3.3x wrapped-arm REGRESSION. It was a speedup, backwards: the two
+# artifacts had identical `warmuphmc_sha`, so the header printed the same
+# WarmupHMC pin on both sides and the reader concluded WarmupHMC — while
+# `brm_sha` had gone BACKWARD 85 commits, the later run having resolved BRM to a
+# tree predating its accessor optimizations. `brm_sha` sat in both files the
+# whole time and was simply never printed here. An hour went into bisecting a
+# WarmupHMC window whose `src/` tree hash was identical at both ends.
+#
+# So: print every pin as `baseline → this run`, mark the ones that MOVED, and
+# where the repo is reachable assert the baseline's pin is an ANCESTOR of this
+# run's. `success()` is true only on exit 0, which is the distinction that
+# matters here: git exits 128 on a missing object, so a `!= 1` test would read
+# "not an ancestor" for a commit that merely isn't present locally.
+#
+# Only WarmupHMC's directory is knowable from the artifact (we are running in
+# it). The others are guessed at the fleet's conventional layout and degrade to
+# an explicit "cannot verify" rather than silence — a reader told to check by
+# hand is still strictly ahead of a reader told nothing.
+const PIN_REPOS = Dict(
+    "warmuphmc_sha" => dirname(dirname(HERE)),
+    "brm_sha" => joinpath(homedir(), "github", "nsiccha",
+                          "BayesianRegressionModels.jl"),
+    "stanblocks_sha" => joinpath(homedir(), "github", "nsiccha", "StanBlocks.jl"),
+)
+const PIN_LABELS = ["warmuphmc_sha" => "WarmupHMC", "brm_sha" => "BayesianRegressionModels",
+                    "stanblocks_sha" => "StanBlocks"]
+
+function pin_order(dir, old, new)
+    old == new && return :same
+    (isempty(old) || isempty(new)) && return :unknown
+    # Ask git whether this is a repo rather than testing for a `.git` DIRECTORY:
+    # in a linked worktree `.git` is a FILE pointing at the common dir, so an
+    # `isdir` test reports "not a repo" for exactly the checkouts KB agents work
+    # in — which silently downgraded every pin to "ancestry NOT verified" on the
+    # first run of this guard.
+    isdir(dir) && success(`git -C $dir rev-parse --git-dir`) || return :unknown
+    present(s) = success(`git -C $dir cat-file -e $(s * "^{commit}")`)
+    (present(old) && present(new)) || return :unknown
+    success(`git -C $dir merge-base --is-ancestor $old $new`) && return :forward
+    success(`git -C $dir merge-base --is-ancestor $new $old`) && return :backward
+    :diverged
+end
+
+function print_pin_provenance(bc, c)
+    println("| pin | baseline | this run | |")
+    println("| --- | --- | --- | --- |")
+    alarms = String[]
+    for (key, name) in PIN_LABELS
+        old, new = get(bc, key, ""), get(c, key, "")
+        ord = pin_order(get(PIN_REPOS, key, ""), old, new)
+        note = ord === :same ? "unchanged" :
+               ord === :forward ? "**moved forward**" :
+               ord === :backward ? "🛑 **WENT BACKWARD**" :
+               ord === :diverged ? "🛑 **DIVERGED — neither is an ancestor**" :
+               "⚠️ changed, ancestry NOT verified (repo/objects unavailable)"
+        ord in (:backward, :diverged) &&
+            push!(alarms, "$name $(ord === :backward ? "went BACKWARD" : "DIVERGED")")
+        println("| ", name, " | `", first(old, 8), "` | `", first(new, 8), "` | ", note, " |")
+    end
+    for (key, name) in ["host" => "host", "julia" => "Julia", "blas_threads" => "BLAS threads"]
+        a, b = string(get(bc, key, "?")), string(get(c, key, "?"))
+        a == b || push!(alarms, "$name differs ($a vs $b)")
+        println("| ", name, " | ", a, " | ", b, " | ", a == b ? "unchanged" : "🛑 **DIFFERS**", " |")
+    end
+    if isempty(alarms)
+        println("\nOnly models present in BOTH artifacts are listed below.\n")
+    else
+        println("\n> **🛑 DO NOT READ THE TABLE BELOW AS A REGRESSION OR A SPEEDUP.**")
+        println("> ", join(alarms, "; "), ".")
+        println(">")
+        println("> A dependency pin that moved backward or a changed host/Julia makes the")
+        println("> per-gradient delta unattributable — the sign can be the opposite of what")
+        println("> it looks like. Re-run both arms against pins in ancestral order first.\n")
+    end
+end
+
 length(ARGS) <= 2 ||
     error("usage: brm_inventory_report.jl [rows.json [baseline-rows.json]]")
 path = isempty(ARGS) ?
@@ -188,10 +268,8 @@ println("\n## Median microseconds per gradient by arm\n")
 base = baseline_path === nothing ? nothing : JSON.parsefile(baseline_path)
 if base !== nothing
     bc = base["config"]
-    println("Each cell is `baseline → this run`. Baseline `", baseline_path, "`: WarmupHMC `",
-            bc["warmuphmc_sha"], "`, Julia ", bc["julia"], ", host `", bc["host"], "`.")
-    println("Only models present in BOTH artifacts are listed; a differing host or")
-    println("Julia version makes the comparison meaningless, so check the line above.\n")
+    println("Each cell is `baseline → this run`. Baseline `", baseline_path, "`.\n")
+    print_pin_provenance(bc, c)
 end
 print("| model |")
 for arm in arms

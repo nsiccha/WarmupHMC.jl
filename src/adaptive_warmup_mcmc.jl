@@ -78,9 +78,10 @@ mypathfinder(args...;
     ndraws=1, ndraws_elbo=1, ntries=1,
     history_length=6,
     # WarmupHMC targets already provide `logdensity_and_gradient`. Telling
-    # Optimization to synthesize another gradient makes its default
-    # AutoForwardDiff path call `logdensity` with Dual-valued parameters,
-    # which native-backed targets such as BridgeStan cannot accept.
+    # Optimization to synthesize another gradient makes its default path call
+    # `logdensity` with tracer-valued parameters, which native-backed targets
+    # such as BridgeStan cannot accept. `NoAD()` keeps that default unreachable,
+    # so no second AD package is ever pulled into the initializer.
     adtype=Pathfinder.SciMLBase.NoAD(),
     optimizer=Pathfinder.Optim.LBFGS(;
         m=history_length,

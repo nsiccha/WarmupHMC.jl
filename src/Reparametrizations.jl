@@ -122,95 +122,74 @@ is a hard dependency of WarmupHMC, so the *interface* is always there, but a
 backend object only works once you load the AD package behind it — `AutoEnzyme`
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
-A reverse-mode backend is the reasonable default here — but that follows from an
-operation count, and an operation count is not wall-clock. The objective
-differentiated here is scalar in the *full* parameter vector, so forward mode
-costs `ceil(n / chunksize)` sweeps of the transform per gradient while reverse
-mode costs one.
+Enzyme is the backend this package is developed and measured against, and a
+bare `AutoEnzyme()` is the right spelling — it is both the fastest and the one
+with the least to configure.
 
-!!! warning "That argument is an operation count, and how it scales here is untested"
-    It is tempting to conclude that the gap widens with dimension — exactly where
-    reparametrization is worth doing. That has **not** been established.
+!!! note "`function_annotation` is accepted but is no longer needed, and now costs"
+    Earlier revisions **required** `AutoEnzyme(; function_annotation =
+    Enzyme.Const)` here, and said so emphatically. That requirement is gone.
 
-    **This docstring deliberately carries no benchmark figures.** It used to, and
-    they went stale three times: a point estimate that no aggregation reproduced,
-    then a range that spanned nothing in the repository, then a range correctly
-    derived from every checked-in source that a re-measurement invalidated within
-    minutes. Each fix addressed how the number was *chosen*; none addressed the
-    actual cause, which is that a docstring is a string evaluated at package load
-    and so cannot read the results JSON the way the manual's tables do. It is the
-    one surface here with no build-time seam, so any figure typed into it is
-    dated silently by the next regeneration and nothing in the build can tell.
+    The cause was on this side, not Enzyme's. Both AD sites used to hand Enzyme a
+    callable that carried mutable data — the gradient path built its objective as
+    a closure over the freshly allocated inner gradient `g_y`, and the halo
+    transport built a struct with an `Array` field. Enzyme differentiates the
+    callable itself, so neither could be proven read-only:
 
-    For every current number — per-target Enzyme-over-ForwardDiff ratios, the
-    `Duplicated` cost, and the boxed/unboxed A/B — read
-    [What the backend costs, measured](@ref). Those tables are generated from
-    `docs/benchmark/results/` at build time, so they move when the data moves.
+        EnzymeMutabilityException: Function argument passed to autodiff cannot be proven readonly
+
+    `function_annotation = Enzyme.Const` silenced that by marking the callable
+    inactive. But `function_annotation` is a property of the **whole backend**, so
+    an annotation needed by those two sites was charged to every gradient.
+
+    Both sites now pass their non-differentiated operands as
+    DifferentiationInterface `Constant` contexts to a top-level function, so
+    nothing mutable rides on the callable. `Const` still works and is still
+    correct — it is simply slower now, because the annotation it applies has
+    nothing left to fix. If you are carrying it from an older version, drop it.
+
+    Enzyme's error text used to suggest `function_annotation =
+    Enzyme.Duplicated`. That hint diagnosed the problem and was never the fix: it
+    allocates and propagates a shadow copy on every call.
+
+!!! warning "This docstring deliberately carries no benchmark figures"
+    It used to, and they went stale three times: a point estimate no aggregation
+    reproduced, then a range that spanned nothing in the repository, then a range
+    correctly derived from every checked-in source that a re-measurement
+    invalidated within minutes. Each fix addressed how the number was *chosen*;
+    none addressed the cause, which is that a docstring is a string evaluated at
+    package load and so cannot read the results JSON the way the manual's tables
+    do. It is the one surface here with no build-time seam, so any figure typed
+    into it is dated silently by the next regeneration and nothing in the build
+    can tell.
+
+    For current numbers read [What the backend costs, measured](@ref); those
+    tables are generated from `docs/benchmark/results/` at build time, so they
+    move when the data moves.
 
     What is stable enough to state here, and why:
 
-      * **Reverse mode wins on every clean measurement to date.** A direction,
-        not a magnitude; it has replicated across every harness in the repo.
+      * **The wrapper costs a small multiple of the wrapped model's own
+        gradient**, and the multiple is a property of the transform, not of the
+        backend. Closing it further needs an analytic adjoint for the
+        reparametrization, not backend tuning.
       * **The boxing confound is fixed.** The larger targets — `seeds`,
         `radon_partially_pooled`, `radon_variable_intercept` — were once measured
         against specs whose accessor closures captured a `Core.Box` (fixed in
         `e9bcfd0`; see `_index_getter` in
         `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly
-        correlated with the apparent ranking — five for five, every boxed spec
-        one where Enzyme lost — so those rows measured the defect, not the
-        backend. The probe now reports no boxed spec at all.
-      * **Scaling with dimension is still unresolved**, but no longer because of
-        that confound. On the current data, target identity accounts for
-        essentially all of the spread and `d` for very little, so these targets
-        do not settle a slope either way.
-      * **Sampling is unaffected.** ESS per 1000 gradients, gradient counts, the
-        fitted `c` and stuck-adaptation counts are identical across backends; the
-        backend sets the cost of a gradient, not how many are needed.
-      * **DifferentiationInterface re-prepares on every call**, and reusing a
-        prep object measured neutral-to-worse. That conclusion has replicated;
-        the share of the call it represents has not, so it is not quoted here.
-      * Running a sampler before timing warms the ForwardDiff path enough to
-        flatter it in a naive microbenchmark.
-
-    So: pick the backend by measuring your own target. This docstring has twice
-    claimed a universal default and been wrong both times, most recently by
-    publishing the boxing artifact as a property of the backend.
-
-!!! warning "Enzyme needs `function_annotation = Enzyme.Const`, and its own error message points the wrong way"
-    A bare `AutoEnzyme()` **does not work here**. The differentiated objective is
-    a closure over this `ReparametrizedProblem` — it captures the reparametrizer
-    and the frozen inner gradient `g_y` — and Enzyme cannot prove that captured
-    state is read-only:
-
-        EnzymeMutabilityException: Function argument passed to autodiff cannot be proven readonly
-
-    Pass `function_annotation = Enzyme.Const`. That is semantically exact rather
-    than a workaround: `g_y` is frozen by construction, and the derivative taken
-    is with respect to the *parameter vector*, never with respect to the problem.
-
-    Enzyme's own error text suggests `function_annotation = Enzyme.Duplicated`.
-    **Do not take that hint.** It is correct — it agrees with `Const` to within
-    floating-point noise — but it allocates and propagates a shadow copy of the
-    closure on every call. The hint diagnoses the problem; it is not the fix.
-
-    How much that costs is **target-dependent** and is not quoted here, for the
-    reason given in the previous warning: earlier revisions published first a
-    single ratio and then a two-row table, and both were dated by the next
-    regeneration. The current per-target figures are in the generated table under
-    [What the backend costs, measured](@ref). The funnel is the extreme case
-    rather than a representative one, which is why no single number belongs here
-    in any revision.
-
-    One reading to avoid: the larger targets once measured ≈1.0×, and that was
-    taken to mean `Const` only helps on small targets. It was an artifact of the
-    boxed specs, where the boxing dominated the call — it says boxing cost more
-    than the shadow copy, not that the shadow copy is cheap at high dimension.
-    That framing does not survive the fix, and the de-boxed table no longer shows
-    a row where `Duplicated` is free.
-
-    None of that changes the recommendation. `Const` is the right annotation on
-    **correctness** grounds everywhere — `g_y` is frozen by construction — and it
-    is never slower.
+        correlated with the apparent ranking — five for five — so those rows
+        measured the defect, not the backend. The probe now reports no boxed spec
+        at all.
+      * **Sampling is unaffected by how a gradient is computed.** ESS per 1000
+        gradients, gradient counts, the fitted `c` and stuck-adaptation counts do
+        not move; the backend sets the cost of a gradient, not how many are
+        needed.
+      * **DifferentiationInterface re-prepares on every call**, and reusing a prep
+        object measured neutral-to-worse — a wash whose sign flips with dimension,
+        against a fixed per-call cost to reach the cache. That conclusion has
+        replicated; the share of the call it represents has not, so it is not
+        quoted here.
 
 A backend is required in practice, and omitting it fails *late*: the
 two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which

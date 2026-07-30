@@ -110,8 +110,7 @@ ir = IndexedReparametrization(
         x -> x[9], x -> x[10]
     ))
 )
-rp = ReparametrizedProblem(ir, my_problem,
-    AutoEnzyme(; function_annotation=Enzyme.Const))
+rp = ReparametrizedProblem(ir, my_problem, AutoEnzyme())
 result = adaptive_warmup_mcmc(rng, rp)
 ```
 
@@ -119,17 +118,15 @@ Posterior samples are transformed back to the wrapped problem's own parametrizat
 before being returned.
 
 The third argument is a DifferentiationInterface.jl backend and is **not** optional:
-the two-argument form constructs fine and then fails on the first gradient. A
-**reverse-mode** backend is the reasonable default — what is differentiated is a
-scalar objective in the full parameter vector, so reverse mode costs one pass
-whatever the dimension, while forward mode costs one per coordinate. That is an
-operation count, though, and it is not wall-clock; measure your own target.
-[`ReparametrizedProblem`](@ref) carries the per-target table and is explicit
-about which rows it can currently stand behind.
+the two-argument form constructs fine and then fails on the first gradient.
+`AutoEnzyme()` is the recommended spelling — Enzyme is the backend this package
+is developed and measured against.
 
-With Enzyme, `function_annotation=Enzyme.Const` is not decoration: a bare
-`AutoEnzyme()` also constructs fine and then fails on the first gradient. See
-[Nonlinear reparametrization](@ref).
+A bare `AutoEnzyme()` is all you need. Earlier versions required
+`function_annotation=Enzyme.Const` and failed on the first gradient without it;
+that was a defect on this side and is fixed. The annotation is still accepted and
+still correct, but it now makes every gradient measurably slower, so drop it if
+you are carrying it. See [Nonlinear reparametrization](@ref).
 
 DifferentiationInterface is a hard dependency, so the interface is always available;
 the **backend package** is not, and you load it yourself (`AutoEnzyme` needs

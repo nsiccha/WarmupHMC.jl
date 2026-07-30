@@ -46,12 +46,12 @@ end
     @test out.elapsed ≥ 0
 end
 
-@testset "DifferentiationInterfaceExt gradient path" begin
+@testset "Reparametrized gradient path" begin
     n = 5
     inner = DiagGaussian(randn(n), rand(n) .+ 0.5)
     x = randn(n)
     # identity reparam ⇒ the custom gradient equals the inner problem's gradient
-    rp0 = WarmupHMC.ReparametrizedProblem(WarmupHMC.IndexedReparametrization([]), inner, AutoForwardDiff())
+    rp0 = WarmupHMC.ReparametrizedProblem(WarmupHMC.IndexedReparametrization([]), inner, AutoEnzyme())
     ld0, g0 = LogDensityProblems.logdensity_and_gradient(rp0, x)
     ldi, gi = LogDensityProblems.logdensity_and_gradient(inner, x)
     @test ld0 ≈ ldi
@@ -61,7 +61,7 @@ end
     ir = WarmupHMC.IndexedReparametrization([
         i => WarmupHMC.Reparametrization(WarmupHMC.PartiallyCentered(0.0), WarmupHMC.PartiallyCentered(1.0),
                                          x -> x[loc_idx], x -> x[scale_idx]) for i in 1:3])
-    rp = WarmupHMC.ReparametrizedProblem(ir, inner, AutoForwardDiff())
+    rp = WarmupHMC.ReparametrizedProblem(ir, inner, AutoEnzyme())
     ld, g = LogDensityProblems.logdensity_and_gradient(rp, x)
     @test ld ≈ LogDensityProblems.logdensity(rp, x)
     @test g ≈ fd_gradient(z -> LogDensityProblems.logdensity(rp, z), x) rtol = 1e-4

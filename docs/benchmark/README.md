@@ -269,6 +269,7 @@ verdict can be checked against that list rather than against a global maximum.
 | `run_brm_high_k_preflight.jl` | asks how wide a random-effect block the inventory can reach, by carrying every wide-block candidate as far as it goes on real data rather than screening on width. Writes `results/brm_inventory_high_k/` |
 | `brm_catalogue.jl`, `brm_plots.jl` | derivations only — the tables and the two AlgebraOfVega figures `docs/src/brm-catalogue.md` builds. Loaded by `load_harness`, so they may use the docs stack and nothing from the measurement stack |
 | `verify_brm_inventory_standard.jl` | acceptance gate for the published artifact: the exact model set, the complete model × arm × seed grid, per-arm parameterization labels, the upstream data checksum pins, and the block widths under both readings |
+| `brm_inventory_report.jl` | prints every number `results/brm_inventory_standard/README.md` quotes, so that census is pasted rather than transcribed — the same arrangement `nonlinear_weighting_report.jl` has with its study. Read-only, and it says so loudly when handed a `rows.json` with no `run_finished_at` |
 
 ## The nonlinear trajectory-weighting study
 

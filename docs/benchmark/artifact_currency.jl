@@ -79,6 +79,18 @@ function recorded_flag(text, key)
     m.captures[1] == "true" ? true : m.captures[1] == "false" ? false : nothing
 end
 
+"""The narrow `src/`-only dirty flag under either of the two names harnesses
+record it as — see `dirty_reason` for why there are two. `missing` only when
+neither is present, so an absent unqualified key never masks a recorded
+qualified one."""
+function recorded_src_flag(text)
+    for key in ("src_dirty", "warmuphmc_src_dirty")
+        flag = recorded_flag(text, key)
+        flag === missing || return flag
+    end
+    missing
+end
+
 """Tracked `*.json` under results/, as repo-relative paths."""
 function artifacts()
     out = git("ls-files", "--", RESULTS)
@@ -191,16 +203,26 @@ WHY `null` IS NOT `false`. All the helpers `catch` into `missing`, which
 serialises as JSON `null` — git was unreachable when the run was recorded.
 Nobody can verify anything about that tree, which is not the same claim as "it
 was clean", and defaulting it to clean is the same silent-reassurance failure as
-a `git fetch` that no-ops and exits 0."""
+a `git fetch` that no-ops and exits 0.
+
+WHY THE FLAG HAS TWO SPELLINGS. A harness measuring only this repo can call the
+flag `src_dirty` unambiguously. The BRM harnesses cannot: they record a base for
+WarmupHMC, for BayesianRegressionModels and for StanBlocks in one header, so
+every field there is repo-qualified and the one this check wants is
+`warmuphmc_src_dirty`. Both spellings are read, unqualified first. This is a
+naming mismatch, not a missing measurement — before it was read, all four BRM
+artifacts came back UNATTRIBUTABLE while sitting on a recorded
+`warmuphmc_src_dirty: false`, which is exactly the "red for a reason that is
+never the reason" failure the paragraph above is about."""
 function dirty_reason(path)
     text = read(joinpath(REPO, path), String)
-    src, whole = recorded_flag(text, "src_dirty"), recorded_flag(text, "worktree_dirty")
+    src, whole = recorded_src_flag(text), recorded_flag(text, "worktree_dirty")
 
     src === true && return "`src/` had UNCOMMITTED CHANGES when this was measured, so " *
         "the base above does not name the code that ran — and no revision does. " *
         "Not dischargeable by any later check: re-measure from a clean tree"
     src === false && return nothing
-    src === nothing && return "`src_dirty` is null — the harness asked git and could not " *
+    src === nothing && return "the recorded `src_dirty` is null — the harness asked git and could not " *
         "find out, so nothing about that tree is verifiable. Not the same as clean; " *
         "re-measure, or record why git was unreachable"
 
@@ -212,7 +234,8 @@ function dirty_reason(path)
         "records `src_dirty` as of this commit), or mark the run SUPERSEDED"
     whole === nothing && return "`worktree_dirty` is null and `src_dirty` is absent — git was " *
         "unreachable at measurement time and nothing narrower was recorded"
-    return "NEITHER `src_dirty` NOR `worktree_dirty` was recorded, so this artifact's tree " *
+    return "NEITHER `src_dirty`/`warmuphmc_src_dirty` NOR `worktree_dirty` was recorded, " *
+        "so this artifact's tree " *
         "is unverifiable. Absent is indistinguishable from clean, which is why it cannot " *
         "be read as clean; re-run the harness (both flags are recorded as of this commit)"
 end

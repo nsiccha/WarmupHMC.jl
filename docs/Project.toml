@@ -14,25 +14,25 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
 WarmupHMC = "60658175-6863-4866-a322-ab51a11c0cfe"
 
-[sources.AlgebraOfVega]
-rev = "dev"
-url = "https://github.com/nsiccha/AlgebraOfVega.jl"
-
-[sources.DynamicObjects]
-rev = "pre-inference"
-url = "https://github.com/nsiccha/DynamicObjects.jl"
-
-[sources.HTMX]
-rev = "dev"
-url = "https://github.com/nsiccha/HTMX.jl"
-
-[sources.HTMXObjects]
-rev = "devibe"
-url = "https://github.com/nsiccha/HTMXObjects.jl"
-
-[sources.Treebars]
-rev = "dev"
-url = "https://github.com/nsiccha/Treebars.jl"
-
+# The unregistered dependencies above (AlgebraOfVega, DynamicObjects, HTMX,
+# HTMXObjects, Treebars) are supplied by `Pkg.develop(PackageSpec(path=...))`
+# against the clones `.github/workflows/Docs.yml` makes, exactly as `web/` does.
+#
+# Do NOT re-add `[sources.<pkg>] url=/rev=` entries for them. `Pkg.develop`
+# merges a requested `path` with an existing source, so a `url` source plus a
+# `path` develop for the same package is
+#
+#     ERROR: `path` and `url` are conflicting specifications
+#     Pkg.API.update_source_if_set -> develop
+#
+# and it fails the whole `Install dependencies` step before anything builds.
+# It cannot be caught locally: `[sources]` is Julia 1.11+, so on the 1.10.11
+# compute host both spellings resolve fine, while CI's `version: '1'`
+# (1.12.6 at the time of writing) errors. That is how it shipped once — the
+# five entries landed in `a392f5f`, and the first Docs run to see them
+# (`dc9636f8`, run 30486850398) died in 45 s, leaving `brm-catalogue` a 404 on
+# the published site while every local build passed.
+#
+# A `path` source is fine and needed — path+path does not conflict.
 [sources.WarmupHMC]
 path = ".."

@@ -25,7 +25,23 @@ using Documenter, DocumenterVitepress, WarmupHMC
 # build was believed unavailable on that host — a strictly weaker check that
 # cannot see `@example` blocks, `@ref` resolution or `checkdocs` (2026-07-28,
 # `WarmupHMC:reparam-bench`). Setting it here makes `julia --project=docs
-# docs/make.jl` work in any checkout, remote or not.
+# docs/make.jl` work in any git checkout, remote or not.
+#
+# WHAT IT DOES NOT COVER: a tree that is not a git repository AT ALL. Documenter
+# treats "no origin" and "no repo" as different cases, and `repo` only answers
+# the first:
+#
+#     ArgumentError: Unable to automatically determine remote for main repo.
+#     > `repo` is set but makedocs is not in a Git repository. You should
+#     > configure `remotes` instead, [...]
+#
+# That is exactly what a `git archive` export or a release tarball is — so the
+# natural way to reproduce CI's Docs job locally (archive the commit, clone the
+# six dependencies beside it, run the workflow's steps) fails for a reason that
+# has nothing to do with the commit under test. `actions/checkout@v4` hands CI a
+# real repository, so `git init && git commit` in the reproduction tree restores
+# fidelity; reach for that rather than for `remotes` (2026-07-30, verifying the
+# 16-model tranche on the 1.12.6 toolchain).
 makedocs(
     sitename = "WarmupHMC.jl",
     modules  = [WarmupHMC],

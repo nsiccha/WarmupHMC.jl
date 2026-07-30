@@ -225,6 +225,131 @@ function brmc_standard_summary(d)
     out
 end
 
+# Historical-gallery coverage metadata. These read fields the runner records per
+# model; nothing here re-derives structure from a formula string, so a coverage
+# claim on the page can only come from something the runner actually measured on
+# the real data it sampled.
+
+"""
+Grouping factors of one model as `name (levels)`, in the inventory's order.
+
+`n_groups` is counted on the adapted data, so a level count here is the number of
+distinct groups actually present in the rows that were sampled — not the number
+the upstream dataset documents.
+"""
+function brmc_group_summary(m)
+    n = get(m, "n_groups", Dict{String,Any}())
+    cols = get(m, "grouping_factors", String[])
+    isempty(cols) && return "—"
+    join(["`$(g)` ($(get(n, g, "?")))" for g in cols], ", ")
+end
+
+"""
+An inventory row key as a table cell — backticked, because a bare one corrupts.
+
+`md_table` runs every cell through `md_cell`, which *parses* it as markdown so a
+cell can legitimately carry code spans and links. Julia's markdown parser treats
+INTRAWORD `_` as emphasis, so a key with two or more underscores is silently
+rewritten: measured through `Markdown.parse`, `bambi:predict_new_groups` renders
+as `bambi:predict*new*groups` and `mixed_models_jl:penicillin_crossed` as
+`mixed*models*jl:penicillin_crossed`. The build stays green and the table renders;
+the identifier a reader copies out simply does not exist.
+
+Five of the sixteen published keys hit this, so it is the default cell for a spec
+key anywhere on the page rather than a fix applied where someone noticed.
+"""
+brmc_spec_cell(spec::AbstractString) = "`" * spec * "`"
+
+"""
+Random-effect block widths of one model as `K=… on group`, in body order.
+
+Empty string when the runner recorded no blocks, which would itself be a defect
+worth seeing rather than hiding behind a dash.
+"""
+function brmc_block_summary(m)
+    blocks = get(m, "random_effect_blocks", Any[])
+    isempty(blocks) && return "—"
+    join(["K=$(b["k"]) on `$(b["group"])`" *
+          (b["correlated"] ? "" : " (uncorrelated)") for b in blocks], "; ")
+end
+
+brmc_max_k(m) = maximum((b["k"] for b in get(m, "random_effect_blocks", Any[]));
+                        init = 0)
+
+"""
+Models whose generated block widths differ from the historical `lme4` reading.
+
+Zipped positionally: the runner emits both lists from the same regex over the
+same block order, so entry `i` of one describes the same block as entry `i` of the
+other. A length mismatch means the generated body restructured the random-effect
+part rather than merely reinterpreting a term, which is a different and larger
+departure — it is reported as such instead of being compared element-wise.
+"""
+function brmc_block_width_departures(d)
+    out = []
+    for m in brmc_models(d)
+        got = get(m, "random_effect_blocks", Any[])
+        want = get(m, "historical_random_effect_blocks", Any[])
+        if length(got) != length(want)
+            push!(out, (spec = m["spec"], kind = "block count differs",
+                        detail = "$(length(want)) historical block(s) vs " *
+                                 "$(length(got)) generated"))
+            continue
+        end
+        differing = [(w, g) for (w, g) in zip(want, got) if w["k"] != g["k"]]
+        isempty(differing) && continue
+        push!(out, (
+            spec = m["spec"], kind = "block width differs",
+            detail = join(["`($(g["terms"]) | $(g["group"]))` is width " *
+                           "$(w["k"]) historically, $(g["k"]) as generated"
+                           for (w, g) in differing], "; "),
+        ))
+    end
+    out
+end
+
+"""
+Per-model count of constrained coordinates dropped from the ESS minimum.
+
+`n_constant` is the number of shared constrained coordinates that were constant
+or non-finite across a trajectory's draws, and therefore excluded before taking
+the minimum ESS. Excluding them is right — a coordinate that never moves has no
+effective sample size to report, and including it would make every model's
+headline ESS zero — but it does narrow what the published minimum is a minimum
+*over*, and by a lot on some rows. That fraction belongs on the page rather than
+in a sentence promising it was counted.
+
+Returns one entry per model with a nonzero drop anywhere, largest share first;
+a model that never dropped a coordinate is omitted so the table stays about the
+rows where the caveat bites.
+"""
+function brmc_dropped_coordinates(d)
+    out = []
+    for m in brmc_models(d)
+        rows = [r for r in brmc_rows(d) if r["spec"] == m["spec"]]
+        isempty(rows) && continue
+        worst = maximum(r["n_constant"] for r in rows)
+        worst == 0 && continue
+        push!(out, (spec = m["spec"], shared = m["n_names_shared"], max_dropped = worst,
+                    cells = count(r -> r["n_constant"] > 0, rows), n_cells = length(rows),
+                    share = worst / m["n_names_shared"]))
+    end
+    sort(out; by = x -> -x.share)
+end
+
+"""Models whose adapter departs from the historical categorical coding."""
+brmc_categorical_departures(d) =
+    [m for m in brmc_models(d) if !isempty(get(m, "categorical_departures", ""))]
+
+# K>2 probe artifact. A separate runner and a separate results directory: it
+# deliberately does NOT apply the publishable-row gate, because its whole purpose
+# is to report what happens to a high-K card on real data rather than to exclude
+# it beforehand.
+
+brmc_high_k_candidates(d) = d["candidates"]
+
+brmc_high_k_reached(c) = get(c, "reached", "")
+
 """Seed-paired numerator/denominator efficiency ratios for two sampler arms."""
 function brmc_standard_ratios(d, numerator, denominator)
     out = []

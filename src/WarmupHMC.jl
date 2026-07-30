@@ -18,7 +18,7 @@ using Serialization: serialize, deserialize
 # Only the reparametrization gradient needs AD, and it needs exactly one entry
 # point. Importing the name rather than the package keeps DifferentiationInterface's
 # broad export surface (`gradient`, `jacobian`, `pullback`, …) out of WarmupHMC.
-using DifferentiationInterface: value_and_gradient
+using DifferentiationInterface: value_and_gradient, Constant
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,

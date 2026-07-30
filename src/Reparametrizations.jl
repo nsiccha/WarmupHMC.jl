@@ -344,12 +344,41 @@ to be AD-friendly.
 function _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x::AbstractVector)
     ljac, y = p.reparametrizer(x)
     ld, g_y = LogDensityProblems.logdensity_and_gradient(p.problem, y)
-    function reparam_objective(x_)
-        ljac_, y_ = p.reparametrizer(x_)
-        ljac_ + dot(g_y, y_)
-    end
-    _, g_x = value_and_gradient(reparam_objective, p.ad_backend, x)
+    _, g_x = value_and_gradient(_reparam_objective, p.ad_backend, x,
+                                Constant(p.reparametrizer), Constant(g_y))
     ljac + ld, g_x
+end
+
+# The objective is a TOP-LEVEL function taking its non-differentiated operands as
+# `Constant` contexts, not a closure capturing them. Enzyme differentiates the
+# callable itself, so a closure over the freshly allocated `g_y` is a callable
+# holding mutable data and Enzyme cannot prove it read-only:
+#
+#     EnzymeMutabilityException: Function argument passed to autodiff cannot be
+#     proven readonly.
+#
+# `AutoEnzyme(; function_annotation = Enzyme.Const)` silences that by marking the
+# callable inactive, and that is how callers had to spell the backend. But
+# `function_annotation` is a property of the WHOLE backend, so the workaround for
+# this one site taxed every gradient. Passing the operands as `Constant` contexts
+# instead leaves nothing mutable on the callable, so a bare `AutoEnzyme()` works —
+# and is the fastest of the three spellings. Measured at d=11 on a funnel, with
+# every arm agreeing with central differences to 1.98e-11:
+#
+#     AutoEnzyme()                                 0.390 us/grad   4.66x bare model
+#     AutoEnzyme(; function_annotation = Const)    0.646 us/grad   7.71x
+#     ... + mode = set_runtime_activity(Reverse)   0.670 us/grad   8.00x
+#
+# So `Const` is now a ~1.7x PESSIMIZATION rather than a requirement. It stays
+# accepted — it is still correct, just slower.
+#
+# Deliberately NOT `prepare_gradient`d. A cached preparation was measured under
+# Enzyme and is a wash (1.14x either way, sign flipping with dimension) while
+# costing +160 B/gradient just to reach the cache, so the cache buys nothing and
+# adds a lifetime to reason about.
+_reparam_objective(x_, reparametrizer, g_y) = begin
+    ljac_, y_ = reparametrizer(x_)
+    ljac_ + dot(g_y, y_)
 end
 
 # --- Abstract reparametrization interface ---
@@ -930,17 +959,18 @@ _reparametrization_ad_backend(p::ReparametrizedProblem) = p.ad_backend
 _reparametrization_ad_backend(p::WrappedLogDensityProblem) =
     _reparametrization_ad_backend(parent(p))
 
-struct ReparametrizationTransportObjective{N,O,G}
-    new_ir::N
-    old_ir::O
-    old_gradient::G
-end
-
-function (objective::ReparametrizationTransportObjective)(new_position)
-    ljac_new, model_position = objective.new_ir(new_position)
+# Same shape as `_reparam_objective` above, and for the same reason: a top-level
+# function with `Constant` operands rather than a callable carrying them. A struct
+# is no safer than a closure here — it is immutable, but its `old_gradient` field
+# is an Array, so Enzyme still cannot prove the callable read-only. Both AD sites
+# had to move together: `function_annotation` is set on the BACKEND, so leaving
+# this one unfixed would keep the annotation mandatory and go on taxing every
+# gradient through the hot path.
+_transport_objective(new_position, new_ir, old_ir, old_gradient) = begin
+    ljac_new, model_position = new_ir(new_position)
     ljac_old, old_position =
-        _inverse_with_logabsdet_jacobian(objective.old_ir, model_position)
-    ljac_new + ljac_old + dot(objective.old_gradient, old_position)
+        _inverse_with_logabsdet_jacobian(old_ir, model_position)
+    ljac_new + ljac_old + dot(old_gradient, old_position)
 end
 
 """
@@ -976,10 +1006,10 @@ function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
         _, y = old_ir(x_old)
         _, transported_position = _inverse_with_logabsdet_jacobian(new_ir, y)
         x_new .= transported_position
-        transport_objective = ReparametrizationTransportObjective(
-            new_ir, old_ir, collect(g_old),
+        _, transported_gradient = value_and_gradient(
+            _transport_objective, backend, x_new,
+            Constant(new_ir), Constant(old_ir), Constant(collect(g_old)),
         )
-        _, transported_gradient = value_and_gradient(transport_objective, backend, x_new)
         g_new .= transported_gradient
     end
     gradient

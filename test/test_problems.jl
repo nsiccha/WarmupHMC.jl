@@ -22,6 +22,44 @@ function LogDensityProblems.logdensity_and_gradient(p::DiagGaussian, x)
     (-sum(abs2, z) / 2 - sum(log, p.sigma) - length(x) / 2 * log(2π), -z ./ p.sigma)
 end
 
+"""
+    NaNProblem(dimension)
+
+A target whose log density AND gradient are `NaN` everywhere — the exact shape a
+consumer's error handler produces when it catches the model's own exception and
+returns a number instead of rethrowing (Bruno's `BridgeStanProblem` does this
+around BridgeStan). Used to pin the initialization error contract.
+"""
+struct NaNProblem
+    dimension::Int
+end
+LogDensityProblems.capabilities(::Type{NaNProblem}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::NaNProblem) = p.dimension
+LogDensityProblems.logdensity(::NaNProblem, x) = NaN
+LogDensityProblems.logdensity_and_gradient(p::NaNProblem, x) = (NaN, fill(NaN, p.dimension))
+
+"""
+    BadGradientProblem(inner, index)
+
+`inner` with a FINITE log density but component `index` of the gradient poisoned
+with `Inf`. The initialization check has to fail on either half, and a test that
+only ever supplies a non-finite log density cannot tell whether the gradient half
+is wired up at all.
+"""
+struct BadGradientProblem{P}
+    inner::P
+    index::Int
+end
+LogDensityProblems.capabilities(::Type{<:BadGradientProblem}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::BadGradientProblem) = LogDensityProblems.dimension(p.inner)
+LogDensityProblems.logdensity(p::BadGradientProblem, x) = LogDensityProblems.logdensity(p.inner, x)
+function LogDensityProblems.logdensity_and_gradient(p::BadGradientProblem, x)
+    logdensity, gradient = LogDensityProblems.logdensity_and_gradient(p.inner, x)
+    poisoned = collect(float(eltype(gradient)), gradient)
+    poisoned[p.index] = Inf
+    (logdensity, poisoned)
+end
+
 "Central finite-difference gradient of scalar `f` at `x`."
 function fd_gradient(f, x; h=1e-6)
     g = similar(x, float(eltype(x)))

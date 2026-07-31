@@ -18,9 +18,101 @@ initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 
     end
 end
 pathfinder_callback(progress) = (state, args...) -> (update_progress!(progress, state.iter); false)
+
+# ── Initialization diagnostics ──────────────────────────────────────────────
+#
+# A non-finite log density at the starting point used to surface five frames
+# downstream, as a bare length check on `elbo_estimates` — an ELBO diagnostic for
+# what is really a broken model or a broken starting point. The chain: Pathfinder's
+# `OptimizationCallback` runs with `fail_on_nonfinite=true`, so a non-finite
+# objective OR gradient halts L-BFGS at iteration 0; a zero-length trajectory
+# leaves no fit distributions to score; `maximize_elbo` returns an empty ELBO
+# vector; and `pathfinder` does not throw — it warns and hands back a structurally
+# valid `PathfinderResult` carrying that empty vector.
+#
+# BOTH checks below are needed, and the second is not made redundant by the first:
+# an empty `elbo_estimates` can also follow a first-step line-search failure or
+# convergence at iteration 0, both from a perfectly finite starting point.
+
+"Bounded one-line summary of `v`'s non-finite entries, so a large vector stays readable."
+function _nonfinite_summary(v; limit=5)
+    bad = findall(!isfinite, v)
+    isempty(bad) && return "all $(length(v)) components finite"
+    shown = first(bad, limit)
+    detail = join(("[$i] = $(v[i])" for i in shown), ", ")
+    length(bad) > length(shown) && (detail *= ", …")
+    "$(length(bad)) of $(length(v)) components non-finite ($detail)"
+end
+
+_nonfinite_init_message(logdensity, gradient, init) = """
+    Initialization failed: $(
+        !isfinite(logdensity) && !all(isfinite, gradient) ? "the log density and its gradient are" :
+        !isfinite(logdensity)                             ? "the log density is" :
+                                                            "the gradient of the log density is"
+    ) not finite at the initial point.
+
+      log density at init: $logdensity
+      gradient at init:    $(_nonfinite_summary(gradient))
+      init:                $(length(init)) components, extrema \
+    $(isempty(init) ? "(empty)" : string(extrema(init)))
+
+    An optimizer cannot move away from such a point. Pathfinder's optimization
+    callback runs with `fail_on_nonfinite=true`, so L-BFGS halts at iteration 0 and
+    no variational approximation is ever formed.
+
+    WarmupHMC only sees the numbers your log-density callable returned. If that
+    callable catches the model's own exception and returns NaN — a common pattern
+    around BridgeStan — then the underlying message (e.g. "Exception: ... at line N
+    of model.stan") exists only inside that callable and never reaches WarmupHMC.
+    Surface it there if you need the cause.
+
+    Usual causes: the model errors, overflows or underflows at this parameter value;
+    a badly scaled parameterization; or an `init=` outside the model's support.
+    """
+
+_empty_elbo_message(result) = """
+    Initialization failed: Pathfinder produced no ELBO estimates, so there is no
+    variational fit to initialize from.
+
+    An empty `elbo_estimates` means the L-BFGS trajectory had length zero — not one
+    step was ever accepted, so no approximating distribution was formed and there was
+    nothing to score. Pathfinder does not throw for this: it warns ("Pathfinder failed
+    after N tries") and returns a structurally valid result whose ELBO vector is empty.
+    This one reports num_tries = $(result.num_tries), fit_iteration = $(result.fit_iteration).
+
+    Three ways to get here:
+      * a non-finite log density or gradient at the starting point — the optimization
+        callback halts L-BFGS at iteration 0. When the result came from WarmupHMC's own
+        Pathfinder call that case is already checked and reported explicitly BEFORE
+        Pathfinder runs, so reaching THIS message points at one of the other two.
+      * the line search failed on its very first step, from a finite but pathological
+        starting point.
+      * the optimizer declared convergence at iteration 0 — the starting point is
+        already stationary.
+
+    Pathfinder does not retry from a fresh point by default (`mypathfinder` sets
+    `ntries=1`); `initialize_mcmc(lpdf, ::Distribution)` is the retry loop, and it
+    draws a new random starting point each time.
+    """
+
+"""
+    _check_finite_init(lpdf, init)
+
+Evaluate `lpdf` and its gradient at `init`, and throw an explicit, actionable error
+when either is non-finite.
+
+The evaluation itself is not optional — it also works around
+https://github.com/roualdes/bridgestan/issues/272, which is why its result used to
+be computed and discarded here.
+"""
+function _check_finite_init(lpdf, init)
+    logdensity, gradient = LogDensityProblems.logdensity_and_gradient(lpdf, init)
+    (isfinite(logdensity) && all(isfinite, gradient)) && return nothing
+    error(_nonfinite_init_message(logdensity, gradient, init))
+end
+
 initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs...) = with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
-    # Work around https://github.com/roualdes/bridgestan/issues/272
-    LogDensityProblems.logdensity_and_gradient(lpdf, init)
+    _check_finite_init(lpdf, init)
     initialize_mcmc(
         lpdf,
         mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
@@ -28,7 +120,7 @@ initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs.
     )
 end
 initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin
-    @assert length(init.elbo_estimates) > 0
+    isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
     position = collect(init.draws[:, 1])::Vector{Float64}
     dimension = length(position)
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)

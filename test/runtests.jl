@@ -45,6 +45,9 @@ end
     @testset "WrappedLogDensityProblems + AD" begin
         include("wrapped_logdensity.jl")
     end
+    @testset "Initialization errors" begin
+        include("initialization_errors.jl")
+    end
     @testset "adaptive_warmup_mcmc (end-to-end)" begin
         include("adaptive_warmup.jl")
     end

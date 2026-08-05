@@ -284,6 +284,7 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
     algorithm = DynamicHMC.NUTS(; max_depth=max_tree_depth)
     hamiltonian = DynamicHMC.Hamiltonian(kinetic_energy, lpdf)
     steps_per_draw = OnlineStatsBase.Mean()
+    total_steps = 0                                        # Σ leapfrog steps = Σ gradient evals
     ess_next = 16                                          # first ESS window
     ess_label = "pending..."                              # until the first window
     n_divergent = 0
@@ -305,7 +306,10 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
         durable && (Mmap.sync!(samples); Mmap.sync!(rng_states); Mmap.sync!(divergences))
         _ring_commit!(ring, rng, k, dimension)
         if show
+            # Each leapfrog step evaluates the gradient once, so Σ steps = Σ
+            # gradient evaluations (DynamicHMC `stats.steps` = leapfrog steps).
             OnlineStatsBase.fit!(steps_per_draw, stats.steps)
+            total_steps += stats.steps
             # ESS is the one O(k log k) update, so recompute it only on doubling
             # windows (and once at the end); the value persists between.
             if (k >= ess_next || k == n_draws) && k > 10
@@ -314,10 +318,12 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
             end
             # One merge per draw carrying ALL non-fixed labels, so none is ever
             # blank or wiped by another. (`__progress__` = the counter node.)
+            elapsed = time_ns() - start_time
             update_progress!(__progress__, nothing;
                 ess = ess_label,
                 divergent = UncertainFrequency(n_divergent, k - n_written),
-                draws = Speed(k - n_written, time_ns() - start_time),
+                draws = Speed(k - n_written, elapsed),
+                gradient_evals = Speed(total_steps, elapsed),   # leapfrog steps / s
                 steps_per_draw = mean(steps_per_draw),
             )
         end

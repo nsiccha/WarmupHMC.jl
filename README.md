@@ -23,7 +23,8 @@ file instead of saying what you get is not much of a README.
 
 Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 `clustered_warmup_mcmc`, plus `resume_warmup_mcmc` to continue a checkpointed
-run; the reparametrization types `ReparametrizedProblem`,
+run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
+read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
 `CandidateScoringPlan` for steering candidate adaptation.
 
@@ -42,6 +43,21 @@ With [Treebars.jl](https://github.com/nsiccha/Treebars.jl) progress tracking, pr
 The result is a NamedTuple, with its `posterior_position` field containing the posterior draws. 
 
 Results should come in faster than with "standard" methods, and should often be better.
+
+Once the kernel is fixed — a mass-matrix scale, a step size and a tree depth,
+whether hand-supplied or read from a warm-up checkpoint — `stream_mcmc` runs pure
+sampling with no adaptation and streams the draws into a zeroed, memory-mappable
+file. It persists only the RNG state and the last safe draw index into a
+crash-safe "safe ring" beside that file, so a process killed mid-sample or
+mid-write resumes byte-for-byte from the immediately preceding state on the next
+call to the same `path`. `open_stream` re-maps a finished or in-progress run for
+reading.
+
+```julia
+stream_mcmc(rng, problem, position; path, n_draws, metric, stepsize)  # start
+stream_mcmc(problem; path, n_draws, metric, stepsize)                  # resume the same path
+stream_mcmc(checkpoint, problem; path, n_draws)                        # seed from a WarmupHMC checkpoint
+```
 
 That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`
 runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and

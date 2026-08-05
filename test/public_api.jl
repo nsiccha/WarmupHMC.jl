@@ -38,6 +38,9 @@ const PUBLIC_EXPORTS = [
     :clustered_warmup_mcmc,
     :cooperative_warmup_mcmc,
     :resume_warmup_mcmc,        # deprecated in favour of `resume=true`, still exported
+    # fixed-kernel interruptible streaming sampler
+    :stream_mcmc,
+    :open_stream,
     # reparametrization types
     :CandidateScoringPlan,
     :IndexedReparametrization,

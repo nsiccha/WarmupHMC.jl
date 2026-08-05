@@ -27,10 +27,14 @@
 # are. For a plain log density the two frames coincide, so the file is already
 # the posterior draws.
 #
-# THE TWO FILES, for an output path `P`:
-#   * `P`          — the draws: a `dimension × n_draws` column-major `Float64`
-#                    matrix, zeroed at creation, memory-mappable as-is. Draws are
-#                    COLUMNS. THIS is the "mmappable, samples-only" artifact.
+# THE FILES, for an output path `P` (each a plain mmappable array, zeroed at
+# creation; the three per-draw arrays grow/resume in lockstep):
+#   * `P`               — the draws: a `dimension × n_draws` column-major
+#                    `Float64` matrix, memory-mappable as-is. Draws are COLUMNS.
+#   * `P * ".rng_states"` — per-draw RNG state: a `5 × n_draws` `UInt64` matrix,
+#                    column k the full Xoshiro state (s0..s4) AFTER draw k.
+#   * `P * ".divergences"`— per-draw divergence flag: a length-`n_draws` `Int8`
+#                    vector, 1 if draw k diverged else 0 (their sum = divergences).
 #   * `P * ".ring"`— the safe ring: two fixed-size slots written alternately,
 #                    each `[seq | len | crc32c | serialize(rng, n_written, dim)]`.
 #                    A torn write hits only one slot; the other still holds the
@@ -38,10 +42,11 @@
 #
 # CRASH-SAFETY ORDERING, per draw k (0-based) written to column k+1 (1-based):
 #   1. `sample_tree` → next position, mutating `rng`.
-#   2. Store the column into the mmap (a store lands in the page cache, so it
-#      survives a PROCESS crash without an explicit sync).
-#   3. (`durable=true` only) `Mmap.sync!` the samples, so the column is on DISK
-#      before the ring can point at it — machine-crash safety.
+#   2. Store the column into the samples mmap AND the per-draw sidecars (divergent
+#      flag + full post-draw RNG state). A store lands in the page cache, so it
+#      survives a PROCESS crash without an explicit sync.
+#   3. (`durable=true` only) `Mmap.sync!` samples + both sidecars, so they are on
+#      DISK before the ring can point at them — machine-crash safety.
 #   4. Commit `(rng, n_written=k+1, dim)` to the ALTERNATE ring slot.
 # The ring's commit `n` happens strictly AFTER column `n` is written, so
 # "the ring says `n`" implies columns `1..n` are complete: a crash between (2)
@@ -207,24 +212,45 @@ end
 _is_resumable(samples_path, ring_path) =
     isfile(samples_path) && !isnothing(_ring_read(ring_path))
 
-# ----------------------------------------------------------- samples file
+# --------------------------------------------------- mmapped stream files
 
-# Open/create the mmappable samples matrix. `fresh` truncates to zero then grows
-# to `dimension × n_draws` (a grown region reads as zeros — "zeroed at
-# creation"). A resume grows the file only if the new `n_draws` needs more room,
-# never shrinks it.
-_open_samples(samples_path, dimension, n_draws; fresh::Bool) = begin
-    nbytes = dimension * n_draws * sizeof(Float64)
-    io = open(samples_path, fresh ? "w+" : "r+")
-    if fresh
+# The three per-draw mmapped sidecars of the samples file at `P`, one array each
+# (each its own file, all zeroed at creation, all resumed/grown in lockstep):
+#   * `P`               — the draws           `Float64`  `dimension × n_draws`
+#   * `P * ".rng_states"` — per-draw RNG state `UInt64`   `5 × n_draws`   (Xoshiro)
+#   * `P * ".divergences"`— per-draw divergent  `Int8`     `n_draws`       (0/1 flag)
+_rng_states_path(path) = string(path, ".rng_states")
+_divergences_path(path) = string(path, ".divergences")
+
+# The FULL Xoshiro state: xoshiro256 words s0..s3 PLUS the internal splitmix
+# word s4 (Julia 1.10's `Xoshiro` carries all five). Storing all five makes the
+# per-draw RNG exactly reconstructable via `Xoshiro(s0, s1, s2, s3, s4)`.
+const _XOSHIRO_WORDS = 5
+_xoshiro_words(rng::Random.Xoshiro) = (rng.s0, rng.s1, rng.s2, rng.s3, rng.s4)
+_xoshiro_words(rng) = throw(ArgumentError(
+    "stream_mcmc persists the per-draw RNG state and currently supports only " *
+    "`Random.Xoshiro` (you passed a $(typeof(rng))). Seed the sampler with a Xoshiro."))
+
+# Open/create an mmappable array of element type `T` and shape `dims`. `fresh`
+# (or a not-yet-existing file) truncates to zero then grows to `dims` (a grown
+# region reads as zeros — "zeroed at creation"). A resume grows the file only if
+# the new shape needs more room, never shrinks it. A resume over a run predating
+# a given sidecar creates it zeroed: the already-drawn columns cannot be
+# reconstructed (those draws are past), so they read as zeros; new columns are
+# recorded truthfully.
+_open_mmap(path, ::Type{T}, dims::Dims; fresh::Bool) where {T} = begin
+    nbytes = prod(dims) * sizeof(T)
+    make = fresh || !isfile(path)
+    io = open(path, make ? "w+" : "r+")
+    if make
         truncate(io, 0)
         truncate(io, nbytes)
-    elseif filesize(samples_path) < nbytes
+    elseif filesize(path) < nbytes
         truncate(io, nbytes)
     end
-    samples = Mmap.mmap(io, Matrix{Float64}, (dimension, n_draws); shared=true)
+    arr = Mmap.mmap(io, Array{T,length(dims)}, dims; shared=true)
     close(io)                                              # the mapping persists
-    samples
+    arr
 end
 
 # ------------------------------------------------------------- diagnostics
@@ -242,59 +268,72 @@ _stream_ess(samples, k, dimension) =
 # The inner loop, shared by fresh runs and resumes. Mutates `samples` and the
 # `ring` in place; consumes `rng`. Returns `(pg, rng, n_divergent, n_written)`.
 #
-# Progress (only when `progress !== nothing`): the bar advances on a fixed stride
-# (~200 ticks over the run) carrying the NON-FIXED fields — divergences, this
-# session's draw rate, mean leapfrog steps per draw (the metric and step size are
-# fixed, so they are deliberately NOT shown). ESS is recomputed on EXPONENTIAL
-# windows (each recompute at twice the previous draw count), matching the
-# adaptive sampler's doubling windows and keeping the O(k log k) ESS cost
-# geometric rather than paid every tick.
+# Progress (only when `progress !== nothing`): the counter is driven by the
+# `@progress … for` macro, so it advances by one on EVERY draw for free — there
+# is NOTHING throttled. Each draw also merges the NON-FIXED labels onto that same
+# node — divergences, this session's draw rate, mean leapfrog steps per draw, and
+# the ESS (the metric and step size are fixed, so they are deliberately NOT
+# shown). All four are shown from the first draw; `ess` reads `pending...` until
+# there are enough draws to compute it, then its VALUE. The label merge is O(1)
+# (a lock + field set); only the ESS itself is O(k log k), so it is recomputed on
+# EXPONENTIAL windows (each recompute at twice the previous draw count) while the
+# last computed value stays on the label in between.
 _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
-        n_draws, max_tree_depth, ring, samples, dimension, n_written, durable,
-        progress, show, start_time) = begin
+        n_draws, max_tree_depth, ring, samples, rng_states, divergences,
+        dimension, n_written, durable, progress, description, start_time) = begin
     algorithm = DynamicHMC.NUTS(; max_depth=max_tree_depth)
     hamiltonian = DynamicHMC.Hamiltonian(kinetic_energy, lpdf)
     steps_per_draw = OnlineStatsBase.Mean()
-    bar_stride = max(1, cld(n_draws, 200))
-    bar_next = n_written + bar_stride
     ess_next = 16                                          # first ESS window
+    ess_label = "pending..."                              # until the first window
     n_divergent = 0
-    k = n_written
-    while k < n_draws
+    show = progress !== nothing                            # no ESS/label cost when off
+    # `@progress <parent> "<desc>" for` hangs a determinate counter (labeled with
+    # the runtime `description`) under `progress` and increments it every
+    # iteration; inside the body `__progress__` IS that counter node, so the
+    # label merge lands on the advancing bar. On resume it counts this session's
+    # draws (n_written already on disk), while the labels report absolute counts.
+    @progress progress "$description" for k in (n_written + 1):n_draws
         pg, stats = DynamicHMC.sample_tree(rng, algorithm, hamiltonian, pg, stepsize)
-        @views samples[:, k + 1] .= pg.q                  # raw SOURCE-frame draw
-        DynamicHMC.is_divergent(stats.termination) && (n_divergent += 1)
-        k += 1
-        # Column k is in the page cache. For machine-crash durability, force it
-        # to DISK before the ring is allowed to point at it.
-        durable && Mmap.sync!(samples)
+        @views samples[:, k] .= pg.q                      # raw SOURCE-frame draw
+        diverged = DynamicHMC.is_divergent(stats.termination)
+        divergences[k] = diverged ? Int8(1) : Int8(0)     # per-draw divergent flag
+        @views rng_states[:, k] .= _xoshiro_words(rng)    # per-draw RNG state (post-draw)
+        diverged && (n_divergent += 1)
+        # Columns are in the page cache. For machine-crash durability, force them
+        # to DISK before the ring is allowed to point at them.
+        durable && (Mmap.sync!(samples); Mmap.sync!(rng_states); Mmap.sync!(divergences))
         _ring_commit!(ring, rng, k, dimension)
         if show
             OnlineStatsBase.fit!(steps_per_draw, stats.steps)
-            if k >= bar_next || k == n_draws
-                update_progress!(progress, k;
-                    divergent = UncertainFrequency(n_divergent, k),
-                    draws = Speed(k - n_written, time_ns() - start_time),
-                    steps_per_draw = mean(steps_per_draw),
-                )
-                bar_next = k + bar_stride
-            end
+            # ESS is the one O(k log k) update, so recompute it only on doubling
+            # windows (and once at the end); the value persists between.
             if (k >= ess_next || k == n_draws) && k > 10
-                update_progress!(progress, nothing;
-                    ess = short_string(_stream_ess(samples, k, dimension)) * " from $k draws")
+                ess_label = short_string(_stream_ess(samples, k, dimension)) * " from $k draws"
                 ess_next = 2k
             end
+            # One merge per draw carrying ALL non-fixed labels, so none is ever
+            # blank or wiped by another. (`__progress__` = the counter node.)
+            update_progress!(__progress__, nothing;
+                ess = ess_label,
+                divergent = UncertainFrequency(n_divergent, k - n_written),
+                draws = Speed(k - n_written, time_ns() - start_time),
+                steps_per_draw = mean(steps_per_draw),
+            )
         end
     end
-    (pg, rng, n_divergent, k)
+    (pg, rng, n_divergent, n_draws)                       # n_draws columns now written
 end
 
-_stream_result(samples_path, samples, dimension, n_written, n_divergent, ess, rng, position) = (;
+_stream_result(samples_path, samples, rng_states, divergences,
+        dimension, n_written, n_divergent, ess, rng, position) = (;
     path = samples_path,
     draws = @view(samples[:, 1:n_written]),   # dimension × n_written SOURCE-frame draws (COLUMNS)
     samples,                                   # the live mapping — keeps `draws` valid
     n_drawn = n_written,
     n_divergent,                               # divergences of THIS call (not persisted)
+    divergences = @view(divergences[1:n_written]),  # per-draw 0/1 flag, ALL draws on disk
+    rng_states = @view(rng_states[:, 1:n_written]), # per-draw Xoshiro state (5 × n_written), post-draw
     ess,                                       # per-coordinate bulk-ESS, sorted ascending (NaN if <=10 draws)
     dimension,
     rng,                                       # rng state after the last draw
@@ -319,10 +358,11 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
             "resumable ring at $(repr(ring_path)) reports n_written=$n_written; a " *
             "committed ring always has at least one draw. The file is corrupt.")
         eff_n_draws = max(n_draws, n_written)
-        samples = _open_samples(samples_path, dimension, eff_n_draws; fresh=false)
+        fresh = false
         # Resume position is the last safe draw, read BACK from the file (never
         # re-stored in the ring). Re-evaluate under this lpdf: a serialized
         # gradient is never trusted, and one evaluation is negligible.
+        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws); fresh)
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(@view samples[:, n_written]); strict=true)
         ring = _StreamRing(open(ring_path, "r+"), filesize(ring_path) ÷ 2, 1 - last_slot, seq + one(UInt64))
     else
@@ -331,23 +371,25 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(float.(q0)); strict=true)
         n_written = 0
         eff_n_draws = n_draws
-        samples = _open_samples(samples_path, dimension, eff_n_draws; fresh=true)
+        fresh = true
+        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws); fresh)
         ring = _ring_create(ring_path, rng, dimension)
     end
-    want_progress = progress !== nothing
+    # Per-draw sidecars (each its own file), opened/grown in lockstep with the
+    # samples file. On resume they keep their already-written columns.
+    rng_states = _open_mmap(_rng_states_path(samples_path), UInt64, (_XOSHIRO_WORDS, eff_n_draws); fresh)
+    divergences = _open_mmap(_divergences_path(samples_path), Int8, (eff_n_draws,); fresh)
     start_time = time_ns()
-    with_progress(progress, eff_n_draws; description) do prog
-        try
-            want_progress && update_progress!(prog, n_written; ess = "pending...")
-            pg, rng, n_divergent, k = _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
-                n_draws=eff_n_draws, max_tree_depth, ring, samples, dimension, n_written, durable,
-                progress=prog, show=want_progress, start_time)
-            Mmap.sync!(samples)
-            ess = k > 10 ? _stream_ess(samples, k, dimension) : fill(NaN, dimension)
-            _stream_result(samples_path, samples, dimension, k, n_divergent, ess, rng, pg.q)
-        finally
-            close(ring.io)
-        end
+    try
+        pg, rng, n_divergent, k = _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
+            n_draws=eff_n_draws, max_tree_depth, ring, samples, rng_states, divergences,
+            dimension, n_written, durable, progress, description, start_time)
+        Mmap.sync!(samples); Mmap.sync!(rng_states); Mmap.sync!(divergences)
+        ess = k > 10 ? _stream_ess(samples, k, dimension) : fill(NaN, dimension)
+        _stream_result(samples_path, samples, rng_states, divergences,
+            dimension, k, n_divergent, ess, rng, pg.q)
+    finally
+        close(ring.io)
     end
 end
 
@@ -437,9 +479,11 @@ result NamedTuples.
 
 Returns a `NamedTuple`: `path`, `draws` (a view of the `dimension × n_drawn`
 mmapped source-frame draws), `samples` (the live mapping), `n_drawn`,
-`n_divergent` (of this call), `ess` (per-coordinate bulk-ESS, sorted ascending;
-`NaN` for `<= 10` draws), `dimension`, `rng`, `position`. Reopen a finished or
-partial run with [`open_stream`](@ref).
+`n_divergent` (of this call), `divergences` (a length-`n_drawn` `Int8` 0/1 view of
+EVERY draw's divergence flag — their sum is the total), `rng_states` (a
+`5 × n_drawn` `UInt64` view of every draw's post-draw Xoshiro state), `ess`
+(per-coordinate bulk-ESS, sorted ascending; `NaN` for `<= 10` draws), `dimension`,
+`rng`, `position`. Reopen a finished or partial run with [`open_stream`](@ref).
 
 Reproducibility of resume-equals-uninterrupted is byte-for-byte for a fixed seed
 only under single-threaded BLAS (`LinearAlgebra.BLAS.set_num_threads(1)`).
@@ -597,7 +641,10 @@ Reopen an `stream_mcmc` run (finished or in-progress) for READING. Reads
 `(rng, n_written, dimension)` from the safe ring at `path * ".ring"`, then
 memory-maps the samples file and returns `draws` — a `dimension × n_drawn` view,
 draws as COLUMNS — plus `samples` (the read-only mapping), `n_drawn`,
-`dimension`, `rng`, and the source-frame `position` (the last drawn column).
+`dimension`, `rng`, and the source-frame `position` (the last drawn column). Also
+returns the per-draw sidecars `divergences` (a length-`n_drawn` `Int8` 0/1 view)
+and `rng_states` (a `5 × n_drawn` `UInt64` view of the post-draw Xoshiro state) —
+each `nothing` for a run that predates them.
 
 The stored draws are the SOURCE (working) frame. Pass `lpdf` and `model=true` to
 get constrained model-frame draws instead (`draws` is then a fresh
@@ -605,6 +652,16 @@ get constrained model-frame draws instead (`draws` is then a fresh
 `model=false` the `lpdf` is used only to check the dimension. Throws if `path`
 has no readable safe ring.
 """
+# Read-only mmap of an existing sidecar, sliced to its first `n` columns; the
+# array's last dimension is `n_cols`. `nothing` if the file is absent (a run
+# created before the sidecar existed).
+_read_sidecar(path, ::Type{T}, lead_dims, n_cols, n) where {T} = begin
+    isfile(path) || return nothing
+    dims = (lead_dims..., n_cols)
+    arr = Mmap.mmap(open(path, "r"), Array{T,length(dims)}, dims)
+    @view arr[ntuple(_ -> Colon(), length(lead_dims))..., 1:n]
+end
+
 open_stream(path, lpdf=nothing; model::Bool=false) = begin
     ring_path = _ring_path(path)
     r = _ring_read(ring_path)
@@ -633,5 +690,12 @@ open_stream(path, lpdf=nothing; model::Bool=false) = begin
         reparametrize!(lpdf, m)
         draws = m
     end
-    (; path, draws, samples, n_drawn=n_written, dimension, rng, position=collect(@view samples[:, n_written]))
+    # Sidecars are sized to whatever the on-disk file holds; slice to n_written.
+    rng_total = isfile(_rng_states_path(path)) ?
+        filesize(_rng_states_path(path)) ÷ (sizeof(UInt64) * _XOSHIRO_WORDS) : 0
+    div_total = isfile(_divergences_path(path)) ? filesize(_divergences_path(path)) : 0
+    rng_states = _read_sidecar(_rng_states_path(path), UInt64, (_XOSHIRO_WORDS,), rng_total, n_written)
+    divergences = _read_sidecar(_divergences_path(path), Int8, (), div_total, n_written)
+    (; path, draws, samples, n_drawn=n_written, divergences, rng_states,
+       dimension, rng, position=collect(@view samples[:, n_written]))
 end

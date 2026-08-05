@@ -237,7 +237,8 @@ _xoshiro_words(rng) = throw(ArgumentError(
 # the new shape needs more room, never shrinks it. A resume over a run predating
 # a given sidecar creates it zeroed: the already-drawn columns cannot be
 # reconstructed (those draws are past), so they read as zeros; new columns are
-# recorded truthfully.
+# recorded truthfully. The resume path WARNS when it does this — see
+# `_warn_missing_sidecar`.
 _open_mmap(path, ::Type{T}, dims::Dims; fresh::Bool) where {T} = begin
     nbytes = prod(dims) * sizeof(T)
     make = fresh || !isfile(path)
@@ -252,6 +253,23 @@ _open_mmap(path, ::Type{T}, dims::Dims; fresh::Bool) where {T} = begin
     close(io)                                              # the mapping persists
     arr
 end
+
+# On RESUME (`n_written >= 1`), a per-draw sidecar that does not yet exist predates
+# this record: `_open_mmap` will create it zeroed, so its already-drawn columns
+# read back as ZEROS, not their true values — and for `.divergences` a 0 is
+# indistinguishable from a genuine non-divergent draw (an all-zero `.rng_states`
+# column is at least a detectably-invalid Xoshiro). Those draws are past and cannot
+# be reconstructed, so we keep the run resumable — but WARN loudly rather than
+# silently fabricate the record (the file's "refuse to guess" discipline, applied
+# to the record; user decision 1kg7fw1). Fresh runs (`n_written == 0`) never trip
+# this; a sidecar that already exists (native run, or a run resumed once before) is
+# left to its columns and not re-warned.
+_warn_missing_sidecar(path, what, n_written) =
+    (n_written >= 1 && !isfile(path)) && @warn(
+        "stream_mcmc: resuming a run whose $what sidecar does not exist — it " *
+        "predates this record. Draws 1..$n_written will read back as ZEROS, NOT " *
+        "their true $what; only draws $(n_written + 1) onward are recorded truthfully.",
+        sidecar = path)
 
 # ------------------------------------------------------------- diagnostics
 
@@ -382,7 +400,11 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
         ring = _ring_create(ring_path, rng, dimension)
     end
     # Per-draw sidecars (each its own file), opened/grown in lockstep with the
-    # samples file. On resume they keep their already-written columns.
+    # samples file. On resume they keep their already-written columns; a sidecar
+    # that predates this record is created zeroed, so WARN first (decision
+    # 1kg7fw1) — its old columns read as zeros, not their true values.
+    _warn_missing_sidecar(_rng_states_path(samples_path), "per-draw RNG state", n_written)
+    _warn_missing_sidecar(_divergences_path(samples_path), "per-draw divergence flag", n_written)
     rng_states = _open_mmap(_rng_states_path(samples_path), UInt64, (_XOSHIRO_WORDS, eff_n_draws); fresh)
     divergences = _open_mmap(_divergences_path(samples_path), Int8, (eff_n_draws,); fresh)
     start_time = time_ns()
@@ -435,6 +457,12 @@ value at or below what is already written returns the existing draws.
 `overwrite=true` discards an existing run and starts fresh. A crash inside the
 very first transition (before draw 1) leaves an unresumable file that simply
 restarts from the caller's seed — no draw is ever lost.
+
+Resuming a run that predates a per-draw sidecar (`.divergences` / `.rng_states`)
+creates that file zeroed and keeps sampling, but emits a `@warn`: the already-drawn
+columns cannot be reconstructed, so draws `1..n_written` read back as zeros (not
+their true divergence flag / RNG state); only draws from the resume point forward
+are recorded truthfully.
 
 # Kernel hyperparameters (never persisted — supplied every call, or read from a checkpoint)
 - `metric` — the mass-matrix SCALE `L` (`L*L'` ≈ posterior covariance): a

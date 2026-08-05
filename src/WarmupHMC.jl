@@ -15,7 +15,8 @@ import DynamicHMC,
     OnlineStatsBase,
     Random,
     Mmap,
-    CRC32c
+    CRC32c,
+    Dates
 using Serialization: serialize, deserialize
 # Only the reparametrization gradient needs AD, and it needs exactly one entry
 # point. Importing the name rather than the package keeps DifferentiationInterface's

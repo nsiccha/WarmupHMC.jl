@@ -25,7 +25,18 @@ struct Speed
     dt::Float64
     Speed(n, dt::UInt64) = new(n, Float64(dt))
 end
-Base.string(x::Speed) = "$(x.n) in $(short_string(x.dt/1e9)) seconds ($(short_string(x.n/(x.dt/1e9))) / s)"
+# Render a throughput. A per-second RATE reads badly for a SLOW process
+# (`0.016 / s`), so once it drops below 1/s we show the reciprocal PACE — the
+# time PER event — via Treebars' `short_duration` (`pace: 1m 4s`, `pace: 2h 49m`,
+# `pace: 11d 13h`). FAST/large rates already pretty-print through `short_string`
+# (`5k / s`), so those stay as a rate. `n` events over `seconds` wall-clock.
+_rate_or_pace(n::Real, seconds::Real) = begin
+    rate = n / seconds
+    (isfinite(rate) && 0 < rate < 1) ?
+        "pace: $(short_duration(Dates.Millisecond(round(Int, 1000 / rate))))" :
+        "$(short_string(rate)) / s"
+end
+Base.string(x::Speed) = "$(x.n) in $(short_string(x.dt/1e9)) seconds ($(_rate_or_pace(x.n, x.dt/1e9)))"
 Base.string(x::ActiveTransformation) = "$(short_string(x.kinetic_energy.M⁻¹.m1)) (marginal scale changes = $(short_string(x.scale_changes)))"
 
 Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose}) = short_string(parent(x.m1))

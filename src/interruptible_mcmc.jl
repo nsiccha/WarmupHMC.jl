@@ -74,6 +74,34 @@ _stream_energy(m::DynamicHMC.GaussianKineticEnergy) = m
 _stream_energy(m::AbstractMatrix) = _stream_kinetic_energy(m)
 _stream_energy(m::AbstractVector) = _stream_kinetic_energy(Diagonal(collect(float.(m))))
 
+# Extract the fixed kernel from a WarmupHMC checkpoint payload AND restore its
+# learned reparametrization centerings onto `lpdf`, so `lpdf`'s frame matches the
+# checkpoint's. Returns `(kinetic_energy, stepsize)`. Shared by every
+# checkpoint-seeded entry point; called once per chain (on that chain's own lpdf
+# copy) in the multi-chain forms, which is why it takes and mutates `lpdf`.
+_checkpoint_kernel!(payload::NamedTuple, lpdf) = begin
+    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative, :clustered))
+    dimension = LogDensityProblems.dimension(lpdf)
+    dimension == payload.dimension || throw(DimensionMismatch(
+        "checkpoint holds a $(payload.dimension)-dimensional problem but the " *
+        "supplied lpdf has dimension $dimension."))
+    restore_reparam_sources!(lpdf, get(payload, :reparam_sources, Pair[]))
+    (_stream_kinetic_energy(payload.scale_options[payload.active_transformation]), float(payload.stepsize))
+end
+
+# N independent, reproducible RNGs derived from one base RNG (a checkpoint's
+# `rng`): draw N seeds from a copy of the base and reseed same-type copies with
+# them. Used as the DEFAULT when a multi-chain caller passes no explicit `rngs`;
+# distinct seeds are what keep the chains from sharing a random stream.
+_derive_chain_rngs(base, n) = begin
+    gen = copy(base)
+    [(r = copy(base); Random.seed!(r, rand(gen, UInt64)); r) for _ in 1:n]
+end
+
+_stream_lpdfs(lpdf, n_chains) =
+    lpdf isa AbstractVector && length(lpdf) == n_chains ? collect(lpdf) :
+    [deepcopy(lpdf) for _ in 1:n_chains]   # a stateful wrapper must not be shared across chains
+
 # ---------------------------------------------------------------- safe ring
 
 # One slot's fixed prefix: seq (UInt64) + payload length (UInt64) + crc32c
@@ -336,7 +364,10 @@ end
 """
     stream_mcmc(rng, lpdf, position; path, n_draws, metric, stepsize, kwargs...)
     stream_mcmc(lpdf; path, n_draws, metric, stepsize, kwargs...)               # resume-only
-    stream_mcmc(payload_or_checkpoint_path, lpdf; path, n_draws, kwargs...)     # seed from a WarmupHMC checkpoint
+    stream_mcmc(checkpoint, lpdf; path, n_draws, kwargs...)                     # seed from a WarmupHMC checkpoint
+    stream_mcmc(checkpoint, lpdf, position; path, n_draws, rng, kwargs...)      # checkpoint kernel, explicit start
+    stream_mcmc(checkpoint, lpdf, positions; path, n_draws, rngs, parallel)     # N chains under path/chain_<i>
+    stream_mcmc(rngs, lpdf, positions; path, n_draws, metric, stepsize)         # N chains, explicit kernel
 
 Fixed-kernel, interruptible, resumable NUTS sampling — pure sampling with NO
 warm-up and NO adaptation. Streams draws into the mmappable `Float64` file at
@@ -392,6 +423,18 @@ position, mass-matrix scale and step size out of the payload — the final adapt
 kernel of a warm-up run — restores its reparametrization centerings onto `lpdf`,
 and streams from there. `lpdf` must be built exactly as the run was given it.
 
+Passing an explicit `position` keeps the checkpoint's KERNEL but overrides its
+start point (e.g. an equidistant warm-up draw), with `rng` inheriting the
+checkpoint's unless given. Passing a VECTOR of `positions` fans out one
+independent chain per start point, each an interruptible/resumable stream under
+`path/chain_<i>` (+ its `.ring`); re-calling the same `path` resumes every chain.
+`parallel=true` threads them under a shared progress bar; `rngs` defaults to N
+independent streams derived from the checkpoint's rng; `lpdf` is deepcopied per
+chain (pass a length-N vector of lpdfs to override) so a stateful wrapper never
+races. `stream_mcmc(rngs, lpdf, positions; metric, stepsize, ...)` is the same
+fan-out with a hand-supplied kernel. Multi-chain returns a `Vector` of per-chain
+result NamedTuples.
+
 Returns a `NamedTuple`: `path`, `draws` (a view of the `dimension × n_drawn`
 mmapped source-frame draws), `samples` (the live mapping), `n_drawn`,
 `n_divergent` (of this call), `ess` (per-coordinate bulk-ESS, sorted ascending;
@@ -441,27 +484,110 @@ end
 stream_mcmc(payload::NamedTuple, lpdf; path, n_draws::Integer,
         max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
         progress=nothing, description::AbstractString="stream_mcmc") = begin
-    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative, :clustered))
-    dimension = LogDensityProblems.dimension(lpdf)
-    dimension == payload.dimension || throw(DimensionMismatch(
-        "checkpoint holds a $(payload.dimension)-dimensional problem but the " *
-        "supplied lpdf has dimension $dimension."))
-    # Restore the learned centerings so `lpdf`'s frame matches the checkpoint's,
-    # whether we start fresh from it or resume its streaming run.
-    restore_reparam_sources!(lpdf, get(payload, :reparam_sources, Pair[]))
-    kinetic_energy = _stream_kinetic_energy(payload.scale_options[payload.active_transformation])
+    kinetic_energy, stepsize = _checkpoint_kernel!(payload, lpdf)
     ring_path = _ring_path(path)
     resumable = !overwrite && _is_resumable(path, ring_path)
     resumable || _guard_fresh_over_existing(path, ring_path, overwrite)
     _stream_impl(lpdf;
         samples_path=path, ring_path, resumable,
         seed_rng=payload.rng, seed_position=payload.position_and_gradient,
-        kinetic_energy, stepsize=float(payload.stepsize),
+        kinetic_energy, stepsize,
+        n_draws, max_tree_depth, durable, progress, description)
+end
+
+# Checkpoint kernel, EXPLICIT start position. Bruno's case: take the hyperparameters
+# (scale/stepsize) FROM the checkpoint, but start each chain from a supplied point
+# (e.g. an equidistant warm-up draw) instead of the checkpoint's single saved
+# position. `rng=nothing` inherits the checkpoint's rng; pass one per chain to fork
+# the streams. An already-resumable `path` still continues that streaming run.
+stream_mcmc(payload::NamedTuple, lpdf, position::AbstractVector; path, n_draws::Integer,
+        rng=nothing, max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
+        progress=nothing, description::AbstractString="stream_mcmc") = begin
+    kinetic_energy, stepsize = _checkpoint_kernel!(payload, lpdf)
+    length(position) == payload.dimension || throw(DimensionMismatch(
+        "start `position` has length $(length(position)) but the checkpoint holds a " *
+        "$(payload.dimension)-dimensional problem."))
+    ring_path = _ring_path(path)
+    resumable = !overwrite && _is_resumable(path, ring_path)
+    resumable || _guard_fresh_over_existing(path, ring_path, overwrite)
+    _stream_impl(lpdf;
+        samples_path=path, ring_path, resumable,
+        seed_rng = isnothing(rng) ? payload.rng : rng, seed_position = position,
+        kinetic_energy, stepsize,
         n_draws, max_tree_depth, durable, progress, description)
 end
 
 stream_mcmc(checkpoint_path::AbstractString, lpdf; kwargs...) =
     stream_mcmc(deserialize(checkpoint_path)::NamedTuple, lpdf; kwargs...)
+stream_mcmc(checkpoint_path::AbstractString, lpdf, position::AbstractVector; kwargs...) =
+    stream_mcmc(deserialize(checkpoint_path)::NamedTuple, lpdf, position; kwargs...)
+
+# ---------------------------------------------------------------- multi-chain
+# Run one chain per start position, each an independent interruptible/resumable
+# stream under `path/chain_<i>` (+ its `.ring`), mirroring the adaptive sampler's
+# `_chain_dir` layout. Re-calling with the same `path` resumes every chain from
+# its own file. `parallel=true` threads the chains; each hangs its own progress
+# sub-node under a shared bar, exactly as `adaptive_warmup_mcmc` does. Returns a
+# `Vector` of the per-chain result NamedTuples.
+_chain_stream_path(path, i) = joinpath(path, "chain_$i")
+
+_stream_multichain(run_chain, n_chains; path, parallel, progress, description) = begin
+    isnothing(path) && throw(ArgumentError("multi-chain stream_mcmc needs a base `path` directory"))
+    mkpath(path)
+    with_progress(progress, n_chains; description) do prog
+        rv = Vector{Any}(missing, n_chains)
+        if parallel
+            Threads.@threads for i in 1:n_chains
+                rv[i] = run_chain(i, prog, _chain_stream_path(path, i), string(description, ".", i))
+                update_progress!(prog)
+            end
+        else
+            for i in 1:n_chains
+                rv[i] = run_chain(i, prog, _chain_stream_path(path, i), string(description, ".", i))
+                update_progress!(prog)
+            end
+        end
+        identity.(rv)
+    end
+end
+
+# Multi-chain, checkpoint kernel + N start positions. `rngs=nothing` derives N
+# independent streams from the checkpoint's rng; `lpdf` is deepcopied per chain
+# (pass a length-N vector of lpdfs to override) so a stateful wrapper never races.
+stream_mcmc(payload::NamedTuple, lpdf, positions::AbstractVector{<:AbstractVector};
+        path, n_draws::Integer, rngs=nothing, parallel::Bool=true, max_tree_depth::Integer=10,
+        overwrite::Bool=false, durable::Bool=false,
+        progress=nothing, description::AbstractString="stream_mcmc") = begin
+    n_chains = length(positions)
+    n_chains >= 1 || throw(ArgumentError("`positions` must be non-empty"))
+    chain_rngs = isnothing(rngs) ? _derive_chain_rngs(payload.rng, n_chains) : rngs
+    length(chain_rngs) == n_chains || throw(DimensionMismatch(
+        "got $(length(chain_rngs)) rngs for $n_chains chains"))
+    lpdfs = _stream_lpdfs(lpdf, n_chains)
+    _stream_multichain(n_chains; path, parallel, progress, description) do i, prog, chain_path, chain_desc
+        stream_mcmc(payload, lpdfs[i], positions[i]; path=chain_path, n_draws, rng=chain_rngs[i],
+            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc)
+    end
+end
+
+stream_mcmc(checkpoint_path::AbstractString, lpdf, positions::AbstractVector{<:AbstractVector}; kwargs...) =
+    stream_mcmc(deserialize(checkpoint_path)::NamedTuple, lpdf, positions; kwargs...)
+
+# Multi-chain, EXPLICIT kernel + N start positions: one rng per chain, a hand-
+# supplied `metric`/`stepsize`. Same per-chain layout, threading and deepcopy.
+stream_mcmc(rngs::AbstractVector, lpdf, positions::AbstractVector{<:AbstractVector};
+        path, n_draws::Integer, metric, stepsize::Real, parallel::Bool=true,
+        max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
+        progress=nothing, description::AbstractString="stream_mcmc") = begin
+    n_chains = length(positions)
+    length(rngs) == n_chains || throw(DimensionMismatch(
+        "got $(length(rngs)) rngs for $n_chains chains"))
+    lpdfs = _stream_lpdfs(lpdf, n_chains)
+    _stream_multichain(n_chains; path, parallel, progress, description) do i, prog, chain_path, chain_desc
+        stream_mcmc(rngs[i], lpdfs[i], positions[i]; path=chain_path, n_draws, metric, stepsize,
+            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc)
+    end
+end
 
 """
     open_stream(path) -> NamedTuple

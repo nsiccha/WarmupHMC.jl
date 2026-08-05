@@ -57,6 +57,8 @@ reading.
 stream_mcmc(rng, problem, position; path, n_draws, metric, stepsize)  # start
 stream_mcmc(problem; path, n_draws, metric, stepsize)                  # resume the same path
 stream_mcmc(checkpoint, problem; path, n_draws)                        # seed from a WarmupHMC checkpoint
+stream_mcmc(checkpoint, problem, position; path, n_draws)             # checkpoint kernel, explicit start point
+stream_mcmc(checkpoint, problem, positions; path, n_draws)            # N chains under path/chain_<i>, one per start
 ```
 
 That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`

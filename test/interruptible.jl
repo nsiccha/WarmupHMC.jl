@@ -143,6 +143,87 @@ try
         @test rs2.n_drawn == 160
         @test Matrix(rs2.draws)[:, 1:80] == Matrix(rs.draws)[:, 1:80]
     end
+
+    @testset "checkpoint kernel + explicit start position (override)" begin
+        dir = mktempdir()
+        adaptive_warmup_mcmc(Xoshiro(5), problem; checkpoint_dir = dir, n_draws = 40, progress = nothing)
+        cp = joinpath(dir, "cp_latest.jls")
+        # Default start (payload's saved position) vs. an explicit override start:
+        # warm-up moved off zeros, so the two chains differ.
+        rdef = stream_mcmc(cp, problem; path = tempname(), n_draws = 50)
+        rov  = stream_mcmc(cp, problem, q0; path = tempname(), n_draws = 50)
+        @test rov.n_drawn == 50 && all(isfinite, rov.draws)
+        @test Matrix(rdef.draws) != Matrix(rov.draws)
+        # Same explicit position + same explicit rng ⇒ identical; a different rng ⇒ not.
+        ra = stream_mcmc(cp, problem, q0; path = tempname(), n_draws = 50, rng = Xoshiro(123))
+        rb = stream_mcmc(cp, problem, q0; path = tempname(), n_draws = 50, rng = Xoshiro(123))
+        rc = stream_mcmc(cp, problem, q0; path = tempname(), n_draws = 50, rng = Xoshiro(999))
+        @test Matrix(ra.draws) == Matrix(rb.draws)
+        @test Matrix(rc.draws) != Matrix(ra.draws)
+    end
+
+    @testset "multi-chain (explicit kernel): per-chain files, chain == single-chain" begin
+        dir = mktempdir()
+        seeds  = [10, 20, 30]
+        starts = [fill(0.1, d), fill(-0.2, d), fill(0.05, d)]
+        rs = stream_mcmc([Xoshiro(s) for s in seeds], problem, starts;
+            path = dir, n_draws = 120, parallel = true, kw...)
+        @test rs isa AbstractVector && length(rs) == 3
+        for (i, s) in enumerate(seeds)
+            cp = joinpath(dir, "chain_$i")
+            @test isfile(cp) && isfile(cp * ".ring")
+            @test rs[i].n_drawn == 120
+            # each chain reproduces the equivalent single-chain run bit-for-bit
+            single = Matrix(stream_mcmc(Xoshiro(s), problem, starts[i];
+                path = tempname(), n_draws = 120, kw...).draws)
+            @test Matrix(rs[i].draws) == single
+        end
+    end
+
+    @testset "multi-chain: serial and parallel agree per chain" begin
+        starts = [fill(0.1, d), fill(-0.3, d)]
+        par = stream_mcmc([Xoshiro(7), Xoshiro(8)], problem, starts;
+            path = mktempdir(), n_draws = 90, parallel = true, kw...)
+        ser = stream_mcmc([Xoshiro(7), Xoshiro(8)], problem, starts;
+            path = mktempdir(), n_draws = 90, parallel = false, kw...)
+        for i in 1:2
+            @test Matrix(par[i].draws) == Matrix(ser[i].draws)
+        end
+    end
+
+    @testset "multi-chain: per-chain resume equals an uninterrupted fan-out" begin
+        starts = [fill(0.2, d), fill(-0.1, d), fill(0.0, d)]
+        mk() = [Xoshiro(i) for i in 1:3]
+        ref = stream_mcmc(mk(), problem, starts; path = mktempdir(), n_draws = 150, kw...)
+        dir = mktempdir()
+        stream_mcmc(mk(), problem, starts; path = dir, n_draws = 60, kw...)     # partial
+        res = stream_mcmc(mk(), problem, starts; path = dir, n_draws = 150, kw...)  # resume
+        for i in 1:3
+            @test res[i].n_drawn == 150
+            @test Matrix(res[i].draws) == Matrix(ref[i].draws)
+        end
+    end
+
+    @testset "multi-chain from a checkpoint: derived rngs, independent, resumable" begin
+        dir = mktempdir()
+        adaptive_warmup_mcmc(Xoshiro(5), problem; checkpoint_dir = dir, n_draws = 40, progress = nothing)
+        cp = joinpath(dir, "cp_latest.jls")
+        starts = [fill(0.3, d), fill(-0.3, d), fill(0.0, d)]
+        out = mktempdir()
+        rs = stream_mcmc(cp, problem, starts; path = out, n_draws = 80)
+        @test length(rs) == 3
+        for i in 1:3
+            @test rs[i].n_drawn == 80
+            @test isfile(joinpath(out, "chain_$i"))
+            @test all(isfinite, rs[i].draws)
+        end
+        @test Matrix(rs[1].draws) != Matrix(rs[2].draws)   # distinct starts + derived rngs
+        rs2 = stream_mcmc(cp, problem, starts; path = out, n_draws = 160)   # resume the fan-out
+        for i in 1:3
+            @test rs2[i].n_drawn == 160
+            @test Matrix(rs2[i].draws)[:, 1:80] == Matrix(rs[i].draws)[:, 1:80]
+        end
+    end
 finally
     LinearAlgebra.BLAS.set_num_threads(_blas_threads)
 end

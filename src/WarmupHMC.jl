@@ -13,7 +13,9 @@ using LogDensityProblems,
     Treebars
 import DynamicHMC,
     OnlineStatsBase,
-    Random
+    Random,
+    Mmap,
+    CRC32c
 using Serialization: serialize, deserialize
 # Only the reparametrization gradient needs AD, and it needs exactly one entry
 # point. Importing the name rather than the package keeps DifferentiationInterface's
@@ -22,7 +24,7 @@ using DifferentiationInterface: value_and_gradient, Constant
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
-    CandidateScoringPlan
+    CandidateScoringPlan, stream_mcmc, open_stream
 
 include("kwarg_validation.jl")
 include("MatrixExpressions.jl")
@@ -34,6 +36,7 @@ include("pooled_scale.jl")
 include("clustering.jl")
 include("cooperative_warmup_mcmc.jl")
 include("clustered_warmup_mcmc.jl")
+include("interruptible_mcmc.jl")
 include("progress.jl")
 
 end

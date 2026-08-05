@@ -70,3 +70,23 @@ function fd_gradient(f, x; h=1e-6)
     end
     g
 end
+
+# A capturing Treebars backend for the `stream_mcmc` progress test: flattens every
+# arg and kwarg VALUE from every progress call into `seen`, so a test can assert on
+# what the sampler emitted (Treebars stringifies the display types before they
+# reach the backend, so field values arrive as their `string(...)` forms). Reached
+# through `WarmupHMC.Treebars` so the test project needs no direct Treebars dep.
+const _Treebars = WarmupHMC.Treebars
+struct CaptureProgress
+    seen::Vector{Any}
+end
+CaptureProgress() = CaptureProgress(Any[])
+_capture!(p::CaptureProgress, args, kwargs) = begin
+    for a in args; push!(p.seen, a); end
+    for kv in kwargs; push!(p.seen, kv[1] => kv[2]); end
+end
+_Treebars.initialize_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); p)
+_Treebars.update_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); nothing)
+_Treebars.finalize_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); nothing)
+_Treebars.fail_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); nothing)
+Base.show(io::IO, ::_Treebars.ProgressNode{<:CaptureProgress}) = print(io, "CaptureProgress")

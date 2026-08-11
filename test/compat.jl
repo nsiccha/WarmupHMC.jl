@@ -54,6 +54,15 @@ const PROJECT = TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))
     @test "julia" in compat
 end
 
+@testset "Pathfinder compat includes the Turing 0.46 release" begin
+    compat = Pkg.Types.semver_spec(PROJECT["compat"]["Pathfinder"])
+
+    @test v"0.9.31" in compat
+    @test !(v"0.10.6" in compat)
+    @test v"0.10.7" in compat
+    @test !(v"0.11.0" in compat)
+end
+
 @testset "declared julia bound is not below any dependency's" begin
     ours = compat_lower_bound(PROJECT["compat"]["julia"])
     @test ours !== nothing

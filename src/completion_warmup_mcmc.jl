@@ -112,7 +112,9 @@ function _completion_batch(run_chain, n; min_completed, grace_seconds,
     chains = map(1:n) do i
         r = s.results[i]
         (; chain_index=i, status=s.statuses[i], finished_at_seconds=s.finished_at[i],
-           n_samples=isnothing(r) ? 0 : size(r.posterior_position, 2),
+           # A failed worker may have checkpointed draws before throwing; no
+           # finalized result exists from which to claim its sampled count.
+           n_samples=s.statuses[i] === :failed ? nothing : isnothing(r) ? 0 : size(r.posterior_position, 2),
            n_retained_samples=i in completed ? size(r.posterior_position, 2) : 0,
            error=s.errors[i])
     end
@@ -181,6 +183,7 @@ function _write_completion_summary(dir, completion)
     # Serialize exceptions as human-readable text in the portable JSON view.
     fields = Pair{String,Any}[string(k) => v for (k, v) in pairs(completion) if k !== :chains]
     push!(fields, "chain_statuses" => string.(getproperty.(completion.chains, :status)))
+    push!(fields, "chain_finished_at_seconds" => getproperty.(completion.chains, :finished_at_seconds))
     push!(fields, "chain_n_samples" => getproperty.(completion.chains, :n_samples))
     push!(fields, "chain_n_retained_samples" => getproperty.(completion.chains, :n_retained_samples))
     push!(fields, "chain_errors" => [isnothing(c.error) ? nothing : sprint(showerror, c.error)
@@ -218,8 +221,10 @@ Returns `(; results, completion)`. Only admitted full chains appear in
 `results`, each carrying the adaptive result fields plus original `chain_index`
 and actual `n_samples`. `completion` records policy, requested/started/completed/
 failed/omitted identities, all chain dispositions and captured errors, quorum
-and cutoff times (seconds since this invocation), and retained draw/divergence
-counts. Failed chains are also omitted. If the quorum is unmet, throws
+and cutoff times (seconds since worker scheduling begins), and retained
+draw/divergence counts. A failed chain's `n_samples` is `nothing` because it
+has no finalized result; its `n_retained_samples` is zero. Failed chains are
+also omitted. If the quorum is unmet, throws
 `WarmupHMC.CompletionQuorumError` with this same `outcome`; partial results are
 never silently reported as a successful fit.
 
@@ -252,15 +257,17 @@ function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         init=missing, checkpoint_dir=nothing, resume=false, overwrite=false,
         callback=nothing, kwargs...)
     n = length(rngs)
+    Base.require_one_based_indexing(rngs, lpdfs)
     n > 0 || throw(ArgumentError("At least one RNG is required."))
     length(lpdfs) == n || throw(DimensionMismatch("One density per RNG is required."))
     min_completed isa Integer && !(min_completed isa Bool) && 1 <= min_completed <= n ||
         throw(ArgumentError("`min_completed` must be an integer in 1:$n."))
     grace_seconds isa Real && isfinite(grace_seconds) && grace_seconds >= 0 ||
         throw(ArgumentError("`grace_seconds` must be finite and nonnegative."))
+    isfinite(Float64(grace_seconds)) || throw(ArgumentError("`grace_seconds` must fit in Float64 seconds."))
     n_draws isa Integer && !(n_draws isa Bool) && 0 < n_draws < typemax(Int) ||
         throw(ArgumentError("`n_draws` must be a finite positive integer."))
-    _check_kwargs(:adaptive_warmup_mcmc, kwargs)
+    _check_kwargs(:completion_warmup_mcmc, kwargs)
     inits = ensurevector(init, n)
     resume && overwrite && throw(ArgumentError("`resume` and `overwrite` are mutually exclusive."))
     terminal_path = isnothing(checkpoint_dir) ? nothing : joinpath(checkpoint_dir, "completion_terminal.jls")
@@ -315,7 +322,7 @@ function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         end
     end
     outcome = _completion_batch(run_chain, n; min_completed=Int(min_completed), grace_seconds, initial_results)
-    outcome = (; outcome.results, completion=merge(outcome.completion, (; attempt_directory)))
+    outcome = (; outcome.results, completion=merge(outcome.completion, (; n_draws, attempt_directory)))
     if outcome.completion.quorum_met && !isnothing(terminal_path)
         _atomic_serialize(terminal_path, (; schema_version=1, n_draws, outcome))
     end

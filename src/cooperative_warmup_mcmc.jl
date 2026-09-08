@@ -574,7 +574,9 @@ end
 # set of scalars and small arrays, and WarmupHMC is heading for General
 # registration where every added dep is a liability.
 
-_json_esc(s) = replace(string(s), '\\' => "\\\\", '"' => "\\\"", '\n' => "\\n")
+_json_esc(s) = replace(
+    replace(string(s), '\\' => "\\\\", '"' => "\\\"", '\n' => "\\n"),
+    r"[\x00-\x1f]" => c -> "\\u" * string(Int(only(c)); base=16, pad=4))
 _json_val(::Nothing) = "null"
 _json_val(x::Bool) = x ? "true" : "false"
 _json_val(x::Real) = isfinite(x) ? string(x) : "null"   # Inf/NaN are not JSON

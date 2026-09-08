@@ -109,6 +109,10 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     ),
 )
 
+_SAMPLER_KWARGS[:completion_warmup_mcmc] = (
+    :min_completed, :grace_seconds, _SAMPLER_KWARGS[:adaptive_warmup_mcmc]...,
+)
+
 """
 Keywords declared by `adaptive_warmup_mcmc`'s MULTI-CHAIN method but deliberately
 kept OUT of its accepted set. They are consumed by the multi-chain signature and

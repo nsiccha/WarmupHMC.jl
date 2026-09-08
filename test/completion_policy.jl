@@ -7,6 +7,16 @@
 _completion_fixture(i; n=5) = (; posterior_position=fill(Float64(i), 2, n),
     n_divergent_samples=i % 2)
 
+struct CompletionBimodal end
+LogDensityProblems.dimension(::CompletionBimodal) = 1
+LogDensityProblems.capabilities(::Type{CompletionBimodal}) = LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity_and_gradient(::CompletionBimodal, x)
+    a, b = -0.5 * (x[1] + 8)^2, -0.5 * (x[1] - 8)^2
+    l = WarmupHMC.logaddexp(a, b)
+    l - log(2) - log(2π) / 2, [exp(a-l) * (-x[1]-8) + exp(b-l) * (-x[1]+8)]
+end
+LogDensityProblems.logdensity(p::CompletionBimodal, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+
 @testset "controlled completion times and original identities" begin
     now = Ref(0.0)
     s = WarmupHMC._CompletionState(ReentrantLock(), () -> now[], 0.0, 2, 3.0,
@@ -86,6 +96,8 @@ end
     @test out.completion.omitted_chain_indices == [2]
     @test out.completion.n_completed == 3
     @test out.completion.n_failed == 1
+    @test isnothing(out.completion.chains[2].n_samples)
+    @test out.completion.chains[2].n_retained_samples == 0
     @test out.completion.stop_reason === :all_settled
     @test occursin("controlled chain 2 failure", sprint(showerror, out.completion.chains[2].error))
     @test out.completion.n_samples == sum(r -> size(r.posterior_position, 2), out.results)
@@ -99,6 +111,11 @@ end
     @test !unmet.completion.quorum_met
     @test unmet.completion.stop_reason === :quorum_unmet
     @test occursin("0 of 2", sprint(showerror, WarmupHMC.CompletionQuorumError(unmet)))
+end
+
+@testset "control characters in failure JSON" begin
+    @test WarmupHMC._json_val("tab\tnewline\nreturn\rnull\0quote\"slash\\") ==
+        "\"tab\\u0009newline\\nreturn\\u000dnull\\u0000quote\\\"slash\\\\\""
 end
 
 @testset "already-complete admission precedes scheduling" begin
@@ -134,6 +151,33 @@ end
     @test all(abs.(vec(mean(draws; dims=2)) .- p.mu) .< 0.2 .* p.sigma)
     @test all(abs.(vec(std(draws; dims=2)) ./ p.sigma .- 1) .< 0.2)
     @test out.completion.n_divergent_samples <= 3
+end
+
+@testset "mode-dependent runtime selection is not inferential validation" begin
+    # A symmetric two-mode density has half its mass on each side. These real
+    # adaptive draws stay in their well-separated initialized modes. Artificial
+    # completion delays below are conditioned on that mode: this is a controlled
+    # selection-bias counterexample, not a timing benchmark or a claim of mixing.
+    p = CompletionBimodal()
+    inits = [(; position=[x], squared_scale=Diagonal(ones(1))) for x in (-7.5, 7.5, -8.5, 8.5)]
+    full = adaptive_warmup_mcmc([Xoshiro(i+100) for i in 1:4], p;
+        init=inits, n_draws=100, n_evaluations=100, parallel=false)
+    @test all(r -> size(r.posterior_position, 2) == 100, full)
+    @test [mean(r.posterior_position) > 0 for r in full] == [false, true, false, true]
+    @test mean(hcat(getproperty.(full, :posterior_position)...) .> 0) == 0.5
+    selected = WarmupHMC._completion_batch(4; min_completed=2, grace_seconds=0.0) do i, stop
+        if mean(full[i].posterior_position) < 0
+            while !stop()
+                yield()
+            end
+        end
+        full[i], true
+    end
+    @test selected.completion.completed_chain_indices == [2, 4]
+    @test selected.completion.omitted_chain_indices == [1, 3]
+    @test mean(hcat(getproperty.(selected.results, :posterior_position)...) .> 0) == 1.0
+    @test selected.completion.n_samples == 200
+    @test occursin("bias inference", selected.completion.selection_warning)
 end
 
 @testset "safe checkpoints and immutable terminal selection" begin
@@ -194,6 +238,50 @@ end
             n_draws=41, min_completed=1, checkpoint_dir=dir, resume=true)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
             n_draws=40, min_completed=1, grace_seconds=1, checkpoint_dir=dir, resume=true)
+        # A crash between terminal serialization and JSON publication is
+        # recoverable from the immutable record, without sampling again.
+        summary = joinpath(out.completion.attempt_directory, "run_summary.json")
+        original_summary = read(summary)
+        rm(summary)
+        recovered = completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true)
+        @test recovered.completion == out.completion
+        @test read(summary) == original_summary
+        # Explicit overwrite starts a new run and clears the old selection.
+        fresh = completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
+            n_draws=40, checkpoint_dir=dir, overwrite=true)
+        @test fresh.completion.completed_chain_indices == [1, 2]
+        @test fresh.completion.n_samples == 80
+    end
+end
+
+@testset "real chain failures are terminal and do not satisfy quorum" begin
+    p = DiagGaussian([0.5, -1.0], [1.0, 1.5])
+    init = (; position=[0.1, 0.2], squared_scale=Matrix{Float64}(I, 2, 2))
+    mktempdir() do dir
+        # NamedTuple initialization avoids the initializer's intentional retry
+        # loop: this density throws at the actual strict gradient evaluation.
+        err = try
+            completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], [NaNProblem(2), p];
+                n_draws=40, checkpoint_dir=dir, init)
+        catch e
+            e
+        end
+        @test err isa WarmupHMC.CompletionQuorumError
+        @test err.outcome.completion.completed_chain_indices == [2]
+        @test err.outcome.completion.failed_chain_indices == [1]
+        @test err.outcome.completion.n_samples == 40
+        @test err.outcome.completion.n_completed == 1
+        @test err.outcome.completion.n_failed == 1
+        @test !isnothing(err.outcome.completion.chains[1].error)
+        @test isfile(joinpath(err.outcome.completion.attempt_directory, "run_summary.json"))
+        @test !isfile(joinpath(dir, "completion_terminal.jls"))
+        # The slot that failed before any checkpoint can initialize on resume;
+        # the already-complete second slot is restored without new transitions.
+        recovered = completion_warmup_mcmc([Xoshiro(1), Xoshiro(999)], p;
+            n_draws=40, checkpoint_dir=dir, init, resume=true)
+        @test recovered.completion.completed_chain_indices == [1, 2]
+        @test recovered.results[2].posterior_position == err.outcome.results[1].posterior_position
     end
 end
 
@@ -202,7 +290,7 @@ end
     for value in (0, 3, 1.5, true)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p; min_completed=value)
     end
-    for value in (-1.0, Inf, NaN)
+    for value in (-1.0, Inf, NaN, big"1e1000")
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; grace_seconds=value)
     end
     for value in (0, -1, typemax(Int), true, 1.5)

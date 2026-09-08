@@ -7,8 +7,9 @@ only worth reading if it says what it is *about*, so here is the whole of it.
 
 **Covered — a breaking change to any of these needs a major version:**
 
-* **The nine exported names** listed on this page
+* **The exported names** listed on this page
   ([`adaptive_warmup_mcmc`](@ref), [`cooperative_warmup_mcmc`](@ref),
+  [`completion_warmup_mcmc`](@ref), [`stream_mcmc`](@ref), [`open_stream`](@ref),
   [`clustered_warmup_mcmc`](@ref), [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
@@ -43,6 +44,9 @@ change is breaking.
 ```@docs
 WarmupHMC.adaptive_warmup_mcmc
 WarmupHMC.cooperative_warmup_mcmc
+WarmupHMC.completion_warmup_mcmc
+WarmupHMC.stream_mcmc
+WarmupHMC.open_stream
 WarmupHMC.clustered_warmup_mcmc
 WarmupHMC.resume_warmup_mcmc
 ```

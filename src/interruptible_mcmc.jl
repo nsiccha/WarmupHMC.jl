@@ -667,6 +667,16 @@ stream_mcmc(rngs::AbstractVector, lpdf, positions::AbstractVector{<:AbstractVect
     end
 end
 
+# Read-only mmap of an existing sidecar, sliced to its first `n` columns; the
+# array's last dimension is `n_cols`. `nothing` if the file is absent (a run
+# created before the sidecar existed).
+_read_sidecar(path, ::Type{T}, lead_dims, n_cols, n) where {T} = begin
+    isfile(path) || return nothing
+    dims = (lead_dims..., n_cols)
+    arr = Mmap.mmap(open(path, "r"), Array{T,length(dims)}, dims)
+    @view arr[ntuple(_ -> Colon(), length(lead_dims))..., 1:n]
+end
+
 """
     open_stream(path) -> NamedTuple
     open_stream(path, lpdf; model=false) -> NamedTuple
@@ -686,16 +696,6 @@ get constrained model-frame draws instead (`draws` is then a fresh
 `model=false` the `lpdf` is used only to check the dimension. Throws if `path`
 has no readable safe ring.
 """
-# Read-only mmap of an existing sidecar, sliced to its first `n` columns; the
-# array's last dimension is `n_cols`. `nothing` if the file is absent (a run
-# created before the sidecar existed).
-_read_sidecar(path, ::Type{T}, lead_dims, n_cols, n) where {T} = begin
-    isfile(path) || return nothing
-    dims = (lead_dims..., n_cols)
-    arr = Mmap.mmap(open(path, "r"), Array{T,length(dims)}, dims)
-    @view arr[ntuple(_ -> Colon(), length(lead_dims))..., 1:n]
-end
-
 open_stream(path, lpdf=nothing; model::Bool=false) = begin
     ring_path = _ring_path(path)
     r = _ring_read(ring_path)

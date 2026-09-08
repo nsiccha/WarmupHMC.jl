@@ -19,29 +19,30 @@ LogDensityProblems.logdensity(p::CompletionBimodal, x) = first(LogDensityProblem
 
 @testset "controlled completion times and original identities" begin
     now = Ref(0.0)
-    s = WarmupHMC._CompletionState(ReentrantLock(), () -> now[], 0.0, 2, 3.0,
-        nothing, nothing, fill(:pending, 5), Any[nothing for _ in 1:5],
+    s = WarmupHMC._CompletionState(ReentrantLock(), () -> now[], 0.0, 2,
+        nothing, fill(:pending, 5), Any[nothing for _ in 1:5],
         Any[nothing for _ in 1:5], Union{Nothing,Float64}[nothing for _ in 1:5])
     # Finishing out of order preserves IDs; quorum is based on full results.
     complete = (i, stop) -> (_completion_fixture(i), true)
     now[] = 1.0
     WarmupHMC._completion_worker!(complete, s, 3)
     @test isnothing(s.quorum_at)
-    now[] = 4.0
-    WarmupHMC._completion_worker!(complete, s, 1)
-    @test s.quorum_at == 4.0
-    @test s.cutoff_at == 7.0
-    now[] = 6.0
-    WarmupHMC._completion_worker!(complete, s, 4)
-    @test s.statuses[4] === :completed
-    # A worker already running across the deadline finishes but is omitted.
-    WarmupHMC._completion_worker!(s, 2) do i, stop
-        now[] = 7.0
+    # Chain 1 is running when chain 4 reaches quorum. Its final round can
+    # finish arbitrarily later: completion is still admitted, without a timer.
+    WarmupHMC._completion_worker!(s, 1) do i, stop
+        @test !stop()
+        now[] = 4.0
+        WarmupHMC._completion_worker!(complete, s, 4)
+        @test s.quorum_at == 4.0
+        now[] = 600.0
         @test stop()
         _completion_fixture(i), true
     end
-    @test s.statuses[2] === :completed_after_cutoff
-    @test s.results[2].posterior_position == fill(2.0, 2, 5)
+    @test s.statuses[1] === :completed
+    @test s.finished_at[1] == 600.0
+    @test s.quorum_at == 4.0
+    WarmupHMC._completion_worker!(complete, s, 2)
+    @test s.statuses[2] === :not_started
     WarmupHMC._completion_worker!(complete, s, 5)
     @test s.statuses[5] === :not_started
     @test findall(==(:completed), s.statuses) == [1, 3, 4]
@@ -52,7 +53,7 @@ end
     release = [Channel{Nothing}(1) for _ in 1:3]
     cleaned = Threads.Atomic{Int}(0)
     slow_finished = Threads.Atomic{Bool}(false)
-    batch = Threads.@spawn WarmupHMC._completion_batch(3; min_completed=1, grace_seconds=0.0) do i, stop
+    batch = Threads.@spawn WarmupHMC._completion_batch(3; min_completed=1) do i, stop
         put!(entered, i)
         take!(release[i])
         try
@@ -64,7 +65,10 @@ end
             while !stop()
                 yield()
             end
-            i == 3 && (slow_finished[] = true)
+            if i == 3
+                slow_finished[] = true
+                return _completion_fixture(i), true
+            end
             _completion_fixture(i; n=2), false
         finally
             Threads.atomic_add!(cleaned, 1)
@@ -75,22 +79,32 @@ end
     out = fetch(batch)
     @test cleaned[] == 3
     @test slow_finished[]
-    @test out.completion.completed_chain_indices == [2]
-    @test out.completion.omitted_chain_indices == [1, 3]
+    @test out.completion.completed_chain_indices == [2, 3]
+    @test out.completion.omitted_chain_indices == [1]
     @test out.completion.n_started == 3
-    @test only(out.results).chain_index == 2
-    @test out.completion.n_samples == 5
-    @test out.completion.n_divergent_samples == 0
-    @test out.completion.stop_reason === :grace_expired
-    @test all(c -> c.n_retained_samples == (c.chain_index == 2 ? 5 : 0), out.completion.chains)
+    @test getproperty.(out.results, :chain_index) == [2, 3]
+    @test out.completion.n_samples == 10
+    @test out.completion.n_divergent_samples == 1
+    @test out.completion.stop_reason === :quorum_reached
+    @test out.completion.stop_policy === :finish_current_round
+    @test out.completion.stop_requested_at_seconds == out.completion.quorum_at_seconds
+    @test !haskey(out.completion, :grace_seconds)
+    @test !haskey(out.completion, :cutoff_at_seconds)
+    @test all(c -> c.n_retained_samples == (c.chain_index in (2, 3) ? 5 : 0), out.completion.chains)
 end
 
-@testset "grace admits extra workers, failures stay explicit" begin
-    # All clocks are zero: an arbitrarily slow worker remains inside grace.
-    out = WarmupHMC._completion_batch(4; min_completed=2, grace_seconds=1.0, clock=() -> 0.0) do i, stop
+@testset "final rounds admit extra workers, failures stay explicit" begin
+    entered = Channel{Int}(4)
+    release = Channel{Nothing}(4)
+    batch = Threads.@spawn WarmupHMC._completion_batch(4; min_completed=2) do i, stop
+        put!(entered, i)
+        take!(release)
         i == 2 && error("controlled chain 2 failure")
         _completion_fixture(i), true
     end
+    @test sort([take!(entered) for _ in 1:4]) == [1, 2, 3, 4]
+    foreach(_ -> put!(release, nothing), 1:4)
+    out = fetch(batch)
     @test out.completion.completed_chain_indices == [1, 3, 4]
     @test out.completion.failed_chain_indices == [2]
     @test out.completion.omitted_chain_indices == [2]
@@ -98,12 +112,12 @@ end
     @test out.completion.n_failed == 1
     @test isnothing(out.completion.chains[2].n_samples)
     @test out.completion.chains[2].n_retained_samples == 0
-    @test out.completion.stop_reason === :all_settled
+    @test out.completion.stop_reason === :quorum_reached
     @test occursin("controlled chain 2 failure", sprint(showerror, out.completion.chains[2].error))
     @test out.completion.n_samples == sum(r -> size(r.posterior_position, 2), out.results)
     @test out.completion.n_divergent_samples == sum(r -> r.n_divergent_samples, out.results)
 
-    unmet = WarmupHMC._completion_batch(2; min_completed=2, grace_seconds=0.0) do i, stop
+    unmet = WarmupHMC._completion_batch(2; min_completed=2) do i, stop
         i == 1 && error("failed initialization")
         _completion_fixture(i; n=0), false
     end
@@ -120,9 +134,9 @@ end
 
 @testset "already-complete admission precedes scheduling" begin
     initial = Dict(3 => _completion_fixture(3), 1 => _completion_fixture(1))
-    out = WarmupHMC._completion_batch(4; min_completed=1, grace_seconds=0.0,
+    out = WarmupHMC._completion_batch(4; min_completed=1,
         initial_results=initial) do i, stop
-        error("No incomplete worker should start after zero grace.")
+        error("No incomplete worker should start after quorum.")
     end
     @test out.completion.completed_chain_indices == [1, 3]
     @test out.completion.started_chain_indices == [1, 3]
@@ -156,7 +170,7 @@ end
 @testset "mode-dependent runtime selection is not inferential validation" begin
     # A symmetric two-mode density has half its mass on each side. These real
     # adaptive draws stay in their well-separated initialized modes. Artificial
-    # completion delays below are conditioned on that mode: this is a controlled
+    # round delays below are conditioned on that mode: this is a controlled
     # selection-bias counterexample, not a timing benchmark or a claim of mixing.
     p = CompletionBimodal()
     inits = [(; position=[x], squared_scale=Diagonal(ones(1))) for x in (-7.5, 7.5, -8.5, 8.5)]
@@ -165,11 +179,15 @@ end
     @test all(r -> size(r.posterior_position, 2) == 100, full)
     @test [mean(r.posterior_position) > 0 for r in full] == [false, true, false, true]
     @test mean(hcat(getproperty.(full, :posterior_position)...) .> 0) == 0.5
-    selected = WarmupHMC._completion_batch(4; min_completed=2, grace_seconds=0.0) do i, stop
+    selected = WarmupHMC._completion_batch(4; min_completed=2) do i, stop
         if mean(full[i].posterior_position) < 0
             while !stop()
                 yield()
             end
+            # This mode's current round reaches only half the draw target;
+            # a full result would have to be included even after quorum.
+            return merge(full[i], (; posterior_position=full[i].posterior_position[:, 1:50],
+                posterior_gradient=full[i].posterior_gradient[:, 1:50])), false
         end
         full[i], true
     end
@@ -206,8 +224,12 @@ end
             @test !haskey(cp, :min_completed)
             @test !haskey(cp, :grace_seconds)
         end
+        # Legacy run manifests wrap the same adaptive checkpoint payloads.
+        # An unfinished legacy run switches to the current round-stop policy.
+        WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_manifest.jls"),
+            (; schema_version=1, sampler=:completion, n_requested=2))
         # Complete chain 2 separately. Resume must admit it before any worker
-        # has a chance to initialize chain 1, even with zero grace.
+        # has a chance to initialize chain 1.
         ordinary = adaptive_warmup_mcmc(Xoshiro(999), p;
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_2"), resume=true)
         out = completion_warmup_mcmc([Xoshiro(999), Xoshiro(999)], p;
@@ -216,11 +238,17 @@ end
         @test out.completion.omitted_chain_indices == [1]
         @test out.results[1].posterior_position == ordinary.posterior_position
         @test out.completion.chains[1].status === :not_started
+        @test out.completion.schema_version == 2
+        @test out.completion.stop_policy === :finish_current_round
         cp1 = read(joinpath(dir, "chain_1", "cp_latest.jls"))
         @test isfile(joinpath(dir, "completion_terminal.jls"))
         @test isfile(joinpath(out.completion.attempt_directory, "run_summary.json"))
         @test occursin("\"completed_chain_indices\":[2]",
             read(joinpath(out.completion.attempt_directory, "run_summary.json"), String))
+        @test occursin("\"stop_policy\":\"finish_current_round\"",
+            read(joinpath(out.completion.attempt_directory, "run_summary.json"), String))
+        @test !occursin("grace_seconds",
+            read(joinpath(out.completion.attempt_directory, "run_manifest.json"), String))
         # Advance the omitted checkpoint: reopening must still preserve the
         # recorded one-chain selection, draws, times, counts and original IDs.
         adaptive_warmup_mcmc(Xoshiro(999), p;
@@ -247,6 +275,28 @@ end
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true)
         @test recovered.completion == out.completion
         @test read(summary) == original_summary
+        # A schema-1 terminal fixture retains the OLD selection semantics,
+        # including a full chain omitted after cutoff. It must not be silently
+        # reinterpreted under the new policy when reopened.
+        legacy_fields = (; (k => v for (k, v) in pairs(out.completion)
+            if k ∉ (:schema_version, :stop_policy, :stop_requested_at_seconds))...)
+        legacy_chains = copy(out.completion.chains)
+        legacy_chains[1] = merge(legacy_chains[1], (; status=:completed_after_cutoff,
+            finished_at_seconds=4.0, n_samples=40))
+        legacy = (; out.results, completion=merge(legacy_fields, (; grace_seconds=3.0,
+            cutoff_at_seconds=3.0, quorum_at_seconds=0.0, elapsed_seconds=4.0,
+            started_chain_indices=[1, 2], n_started=2, stop_reason=:grace_expired,
+            chains=legacy_chains)))
+        WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_terminal.jls"),
+            (; schema_version=1, n_draws=40, outcome=legacy))
+        rm(summary)
+        old = completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true,
+            callback=(s, stage) -> error("Legacy terminal reopen must not sample"))
+        @test old.completion == legacy.completion
+        @test getproperty.(old.results, :chain_index) == [2]
+        @test old.results[1].posterior_position == out.results[1].posterior_position
+        @test occursin("\"grace_seconds\":3.0", read(summary, String))
         # Explicit overwrite starts a new run and clears the old selection.
         fresh = completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
             n_draws=40, checkpoint_dir=dir, overwrite=true)
@@ -290,9 +340,10 @@ end
     for value in (0, 3, 1.5, true)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p; min_completed=value)
     end
-    for value in (-1.0, Inf, NaN, big"1e1000")
+    for value in (0.0, 30.0)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; grace_seconds=value)
     end
+    @test :grace_seconds ∉ WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
     for value in (0, -1, typemax(Int), true, 1.5)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; n_draws=value)
     end

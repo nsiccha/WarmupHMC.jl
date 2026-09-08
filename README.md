@@ -28,7 +28,7 @@ read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
 `CandidateScoringPlan` for steering candidate adaptation. The opt-in
 `completion_warmup_mcmc` runs independent adaptive chains with a completion
-quorum and grace period.
+quorum and finishes each running chain's current round before returning.
 
 The main method takes a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments:
 ```julia
@@ -80,16 +80,19 @@ Nothing here measures whether the draws are correct.
 ```julia
 using Random, WarmupHMC
 out = completion_warmup_mcmc([Xoshiro(i) for i in 1:16], problem;
-    n_draws=1000, min_completed=12, grace_seconds=30,
+    n_draws=1000, min_completed=12,
     checkpoint_dir="completion-run")
 chain_ids = [r.chain_index for r in out.results]
 draw_count = out.completion.n_samples
 ```
 
-The twelfth completed chain starts the grace period. All full chains admitted
-before the cutoff are returned, with their original identities. Grace is a
-**stop-request time**: unfinished workers stop at checkpoint boundaries and are
-joined before return, so initialization or a long window can delay the return.
+The twelfth completed chain calls the last round: each unfinished worker
+finishes its current initialization or sampling window, then stops at the
+checkpoint boundary. Every chain that completes its requested draws is
+included, even if it finishes during shutdown. There is no grace period or
+admission cutoff. Workers are joined before return, so initialization or a
+long window can still delay the return. All returned chains carry their
+original identities.
 Warmup windows do not count as completed production draws. Chain failures and
 omissions are explicit in `out.completion`; an unmet quorum throws
 `WarmupHMC.CompletionQuorumError` carrying the settled `outcome`.
@@ -107,6 +110,10 @@ selection, even if omitted checkpoints have since advanced. Changing the
 terminal draw target or policy requires a new run. Each invocation records its
 policy and terminal counts under the returned `completion.attempt_directory`;
 the full contract is in `?completion_warmup_mcmc`.
+
+The former `grace_seconds` keyword is removed. Previously finished runs still
+reopen their saved selections and metadata unchanged (omit that keyword);
+unfinished legacy runs resume with the finish-current-round policy.
 
 ## Stability
 

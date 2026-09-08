@@ -25,7 +25,7 @@ using DifferentiationInterface: value_and_gradient, Constant
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
-    CandidateScoringPlan, stream_mcmc, open_stream
+    CandidateScoringPlan, stream_mcmc, open_stream, completion_warmup_mcmc
 
 include("kwarg_validation.jl")
 include("MatrixExpressions.jl")
@@ -36,6 +36,7 @@ include("adaptive_warmup_mcmc.jl")
 include("pooled_scale.jl")
 include("clustering.jl")
 include("cooperative_warmup_mcmc.jl")
+include("completion_warmup_mcmc.jl")
 include("clustered_warmup_mcmc.jl")
 include("interruptible_mcmc.jl")
 include("progress.jl")

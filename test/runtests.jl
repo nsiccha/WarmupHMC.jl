@@ -51,6 +51,9 @@ end
     @testset "adaptive_warmup_mcmc (end-to-end)" begin
         include("adaptive_warmup.jl")
     end
+    @testset "completion_warmup_mcmc" begin
+        include("completion_policy.jl")
+    end
     @testset "interruptible stream_mcmc" begin
         include("interruptible.jl")
     end

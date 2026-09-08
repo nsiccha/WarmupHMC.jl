@@ -26,7 +26,9 @@ Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
 read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
-`CandidateScoringPlan` for steering candidate adaptation.
+`CandidateScoringPlan` for steering candidate adaptation. The opt-in
+`completion_warmup_mcmc` runs independent adaptive chains with a completion
+quorum and grace period.
 
 The main method takes a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments:
 ```julia
@@ -72,6 +74,39 @@ not move. Wall-clock is a different story, and the page says so out of its own
 rows rather than in a caveat: its verdict changes between repeats of the *same*
 seeds, because the timing noise is wider than the band used to call a winner.
 Nothing here measures whether the draws are correct.
+
+## Completion quorum (opt-in)
+
+```julia
+using Random, WarmupHMC
+out = completion_warmup_mcmc([Xoshiro(i) for i in 1:16], problem;
+    n_draws=1000, min_completed=12, grace_seconds=30,
+    checkpoint_dir="completion-run")
+chain_ids = [r.chain_index for r in out.results]
+draw_count = out.completion.n_samples
+```
+
+The twelfth completed chain starts the grace period. All full chains admitted
+before the cutoff are returned, with their original identities. Grace is a
+**stop-request time**: unfinished workers stop at checkpoint boundaries and are
+joined before return, so initialization or a long window can delay the return.
+Warmup windows do not count as completed production draws. Chain failures and
+omissions are explicit in `out.completion`; an unmet quorum throws
+`WarmupHMC.CompletionQuorumError` carrying the settled `outcome`.
+
+**Selecting faster chains can bias inference** when runtime depends on sampled
+states or modes. R-hat, bulk/tail ESS and divergences describe only retained
+draws and cannot rule out this bias. Report the policy, omissions and actual
+returned counts. The ordinary samplers retain their existing behavior.
+
+Checkpoints keep original `chain_<i>` identities and adaptive resume state.
+An interrupted run can resume with the same ordered RNG/density slots;
+already-complete checkpoints are admitted before scheduling. Reopening a
+successfully finished run with `resume=true` returns its recorded outcome and
+selection, even if omitted checkpoints have since advanced. Changing the
+terminal draw target or policy requires a new run. Each invocation records its
+policy and terminal counts under the returned `completion.attempt_directory`;
+the full contract is in `?completion_warmup_mcmc`.
 
 ## Stability
 

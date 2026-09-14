@@ -59,7 +59,7 @@ back. A silent fallback would resume a different problem than the one recorded
 while looking like a successful restore.
 
 See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
-[candidate_scoring_losses](@ref) for the criterion and the supported ways to
+[`candidate_scoring_losses`](@ref) for the criterion and the supported ways to
 inspect its loss curve. See also
 [Adaptive centering at fixed `c`](@ref) for a measured comparison of a
 strict-online scoring proxy against an exact-score reference.

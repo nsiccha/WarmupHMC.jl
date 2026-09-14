@@ -17,7 +17,8 @@
     # Returned NamedTuple carries the documented fields.
     for f in (:initial_position, :halo_position, :halo_gradient, :posterior_position,
               :posterior_gradient, :ess, :scale_options, :active_transformation,
-              :stepsize, :total_evaluation_counter, :n_divergent_samples,
+              :stepsize, :total_evaluation_counter, :sampling_evaluation_counter,
+              :n_divergent_samples,
               :position_and_gradient, :scale_changes)
         @test hasproperty(result, f)
     end

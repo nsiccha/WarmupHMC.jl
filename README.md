@@ -26,7 +26,9 @@ Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
 read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
-`CandidateScoringPlan` for steering candidate adaptation. The opt-in
+`CandidateScoringPlan` for steering candidate adaptation, with
+`candidate_scoring_losses` to inspect or retrospectively recompute its loss
+curve. The opt-in
 `completion_warmup_mcmc` runs independent adaptive chains with a completion
 quorum and finishes each running chain's current round before returning.
 

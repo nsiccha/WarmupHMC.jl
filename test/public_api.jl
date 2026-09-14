@@ -44,6 +44,7 @@ const PUBLIC_EXPORTS = [
     :open_stream,
     # reparametrization types
     :CandidateScoringPlan,
+    :candidate_scoring_losses,
     :IndexedReparametrization,
     :PartiallyCentered,
     :Reparametrization,

@@ -81,7 +81,7 @@
         @testset "paths use the stable chain index; nothing disables" begin
             @test _chain_checkpoint_paths(nothing, chain) === nothing
             d, w, l = _chain_checkpoint_paths("/tmp/run", chain)
-            @test d == "/tmp/run/chain_3"
+            @test d == joinpath("/tmp/run", "chain_3")
             @test basename(w) == "cp_window_$(chain.outer_counter).jls"
             @test basename(l) == "cp_latest.jls"
         end

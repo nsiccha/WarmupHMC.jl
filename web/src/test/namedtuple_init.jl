@@ -32,6 +32,11 @@
                 Matrix(1.0I, dimension, dimension) .+ 0.1,
             )
             for squared_scale in squared_scales
+                covariance = squared_scale isa AbstractVector ?
+                             Matrix(Diagonal(squared_scale)) : Matrix(squared_scale)
+                scale = WarmupHMC._initial_pathfinder_scale(covariance, dimension)
+                @test Matrix(scale.m1 * scale.m1') ≈ covariance
+
                 result = adaptive_warmup_mcmc(
                     Xoshiro(1), lpdf;
                     init=(; position=zeros(dimension), squared_scale),

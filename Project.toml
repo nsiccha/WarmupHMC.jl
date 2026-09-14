@@ -27,6 +27,7 @@ Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
 
 [compat]
 CRC32c = "1.10"
+Dates = "1.10"
 DifferentiationInterface = "0.6, 0.7"
 Distributions = "0.25"
 DynamicHMC = "3.6"

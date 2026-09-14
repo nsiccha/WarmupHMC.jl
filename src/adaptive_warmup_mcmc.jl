@@ -2,8 +2,14 @@ _initial_diagonal_scale(squared_scale::AbstractMatrix) =
     Diagonal(sqrt.(Float64.(diag(squared_scale))))
 
 function _initial_pathfinder_scale(squared_scale::AbstractMatrix, dimension)
-    decomposition = factorize(squared_scale)
-    factor = decomposition isa Diagonal ? _initial_diagonal_scale(squared_scale) : decomposition.L
+    # `factorize(::Matrix)` may return a `BunchKaufman` decomposition for a
+    # symmetric covariance. That decomposition can be upper-factorized and has
+    # no `.L` property, so selecting `.L` from the generic factorization is not
+    # a portable way to recover a covariance square root. This value is a
+    # squared scale by contract: ask for its Cholesky factor explicitly.
+    factor = squared_scale isa Diagonal ?
+             _initial_diagonal_scale(squared_scale) :
+             cholesky(Symmetric(squared_scale)).L
     MatrixFactorization(factor, Diagonal(ones(dimension)))
 end
 

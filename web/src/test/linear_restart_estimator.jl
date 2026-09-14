@@ -132,9 +132,10 @@ end
                nonlinear_changed=true),
         )
             candidate = (; diagonal=Diagonal([2.0, 3.0]))
-            @test !WarmupHMC._apply_linear_metric_fallback!(
+            fallback_applied = WarmupHMC._apply_linear_metric_fallback!(
                 candidate, [2.0, 3.0], [0.5, 4.0]; kwargs...,
             )
+            @test !fallback_applied
             @test candidate.diagonal.diag == [2.0, 3.0]
         end
     end

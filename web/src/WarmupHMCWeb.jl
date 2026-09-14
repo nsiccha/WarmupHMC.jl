@@ -146,7 +146,12 @@ benchmark_load(key) = BenchmarkEvidence.benchmark_load(key)
 
     @cached posterior_names = sort([
         Symbol(name) for name in PosteriorDB.posterior_names(pdb)
-        if !isnothing(PosteriorDB.implementation(PosteriorDB.model(PosteriorDB.posterior(pdb, name)), "stan"))
+        # `implementation(model, "stan")` is a lookup, not a predicate: it
+        # throws `KeyError` for a model without Stan code. The catalog exposes
+        # the supported predicate through `implementation_names`.
+        if "stan" in PosteriorDB.implementation_names(
+            PosteriorDB.model(PosteriorDB.posterior(pdb, name)),
+        )
     ])
 
     # === Recording (mirrors AlgebraOfVegaGallery §2b canonical form) ===
@@ -270,12 +275,10 @@ benchmark_load(key) = BenchmarkEvidence.benchmark_load(key)
 
             @cached v"1" value = begin
                 # Harness choice, NOT a recommendation: ForwardDiff is already
-                # here transitively via Pathfinder, and no reverse-mode backend
-                # is loadable in this env. The documented backend for a
-                # ReparametrizedProblem is reverse mode, and needs BOTH
-                # `mode=set_runtime_activity(Reverse)` and
-                # `function_annotation=Const`; a bare `AutoEnzyme()` throws on
-                # the first gradient — see `docs/src/reparametrization.md`.
+                # here transitively via Pathfinder, while loading Enzyme would
+                # add its compile cost to this interactive app. The documented
+                # production backend is a bare `AutoEnzyme()`; this route uses
+                # ForwardDiff only to keep the web harness lightweight.
                 rp   = ReparametrizedProblem(spec, problem, AutoForwardDiff())
                 init = WarmupHMC.initialize_mcmc(problem, missing; rng, progress=nothing)
                 WarmupHMC.count_and_time(rp) do cp

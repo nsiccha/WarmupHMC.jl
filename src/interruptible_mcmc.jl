@@ -390,6 +390,9 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(@view samples[:, n_written]); strict=true)
         ring = _StreamRing(open(ring_path, "r+"), filesize(ring_path) ÷ 2, 1 - last_slot, seq + one(UInt64))
     else
+        # Windows refuses to truncate an mmap that is awaiting finalization.
+        # An explicit overwrite may follow a discarded result immediately.
+        isfile(samples_path) && GC.gc()
         rng = seed_rng
         q0 = seed_position isa DynamicHMC.EvaluatedLogDensity ? seed_position.q : seed_position
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(float.(q0)); strict=true)

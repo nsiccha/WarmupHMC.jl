@@ -59,6 +59,8 @@ back. A silent fallback would resume a different problem than the one recorded
 while looking like a successful restore.
 
 See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
+[candidate_scoring_losses](@ref) for the criterion and the supported ways to
+inspect its loss curve. See also
 [Adaptive centering at fixed `c`](@ref) for a measured comparison of a
 strict-online scoring proxy against an exact-score reference.
 """
@@ -738,6 +740,26 @@ reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); 
 _mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
 _mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
 
+function _candidate_scoring_loss_row(pair_number, index, candidate, accumulator, groups)
+    (; pair_number,
+       index,
+       candidate=candidate.c,
+       loss=groups > 2 ? reparametrization_loss(accumulator) : missing,
+       groups,
+       effective_n=iszero(accumulator.weight2) ? missing : effective_n(accumulator))
+end
+
+function _candidate_scoring_losses((;pairs)::OnlineReparametrizer)
+    [
+        _candidate_scoring_loss_row(
+            pair_number, index, candidate, accumulator,
+            OnlineStatsBase.nobs(candidates),
+        )
+        for (pair_number, (index, candidates)) in enumerate(pairs)
+        for (candidate, accumulator) in candidates.pairs
+    ]
+end
+
 reparametrization_candidates(::PartiallyCentered; n=11) = Iterators.map(PartiallyCentered, range(0, 1, n))
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
 OnlineReparametrizer(source::PartiallyCentered, xg...;
@@ -868,6 +890,112 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
             reparametrizer(lpdf); accumulator=WeightedReparametrizationLoss,
         ),
     )
+end
+
+"""
+    candidate_scoring_losses(payload::NamedTuple)
+    candidate_scoring_losses(lpdf, positions, gradients; weights=nothing)
+
+Return one row per reparametrized coordinate and candidate, with fields
+`pair_number`, `index`, `candidate`, `loss`, `groups`, and `effective_n`.
+`candidate` is the candidate partial-centering value on the fixed
+`0.0:0.1:1.0` grid. `loss` is `missing` until more than two evidence groups
+have accumulated, matching the sampler's selection threshold.
+
+For finite, nondegenerate observations, the default candidate objective is
+
+```
+L = w₁ * (-mean(Δlog|J|) + log(var(position)) / 2) +
+    (1 - w₁) * cor(position, gradient),       w₁ = 0
+```
+
+so the selected candidate minimizes weighted position-gradient correlation.
+Writing `W = sum(wᵢ)`, `q̄ = sum(wᵢqᵢ) / W`, and
+`ḡ = sum(wᵢgᵢ) / W`, that correlation is exactly
+
+```
+sum(wᵢ * (qᵢ - q̄) * (gᵢ - ḡ)) /
+sqrt(sum(wᵢ * (qᵢ - q̄)^2) * sum(wᵢ * (gᵢ - ḡ)^2))
+```
+
+The log-Jacobian/log-variance term is present but has zero default weight; a
+`CandidateScoringPlan` changes how candidate observations are constructed, not
+this criterion. WarmupHMC does not reject nonfinite candidate observations or
+losses. The implementation evaluates both displayed terms before applying the
+weights, so degenerate or nonfinite input can produce a nonfinite loss even at
+`w₁ = 0`; this function returns that value unchanged.
+
+The `payload` method reads the serialized `nonlinear_recorder` accumulator from
+an adaptive or cooperative checkpoint. It is the actual pending online curve
+since the most recent nonlinear reset, not a history: after a restarting window
+selects a candidate, the recorder is reset before that boundary's checkpoint is
+written. Payloads without that recorder, including clustered checkpoints, raise
+an `ArgumentError`.
+
+The matrix method deliberately recomputes a retrospective curve. `positions`
+and `gradients` must have identical `dimension × observations` shapes and be in
+the current sampler/source coordinate frame. The attached
+`CandidateScoringPlan`, when present, prepares its own candidate frame from
+each column. Each positive-weight column counts as one evidence group; zero
+weights are ignored and negative weights raise `ArgumentError`. This is the
+same scorer and criterion, but it is the recorded warm-up curve only if the
+caller supplies the exact online leaf stream, weights, and group boundaries.
+Ordinary saved halo or posterior matrices do not contain those boundaries, so
+their curves are retrospective diagnostics.
+"""
+candidate_scoring_losses(recorder::NonlinearRecorder) =
+    _candidate_scoring_losses(recorder.online)
+
+function candidate_scoring_losses(payload::NamedTuple)
+    hasproperty(payload, :nonlinear_recorder) || throw(ArgumentError(
+        "checkpoint payload has no nonlinear_recorder candidate-scoring state",
+    ))
+    recorder = payload.nonlinear_recorder
+    recorder isa NonlinearRecorder || throw(ArgumentError(
+        "checkpoint nonlinear_recorder has unsupported type $(typeof(recorder))",
+    ))
+    candidate_scoring_losses(recorder)
+end
+
+function candidate_scoring_losses(lpdf,
+                                  positions::AbstractMatrix,
+                                  gradients::AbstractMatrix;
+                                  weights::Union{Nothing,AbstractVector}=nothing)
+    size(positions) == size(gradients) || throw(DimensionMismatch(
+        "positions and gradients must have identical shapes; got " *
+        "$(size(positions)) and $(size(gradients))",
+    ))
+    dimension = LogDensityProblems.dimension(lpdf)
+    size(positions, 1) == dimension || throw(DimensionMismatch(
+        "positions and gradients must have $dimension rows; got $(size(positions, 1))",
+    ))
+    n_observations = size(positions, 2)
+    if !isnothing(weights)
+        length(weights) == n_observations || throw(DimensionMismatch(
+            "weights must have $n_observations entries; got $(length(weights))",
+        ))
+    end
+
+    ir = reparametrizer(lpdf)
+    online = OnlineReparametrizer(
+        ir; accumulator=WeightedReparametrizationLoss,
+    )
+    plan = candidate_scoring_plan(lpdf)
+    if isnothing(weights)
+        for (position, gradient) in zip(eachcol(positions), eachcol(gradients))
+            OnlineStatsBase.fit!(
+                ir, online, position, gradient; scoring_plan=plan,
+            )
+        end
+    else
+        for (position, gradient, weight) in
+            zip(eachcol(positions), eachcol(gradients), weights)
+            OnlineStatsBase.fit!(
+                ir, online, position, gradient; weight, scoring_plan=plan,
+            )
+        end
+    end
+    _candidate_scoring_losses(online)
 end
 
 _uses_online_candidate_scoring(::DirectCandidateScoring) = false

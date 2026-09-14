@@ -13,7 +13,8 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`clustered_warmup_mcmc`](@ref), [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
-  [`CandidateScoringPlan`](@ref)) and the behaviour their docstrings describe.
+  [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref)) and the
+  behaviour their docstrings describe.
 * **The keywords [`adaptive_warmup_mcmc`](@ref) accepts.** Passing one it does not
   accept is an error rather than a silent no-op, which makes the accepted set
   part of the interface — so removing or renaming one breaks callers.
@@ -56,6 +57,7 @@ WarmupHMC.resume_warmup_mcmc
 ```@docs
 WarmupHMC.ReparametrizedProblem
 WarmupHMC.CandidateScoringPlan
+WarmupHMC.candidate_scoring_losses
 WarmupHMC.IndexedReparametrization
 WarmupHMC.PartiallyCentered
 WarmupHMC.Reparametrization

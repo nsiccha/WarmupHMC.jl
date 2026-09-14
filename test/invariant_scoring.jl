@@ -209,3 +209,59 @@ end
     @test winners == [0.5, 0.7, 0.9]
     @test all(0 .< winners .< 1)
 end
+
+@testset "public candidate loss queries" begin
+    rng = Xoshiro(623)
+    ir = ace_ir(ACE_CSTAR)
+    plan = ace_plan()
+    rp = WarmupHMC.ReparametrizedProblem(
+        ir, DiagGaussian(zeros(4), ones(4)), AutoEnzyme(); scoring_plan=plan,
+    )
+    positions = randn(rng, 4, 8)
+    gradients = randn(rng, 4, 8)
+
+    retrospective = WarmupHMC.candidate_scoring_losses(rp, positions, gradients)
+    @test length(retrospective) == ACE_K * 11
+    @test all(row -> row.groups == 8 && row.effective_n == 8, retrospective)
+    for row in retrospective
+        scored = map(zip(eachcol(positions), eachcol(gradients))) do (position, gradient)
+            frame = plan.prepare(ir, position, gradient)
+            plan.score(
+                frame,
+                row.pair_number,
+                row.index,
+                ir.pairs[row.pair_number].second,
+                WarmupHMC.PartiallyCentered(row.candidate),
+            )
+        end
+        @test row.loss ≈ cor(getindex.(scored, 2), getindex.(scored, 3))
+    end
+
+    recorder = WarmupHMC.NonlinearRecorder(rp; mode=:all_good_leaves)
+    for (position, gradient) in zip(eachcol(positions), eachcol(gradients))
+        WarmupHMC.OnlineStatsBase.fit!(
+            ir, recorder.online, position, gradient; scoring_plan=plan,
+        )
+    end
+    recorded = WarmupHMC.candidate_scoring_losses((; nonlinear_recorder=recorder))
+    @test recorded == retrospective
+
+    insufficient = WarmupHMC.candidate_scoring_losses(
+        rp, @view(positions[:, 1:2]), @view(gradients[:, 1:2]),
+    )
+    @test all(row -> ismissing(row.loss) && row.groups == 2, insufficient)
+
+    degenerate = WarmupHMC.candidate_scoring_losses(rp, zeros(4, 3), ones(4, 3))
+    @test all(row -> isnan(row.loss), degenerate)
+
+    @test_throws DimensionMismatch WarmupHMC.candidate_scoring_losses(
+        rp, positions, @view(gradients[:, 1:end-1]),
+    )
+    @test_throws DimensionMismatch WarmupHMC.candidate_scoring_losses(
+        rp, positions, gradients; weights=ones(7),
+    )
+    @test_throws ArgumentError WarmupHMC.candidate_scoring_losses(
+        rp, positions, gradients; weights=[-1.0; ones(7)],
+    )
+    @test_throws ArgumentError WarmupHMC.candidate_scoring_losses((; other=1))
+end

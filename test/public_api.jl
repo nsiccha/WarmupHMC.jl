@@ -91,6 +91,7 @@ const PUBLIC_RESULT_FIELDS = [
     :linear_metric_fallbacks,
     :stepsize,
     :total_evaluation_counter,
+    :sampling_evaluation_counter,
     :n_divergent_samples,
     :position_and_gradient,
     :scale_changes,

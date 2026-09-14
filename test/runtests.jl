@@ -51,6 +51,9 @@ end
     @testset "adaptive_warmup_mcmc (end-to-end)" begin
         include("adaptive_warmup.jl")
     end
+    @testset "sampling_evaluation_counter" begin
+        include("sampling_evaluation_counter.jl")
+    end
     @testset "completion_warmup_mcmc" begin
         include("completion_policy.jl")
     end

@@ -99,9 +99,12 @@ try
 
     @testset "overwrite vs. refusing to clobber an unreadable run" begin
         p = tempname()
-        stream_mcmc(Xoshiro(1), problem, q0; path = p, n_draws = 40, kw...)
-        r = stream_mcmc(Xoshiro(2), problem, q0; path = p, n_draws = 25, overwrite = true, kw...)
+        old = stream_mcmc(Xoshiro(1), problem, q0; path = p, n_draws = 40, kw...)
+        old_capacity = filesize(p)
+        r = GC.@preserve old stream_mcmc(
+            Xoshiro(2), problem, q0; path = p, n_draws = 25, overwrite = true, kw...)
         @test r.n_drawn == 25                                     # fresh, discarded the old run
+        @test filesize(p) == old_capacity                         # reused while old mmap stayed live
         # A samples file with no valid ring must not be silently clobbered.
         write(p * ".ring", zeros(UInt8, filesize(p * ".ring")))
         @test_throws ArgumentError stream_mcmc(Xoshiro(3), problem, q0; path = p, n_draws = 25, kw...)

@@ -231,22 +231,22 @@ _xoshiro_words(rng) = throw(ArgumentError(
     "stream_mcmc persists the per-draw RNG state and currently supports only " *
     "`Random.Xoshiro` (you passed a $(typeof(rng))). Seed the sampler with a Xoshiro."))
 
-# Open/create an mmappable array of element type `T` and shape `dims`. `fresh`
-# (or a not-yet-existing file) truncates to zero then grows to `dims` (a grown
-# region reads as zeros — "zeroed at creation"). A resume grows the file only if
-# the new shape needs more room, never shrinks it. A resume over a run predating
-# a given sidecar creates it zeroed: the already-drawn columns cannot be
+# Open/create an mmappable array of element type `T` and shape `dims`. A new file
+# grows to `dims` (the grown region reads as zeros). A fresh overwrite reuses an
+# existing file's capacity when it is large enough: every logical element is
+# rewritten before its ring commit, and avoiding a truncate keeps the operation
+# valid while an older mapping is still live on Windows. Fresh and resume both
+# grow the file only if the new shape needs more room, never shrink it. A resume
+# over a run predating a given sidecar creates it zeroed: the already-drawn
+# columns cannot be
 # reconstructed (those draws are past), so they read as zeros; new columns are
 # recorded truthfully. The resume path WARNS when it does this — see
 # `_warn_missing_sidecar`.
-_open_mmap(path, ::Type{T}, dims::Dims; fresh::Bool) where {T} = begin
+_open_mmap(path, ::Type{T}, dims::Dims) where {T} = begin
     nbytes = prod(dims) * sizeof(T)
-    make = fresh || !isfile(path)
-    io = open(path, make ? "w+" : "r+")
-    if make
-        truncate(io, 0)
-        truncate(io, nbytes)
-    elseif filesize(path) < nbytes
+    exists = isfile(path)
+    io = open(path, exists ? "r+" : "w+")
+    if !exists || filesize(path) < nbytes
         truncate(io, nbytes)
     end
     arr = Mmap.mmap(io, Array{T,length(dims)}, dims; shared=true)
@@ -382,24 +382,19 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
             "resumable ring at $(repr(ring_path)) reports n_written=$n_written; a " *
             "committed ring always has at least one draw. The file is corrupt.")
         eff_n_draws = max(n_draws, n_written)
-        fresh = false
         # Resume position is the last safe draw, read BACK from the file (never
         # re-stored in the ring). Re-evaluate under this lpdf: a serialized
         # gradient is never trusted, and one evaluation is negligible.
-        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws); fresh)
+        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws))
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(@view samples[:, n_written]); strict=true)
         ring = _StreamRing(open(ring_path, "r+"), filesize(ring_path) ÷ 2, 1 - last_slot, seq + one(UInt64))
     else
-        # Windows refuses to truncate an mmap that is awaiting finalization.
-        # An explicit overwrite may follow a discarded result immediately.
-        isfile(samples_path) && GC.gc()
         rng = seed_rng
         q0 = seed_position isa DynamicHMC.EvaluatedLogDensity ? seed_position.q : seed_position
         pg = DynamicHMC.evaluate_ℓ(lpdf, collect(float.(q0)); strict=true)
         n_written = 0
         eff_n_draws = n_draws
-        fresh = true
-        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws); fresh)
+        samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws))
         ring = _ring_create(ring_path, rng, dimension)
     end
     # Per-draw sidecars (each its own file), opened/grown in lockstep with the
@@ -408,8 +403,8 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
     # 1kg7fw1) — its old columns read as zeros, not their true values.
     _warn_missing_sidecar(_rng_states_path(samples_path), "per-draw RNG state", n_written)
     _warn_missing_sidecar(_divergences_path(samples_path), "per-draw divergence flag", n_written)
-    rng_states = _open_mmap(_rng_states_path(samples_path), UInt64, (_XOSHIRO_WORDS, eff_n_draws); fresh)
-    divergences = _open_mmap(_divergences_path(samples_path), Int8, (eff_n_draws,); fresh)
+    rng_states = _open_mmap(_rng_states_path(samples_path), UInt64, (_XOSHIRO_WORDS, eff_n_draws))
+    divergences = _open_mmap(_divergences_path(samples_path), Int8, (eff_n_draws,))
     start_time = time_ns()
     try
         pg, rng, n_divergent, k = _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;

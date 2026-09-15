@@ -1149,6 +1149,17 @@ function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
     gradient
 end
 
+# A centering switch changes coordinate meaning. Preserve the active physical
+# point, just as `_jointly_transport_halo!` preserves the stored history, then
+# refresh the density and gradient in the new source frame. Re-evaluating the
+# old source vector without transforming it can send the chain far outside the
+# typical set at every restarting window.
+function _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
+    _, model_position = old_ir(position_and_gradient.q)
+    _, source_position = _inverse_with_logabsdet_jacobian(reparametrizer(lpdf), model_position)
+    DynamicHMC.evaluate_ℓ(lpdf, source_position; strict=false)
+end
+
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return position_and_gradient
@@ -1159,7 +1170,7 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     _synchronize_scoring!(lpdf)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              halo_position, halo_gradient)
-    DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
+    _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
 end
 
 function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
@@ -1180,7 +1191,7 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
         lpdf, old_ir, old_position, old_gradient, halo_position, halo_gradient,
     )
     reset!(recorder)
-    DynamicHMC.evaluate_ℓ(lpdf, position_and_gradient.q; strict=false)
+    _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
 end
 
 # Draws are stored in the SAMPLING parametrization: `logdensity` receives the

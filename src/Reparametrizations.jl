@@ -1160,6 +1160,35 @@ function _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
     DynamicHMC.evaluate_ℓ(lpdf, source_position; strict=false)
 end
 
+# A candidate can be representable in the streaming scoring evidence but not
+# in every point of the linear-adaptation pool (e.g. HSGP scales underflow).
+# Treat the coordinate update as a transaction: an unusable transport must not
+# poison the metric, nor change the meaning of the preserved sampler state.
+function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
+                               position, gradient, position_and_gradient)
+    _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
+                             position, gradient)
+    ir = reparametrizer(lpdf)
+    if all(isfinite, position) && all(isfinite, gradient)
+        _, physical = old_ir(position_and_gradient.q)
+        _, source = _inverse_with_logabsdet_jacobian(ir, physical)
+        if all(isfinite, source)
+            point = DynamicHMC.evaluate_ℓ(lpdf, source; strict=false)
+            if isfinite(point.ℓq) && all(isfinite, point.∇ℓq)
+                return point
+            end
+        end
+    end
+    bad_positions = count(!isfinite, position)
+    bad_gradients = count(!isfinite, gradient)
+    ir.pairs .= old_ir.pairs
+    _synchronize_scoring!(lpdf)
+    position .= old_position
+    gradient .= old_gradient
+    @warn "Rejected centering update: nonfinite coordinate transport; retaining previous coordinates" bad_positions bad_gradients
+    position_and_gradient
+end
+
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)
     isempty(ir.pairs) && return position_and_gradient
@@ -1168,9 +1197,8 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     old_gradient = copy(halo_gradient)
     optimize!(ir, halo_position, halo_gradient)
     _synchronize_scoring!(lpdf)
-    _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
-                             halo_position, halo_gradient)
-    _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
+    _validated_transport!(lpdf, old_ir, old_position, old_gradient,
+                          halo_position, halo_gradient, position_and_gradient)
 end
 
 function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
@@ -1187,11 +1215,10 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     old_gradient = copy(halo_gradient)
     optimize!(ir, recorder.online)
     _synchronize_scoring!(lpdf)
-    _jointly_transport_halo!(
-        lpdf, old_ir, old_position, old_gradient, halo_position, halo_gradient,
-    )
+    point = _validated_transport!(lpdf, old_ir, old_position, old_gradient,
+                                  halo_position, halo_gradient, position_and_gradient)
     reset!(recorder)
-    _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
+    point
 end
 
 # Draws are stored in the SAMPLING parametrization: `logdensity` receives the

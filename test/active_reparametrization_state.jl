@@ -41,3 +41,28 @@
         end
     end
 end
+
+@testset "unrepresentable centering updates preserve the complete old state" begin
+    inner=DiagGaussian(zeros(2),ones(2))
+    old_ir=WarmupHMC.IndexedReparametrization([
+        2=>WarmupHMC.Reparametrization(WarmupHMC.PartiallyCentered(0.0),
+            WarmupHMC.PartiallyCentered(0.0),0.0,x->x[1])])
+    rp=WarmupHMC.ReparametrizedProblem(WarmupHMC.IndexedReparametrization(copy(old_ir.pairs)),inner,AutoEnzyme())
+    old_position=[-1000.0 0.0; 1.0 0.5]
+    old_gradient=reduce(hcat,(last(LogDensityProblems.logdensity_and_gradient(rp,q)) for q in eachcol(old_position)))
+    active=WarmupHMC.DynamicHMC.evaluate_ℓ(rp,copy(old_position[:,end]))
+    WarmupHMC.restore_reparam_sources!(rp,[2=>WarmupHMC.PartiallyCentered(1.0)])
+    position=copy(old_position);gradient=copy(old_gradient)
+    WarmupHMC._jointly_transport_halo!(rp,old_ir,old_position,old_gradient,position,gradient)
+    @test !all(isfinite,gradient) # The existing transport cannot represent exp(-1000).
+    point=@test_logs (:warn,r"Rejected centering update") WarmupHMC._validated_transport!(
+        rp,old_ir,old_position,old_gradient,position,gradient,active)
+    @test point === active
+    @test position == old_position
+    @test gradient == old_gradient
+    @test WarmupHMC.reparam_sources(rp) == [2=>WarmupHMC.PartiallyCentered(0.0)]
+    @test last(WarmupHMC.reparametrizer(rp)(point.q)) == old_position[:,end]
+    value,g=LogDensityProblems.logdensity_and_gradient(rp,point.q)
+    @test point.ℓq == value
+    @test point.∇ℓq == g
+end

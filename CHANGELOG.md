@@ -81,6 +81,12 @@ public surface since then; `README.md` lists what the total now is, and
   a deprecation warning, so 1.0's compatibility promise covers it — that is why
   it is listed rather than quietly dropped.
 - `CandidateScoringPlan` — steers online candidate adaptation.
+- `WindowSelectionPlan` — replaces the candidate grid with a user rule that
+  chooses the controls at every restarting window, from the replayed pool or
+  from weighted streamed leaves. It also adapts reparametrizers that are not an
+  `IndexedReparametrization`, through a small controls interface
+  (`reparam_controls`, `restore_reparam_controls!`,
+  `snapshot_reparametrization`).
 - The reparametrization types `ReparametrizedProblem`,
   `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`.
 - **On-disk checkpointing** across all three samplers, on a shared contract:

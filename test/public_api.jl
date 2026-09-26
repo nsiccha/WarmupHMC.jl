@@ -45,6 +45,7 @@ const PUBLIC_EXPORTS = [
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,
+    :WindowSelectionPlan,
     :IndexedReparametrization,
     :PartiallyCentered,
     :Reparametrization,

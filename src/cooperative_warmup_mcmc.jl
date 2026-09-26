@@ -139,6 +139,7 @@ cooperative_chain(
     # One retained halo state per `thin` leaf evaluations, so a window fills the ring.
     recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     nonlinear_recorder = NonlinearRecorder(
         lpdf;
         mode=nonlinear_evidence,

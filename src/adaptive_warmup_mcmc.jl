@@ -434,6 +434,7 @@ init_state(
         max(1, n_evaluations ÷ recording_target),
     )
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     nonlinear_recorder = NonlinearRecorder(
         lpdf;
         mode=nonlinear_evidence,
@@ -703,8 +704,8 @@ finalize_warmup!(state::AWMState) = begin
     # frames as if they were one.
     #
     # Safe unconditionally: `reparametrizer(::Any)` is an empty
-    # `IndexedReparametrization` and `reparametrize!` returns immediately on
-    # `isempty(ir.pairs)`, so this is a no-op for a plain lpdf and for a
+    # `IndexedReparametrization` and `reparametrize!` returns immediately unless
+    # `has_reparametrization(ir)`, so this is a no-op for a plain lpdf and for a
     # `ReparametrizedProblem` carrying no spec.
     reparametrize!(lpdf, recording_lpdf.posterior_position)
     (;
@@ -734,7 +735,7 @@ end
 # non-serializable native problem) and the reparametrizer's index-extraction
 # closures are NOT serialized; on resume these `source` values are restored onto
 # a freshly supplied lpdf. Empty for a plain lpdf.
-reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(lpdf).pairs]
+reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 
 # A serializable snapshot of the TRANSIENT SAMPLER STATE at a checkpoint —
 # nothing else.
@@ -982,16 +983,18 @@ _reparam_pairs_with_sources(ir, sources) = [
     for ((idx, value), (_, src)) in zip(ir.pairs, sources)
 ]
 
-# Restore the reparametrizer's scalar `source` centerings (from `reparam_sources`)
-# onto a freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
-# structure (targets + index-extraction closures); only the mutated `source`
-# scalars are overwritten. No-op for a plain lpdf (empty `sources`).
+# Restore the reparametrizer's controls (from `reparam_sources`) onto a
+# freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
+# structure (targets + index-extraction closures); only the adapted controls —
+# the scalar `source` centerings of an `IndexedReparametrization` — are
+# overwritten. No-op for a plain lpdf (empty `sources`).
 restore_reparam_sources!(lpdf, sources) = begin
     ir = reparametrizer(lpdf)
-    isempty(sources) || (ir.pairs .= _reparam_pairs_with_sources(ir, sources))
+    _is_empty_controls(sources) || restore_reparam_controls!(ir, sources)
     _synchronize_scoring!(lpdf)
     lpdf
 end
+_is_empty_controls(sources) = sources isa AbstractVector && isempty(sources)
 
 # Validate a payload/lpdf pair for `back_transform` and build the reparametrizer
 # that boundary's draws were sampled under. Returns `nothing` when there is
@@ -1018,6 +1021,13 @@ _back_transform_reparametrizer(payload, lpdf, n_rows) = begin
         "checkpoint holds a $(payload.dimension)-dimensional problem but the supplied " *
         "lpdf has dimension $lpdf_dimension."
     ))
+    # A custom reparametrizer validates its own controls in
+    # `restore_reparam_controls!`; the copy leaves `lpdf` untouched.
+    if !(ir isa IndexedReparametrization)
+        out = snapshot_reparametrization(ir)
+        restore_reparam_controls!(out, sources)
+        return out
+    end
     length(ir.pairs) == length(sources) || throw(ArgumentError("""
     the supplied log density's reparametrization cannot be the one that wrote this
     checkpoint: it reparametrizes $(length(ir.pairs)) coordinate(s), the checkpoint
@@ -1144,15 +1154,15 @@ function _check_candidate_scoring_compatible(p, lpdf)
     checkpoint_custom == supplied_custom && return nothing
     if checkpoint_custom
         throw(ArgumentError(
-            "this checkpoint was written with a custom CandidateScoringPlan, but " *
+            "this checkpoint was written with a custom scoring or selection plan, but " *
             "the supplied log density has only the default scoring plan; reconstruct " *
             "the ReparametrizedProblem with scoring_plan=plan before resuming",
         ))
     end
     throw(ArgumentError(
         "this checkpoint was written with the default candidate scoring plan, but " *
-        "the supplied log density has a custom CandidateScoringPlan; resume with the " *
-        "same scoring strategy that wrote the checkpoint",
+        "the supplied log density has a custom scoring or selection plan; resume with " *
+        "the same strategy that wrote the checkpoint",
     ))
 end
 
@@ -1179,6 +1189,7 @@ restore_state(p, lpdf, progress;
 ) = begin
     check_checkpoint_compatible(p, :adaptive, (:adaptive,))
     _check_candidate_scoring_compatible(p, lpdf)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     lpdf_dimension = LogDensityProblems.dimension(lpdf)
     p.dimension == lpdf_dimension || throw(DimensionMismatch(
         "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *

@@ -28,7 +28,8 @@ read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
 `CandidateScoringPlan` for steering candidate adaptation, with
 `candidate_scoring_losses` to inspect or retrospectively recompute its loss
-curve. The opt-in
+curve, and `WindowSelectionPlan` to replace candidate adaptation with your own
+per-window selection rule. The opt-in
 `completion_warmup_mcmc` runs independent adaptive chains with a completion
 quorum and finishes each running chain's current round before returning.
 

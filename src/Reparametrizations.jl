@@ -77,12 +77,89 @@ _synchronize_scoring!(plan::CandidateScoringPlan, ir) =
     (plan.synchronize!(ir); ir)
 
 """
+    WindowSelectionPlan(init, observe!, select!; synchronize! = identity)
+
+A pluggable rule that CHOOSES a reparametrizer's controls at every restarting
+warm-up window, attached with
+`ReparametrizedProblem(ir, problem, backend; scoring_plan = plan)`.
+
+It replaces the candidate grid and its position-gradient criterion entirely.
+WarmupHMC keeps the rest of the window lifecycle: collecting evidence,
+transporting the retained pool and the active point into the newly selected
+coordinates, the metric update that follows, and checkpointing. Unlike a
+[`CandidateScoringPlan`](@ref), a selection plan also works with reparametrizers
+that are not an [`IndexedReparametrization`](@ref) (see *Custom
+reparametrizers* below).
+
+# Callbacks
+
+`init(ir)` returns a fresh evidence accumulator. It runs when the nonlinear
+recorder is built and again after every selection; every call must return the
+same concrete type.
+
+`observe!(accumulator, ir, position, gradient, weight)` adds one piece of
+evidence: a sampler position and its log-density gradient in the CURRENT source
+coordinates of `ir`, with a nonnegative weight. Its return value is ignored.
+
+`select!(ir, accumulator)` runs at a restarting window boundary. It may update
+`ir`'s controls in place and returns `true` if it did, in which case the
+evidence and the active point are transported into the new coordinates, or
+`false` to keep the current ones.
+
+`synchronize!(ir)` has the same role and call points as for a
+[`CandidateScoringPlan`](@ref).
+
+# Evidence
+
+With `nonlinear_evidence = :linear_pool` (the default) the retained pool is
+replayed at the boundary: every stored position and gradient is observed once,
+with weight one, into a fresh accumulator. `:all_good_leaves` and
+`:nuts_weighted` stream NUTS leaves into the accumulator during the window with
+the same weights WarmupHMC's own scoring uses, `nonlinear_trajectory_weighting`
+included. Unlike a scoring plan, a selection plan never remaps `:linear_pool`.
+
+# Custom reparametrizers
+
+Besides `IndexedReparametrization`, any `WarmupHMC.AbstractReparametrization`
+can be adapted by a selection plan if it implements:
+
+* `WarmupHMC.with_logabsdet_jacobian!(y, ir, x) -> (ljac, y)`, the source-to-target
+  map and its log-Jacobian (this runs under AD on every gradient evaluation);
+* `InverseFunctions.inverse(ir)`, an `AbstractReparametrization` computing the
+  target-to-source map in the same way;
+* `WarmupHMC.reparam_controls(ir)`, a serializable COPY of the current controls,
+  and `WarmupHMC.restore_reparam_controls!(ir, controls)`, which writes such a
+  value back and throws if it cannot belong to `ir`;
+* optionally `WarmupHMC.snapshot_reparametrization(ir)`, an independent copy
+  with the same controls (default `deepcopy`).
+
+# Checkpoints
+
+The accumulator is part of the serialized nonlinear recorder, so it must be
+serializable. The plan itself is not serialized; re-attach it on resume, as for
+a scoring plan. The controls are written under the payload's `reparam_sources`
+key.
+"""
+struct WindowSelectionPlan{I,O,S,Y}
+    init::I
+    observe!::O
+    select!::S
+    synchronize!::Y
+end
+WindowSelectionPlan(init, observe!, select!; synchronize! = identity) =
+    WindowSelectionPlan(init, observe!, select!, synchronize!)
+
+_synchronize_scoring!(plan::WindowSelectionPlan, ir) =
+    (plan.synchronize!(ir); ir)
+
+"""
     ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing; scoring_plan=nothing)
 
 Wrap a `LogDensityProblems`-compatible `problem` in a nonlinear reparametrization
 that warm-up is allowed to ADAPT.
 
-`reparametrizer` is an [`IndexedReparametrization`](@ref). The sampler works in
+`reparametrizer` is an [`IndexedReparametrization`](@ref), or another
+reparametrizer that a [`WindowSelectionPlan`](@ref) adapts. The sampler works in
 its *source* coordinates; `logdensity` maps a source-coordinate position `x` into
 the coordinates `problem` is written in and adds the log-Jacobian:
 
@@ -266,6 +343,7 @@ struct ReparametrizedProblem{R,P,B,S}
 end
 _resolve_candidate_scoring(::Nothing) = DIRECT_CANDIDATE_SCORING
 _resolve_candidate_scoring(plan::CandidateScoringPlan) = plan
+_resolve_candidate_scoring(plan::WindowSelectionPlan) = plan
 ReparametrizedProblem(r, p, b; scoring_plan=nothing) =
     ReparametrizedProblem(r, p, b, _resolve_candidate_scoring(scoring_plan))
 ReparametrizedProblem(r, p; scoring_plan=nothing) =
@@ -276,7 +354,7 @@ reparametrizer(::Any) = IndexedReparametrization([])
 candidate_scoring_plan(p::ReparametrizedProblem) = p.scoring_plan
 candidate_scoring_plan(p::WrappedLogDensityProblem) = candidate_scoring_plan(parent(p))
 candidate_scoring_plan(::Any) = DIRECT_CANDIDATE_SCORING
-_has_custom_candidate_scoring(p) = candidate_scoring_plan(p) isa CandidateScoringPlan
+_has_custom_candidate_scoring(p) = !(candidate_scoring_plan(p) isa DirectCandidateScoring)
 _synchronize_scoring!(p) = _synchronize_scoring!(candidate_scoring_plan(p), reparametrizer(p))
 LogDensityProblems.capabilities(::Type{<:ReparametrizedProblem{R,P}}) where {R,P} = LogDensityProblems.capabilities(P)
 LogDensityProblems.dimension(p::ReparametrizedProblem) = LogDensityProblems.dimension(p.problem)
@@ -622,6 +700,31 @@ end
 _inverse_with_logabsdet_jacobian(ir::IndexedReparametrization,
                                  target::AbstractVector) =
     _inverse_with_logabsdet_jacobian!(copy(target), ir, target)
+_inverse_with_logabsdet_jacobian(ir::AbstractReparametrization,
+                                 target::AbstractVector) =
+    with_logabsdet_jacobian!(copy(target), inverse(ir), target)
+
+# --- Controls: what adaptation changes, checkpoints record, transport compares ---
+#
+# `IndexedReparametrization` keeps its historical representation (a vector of
+# `idx => PartiallyCentered` sources). Other reparametrizers define their own
+# serializable controls; see `WindowSelectionPlan`.
+has_reparametrization(ir::IndexedReparametrization) = !isempty(ir.pairs)
+has_reparametrization(::AbstractReparametrization) = true
+reparam_controls(ir::IndexedReparametrization) =
+    [idx => value.source for (idx, value) in ir.pairs]
+restore_reparam_controls!(ir::IndexedReparametrization, controls) =
+    (isempty(controls) || (ir.pairs .= _reparam_pairs_with_sources(ir, controls)); ir)
+snapshot_reparametrization(ir::IndexedReparametrization) =
+    IndexedReparametrization(copy(ir.pairs))
+snapshot_reparametrization(ir::AbstractReparametrization) = deepcopy(ir)
+_restore_reparametrization!(ir::IndexedReparametrization, old) = (ir.pairs .= old.pairs; ir)
+_restore_reparametrization!(ir::AbstractReparametrization, old) =
+    restore_reparam_controls!(ir, reparam_controls(old))
+
+_require_indexed(ir) = ir isa IndexedReparametrization || throw(ArgumentError(
+    "adapting a $(nameof(typeof(ir))) needs a WindowSelectionPlan; the candidate " *
+    "grid and CandidateScoringPlan only apply to an IndexedReparametrization"))
 with_logabsdet_jacobian!(source::AbstractVector,
                          (;forward)::InverseIndexedReparametrization,
                          target::AbstractVector) =
@@ -886,11 +989,33 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
         mode,
         trajectory_weighting,
         good_leaf_threshold,
-        OnlineReparametrizer(
-            reparametrizer(lpdf); accumulator=WeightedReparametrizationLoss,
-        ),
+        _nonlinear_accumulator(candidate_scoring_plan(lpdf), reparametrizer(lpdf)),
     )
 end
+
+_nonlinear_accumulator(plan::WindowSelectionPlan, ir) = plan.init(ir)
+# A fixed (`nonlinear_adapt=false`) custom reparametrizer records nothing;
+# adapting one without a selection plan is refused by
+# `_check_nonlinear_adaptable` before sampling starts.
+_nonlinear_accumulator(plan, ir) = ir isa IndexedReparametrization ?
+    OnlineReparametrizer(ir; accumulator=WeightedReparametrizationLoss) : nothing
+
+# Fail before sampling rather than at the first restarting window, which a run
+# may never reach.
+_check_nonlinear_adaptable(lpdf, nonlinear_adapt) = begin
+    ir = reparametrizer(lpdf)
+    nonlinear_adapt && has_reparametrization(ir) &&
+        !(candidate_scoring_plan(lpdf) isa WindowSelectionPlan) && _require_indexed(ir)
+    nothing
+end
+
+_observe_nonlinear!(plan, ir, online, position, gradient, weight) =
+    OnlineStatsBase.fit!(ir, online, position, gradient;
+                         weight, count=false, scoring_plan=plan)
+_observe_nonlinear!(plan::WindowSelectionPlan, ir, online, position, gradient, weight) =
+    (plan.observe!(online, ir, position, gradient, weight); nothing)
+_mark_nonlinear_group!(plan, online) = _mark_group!(online)
+_mark_nonlinear_group!(::WindowSelectionPlan, online) = nothing
 
 """
     candidate_scoring_losses(payload::NamedTuple)
@@ -1000,6 +1125,7 @@ end
 
 _uses_online_candidate_scoring(::DirectCandidateScoring) = false
 _uses_online_candidate_scoring(::CandidateScoringPlan) = true
+_uses_online_candidate_scoring(::WindowSelectionPlan) = false
 
 # `recorder.mode` is the DECLARED evidence mode; this returns the EFFECTIVE one.
 # A custom scoring plan reads `:linear_pool` as online all-good-leaf evidence and
@@ -1042,7 +1168,9 @@ function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
     mode = _effective_nonlinear_evidence(recorder, lpdf)
     mode === :linear_pool && return recorder
     ir = reparametrizer(lpdf)
-    isempty(ir.pairs) && return recorder
+    has_reparametrization(ir) || return recorder
+    plan = candidate_scoring_plan(lpdf)
+    plan isa WindowSelectionPlan || _require_indexed(ir)
     trajectory_weight = _trajectory_weight(recorder.trajectory_weighting, stepsize)
     iszero(trajectory_weight) && return recorder
 
@@ -1055,18 +1183,17 @@ function record_nonlinear!(recorder::NonlinearRecorder, lpdf, leaves, stepsize)
         end
         weight = trajectory_weight * leaf_weight
         iszero(weight) && continue
-        OnlineStatsBase.fit!(
+        _observe_nonlinear!(
+            plan,
             ir,
             recorder.online,
             @view(leaves.position[:, i]),
-            @view(leaves.gradient[:, i]);
+            @view(leaves.gradient[:, i]),
             weight,
-            count=false,
-            scoring_plan=candidate_scoring_plan(lpdf),
         )
         recorded = true
     end
-    recorded && _mark_group!(recorder.online)
+    recorded && _mark_nonlinear_group!(plan, recorder.online)
     recorder
 end
 
@@ -1181,7 +1308,7 @@ function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
     end
     bad_positions = count(!isfinite, position)
     bad_gradients = count(!isfinite, gradient)
-    ir.pairs .= old_ir.pairs
+    _restore_reparametrization!(ir, old_ir)
     _synchronize_scoring!(lpdf)
     position .= old_position
     gradient .= old_gradient
@@ -1191,7 +1318,8 @@ end
 
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)
-    isempty(ir.pairs) && return position_and_gradient
+    has_reparametrization(ir) || return position_and_gradient
+    _require_indexed(ir)
     old_ir = IndexedReparametrization(copy(ir.pairs))
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
@@ -1204,12 +1332,17 @@ end
 function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
                                   halo_position, halo_gradient,
                                   position_and_gradient)
+    plan = candidate_scoring_plan(lpdf)
+    plan isa WindowSelectionPlan && return _select_reparametrization!(
+        plan, lpdf, recorder, halo_position, halo_gradient, position_and_gradient,
+    )
     _effective_nonlinear_evidence(recorder, lpdf) === :linear_pool &&
         return find_reparametrization!(
         lpdf, halo_position, halo_gradient, position_and_gradient,
     )
     ir = reparametrizer(lpdf)
-    isempty(ir.pairs) && return position_and_gradient
+    has_reparametrization(ir) || return position_and_gradient
+    _require_indexed(ir)
     old_ir = IndexedReparametrization(copy(ir.pairs))
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
@@ -1221,6 +1354,36 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     point
 end
 
+# A selection plan's boundary step. `:linear_pool` replays the retained pool into
+# a fresh accumulator (unit weights); the streaming modes already filled
+# `recorder.online` during the window. The same transaction as the candidate
+# path follows: snapshot, select, synchronize, transport (or roll back on a
+# nonfinite transport), then start a fresh accumulator for the next window.
+function _select_reparametrization!(plan::WindowSelectionPlan, lpdf,
+                                    recorder::NonlinearRecorder,
+                                    halo_position, halo_gradient,
+                                    position_and_gradient)
+    ir = reparametrizer(lpdf)
+    has_reparametrization(ir) || return position_and_gradient
+    if _effective_nonlinear_evidence(recorder, lpdf) === :linear_pool
+        recorder.online = plan.init(ir)
+        for (position, gradient) in zip(eachcol(halo_position), eachcol(halo_gradient))
+            plan.observe!(recorder.online, ir, position, gradient, 1.0)
+        end
+    end
+    old_ir = snapshot_reparametrization(ir)
+    old_position = copy(halo_position)
+    old_gradient = copy(halo_gradient)
+    changed = plan.select!(ir, recorder.online) === true
+    _synchronize_scoring!(lpdf)
+    point = changed ? _validated_transport!(
+        lpdf, old_ir, old_position, old_gradient,
+        halo_position, halo_gradient, position_and_gradient,
+    ) : position_and_gradient
+    recorder.online = plan.init(ir)
+    point
+end
+
 # Draws are stored in the SAMPLING parametrization: `logdensity` receives the
 # sampler position in `source` coordinates and maps it through `ir`
 # (source -> target) before handing `y` to the inner problem. Reporting draws in
@@ -1229,7 +1392,7 @@ end
 # it was a no-op only while adaptation left `source == target`.
 reparametrize!(lpdf, posterior_position) = begin
     ir = reparametrizer(lpdf)
-    isempty(ir.pairs) && return
+    has_reparametrization(ir) || return
     for col in eachcol(posterior_position)
         ljac, y = ir(col)
         col .= y

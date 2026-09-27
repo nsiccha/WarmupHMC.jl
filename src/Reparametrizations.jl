@@ -77,7 +77,7 @@ _synchronize_scoring!(plan::CandidateScoringPlan, ir) =
     (plan.synchronize!(ir); ir)
 
 """
-    WindowSelectionPlan(init, observe!, select!; synchronize! = identity)
+    WindowSelectionPlan(select!; synchronize! = identity)
 
 A pluggable rule that CHOOSES a reparametrizer's controls at every restarting
 warm-up window, attached with
@@ -93,16 +93,10 @@ reparametrizers* below).
 
 # Callbacks
 
-`init(ir)` returns a fresh evidence accumulator. It runs when the nonlinear
-recorder is built and again after every selection; every call must return the
-same concrete type.
-
-`observe!(accumulator, ir, position, gradient, weight)` adds one piece of
-evidence: a sampler position and its log-density gradient in the CURRENT source
-coordinates of `ir`, with a nonnegative weight. Its return value is ignored.
-
-`select!(ir, accumulator)` runs at a restarting window boundary. It may update
-`ir`'s controls in place and returns `true` if it did, in which case the
+`select!(ir, positions, gradients)` runs at a restarting window boundary. The
+columns of `positions` and `gradients` are equally weighted sampler states in
+the CURRENT source coordinates of `ir` (read-only; see *Evidence*). It may
+update `ir`'s controls in place and returns `true` if it did, in which case the
 evidence and the active point are transported into the new coordinates, or
 `false` to keep the current ones.
 
@@ -111,12 +105,13 @@ evidence and the active point are transported into the new coordinates, or
 
 # Evidence
 
-With `nonlinear_evidence = :linear_pool` (the default) the retained pool is
-replayed at the boundary: every stored position and gradient is observed once,
-with weight one, into a fresh accumulator. `:all_good_leaves` and
-`:nuts_weighted` stream NUTS leaves into the accumulator during the window with
-the same weights WarmupHMC's own scoring uses, `nonlinear_trajectory_weighting`
-included. Unlike a scoring plan, a selection plan never remaps `:linear_pool`.
+With `nonlinear_evidence = :linear_pool` (the default) the evidence is the
+retained pool itself (at most `recording_target` states). With
+`:all_good_leaves` or `:nuts_weighted` it is `recording_target` states drawn
+with replacement from every NUTS leaf of the window, each leaf with probability
+proportional to the weight WarmupHMC's own scoring gives it
+(`nonlinear_trajectory_weighting` included), so repeated columns are expected.
+Unlike a scoring plan, a selection plan never remaps `:linear_pool`.
 
 # Custom reparametrizers
 
@@ -135,19 +130,15 @@ can be adapted by a selection plan if it implements:
 
 # Checkpoints
 
-The accumulator is part of the serialized nonlinear recorder, so it must be
-serializable. The plan itself is not serialized; re-attach it on resume, as for
-a scoring plan. The controls are written under the payload's `reparam_sources`
-key.
+The plan itself is not serialized; re-attach it on resume, as for a scoring
+plan. The controls are written under the payload's `reparam_sources` key.
 """
-struct WindowSelectionPlan{I,O,S,Y}
-    init::I
-    observe!::O
+struct WindowSelectionPlan{S,Y}
     select!::S
     synchronize!::Y
 end
-WindowSelectionPlan(init, observe!, select!; synchronize! = identity) =
-    WindowSelectionPlan(init, observe!, select!, synchronize!)
+WindowSelectionPlan(select!; synchronize! = identity) =
+    WindowSelectionPlan(select!, synchronize!)
 
 _synchronize_scoring!(plan::WindowSelectionPlan, ir) =
     (plan.synchronize!(ir); ir)
@@ -977,7 +968,7 @@ mutable struct NonlinearRecorder{O,T}
 end
 
 function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
-                           good_leaf_threshold=log(1e-2))
+                           good_leaf_threshold=log(1e-2), capacity=1000)
     mode in NONLINEAR_EVIDENCE_MODES || throw(ArgumentError(
         "unknown nonlinear evidence mode $mode; expected one of $(join(NONLINEAR_EVIDENCE_MODES, ", "))",
     ))
@@ -989,15 +980,58 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
         mode,
         trajectory_weighting,
         good_leaf_threshold,
-        _nonlinear_accumulator(candidate_scoring_plan(lpdf), reparametrizer(lpdf)),
+        _nonlinear_accumulator(candidate_scoring_plan(lpdf), reparametrizer(lpdf),
+                               LogDensityProblems.dimension(lpdf), capacity),
     )
 end
 
-_nonlinear_accumulator(plan::WindowSelectionPlan, ir) = plan.init(ir)
+"""
+    WeightedLeafSample(dimension, capacity)
+
+`capacity` states drawn WITH replacement from a weighted stream: after any
+prefix of the stream, every slot independently holds state `i` with
+probability `w_i / sum(w)`. A new state replaces each slot with probability
+`w / sum(w)`; geometric skips visit only the replaced slots.
+"""
+mutable struct WeightedLeafSample
+    position::Matrix{Float64}
+    gradient::Matrix{Float64}
+    total::Float64
+    rng::Random.Xoshiro
+end
+WeightedLeafSample(dimension, capacity) = WeightedLeafSample(
+    zeros(dimension, capacity), zeros(dimension, capacity), 0.0, Random.Xoshiro(0x5eed))
+
+function _observe_sample!(sample::WeightedLeafSample, position, gradient, weight)
+    sample.total += weight
+    p = weight / sample.total
+    slots = size(sample.position, 2)
+    slot = 0
+    while true
+        if p < 1
+            skip = log(1 - rand(sample.rng)) / log1p(-p)   # misses before the next hit
+            skip < slots - slot || break
+            slot += floor(Int, skip) + 1
+        else
+            slot += 1
+            slot <= slots || break
+        end
+        sample.position[:, slot] .= position
+        sample.gradient[:, slot] .= gradient
+    end
+    sample
+end
+reset!(sample::WeightedLeafSample) = (sample.total = 0.0; sample)
+_sample_evidence(sample::WeightedLeafSample) = sample.total > 0 ?
+    (sample.position, sample.gradient) :
+    (sample.position[:, 1:0], sample.gradient[:, 1:0])
+
+_nonlinear_accumulator(::WindowSelectionPlan, ir, dimension, capacity) =
+    WeightedLeafSample(dimension, capacity)
 # A fixed (`nonlinear_adapt=false`) custom reparametrizer records nothing;
 # adapting one without a selection plan is refused by
 # `_check_nonlinear_adaptable` before sampling starts.
-_nonlinear_accumulator(plan, ir) = ir isa IndexedReparametrization ?
+_nonlinear_accumulator(plan, ir, dimension, capacity) = ir isa IndexedReparametrization ?
     OnlineReparametrizer(ir; accumulator=WeightedReparametrizationLoss) : nothing
 
 # Fail before sampling rather than at the first restarting window, which a run
@@ -1012,8 +1046,8 @@ end
 _observe_nonlinear!(plan, ir, online, position, gradient, weight) =
     OnlineStatsBase.fit!(ir, online, position, gradient;
                          weight, count=false, scoring_plan=plan)
-_observe_nonlinear!(plan::WindowSelectionPlan, ir, online, position, gradient, weight) =
-    (plan.observe!(online, ir, position, gradient, weight); nothing)
+_observe_nonlinear!(::WindowSelectionPlan, ir, online, position, gradient, weight) =
+    (_observe_sample!(online, position, gradient, weight); nothing)
 _mark_nonlinear_group!(plan, online) = _mark_group!(online)
 _mark_nonlinear_group!(::WindowSelectionPlan, online) = nothing
 
@@ -1354,33 +1388,28 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     point
 end
 
-# A selection plan's boundary step. `:linear_pool` replays the retained pool into
-# a fresh accumulator (unit weights); the streaming modes already filled
-# `recorder.online` during the window. The same transaction as the candidate
-# path follows: snapshot, select, synchronize, transport (or roll back on a
-# nonfinite transport), then start a fresh accumulator for the next window.
+# A selection plan's boundary step. `:linear_pool` hands over the retained pool;
+# the streaming modes filled `recorder.online` during the window. The same
+# transaction as the candidate path follows: snapshot, select, synchronize,
+# transport (or roll back on a nonfinite transport), then clear the sample.
 function _select_reparametrization!(plan::WindowSelectionPlan, lpdf,
                                     recorder::NonlinearRecorder,
                                     halo_position, halo_gradient,
                                     position_and_gradient)
     ir = reparametrizer(lpdf)
     has_reparametrization(ir) || return position_and_gradient
-    if _effective_nonlinear_evidence(recorder, lpdf) === :linear_pool
-        recorder.online = plan.init(ir)
-        for (position, gradient) in zip(eachcol(halo_position), eachcol(halo_gradient))
-            plan.observe!(recorder.online, ir, position, gradient, 1.0)
-        end
-    end
     old_ir = snapshot_reparametrization(ir)
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
-    changed = plan.select!(ir, recorder.online) === true
+    evidence = _effective_nonlinear_evidence(recorder, lpdf) === :linear_pool ?
+        (old_position, old_gradient) : _sample_evidence(recorder.online)
+    changed = plan.select!(ir, evidence...) === true
     _synchronize_scoring!(lpdf)
     point = changed ? _validated_transport!(
         lpdf, old_ir, old_position, old_gradient,
         halo_position, halo_gradient, position_and_gradient,
     ) : position_and_gradient
-    recorder.online = plan.init(ir)
+    reset!(recorder.online)
     point
 end
 

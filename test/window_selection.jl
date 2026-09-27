@@ -51,31 +51,17 @@ function WarmupHMC.restore_reparam_controls!(t::RotScaleBlock, c)
 end
 
 # Target-frame second moments along Q's columns; select c = log(sd).
-mutable struct MomentEvidence
-    weight::Float64
-    m2::Vector{Float64}
-    n::Int
-    weights::Vector{Float64}
-end
-ws_init(ir) = MomentEvidence(0.0, zeros(3), 0, Float64[])
-function ws_observe!(acc, ir, position, gradient, weight)
-    _, y = ir(position)
-    u = ir.Q' * y[ir.idx]
-    acc.weight += weight
-    acc.m2 .+= weight .* u .^ 2
-    acc.n += 1
-    push!(acc.weights, weight)
-end
 const WS_SELECTIONS = Ref(0)
-const WS_WEIGHTS = Float64[]
-function ws_select!(ir, acc)
-    acc.weight > 0 || return false
+const WS_SIZES = Int[]
+function ws_select!(ir, positions, gradients)
+    size(positions, 2) > 0 || return false
     WS_SELECTIONS[] += 1
-    append!(WS_WEIGHTS, acc.weights)
-    ir.c .= log.(acc.m2 ./ acc.weight) ./ 2
+    push!(WS_SIZES, size(positions, 2))
+    u = reduce(hcat, [ir.Q' * last(ir(x))[ir.idx] for x in eachcol(positions)])
+    ir.c .= log.(vec(mean(u .^ 2; dims=2))) ./ 2
     true
 end
-ws_plan() = WarmupHMC.WindowSelectionPlan(ws_init, ws_observe!, ws_select!)
+ws_plan() = WarmupHMC.WindowSelectionPlan(ws_select!)
 ws_problem(c=zeros(3); plan=ws_plan()) = WarmupHMC.ReparametrizedProblem(
     RotScaleBlock(c), DenseGaussian(WS_Q, WS_S), AutoEnzyme(); scoring_plan=plan)
 
@@ -124,20 +110,28 @@ end
     @test all(iszero, WarmupHMC.reparametrizer(rp).c)
 end
 
+@testset "weighted leaf sample draws proportionally to weight" begin
+    sample = WarmupHMC.WeightedLeafSample(1, 20_000)
+    for (i, w) in enumerate([1.0, 3.0, 0.5, 2.5, 3.0])
+        WarmupHMC._observe_sample!(sample, [float(i)], [0.0], w)
+    end
+    positions, _ = WarmupHMC._sample_evidence(sample)
+    @test [mean(==(i), positions) for i in 1:5] ≈ [1, 3, 0.5, 2.5, 3] ./ 10 atol = 0.01
+    WarmupHMC.reset!(sample)
+    @test size(first(WarmupHMC._sample_evidence(sample)), 2) == 0
+end
+
 @testset "selection plan adapts a dense block ($evidence)" for evidence in
         (:linear_pool, :nuts_weighted)
     WS_SELECTIONS[] = 0
-    empty!(WS_WEIGHTS)
+    empty!(WS_SIZES)
     rp = ws_problem()
     result = adaptive_warmup_mcmc(Xoshiro(20260926), rp; n_draws=1000,
-        progress=nothing, nonlinear_evidence=evidence)
+        progress=nothing, nonlinear_evidence=evidence, recording_target=500)
     @test WS_SELECTIONS[] >= 1
-    @test all(>=(0), WS_WEIGHTS)
-    if evidence === :linear_pool
-        @test all(==(1.0), WS_WEIGHTS)
-    else
-        @test any(w -> 0 < w < 1, WS_WEIGHTS)
-    end
+    # One evidence size: the pool, or a same-size sample of the leaves.
+    @test all(<=(500), WS_SIZES)
+    evidence === :nuts_weighted && @test all(==(500), WS_SIZES)
     # The rule whitens the block: controls near log(s).
     @test WarmupHMC.reparametrizer(rp).c ≈ log.(WS_S) atol = 0.5
     # Draws come back in the model's own frame.
@@ -155,9 +149,7 @@ end
     ])
     selections = Ref(0)
     plan = WarmupHMC.WindowSelectionPlan(
-        ir -> Ref(0),
-        (acc, ir, x, g, w) -> (acc[] += 1),
-        (ir, acc) -> begin
+        (ir, positions, gradients) -> begin
             selections[] += 1
             ir.pairs .= [idx => WarmupHMC.Reparametrization(value.target,
                 WarmupHMC.PartiallyCentered(1.0), value.args...) for (idx, value) in ir.pairs]
@@ -182,7 +174,7 @@ end
     payload = WarmupHMC.deserialize(joinpath(dir, "cp_latest.jls"))
     @test payload.reparam_sources isa Vector{Float64}
     @test payload.custom_candidate_scoring
-    @test payload.nonlinear_recorder.online isa MomentEvidence
+    @test payload.nonlinear_recorder.online isa WarmupHMC.WeightedLeafSample
     # Resuming without the plan is refused, as for a scoring plan.
     plain = WarmupHMC.ReparametrizedProblem(RotScaleBlock(), DenseGaussian(WS_Q, WS_S), AutoEnzyme())
     @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(7), plain; n_draws=300,

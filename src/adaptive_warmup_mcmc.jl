@@ -440,6 +440,7 @@ init_state(
         mode=nonlinear_evidence,
         trajectory_weighting=nonlinear_trajectory_weighting,
         good_leaf_threshold=nonlinear_good_leaf_threshold,
+        capacity=recording_target,
     )
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
@@ -1233,6 +1234,7 @@ restore_state(p, lpdf, progress;
         mode=restored_mode,
         trajectory_weighting=restored_weighting,
         good_leaf_threshold=restored_threshold,
+        capacity=p.recorder.target,
     )
     saved_linear_recorder = get(p, :linear_recorder, nothing)
     restored_linear_source = something(

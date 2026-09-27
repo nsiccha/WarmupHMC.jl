@@ -145,6 +145,7 @@ cooperative_chain(
         mode=nonlinear_evidence,
         trajectory_weighting=nonlinear_trajectory_weighting,
         good_leaf_threshold=nonlinear_good_leaf_threshold,
+        capacity=recording_target,
     )
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;

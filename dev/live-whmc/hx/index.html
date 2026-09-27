@@ -99,6 +99,36 @@ function htmxoSortState(target) {
         sort_dir: th.dataset.sortDir,
     };
 }
+function htmxoMdToggle(row, event, key, slot) {
+    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    var d = document.getElementById('detail-' + key); if (!d) return;
+    var show = d.hidden; d.hidden = !show;
+    row.setAttribute('aria-expanded', show);
+    if (show && slot) {
+        var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
+        if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') {
+            s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+        }
+    }
+    return show;
+}
+function htmxoMdBefore(s) {
+    s.dataset.loading = '1'; delete s.dataset.failed;
+    var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
+}
+function htmxoMdAfter(s, event) {
+    delete s.dataset.loading;
+    if (event.detail.successful) { s.dataset.loaded = '1'; delete s.dataset.failed; }
+    else {
+        s.dataset.loaded = '0'; s.dataset.failed = '1';
+        var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Failed to load — click to retry';
+    }
+}
+function htmxoMdRetry(s) {
+    if (s.dataset.failed === '1' && !s.dataset.loading) {
+        s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+    }
+}
 </script><style>@layer htmxo {
 .htmxo-sortable-table thead th { cursor: pointer; }
 .htmxo-sortable-table thead th[colspan] { cursor: default; text-align: center; border-bottom: none; }

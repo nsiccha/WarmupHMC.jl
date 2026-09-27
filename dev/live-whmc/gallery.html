@@ -1,5 +1,19 @@
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script><script src="https://unpkg.com/hyperscript.org@0.9.14"></script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"><style>@layer htmxo {
+<html hx-ext="preload"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/dist/sse.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-preload@2.1.2/dist/preload.min.js"></script><script>(function() {
+    if (window.htmxoPreloadClient) return;
+    var bytes = new Uint8Array(16), id = '';
+    crypto.getRandomValues(bytes);
+    for (var i = 0; i < bytes.length; i++) id += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+    window.htmxoPreloadClient = id;
+    document.addEventListener('htmx:configRequest', function(e) {
+        var d = e.detail;
+        if (d.verb !== 'get') return;
+        try { if (new URL(d.path, location.href).origin !== location.origin) return; }
+        catch (_) { return; }
+        d.headers['HTMXO-Client'] = id;
+    });
+})();
+</script><script src="https://unpkg.com/hyperscript.org@0.9.14"></script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"><style>@layer htmxo {
     :where(:root) {
         --htmxo-accent:  #4a90d9;
         --htmxo-success: #2a9d8f;
@@ -45,6 +59,13 @@
     0% { outline-color: var(--htmxo-error); }
     100% { outline-color: transparent; }
 }
+@media (prefers-reduced-motion: reduce) {
+    .htmx-request-active,
+    .htmx-request-success,
+    .htmx-request-error {
+        animation: none;
+    }
+}
 }
 </style><script>document.addEventListener('DOMContentLoaded', function() {
     function getTarget(evt) {
@@ -64,12 +85,19 @@
     function isPollingRelated(elt) {
         return isPolling(elt) || (elt.querySelector && !!elt.querySelector('[hx-trigger*="every"]'));
     }
+    // htmx dispatches a preload's beforeRequest before the preload extension
+    // cancels it, and no afterRequest follows: marking it would leave the
+    // hovered element pulsing for good.
+    function isPreload(e) {
+        var config = e.detail.requestConfig;
+        return !!(config && config.headers && config.headers['HX-Preloaded'] === 'true');
+    }
     function clearFeedback(el) {
         el.classList.remove('htmx-request-active', 'htmx-request-success', 'htmx-request-error');
     }
     document.body.addEventListener('htmx:beforeRequest', function(e) {
         var elt = e.detail.elt;
-        if (isPolling(elt)) return;
+        if (isPolling(elt) || isPreload(e)) return;
         var t = getTarget(e);
         clearFeedback(t);
         t.classList.add('htmx-request-active');
@@ -211,6 +239,511 @@
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
+})();
+</script><style>@layer htmxo {
+.htmxo-thread { display: flex; flex-direction: column; min-height: 0; }
+.htmxo-thread-viewport { position: relative; min-height: 0; }
+.htmxo-thread-scroll {
+    max-height: var(--htmxo-thread-height, 60vh);
+    overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain;
+}
+.htmxo-thread-items { display: flex; flex-direction: column; gap: var(--htmxo-thread-gap, 0.5rem); }
+.htmxo-thread-items:empty::before {
+    content: attr(data-empty); display: block; padding: 1rem 0;
+    text-align: center; font-size: 0.875em; color: var(--htmxo-muted);
+}
+.htmxo-thread-item { min-width: 0; }
+.htmxo-thread-older {
+    display: flex; align-items: center; justify-content: center;
+    height: 2rem; overflow: hidden; font-size: 0.8em; color: var(--htmxo-muted);
+}
+.htmxo-thread-older:empty { height: 0; }
+.htmxo-thread-older [role="button"] { cursor: pointer; text-decoration: underline dotted; }
+.htmxo-thread-status { padding: 0.25rem 0; font-size: 0.8em; color: var(--htmxo-error); }
+.htmxo-thread-status details { color: var(--htmxo-muted); }
+.htmxo-thread-status[hidden] { display: none; }
+.htmxo-thread-focus { animation: htmxo-thread-focus 2.5s ease-out; border-radius: 0.25rem; }
+@keyframes htmxo-thread-focus {
+    from { background-color: color-mix(in srgb, var(--htmxo-accent) 25%, transparent); }
+    to   { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .htmxo-thread-focus { animation: none; outline: 2px solid var(--htmxo-accent); }
+}
+}
+.htmxo-thread-viewport > .htmxo-thread-new {
+    position: absolute; left: 50%; bottom: 0.75rem; transform: translateX(-50%);
+    width: auto; margin: 0; padding: 0.2rem 0.75rem; border-radius: 999px;
+    font-size: 0.8rem; line-height: 1.4; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.htmxo-thread-viewport > .htmxo-thread-new[hidden] { display: none; }
+</style><script>(function () {
+  'use strict';
+  if (window.htmxoThread) return;
+  var STICK_PX = 48;       // this close to the bottom counts as "at the bottom"
+  var PREFETCH_PX = 600;   // start loading older pages this far above the top
+  var TIMEOUT_MS = 30000;
+  var MAX_BACKOFF = 8;
+  var ITEM = 'htmxo-thread-item';
+  var MORPH = {
+    morphStyle: 'outerHTML',
+    ignoreActiveValue: true,
+    callbacks: {
+      // A viewer's own <details> open/closed choice survives item updates.
+      beforeAttributeUpdated: function (name, node) {
+        if (name === 'open' && node.tagName === 'DETAILS') return false;
+      }
+    }
+  };
+
+  function withParams(url, params) {
+    var u = new URL(url, window.location.href);
+    Object.keys(params).forEach(function (k) { u.searchParams.set(k, params[k]); });
+    return u.toString();
+  }
+
+  function fetchFragment(url) {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, TIMEOUT_MS);
+    return fetch(url, {
+      headers: { 'HX-Request': 'true', 'Accept': 'text/html' },
+      credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal
+    }).then(function (r) {
+      return r.text().then(function (text) {
+        return { status: r.status, ok: r.ok, errorId: r.headers.get('X-HTMXO-Error-Id'), text: text };
+      });
+    }, function (err) {
+      throw { message: err && err.name === 'AbortError' ? 'request timed out' : 'network error' };
+    }).finally(function () { clearTimeout(timer); });
+  }
+
+  // The response's `.cls` wrapper, or a thrown {message, html} describing why not.
+  function expect(res, cls) {
+    if (!res.ok || res.errorId) {
+      throw { message: 'HTTP ' + res.status + (res.errorId ? ' (error ' + res.errorId + ')' : ''), html: res.text };
+    }
+    var t = document.createElement('template');
+    t.innerHTML = res.text;
+    var frag = t.content.querySelector('.' + cls);
+    if (!frag) {
+      throw {
+        message: /treebar-poller/.test(res.text)
+          ? 'the route answered with an interim poller; declare it `@fresh @get`'
+          : 'unexpected response (no .' + cls + ')',
+        html: res.text
+      };
+    }
+    return frag;
+  }
+
+  function childItems(parent) {
+    return Array.prototype.filter.call(parent.children, function (el) { return el.classList.contains(ITEM); });
+  }
+  function findKey(s, key) {
+    var list = s.items.children;
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i].getAttribute('data-key') === key) return list[i];
+    }
+    return null;
+  }
+
+  // Treat inserted content like an htmx swap would: fresh copies of scripts
+  // (parsed ones never run), htmx attributes processed, `htmx:load` fired.
+  function processNew(node) {
+    var scripts = !(window.htmx && htmx.config && htmx.config.allowScriptTags === false);
+    node.querySelectorAll('script').forEach(function (old) {
+      if (!scripts) { old.remove(); return; }
+      var type = (old.getAttribute('type') || '').toLowerCase();
+      if (type && type !== 'module' && type.indexOf('javascript') < 0) return;
+      var fresh = document.createElement('script');
+      Array.prototype.forEach.call(old.attributes, function (a) { fresh.setAttribute(a.name, a.value); });
+      fresh.textContent = old.textContent;
+      old.replaceWith(fresh);
+    });
+    if (window.htmx) { htmx.process(node); htmx.trigger(node, 'htmx:load'); }
+  }
+
+  function updateItem(cur, fresh) {
+    if (window.Idiomorph && Idiomorph.morph) {
+      Idiomorph.morph(cur, fresh, MORPH);
+      if (window.htmx) htmx.process(cur);
+      return cur;
+    }
+    cur.replaceWith(fresh);
+    processNew(fresh);
+    return fresh;
+  }
+
+  // Reconcile the items after `after` (the whole list when null) to `fresh`,
+  // by key: identical digests are left alone, the rest morphed / inserted /
+  // moved / removed.
+  function reconcile(s, after, fresh) {
+    var box = s.items, region = [], outside = new Set(), inRegion = !after;
+    for (var el = box.firstElementChild; el; el = el.nextElementSibling) {
+      if (inRegion) region.push(el); else outside.add(el.getAttribute('data-key'));
+      if (el === after) inRegion = true;
+    }
+    var byKey = new Map(), kept = new Set(), inserted = [];
+    var stats = { added: 0, changed: 0, removed: 0 };
+    region.forEach(function (el) { byKey.set(el.getAttribute('data-key'), el); });
+    var prev = after;
+    fresh.forEach(function (f) {
+      var key = f.getAttribute('data-key');
+      if (outside.has(key) || kept.has(key)) {
+        console.warn('htmxo thread: ignoring item with duplicate key', key);
+        return;
+      }
+      kept.add(key);
+      var next = prev ? prev.nextElementSibling : box.firstElementChild;
+      var cur = byKey.get(key);
+      if (cur) {
+        if (cur !== next) box.insertBefore(cur, next);
+        if (cur.getAttribute('data-digest') !== f.getAttribute('data-digest')) {
+          cur = updateItem(cur, f);
+          stats.changed++;
+        }
+        prev = cur;
+      } else {
+        box.insertBefore(f, next);
+        inserted.push(f);
+        stats.added++;
+        prev = f;
+      }
+    });
+    region.forEach(function (el) {
+      if (!kept.has(el.getAttribute('data-key'))) { el.remove(); stats.removed++; }
+    });
+    inserted.forEach(processNew);
+    return stats;
+  }
+
+  // --- scroll anchoring -------------------------------------------------
+  function distance(s) {
+    var sc = s.scroller;
+    return sc.scrollHeight - sc.scrollTop - sc.clientHeight;
+  }
+  function stickBottom(s) { s.scroller.scrollTop = s.scroller.scrollHeight; }
+  // Up to three items from the first one visible at the top, with offsets.
+  function captureAnchors(s) {
+    var list = s.items.children, n = list.length, out = [];
+    if (!n) return out;
+    var top = s.scroller.getBoundingClientRect().top, lo = 0, hi = n - 1, first = n;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (list[mid].getBoundingClientRect().bottom > top) { first = mid; hi = mid - 1; } else lo = mid + 1;
+    }
+    for (var i = first; i < n && out.length < 3; i++) {
+      out.push({ el: list[i], off: list[i].getBoundingClientRect().top - top });
+    }
+    return out;
+  }
+  function restoreAnchors(s, anchors) {
+    if (!anchors) return;
+    var top = s.scroller.getBoundingClientRect().top;
+    for (var i = 0; i < anchors.length; i++) {
+      var a = anchors[i];
+      if (a.el.parentNode !== s.items) continue;
+      var d = a.el.getBoundingClientRect().top - top - a.off;
+      if (d) s.scroller.scrollTop += d;
+      return;
+    }
+  }
+  // Run a DOM change without moving what the viewer is looking at.
+  function mutate(s, change) {
+    var anchors = s.stuck ? null : captureAnchors(s);
+    var out = change();
+    if (s.stuck) stickBottom(s); else restoreAnchors(s, anchors);
+    s.anchors = s.stuck ? null : captureAnchors(s);
+    return out;
+  }
+  function onScroll(s) {
+    var sc = s.scroller;
+    if (distance(s) <= STICK_PX) { s.stuck = true; s.unseen = 0; }
+    else if (sc.scrollTop < s.lastTop - 1) s.stuck = false;   // the viewer moved up
+    s.lastTop = sc.scrollTop;
+    s.anchors = s.stuck ? null : captureAnchors(s);
+    updatePill(s);
+  }
+  // Layout changes nobody announced (images loading, <details> toggled,
+  // the box resized): keep the bottom, or keep the anchor.
+  function onResize(s) {
+    if (s.dead) return;
+    if (s.stuck) stickBottom(s); else restoreAnchors(s, s.anchors);
+    updatePill(s);
+  }
+  function updatePill(s) {
+    var show = !s.stuck && (s.unseen > 0 || distance(s) > s.scroller.clientHeight);
+    s.pill.hidden = !show;
+    if (show) s.pill.textContent = s.unseen > 0 ? '↓ ' + s.unseen + ' new' : '↓ Latest';
+  }
+
+  // --- status -----------------------------------------------------------
+  function report(s, what, err) {
+    console.error('htmxo thread: ' + what + ' failed: ' + err.message, err.html || '');
+    var st = s.status;
+    st.textContent = '';
+    st.appendChild(document.createTextNode(what + ' failed: ' + err.message));
+    if (err.html) {
+      var d = document.createElement('details'), sm = document.createElement('summary'), body = document.createElement('div');
+      sm.textContent = 'response';
+      body.innerHTML = err.html;
+      d.appendChild(sm); d.appendChild(body); st.appendChild(d);
+    }
+    st.hidden = false;
+  }
+  function clearStatus(s) { if (!s.status.hidden) { s.status.hidden = true; s.status.textContent = ''; } }
+
+  // --- older pages --------------------------------------------------------
+  function setOlder(s, cursor, done) {
+    s.olderCursor = cursor;
+    s.olderDone = done || cursor == null;
+    if (cursor == null) s.older.removeAttribute('data-cursor'); else s.older.setAttribute('data-cursor', cursor);
+    s.older.toggleAttribute('data-done', s.olderDone);
+    olderLabel(s);
+  }
+  function olderLabel(s) {
+    var o = s.older;
+    o.textContent = '';
+    if (!s.olderUrl) return;
+    if (s.olderBusy) { o.textContent = 'Loading earlier messages…'; return; }
+    if (s.olderDone) { o.textContent = 'Start of thread'; return; }
+    var b = document.createElement('span');
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
+    b.textContent = s.olderError ? 'Couldn’t load earlier messages — retry' : 'Earlier messages';
+    o.appendChild(b);
+  }
+  function loadOlder(s) {
+    if (s.dead || s.olderBusy || s.olderDone || s.olderError || !s.olderUrl) return;
+    s.olderBusy = true;
+    olderLabel(s);
+    var gen = s.gen, before = s.olderCursor;
+    // A reset while this page was in flight made it stale: drop it and look
+    // again with the new cursor (the observer will not re-fire by itself).
+    function stale() {
+      if (s.dead || gen === s.gen) return false;
+      olderLabel(s);
+      requestAnimationFrame(function () { maybeLoadOlder(s); });
+      return true;
+    }
+    fetchFragment(withParams(s.olderUrl, { before: before })).then(function (res) {
+      s.olderBusy = false;
+      if (s.dead || stale()) return;
+      var frag = expect(res, 'htmxo-thread-page');
+      var cursor = frag.getAttribute('data-cursor'), done = frag.hasAttribute('data-done');
+      var added = mutate(s, function () {
+        var first = s.items.firstElementChild, inserted = [];
+        childItems(frag).forEach(function (f) {
+          if (findKey(s, f.getAttribute('data-key'))) return;   // overlapping cursor
+          s.items.insertBefore(f, first);
+          inserted.push(f);
+        });
+        inserted.forEach(processNew);
+        return inserted.length;
+      });
+      if (!added && !done && cursor === before) {
+        throw { message: 'the older page added nothing and did not advance its cursor' };
+      }
+      setOlder(s, cursor, done);
+      emit(s, { older: added });
+      requestAnimationFrame(function () { maybeLoadOlder(s); });
+    }).catch(function (err) {
+      s.olderBusy = false;
+      if (s.dead || stale()) return;
+      s.olderError = true;
+      olderLabel(s);
+      report(s, 'Loading earlier messages', err);
+    });
+  }
+  // The observer only reports changes; after a page lands, keep filling while
+  // the top is still within reach.
+  function maybeLoadOlder(s) {
+    if (s.dead || s.olderBusy || s.olderDone || s.olderError || !s.olderUrl) return;
+    if (!s.scroller.clientHeight) return;   // not rendered (collapsed, hidden)
+    if (s.older.getBoundingClientRect().bottom >= s.scroller.getBoundingClientRect().top - PREFETCH_PX) loadOlder(s);
+  }
+
+  // --- live tail ------------------------------------------------------------
+  function applyTail(s, frag, sentSince) {
+    var reset = frag.hasAttribute('data-reset'), after = null;
+    if (!reset && sentSince) {
+      after = findKey(s, sentSince);
+      if (!after) {
+        s.since = ''; s.version = '';
+        throw { message: 'the list no longer holds the `since` item "' + sentSince + '"; asking for a full tail next' };
+      }
+    }
+    var stats = mutate(s, function () {
+      if (reset) {
+        s.gen++;   // older pages in flight belong to the old list
+        s.olderError = false;
+        setOlder(s, frag.getAttribute('data-cursor'), frag.hasAttribute('data-done'));
+      }
+      return reconcile(s, after, childItems(frag));
+    });
+    s.since = frag.getAttribute('data-since') || '';
+    s.version = frag.getAttribute('data-version') || '';
+    s.root.setAttribute('data-since', s.since);
+    s.root.setAttribute('data-version', s.version);
+    if (!s.stuck) s.unseen += stats.added;
+    updatePill(s);
+    stats.reset = reset;
+    if (stats.added || stats.changed || stats.removed || reset) emit(s, stats);
+    if (reset) requestAnimationFrame(function () { maybeLoadOlder(s); });
+  }
+  function refresh(s, opts) {
+    if (s.dead) return;
+    if (opts && opts.bottom) { s.stuck = true; s.unseen = 0; stickBottom(s); updatePill(s); }
+    if (!s.tailUrl) return;
+    if (s.tailBusy) { s.tailAgain = true; return; }
+    clearTimeout(s.timer);
+    s.timer = null;
+    s.tailBusy = true;
+    var sentSince = s.since;
+    fetchFragment(withParams(s.tailUrl, { since: sentSince, v: s.version })).then(function (res) {
+      if (s.dead) return;
+      if (res.status !== 204 || res.errorId) applyTail(s, expect(res, 'htmxo-thread-tail'), sentSince);
+      s.failures = 0;
+      clearStatus(s);
+    }).catch(function (err) {
+      if (s.dead) return;
+      s.failures++;
+      report(s, 'Refreshing', err);
+    }).then(function () {
+      s.tailBusy = false;
+      if (s.dead) return;
+      if (s.tailAgain) { s.tailAgain = false; refresh(s); } else schedule(s);
+    });
+  }
+  function schedule(s) {
+    clearTimeout(s.timer);
+    s.timer = null;
+    if (s.dead || !s.tailUrl || !(s.pollMs > 0)) return;
+    var delay = s.pollMs * Math.min(Math.pow(2, s.failures), MAX_BACKOFF);
+    s.timer = setTimeout(function () {
+      s.timer = null;
+      if (!s.root.isConnected) { destroy(s); return; }
+      if (document.hidden) { s.hiddenPaused = true; return; }
+      refresh(s);
+    }, delay);
+  }
+
+  function emit(s, detail) {
+    s.root.dispatchEvent(new CustomEvent('htmxo:thread-updated', { bubbles: true, detail: detail }));
+  }
+
+  function destroy(s) {
+    s.dead = true;
+    clearTimeout(s.timer);
+    if (s.io) s.io.disconnect();
+    if (s.ro) s.ro.disconnect();
+    delete s.root.__htmxoThread;
+  }
+
+  function init(root) {
+    if (root.__htmxoThread) return root.__htmxoThread;
+    var s = {
+      root: root,
+      scroller: root.querySelector('.htmxo-thread-scroll'),
+      items: root.querySelector('.htmxo-thread-items'),
+      older: root.querySelector('.htmxo-thread-older'),
+      pill: root.querySelector('.htmxo-thread-new'),
+      status: root.querySelector('.htmxo-thread-status'),
+      olderUrl: root.getAttribute('data-older-url'),
+      tailUrl: root.getAttribute('data-tail-url'),
+      pollMs: parseInt(root.getAttribute('data-poll') || '0', 10),
+      since: root.getAttribute('data-since') || '',
+      version: root.getAttribute('data-version') || '',
+      stuck: true, unseen: 0, lastTop: 0, anchors: null, gen: 0, failures: 0,
+      tailBusy: false, tailAgain: false, olderBusy: false, olderError: false,
+      timer: null, dead: false, hiddenPaused: false
+    };
+    root.__htmxoThread = s;
+    setOlder(s, s.older.getAttribute('data-cursor'), s.older.hasAttribute('data-done'));
+    s.scroller.addEventListener('scroll', function () { onScroll(s); }, { passive: true });
+    s.pill.addEventListener('click', function () {
+      s.stuck = true;
+      s.unseen = 0;
+      s.scroller.scrollTo({ top: s.scroller.scrollHeight, behavior: 'smooth' });
+      updatePill(s);
+    });
+    function retryOlder(e) {
+      if (!e.target.closest('[role="button"]')) return;
+      if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      s.olderError = false;
+      clearStatus(s);
+      loadOlder(s);
+    }
+    s.older.addEventListener('click', retryOlder);
+    s.older.addEventListener('keydown', retryOlder);
+    var focus = root.getAttribute('data-focus'), target = focus && findKey(s, focus);
+    if (target) {
+      s.stuck = false;
+      var sr = s.scroller.getBoundingClientRect(), tr = target.getBoundingClientRect();
+      s.scroller.scrollTop += tr.top - sr.top - (s.scroller.clientHeight - tr.height) / 2;
+      target.classList.add('htmxo-thread-focus');
+      s.stuck = distance(s) <= STICK_PX;
+    } else {
+      stickBottom(s);
+    }
+    s.lastTop = s.scroller.scrollTop;
+    s.anchors = s.stuck ? null : captureAnchors(s);
+    s.ro = new ResizeObserver(function () { onResize(s); });
+    s.ro.observe(s.items);
+    s.ro.observe(s.scroller);
+    s.io = new IntersectionObserver(function (entries) {
+      if (entries.some(function (e) { return e.isIntersecting; })) loadOlder(s);
+    }, { root: s.scroller, rootMargin: PREFETCH_PX + 'px 0px 0px 0px' });
+    s.io.observe(s.older);
+    updatePill(s);
+    schedule(s);
+    return s;
+  }
+
+  function threadsFor(target) {
+    if (!target) return Array.prototype.slice.call(document.querySelectorAll('[data-htmxo-thread]'));
+    var els = typeof target === 'string' ? document.querySelectorAll(target) : [target], out = [];
+    Array.prototype.forEach.call(els, function (el) {
+      var root = el.closest('[data-htmxo-thread]');
+      if (root) out.push(root);
+      else el.querySelectorAll('[data-htmxo-thread]').forEach(function (r) { out.push(r); });
+    });
+    return out;
+  }
+
+  window.htmxoThread = {
+    init: init,
+    refresh: function (target, opts) {
+      threadsFor(target).forEach(function (root) { refresh(init(root), opts || {}); });
+    }
+  };
+
+  function scan(node) {
+    if (node.nodeType !== 1) return;
+    if (node.hasAttribute('data-htmxo-thread')) init(node);
+    if (node.firstElementChild) node.querySelectorAll('[data-htmxo-thread]').forEach(init);
+  }
+  function boot() {
+    scan(document.body);
+    new MutationObserver(function (records) {
+      records.forEach(function (r) { r.addedNodes.forEach(scan); });
+    }).observe(document.body, { childList: true, subtree: true });
+    document.addEventListener('htmxo:thread-refresh', function (e) {
+      var d = e.detail || {};
+      window.htmxoThread.refresh(d.target || d.value || null, { bottom: !!d.bottom });
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) return;
+      threadsFor(null).forEach(function (root) {
+        var s = root.__htmxoThread;
+        if (s && s.hiddenPaused) { s.hiddenPaused = false; refresh(s); }
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 })();
 </script><script src="/WarmupHMC.jl/dev/live-whmc/overlay/bar.js" defer="true"></script><style>@layer htmxo {
 /* === Generic behavior conventions === */
@@ -394,6 +927,10 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 .u-scroll-y-lg { max-height: 400px; overflow: auto; }
 .u-card { background: var(--pico-card-background-color, transparent); padding: 1rem; border-radius: 0.5rem; }
 .u-code-block { background: var(--pico-code-background-color, #f6f8fa); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+/* Wide-table scroll container emitted by `sortable_table` (which covers
+   `render_table` and `master_detail_table` too): a table wider than its
+   column scrolls inside this wrapper instead of widening the page. */
+.table-wrap { overflow-x: auto; }
 /* Status banner — colored left-border callout. State via data-status. */
 .htmxo-status-banner { padding: 0.5rem 1rem; margin-bottom: 0.5rem; min-width: 0; overflow: hidden; background: var(--pico-card-background-color, transparent); border-left: 4px solid var(--htmxo-border); }
 .htmxo-status-banner[data-status="success"] { border-left-color: var(--htmxo-success); }
@@ -444,6 +981,29 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 }
 .htmxo-back-link:hover { text-decoration: underline; }
 }
+
+/* While its request is in flight, htmx itself adds `htmx-request` to the
+   triggering element (core `requestClass` — no HTMXObjects JS needed), so
+   this rule fires on every page carrying this block, including hand-built
+   shells that skip `request_feedback()`. `cursor: progress` plus a subtle
+   dim, in plain literals so it holds without `htmxo_theme()`. Pollers
+   (`hx-trigger` containing `every`) are background work, not user-triggered
+   feedback, so they keep their resting style — the same exclusion the
+   `request_feedback` script applies.
+   INTENTIONALLY UNLAYERED: Pico styles `<button>` (and other controls)
+   unlayered, and an unlayered declaration beats every layered one
+   regardless of specificity — inside `@layer htmxo` the cursor would never
+   apply on buttons (the opacity would, Pico sets none). The resting `[hx-*]`
+   rule above stays layered: at rest it agrees with Pico's `pointer`, so
+   there is nothing to beat. */
+[hx-get]:not([hx-trigger*="every"]).htmx-request,
+[hx-post]:not([hx-trigger*="every"]).htmx-request,
+[hx-put]:not([hx-trigger*="every"]).htmx-request,
+[hx-patch]:not([hx-trigger*="every"]).htmx-request,
+[hx-delete]:not([hx-trigger*="every"]).htmx-request {
+    cursor: progress;
+    opacity: 0.7;
+}
 </style><style>@layer htmxo {
 .tabset > nav {
     margin: 0;
@@ -493,4 +1053,798 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     margin-top: 0.5rem;
 }
 }
-</style><style>[data-static-disabled]{opacity:.45;pointer-events:none;cursor:not-allowed}</style></head><body><div class="htmxo-app-layout"><aside><nav><ul><li><a href="//" hx-get="//" hx-target="#content" hx-push-url="//" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Table</a></li><li><a href="//gallery" hx-get="//gallery" hx-target="#content" hx-push-url="//gallery" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Gallery</a></li></ul></nav></aside><main id="content"><div><h2>WarmupHMC Posterior Gallery (147 posteriors)</h2><div class="htmxo-gallery"><article><h4>GLMM_Poisson_data-GLMM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLMM_data-GLMM1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Binomial_data-GLM_Binomial_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Poisson_Data-GLM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>M0_data-M0_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mb_data-Mb_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mh_data-Mh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mt_data-Mt_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mtbh_data-Mtbh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mth_data-Mth_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_1_data-Rate_1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_2_data-Rate_2_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_3_data-Rate_3_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_4_data-Rate_4_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_5_data-Rate_5_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Survey_data-Survey_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arK-arK</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arma-arma11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_0-hmm_drive_0</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_1-hmm_drive_1</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bones_data-bones_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>butterfly-multi_occupancy</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>diamonds-diamonds</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_hierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_log</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_nonhierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dugongs_data-dugongs_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-log10earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_logheight_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>election88-election88_full</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>fims_Aus_Jpn_irt-2pl_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>garch-garch11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_pois_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_example-hmm_example</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_gaussian_simulated-hmm_gaussian</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hudson_lynx_hare-lotka_volterra</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>iohmm_reg_simulated-iohmm_reg</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>irt_2pl-irt_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhsiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_mom_work</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kilpisjarvi_mod-kilpisjarvi</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>loss_curves-losscurve_sislob</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix-low_dim_gauss_mix</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix_collapse-low_dim_gauss_mix_collapse</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>lsat_data-lsat_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_gp-accel_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_splines-accel_splines</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logva</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvas</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvash</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvolume</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-mesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist-nn_rbm1bJ100</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist_100-nn_rbm1bJ10</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1972-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1976-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1980-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1984-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1988-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1992-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1996-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes2000-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes_logit_data-nes_logit_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_2-normal_mixture</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_5-normal_mixture_k</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>one_comp_mm_elim_abs-one_comp_mm_elim_abs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ovarian-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>pilots-pilots</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_chapter-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_paragraph-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prostate-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mod-radon_county</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rats_data-rats_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rstan_downloads-prophet</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sat-hier_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblrc-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblri-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>science_irt-grsm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_centered_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_stanified_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sesame_data-sesame_one_pred_a</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sir-sir</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>soil_carbon-soil_incubation</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>state_wide_presidential_votes-hierarchical_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>surgical_data-surgical_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>synthetic_grid_RBF_kernels-kronecker_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_docs1200-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men1-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men2-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men3-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>timssAusTwn_irt-gpcm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>traffic_accident_nyc-bym2_offset_only</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>uk_drivers-state_space_stochastic_level_stochastic_seasonal</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_daae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_inter_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100ars_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article></div></div></main></div><style>.htmxo-status-banner section { margin-bottom: 0.5rem; }</style></body></html>
+</style><script>function htmxoMdToggle(row, event, key, slot) {
+    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    var d = document.getElementById('detail-' + key); if (!d) return;
+    var show = d.hidden; d.hidden = !show;
+    row.setAttribute('aria-expanded', show);
+    if (show && slot) {
+        var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
+        if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') {
+            s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+        }
+    }
+    return show;
+}
+function htmxoMdBefore(s) {
+    s.dataset.loading = '1'; delete s.dataset.failed;
+    var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
+}
+function htmxoMdAfter(s, event) {
+    delete s.dataset.loading;
+    if (event.detail.successful) { s.dataset.loaded = '1'; delete s.dataset.failed; }
+    else {
+        s.dataset.loaded = '0'; s.dataset.failed = '1';
+        var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Failed to load — click to retry';
+    }
+}
+function htmxoMdRetry(s) {
+    if (s.dataset.failed === '1' && !s.dataset.loading) {
+        s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+    }
+}
+</script><style>.treebar-pills { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.treebar-pill {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border-radius: 1rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid transparent;
+    transition: opacity 0.15s;
+}
+.treebar-pill-finished {
+    background: color-mix(in srgb, var(--pico-ins-color, #d1fae5) 35%, transparent);
+}
+.treebar-pill-failed {
+    background: color-mix(in srgb, var(--pico-del-color, #fee2e2) 35%, transparent);
+}
+.treebar-pill-pending {
+    background: color-mix(in srgb, var(--pico-muted-color, #ccc) 25%, transparent);
+}
+.treebar-pill-skipped {
+    background: color-mix(in srgb, var(--pico-muted-color, #ccc) 15%, transparent);
+}
+.treebar-pending { opacity: 0.55; }
+.treebar-pending .treebar-progress { opacity: 0.5; }
+/* Dimmer than pending and struck through: the phase is terminal, and the
+   strike is what separates "never ran" from "not yet" at a glance. */
+.treebar-skipped { opacity: 0.45; }
+.treebar-skipped .treebar-description { text-decoration: line-through; }
+.treebar-pill:hover { opacity: 0.8; }
+.treebar-header { display: flex; gap: 0.5ch; align-items: baseline; flex-wrap: wrap; }
+.treebar-duration { font-size: 0.85em; color: var(--pico-muted-color, #888); }
+.treebar-stop { padding: 0.1rem 0.4rem; font-size: 0.7em; float: right; margin-right: 3.5rem; }
+.treebar-node { margin-bottom: 0.25rem; }
+
+/* Pause/resume control. Sits top-right of the persistent .treebar-poller
+   wrapper. The margin-right above keeps the (float:right) Stop button clear
+   of this absolutely-positioned button when cancel_url is set — a constant
+   margin, NOT the inherited-custom-prop visibility scheme, so it does not
+   interact with the nested-poller data-show-* logic below. */
+.treebar-poller { position: relative; }
+.treebar-terminal { position: static; }
+.treebar-pause {
+    display: none;
+    position: absolute; top: 0.25rem; right: 0.4rem; z-index: 2;
+    margin: 0; padding: 0.1rem 0.5rem; font-size: 0.7rem; line-height: 1.4;
+    width: auto; cursor: pointer;
+}
+/* Reveal the pause control ONLY while this poller is actively polling — i.e. its
+   DIRECT-CHILD inner still carries hx-trigger (running). The done inner and the
+   error article (article[aria-invalid]) drop hx-trigger, so :has() goes false and
+   the button auto-hides with zero server change. The `>` is load-bearing: without
+   it an outer (done) poller would match a NESTED still-running inner and keep its
+   own button visible (the same nested-poller trap the data-show-* scheme avoids,
+   see comment below). Pause cancels the request via JS but keeps the element (and
+   its hx-trigger), so a paused poller still matches → button stays → Resume works. */
+.treebar-poller:has(> .treebar-poller-inner[hx-trigger]) .treebar-pause { display: inline-block; }
+/* Push transports (WebSocket / SSE) put the connection on the wrapper and send
+   inners without hx-trigger: there, a direct-child .treebar-poller-inner is the
+   running state, and the terminal frame (.treebar-terminal-content) hides the
+   button the same way. */
+.treebar-poller[ws-connect]:has(> .treebar-poller-inner) > .treebar-pause,
+.treebar-poller[sse-connect]:has(> .treebar-poller-inner) > .treebar-pause { display: inline-block; }
+.treebar-children { padding-left: 1rem; margin-left: 0.25rem; border-left: 2px solid color-mix(in srgb, var(--pico-muted-color, #888) 40%, transparent); }
+/* Message-bearing nodes now use the same treebar-node + treebar-header structure
+   as container nodes, so treebar-label/treebar-value/treebar-description classes
+   are no longer emitted. */
+
+/* Pill toggle state lives on the closest scope (.treebar-poller for live polls,
+   .treebar-children for static one-shot renders). data-show-* values are "0" or
+   "1" rather than "true"/"false" because Cobweb drops attrs whose value is the
+   string "false".
+
+   Visibility is driven through INHERITED custom properties, NOT a descendant
+   combinator (`.treebar-poller[data-show-finished="0"] .treebar-child-finished`).
+   The combinator reached straight through *nested* pollers: an outer poller
+   stuck at "0" kept hiding finished nodes inside a nested poller even after
+   that inner poller's pill flipped it to "1" (the outer match still applied;
+   CSS descendant selectors have no nearest-ancestor-wins rule). Custom
+   properties inherit and the NEAREST definition wins, so each scope governs
+   its own subtree down to the next scope — nested-poller-correct by
+   construction. Only scopes that actually carry the data-show-* attribute set
+   the var, so a scopeless inner .treebar-children (scoped=false inside a
+   poller) is transparent to inheritance: the poller's value passes through. */
+.treebar-poller[data-show-finished="0"], .treebar-board-item[data-show-finished="0"], .treebar-children[data-show-finished="0"] { --tb-finished-display: none; }
+.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-display: block; }
+.treebar-poller[data-show-failed="0"], .treebar-board-item[data-show-failed="0"], .treebar-children[data-show-failed="0"] { --tb-failed-display: none; }
+.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-display: block; }
+.treebar-poller[data-show-pending="0"], .treebar-board-item[data-show-pending="0"], .treebar-children[data-show-pending="0"] { --tb-pending-display: none; }
+.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-display: block; }
+.treebar-poller[data-show-skipped="0"], .treebar-board-item[data-show-skipped="0"], .treebar-children[data-show-skipped="0"] { --tb-skipped-display: none; }
+.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-display: block; }
+.treebar-child-finished { display: var(--tb-finished-display, block); }
+.treebar-child-failed { display: var(--tb-failed-display, block); }
+.treebar-child-pending { display: var(--tb-pending-display, block); }
+.treebar-child-skipped { display: var(--tb-skipped-display, block); }
+
+/* Active-pill highlight, same nearest-scope-wins inheritance so a nested
+   poller's pills reflect that poller's own toggle, not an ancestor's. */
+.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-pill-border: currentColor; }
+.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-pill-border: currentColor; }
+.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-pill-border: currentColor; }
+.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-pill-border: currentColor; }
+.treebar-pill-finished { border-color: var(--tb-finished-pill-border, transparent); }
+.treebar-pill-failed { border-color: var(--tb-failed-pill-border, transparent); }
+.treebar-pill-pending { border-color: var(--tb-pending-pill-border, transparent); }
+.treebar-pill-skipped { border-color: var(--tb-skipped-pill-border, transparent); }
+
+/* Keyed board (htmx_render_board). The .treebar-board-item wrapper is never
+   replaced by the client reconciler — only its .treebar-board-item-content —
+   so UI state on it (data-show-* pill toggles above, data-open for the tree)
+   survives updates exactly like the .treebar-poller wrapper does. */
+.treebar-board-header { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.treebar-board-count { font-size: 0.85em; color: var(--pico-muted-color, #888); }
+.treebar-board-pause {
+    margin: 0; padding: 0.1rem 0.5rem; font-size: 0.7rem; line-height: 1.4;
+    width: auto; cursor: pointer;
+}
+.treebar-board-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.treebar-board-item {
+    min-width: 0;
+    padding: 0.35rem 0.6rem;
+    border-left: 3px solid color-mix(in srgb, var(--pico-muted-color, #888) 45%, transparent);
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, var(--pico-muted-color, #888) 7%, transparent);
+    transition: opacity 0.3s;
+}
+.treebar-board-item[data-treebar-state="running"] { border-left-color: var(--pico-primary, #1095c1); }
+.treebar-board-item[data-treebar-state="done"] { border-left-color: var(--pico-ins-color, #2e7d32); }
+.treebar-board-item[data-treebar-state="failed"] { border-left-color: var(--pico-del-color, #c62828); }
+/* Queued renders like a pending node: dim, not yet started. */
+.treebar-board-item[data-treebar-state="queued"] { opacity: 0.55; }
+.treebar-board-item.treebar-board-leaving { opacity: 0.45; }
+.treebar-board-item-header { display: flex; gap: 0.5ch; align-items: baseline; flex-wrap: wrap; overflow-wrap: anywhere; }
+.treebar-board-label { font-weight: 600; }
+.treebar-board-meta {
+    display: flex; flex-wrap: wrap; gap: 0 0.9rem; width: 100%;
+    font-size: 0.8em; color: var(--pico-muted-color, #888);
+}
+.treebar-board-meta-key { opacity: 0.75; }
+.treebar-board-tree { margin: 0.25rem 0 0; }
+.treebar-board-tree > summary { cursor: pointer; font-size: 0.8em; color: var(--pico-muted-color, #888); }
+.treebar-board-tree > .treebar-node { margin-top: 0.25rem; }
+.treebar-board-empty { margin: 0; color: var(--pico-muted-color, #888); }
+.treebar-board-empty[hidden] { display: none; }
+
+/* Demo helpers */
+.tb-input-narrow { max-width: 6rem; }
+.tb-input-narrow-7 { max-width: 7rem; }
+</style><script>(function(){
+    // Band-based formatter mirroring the server-side short_duration: sub-100ms
+    // show whole milliseconds, sub-minute shows one-decimal seconds at 0.1s
+    // resolution ("13.9s"; FLOOR, so server-render and ticker never disagree at
+    // poll boundaries), and minute-and-up show the two most-significant units.
+    // Each band's smallest displayed unit steps by a fixed amount (per-100ms
+    // below 1min, per-second up to 1h, per-minute up to 1d, per-hour beyond) so
+    // the rendered string changes at most once per step and length stays stable
+    // within a band.
+    function fmt(ms){
+        if (ms < 0) ms = 0;
+        if (ms < 100)         return ms + 'ms';
+        if (ms < 60_000)      return (Math.floor(ms / 100) / 10) + 's';
+        if (ms < 3_600_000){
+            var m = Math.floor(ms / 60_000);
+            var s = Math.floor(ms / 1000) % 60;
+            return m + 'm ' + s + 's';
+        }
+        if (ms < 86_400_000){
+            var h = Math.floor(ms / 3_600_000);
+            var m = Math.floor(ms / 60_000) % 60;
+            return h + 'h ' + m + 'm';
+        }
+        var d = Math.floor(ms / 86_400_000);
+        var h = Math.floor(ms / 3_600_000) % 24;
+        return d + 'd ' + h + 'h';
+    }
+    function anchor(el){
+        var ms = parseInt(el.dataset.elapsedMs, 10);
+        if (isNaN(ms)) ms = 0;
+        el._tbAnchor = Date.now() - ms;
+        el._tbAnchoredFrom = el.dataset.elapsedMs;
+        el._tbLast = undefined;
+        // ETA (running determinate nodes only): anchor an ABSOLUTE finish target
+        // so the estimate counts down smoothly between polls; each server poll
+        // re-anchors with a fresh data-eta-ms as the position advances.
+        var eta = el.dataset.etaMs === undefined ? NaN : parseInt(el.dataset.etaMs, 10);
+        el._tbEtaTarget = isNaN(eta) ? undefined : Date.now() + eta;
+    }
+    function tick(el){
+        if (el.dataset.treebarStatus !== 'running') return;
+        // Never tick inside a kept snapshot (.treebar-frozen, see _kept_progress):
+        // a terminal tree may still carry a "running" node, and a post-hoc
+        // inspection view must be static, not counting up forever.
+        if (el.closest('.treebar-frozen')) return;
+        // Freeze the duration while this span's poller is paused, so the
+        // inspected snapshot is genuinely still. On resume the ticker
+        // catches up to true elapsed (the work kept running — pause is not
+        // cancel) and the next server poll re-anchors.
+        var p = el.closest('.treebar-poller');
+        if (p && p.dataset.paused === '1') return;
+        // Same for a paused board (htmx_render_board): pause freezes it whole.
+        var b = el.closest('.treebar-board');
+        if (b && b.dataset.paused === '1') return;
+        if (el._tbAnchor === undefined) anchor(el);
+        var s = ' — ' + fmt(Date.now() - el._tbAnchor) + ' so far';
+        // A determinate node also counts its ETA down (fmt clamps negatives to
+        // 0; the next server poll re-anchors to the new estimate).
+        if (el._tbEtaTarget !== undefined){
+            s += ' · ETA ~' + fmt(el._tbEtaTarget - Date.now());
+        }
+        // Only touch the DOM when the rendered string actually changes —
+        // below 1min the value steps every 100ms (matching the tick cadence,
+        // so each tick updates), while minute-and-up only change once per
+        // integer minute/hour, so those ticks are mostly no-ops.
+        if (el._tbLast !== s){ el.textContent = s; el._tbLast = s; }
+    }
+    function terminalizePoller(evt){ terminalize(evt && evt.detail && evt.detail.elt); }
+    function terminalize(el){
+        if (!el || !el.classList || !el.classList.contains('treebar-terminal-content')) return;
+        var p = el.parentElement;
+        if (!p || !p.classList.contains('treebar-poller')) return;
+        p.classList.replace('treebar-poller', 'treebar-terminal');
+        ['paused', 'showFinished', 'showPending', 'showFailed', 'showSkipped'].forEach(function(key){
+            delete p.dataset[key];
+        });
+        var pause = p.querySelector(':scope > .treebar-pause');
+        if (pause) pause.remove();
+        p._tbHeld = undefined;
+    }
+    // Re-anchor only spans whose server value changed (or that are new). A swap
+    // replaces the spans it delivers, so fresh ones anchor from their own
+    // data-elapsed-ms; a span the swap did NOT touch keeps its anchor. Blindly
+    // re-reading every span on every swap would reset an untouched span (a
+    // board item between its 1s polls, a sibling poller) back to the
+    // server value it was rendered with, so it would jump backwards.
+    function reanchorAll(){
+        document.querySelectorAll('.treebar-duration[data-treebar-status="running"]').forEach(function(el){
+            if (el._tbAnchor === undefined || el._tbAnchoredFrom !== el.dataset.elapsedMs) anchor(el);
+        });
+    }
+    function tickAll(){
+        document.querySelectorAll('.treebar-duration[data-treebar-status="running"]').forEach(tick);
+    }
+    function reanchorAndTick(evt){ terminalizePoller(evt); reanchorAll(); tickAll(); }
+    document.addEventListener('htmx:afterSwap', reanchorAndTick);
+    document.addEventListener('htmx:oobAfterSwap', reanchorAndTick);
+    // A WebSocket frame keeps the inner's id, and htmx "settles" an element
+    // whose id survives a swap: until the swap's settle tasks run — after
+    // htmx:oobAfterSwap — the new element still wears the old element's
+    // attributes, class included, so the check above cannot recognise a
+    // terminal frame yet. htmx:wsAfterMessage fires once they have run.
+    document.addEventListener('htmx:wsAfterMessage', function(evt){
+        var id = frameId(evt.detail && evt.detail.message);
+        if (id) terminalize(document.getElementById(id));
+    });
+
+    // --- Keyed board (htmx_render_board) -----------------------------------
+    // Every update — a poll response, a WebSocket frame, treebarUpdateBoard —
+    // carries the FULL current list, so reconciling is idempotent and a dropped
+    // update costs nothing. Items are matched by data-treebar-key: an existing
+    // item keeps its wrapper (and the UI state on it) and swaps only its
+    // .treebar-board-item-content; a new item is inserted in server order; an
+    // item that left the list shows its final state for the board's linger
+    // time and is then removed. The server decides how long a done/failed item
+    // stays listed, so a board can also hold recent history.
+    function isTerminalState(s){ return s === 'done' || s === 'failed' || s === 'ended'; }
+    function boardList(board){ return board.querySelector(':scope > .treebar-board-list'); }
+    function boardItems(list){
+        return Array.prototype.filter.call(list.children, function(c){
+            return c.classList.contains('treebar-board-item');
+        });
+    }
+    function boardEmpty(board){
+        var list = boardList(board), empty = board.querySelector(':scope > .treebar-board-empty');
+        if (list && empty) empty.hidden = boardItems(list).length > 0;
+    }
+    function boardLinger(board, item){
+        var ms = parseInt(item.dataset.treebarLingerMs || board.dataset.treebarLingerMs, 10);
+        return isNaN(ms) ? 3000 : Math.max(0, ms);
+    }
+    function scheduleLeave(board, item){
+        if (item._tbLeave) return;
+        var leave = function(){
+            // A paused board is frozen: lingering items wait for Resume.
+            if (board.dataset.paused === '1'){ item._tbLeave = setTimeout(leave, 250); return; }
+            item.remove();
+            boardEmpty(board);
+        };
+        item._tbLeave = setTimeout(leave, boardLinger(board, item));
+    }
+    function cancelLeave(item){
+        if (!item._tbLeave) return;
+        clearTimeout(item._tbLeave);
+        item._tbLeave = null;
+        item.classList.remove('treebar-board-leaving');
+    }
+    // An item that left the list lingers, then leaves. If the server never
+    // showed it terminal it ends where it stands: clocks freeze, it reads
+    // "ended".
+    function endItem(board, item){
+        if (!isTerminalState(item.dataset.treebarState)){
+            item.dataset.treebarState = 'ended';
+            var hd = item.querySelector('.treebar-board-duration');
+            if (hd){
+                var ms = hd._tbAnchor !== undefined ? Date.now() - hd._tbAnchor : parseInt(hd.dataset.elapsedMs, 10) || 0;
+                hd.dataset.treebarStatus = 'ended';
+                hd.textContent = ' — ended (' + fmt(ms) + ')';
+            }
+            var tree = item.querySelector('.treebar-board-tree');
+            if (tree) tree.classList.add('treebar-frozen');
+        }
+        item.classList.add('treebar-board-leaving');
+        scheduleLeave(board, item);
+    }
+    function updateItem(item, next){
+        var content = next.querySelector(':scope > .treebar-board-item-content');
+        if (!content) return;
+        content = document.importNode(content, true);
+        // The tree's expanded state belongs to the wrapper, not the response.
+        var tree = content.querySelector(':scope > .treebar-board-tree');
+        if (tree) tree.open = item.dataset.open === '1';
+        var old = item.querySelector(':scope > .treebar-board-item-content');
+        old ? item.replaceChild(content, old) : item.appendChild(content);
+        ['treebarState', 'treebarLingerMs'].forEach(function(k){
+            if (next.dataset[k] === undefined) delete item.dataset[k]; else item.dataset[k] = next.dataset[k];
+        });
+        if (window.htmx) htmx.process(content);
+    }
+    function reconcileBoard(board, incoming){
+        var list = boardList(board), next = boardList(incoming);
+        if (!list || !next) return;
+        var live = {}, seen = {}, prev = null;
+        boardItems(list).forEach(function(it){ live[it.dataset.treebarKey] = it; });
+        boardItems(next).forEach(function(n){
+            var key = n.dataset.treebarKey, state = n.dataset.treebarState, item = live[key];
+            seen[key] = true;
+            if (!item){
+                item = document.importNode(n, true);
+                if (window.htmx) htmx.process(item);
+            } else {
+                // Listed again after dropping out (a flapping filter): it stays.
+                cancelLeave(item);
+                updateItem(item, n);
+            }
+            var at = prev ? prev.nextSibling : list.firstChild;
+            if (item !== at) list.insertBefore(item, at);
+            prev = item;
+        });
+        Object.keys(live).forEach(function(key){ if (!seen[key]) endItem(board, live[key]); });
+        var count = board.querySelector(':scope > .treebar-board-header > .treebar-board-count');
+        var ncount = incoming.querySelector(':scope > .treebar-board-header > .treebar-board-count');
+        if (count && ncount) count.replaceWith(document.importNode(ncount, true));
+        boardEmpty(board);
+        reanchorAll(); tickAll();
+    }
+    function parseBoards(html){
+        if (typeof html !== 'string' || html.indexOf('treebar-board') === -1) return [];
+        var t = document.createElement('template');
+        t.innerHTML = html;
+        return Array.prototype.slice.call(t.content.querySelectorAll('.treebar-board'));
+    }
+    // Apply every board in `html` to the live board with the same id; returns
+    // how many were applied (or dropped because that board is paused). The
+    // single client entry point for any transport — polls and htmx WebSocket
+    // frames route through it; SSE or custom sockets can call it directly.
+    function updateBoards(html){
+        var n = 0;
+        parseBoards(html).forEach(function(incoming){
+            var board = incoming.id && document.getElementById(incoming.id);
+            if (!board || !board.classList.contains('treebar-board')) return;
+            n += 1;
+            if (board.dataset.paused !== '1') reconcileBoard(board, incoming);
+        });
+        return n;
+    }
+    window.treebarUpdateBoard = updateBoards;
+    // Board polls: htmx would replace the board (the no-script fallback the
+    // poll element's hx-target/hx-select describe); hand the response to the
+    // reconciler instead.
+    document.addEventListener('htmx:beforeSwap', function(evt){
+        var d = evt.detail || {};
+        if (!d.shouldSwap) return;
+        // detail.elt is the swap TARGET here; the requester is on requestConfig.
+        var el = (d.requestConfig && d.requestConfig.elt) || d.elt;
+        var board = el && el.classList && el.classList.contains('treebar-board-poll') ?
+            el.closest('.treebar-board') : d.target;
+        if (!board || !board.classList || !board.classList.contains('treebar-board')) return;
+        d.shouldSwap = false;
+        if (board.dataset.paused === '1') return;
+        var incoming = parseBoards(d.serverResponse).filter(function(b){ return b.id === board.id; })[0];
+        if (incoming) reconcileBoard(board, incoming);
+    });
+    // WebSocket boards (htmx ws extension, see ws_board): same reconciler.
+    document.addEventListener('htmx:wsBeforeMessage', function(evt){
+        if (updateBoards(evt.detail && evt.detail.message) > 0) evt.preventDefault();
+    });
+    // Remember a board item's tree expansion on its wrapper (toggle does not
+    // bubble, hence the capture listener).
+    document.addEventListener('toggle', function(evt){
+        var d = evt.target;
+        if (!d.classList || !d.classList.contains('treebar-board-tree')) return;
+        var item = d.closest('.treebar-board-item');
+        if (item) item.dataset.open = d.open ? '1' : '0';
+    }, true);
+    // Pause: cancel a poller's own `every Xs` poll request while its wrapper
+    // is data-paused. Scoped to the .treebar-poller-inner element, so the
+    // Stop/cancel request (a different element) still fires when paused. The
+    // `every` timer keeps rescheduling, so resume needs no re-arming. Keyed
+    // on closest('.treebar-poller') → self-contained per poller (nested
+    // pollers each govern their own polling).
+    document.addEventListener('htmx:beforeRequest', function(evt){
+        var el = evt.detail && evt.detail.elt;
+        if (el && el.classList.contains('treebar-poller-inner')){
+            var p = el.closest('.treebar-poller');
+            if (p && p.dataset.paused === '1') evt.preventDefault();
+        }
+        // A board's poll element pauses the same way, keyed on its board.
+        if (el && el.classList.contains('treebar-board-poll')){
+            var b = el.closest('.treebar-board');
+            if (b && b.dataset.paused === '1') evt.preventDefault();
+        }
+    });
+    // Pause for push transports (WebSocket / SSE): there is no request to
+    // cancel, so hold back running frames while the wrapper is data-paused.
+    // The newest held frame is applied on Resume: the server sends a frame only
+    // when the tree changes, so without it a resumed view could stay stale
+    // until the next change. The terminal frame is never held back.
+    function isTerminalFrame(html){
+        return /^\s*<[^>]*\btreebar-terminal-content\b/.test(html);
+    }
+    // The id on a frame's top-level element (WebSocket frames swap by id).
+    function frameId(html){
+        var m = typeof html === 'string' && /^\s*<[^>]*\sid="([^"]+)"/.exec(html);
+        return m ? m[1] : null;
+    }
+    function holdIfPaused(evt, p, html){
+        if (!p || !p.classList.contains('treebar-poller') || p.dataset.paused !== '1') return;
+        evt.preventDefault();
+        p._tbHeld = html;
+    }
+    document.addEventListener('htmx:wsBeforeMessage', function(evt){
+        var d = evt.detail || {}, html = d.message;
+        if (typeof html !== 'string' || isTerminalFrame(html)) return;
+        // Frames swap by id, so the poller is the parent of the element with
+        // the frame's id; without an id, fall back to the socket's element.
+        var id = frameId(html), p;
+        if (id){ var t = document.getElementById(id); p = t && t.parentElement; }
+        else p = d.elt && d.elt.closest && d.elt.closest('.treebar-poller');
+        holdIfPaused(evt, p, html);
+    });
+    document.addEventListener('htmx:sseBeforeMessage', function(evt){
+        // detail is the MessageEvent: type is the SSE event name.
+        var d = evt.detail || {}, html = d.data;
+        if (d.type === 'done' || typeof html !== 'string' || isTerminalFrame(html)) return;
+        holdIfPaused(evt, d.elt && d.elt.closest && d.elt.closest('.treebar-poller'), html);
+    });
+    // Resume. A document listener runs after the button's own onclick, so
+    // data-paused has already flipped back to '0' here.
+    document.addEventListener('click', function(evt){
+        var b = evt.target && evt.target.closest && evt.target.closest('.treebar-pause');
+        var p = b && b.parentElement;
+        if (!p || p.dataset.paused === '1' || !p._tbHeld) return;
+        var html = p._tbHeld, inner = p.querySelector(':scope > .treebar-poller-inner');
+        p._tbHeld = undefined;
+        if (inner && window.htmx && htmx.swap) htmx.swap(inner, html, {swapStyle: 'outerHTML'});
+    });
+    function start(){
+        reanchorAndTick();
+        if (!window.__tbTickerStarted){ window.__tbTickerStarted = true; setInterval(tickAll, 100); }
+    }
+    if (document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+})();
+</script><script>(function() {
+  if (window.__htmxoLiveRefresh) return;
+  window.__htmxoLiveRefresh = true;
+  var SETTLED = 'data-htmxo-live-settled';
+  var BUSY = 'data-htmxo-live-busy';
+  var MARKER = 'data-htmxo-live';
+
+  // The reporter lives "behind the hairline": a subtle, muted strip below a
+  // 1px divider, so an ongoing refresh reads as quiet background progress, not
+  // as content being torn down.
+  var st = document.createElement('style');
+  st.textContent =
+    '.htmxo-live-reporter{margin-top:.35rem;padding-top:.3rem;' +
+    'border-top:1px solid color-mix(in srgb, currentColor 22%, transparent);' +
+    'opacity:.6;font-size:.82em}.htmxo-live-reporter[hidden]{display:none}';
+  (document.head || document.documentElement).appendChild(st);
+
+  // A live element is either a periodic self-poll (an `every` trigger swapping
+  // its own region) or an explicitly marked event-driven aggregate target
+  // (`data-htmxo-live`, refreshed from elsewhere). Both re-fetch a ROUTE url
+  // (never a `__htmxo_poll` url) and are never part of poller chrome — that
+  // distinguishes a live element from a Treebars poller-inner, which also
+  // carries an `every` trigger (its 200ms self-poll).
+  function isLive(el) {
+    if (!el || !el.getAttribute) return false;
+    if (el.closest && (el.closest('.treebar-poller') || el.closest('.htmxo-live-reporter'))) return false;
+    if ((el.getAttribute('hx-get') || '').indexOf('__htmxo_poll') !== -1) return false;
+    if (el.hasAttribute(MARKER)) return true;
+    return (el.getAttribute('hx-trigger') || '').indexOf('every') !== -1;
+  }
+  // Parse a response fragment's first element. Classifying by the actual
+  // top-level class is required: a running poller's `hx-select` attribute value
+  // literally contains the string `treebar-terminal-content`, so a substring
+  // test misfires.
+  function firstEl(s) {
+    if (typeof s !== 'string') return null;
+    var t = document.createElement('template');
+    t.innerHTML = s;
+    return t.content.firstElementChild;
+  }
+  // A running Treebars poller (chrome present, not yet terminal).
+  function isPoller(s) {
+    var el = firstEl(s);
+    if (!el || el.classList.contains('treebar-terminal-content')) return false;
+    return el.classList.contains('treebar-poller') ||
+           el.classList.contains('treebar-poller-inner') ||
+           !!el.querySelector('.treebar-poller-inner');
+  }
+  // The resolved terminal result.
+  function isTerminal(s) {
+    var el = firstEl(s);
+    return !!(el && (el.classList.contains('treebar-terminal-content') ||
+                     el.querySelector('.treebar-terminal-content')));
+  }
+  // The unobtrusive progress reporter that sits beside a live element.
+  function reporterFor(el) {
+    var rep = el.__htmxoReporter;
+    if (rep && rep.isConnected) return rep;
+    rep = document.createElement('div');
+    rep.className = 'htmxo-live-reporter';
+    rep.hidden = true;
+    if (el.parentNode) el.parentNode.insertBefore(rep, el.nextSibling);
+    el.__htmxoReporter = rep;
+    rep.__htmxoLiveTarget = el;
+    return rep;
+  }
+  // A marked target holds settled content when it shows something other than
+  // a running poller: a server-rendered aggregate stamps at page load (so its
+  // first event refresh already diverts), while an empty placeholder or a
+  // first-paint poller stays unstamped until a terminal arrives.
+  function holdsSettledContent(el) {
+    if (el.querySelector && el.querySelector('.treebar-poller-inner')) return false;
+    if (el.children && el.children.length > 0) return true;
+    return (el.textContent || '').replace(/\s+/g, '').length > 0;
+  }
+  function stampLiveMarkers() {
+    document.querySelectorAll('[' + MARKER + ']:not([' + SETTLED + '])').forEach(function(el) {
+      if (!isLive(el) || !holdsSettledContent(el)) return;
+      el.setAttribute(SETTLED, '1');
+      reporterFor(el);
+    });
+  }
+  // The bare swap style: `hx-swap` modifiers ("outerHTML swap:1s") ride the
+  // attribute but are not part of the style, while a `morph:{...}` config
+  // keeps its spaces.
+  function bareSwapStyle(swap) {
+    if (swap === 'morph' || swap.indexOf('morph:{') === 0) return swap;
+    var i = swap.indexOf(' ');
+    return i === -1 ? swap : swap.slice(0, i);
+  }
+  // Swap terminal content into the live target with the diverted request's swap
+  // style. `htmx.swap` consults swap-style extensions (e.g. `morph`) ONLY
+  // through `swapOptions.contextElement` — without it a `morph:*` style
+  // silently falls back to htmx's default `innerHTML` swap, nesting the
+  // terminal inside the target (duplicate ids, double polling, and a
+  // reporter stranded inside by the re-stamp). Pass the live target so
+  // extension lookup walks up from it, exactly like the ajax path.
+  function swapTerminal(live, content, swap) {
+    var style = bareSwapStyle(swap);
+    if (window.htmx && window.htmx.swap) {
+      if ((style === 'morph' || style.indexOf('morph:') === 0) &&
+          !(window.Idiomorph && Idiomorph.morph)) {
+        // Morph engine absent (the extension failed to load): keep the
+        // outer/inner distinction with the core style rather than htmx's
+        // silent innerHTML fallback.
+        style = (style === 'morph:innerHTML') ? 'innerHTML' : 'outerHTML';
+      }
+      window.htmx.swap(live, content, { swapStyle: style }, { contextElement: live });
+    } else if (style.indexOf('outerHTML') !== -1) {
+      live.outerHTML = content;
+    } else {
+      live.innerHTML = content;
+    }
+  }
+  // Stamp any settled live element in a freshly swapped subtree, and give it a
+  // reporter. A live element only ever appears carrying terminal content, so
+  // "swapped in" == "settled".
+  function stampSettled(root) {
+    // A live element settles only on a real fragment swap that delivered its
+    // result — never the initial page load (whose settle covers the whole body
+    // and would settle a live element before it has shown any result, diverting
+    // its first load too). Walk up from the swapped node to the live element it
+    // belongs to (skipping poller chrome), and stamp any live descendants.
+    if (!root || root === document.body || root === document.documentElement ||
+        root.nodeType === 9 || !root.querySelectorAll) return;
+    var found = [];
+    var el = root;
+    while (el && el.getAttribute) { if (isLive(el)) { found.push(el); break; } el = el.parentElement; }
+    root.querySelectorAll('[hx-trigger*="every"]').forEach(function(e) { if (isLive(e)) found.push(e); });
+    found.forEach(function(el) {
+      el.setAttribute(SETTLED, '1');
+      reporterFor(el);
+    });
+  }
+  document.addEventListener('htmx:afterSettle', function(evt) {
+    stampSettled(evt.detail && evt.detail.elt);
+    // Marked targets re-render with their marker on every terminal, so a
+    // sweep (not a subtree walk) re-stamps them no matter which swap shape
+    // delivered the content — including a morph that consumed the old node.
+    stampLiveMarkers();
+  });
+  // Server-rendered aggregates already hold settled content at page load, so
+  // their FIRST event refresh diverts too — unlike periodic targets, which
+  // must show a terminal before they settle.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', stampLiveMarkers);
+  } else {
+    stampLiveMarkers();
+  }
+
+  // The terminal's swap style lives on the REQUESTING element: htmx resolves
+  // `hx-swap` from the requester (inheriting up its ancestors), and
+  // `htmx.ajax` takes it as an option — while a marked target is a passive
+  // node that must NOT repeat it (`hx-swap` inherits to descendants, so
+  // stamping it on an aggregate wrapper would retarget every nested
+  // self-poll). Remember the requester's style on the target at request
+  // start; `detail.swapOverride` (ajax `swap:` / `HX-Reswap`) is read at
+  // divert time and takes precedence, exactly like the ajax path. Two
+  // overlapping same-target requests with different styles race on this
+  // stash (last start wins); same-target refreshes overwhelmingly share one
+  // style, and the BUSY drop serializes diverts anyway.
+  function closestSwap(elt) {
+    var el = elt;
+    while (el && el.getAttribute) {
+      var v = el.getAttribute('hx-swap');
+      if (v != null) return v;
+      el = el.parentElement;
+    }
+    return null;
+  }
+  document.addEventListener('htmx:configRequest', function(evt) {
+    var d = evt.detail; if (!d || !d.target) return;
+    if (!isLive(d.target)) return;
+    // Request-start stamping: a marked target holding content when a refresh
+    // starts IS settled, however it arrived (server render, earlier swap).
+    // Empty placeholders and first-paint pollers still hold nothing, so
+    // first paints never divert. This also covers any parse-timing gap in
+    // the initial sweep above.
+    if (!d.target.hasAttribute(SETTLED) && d.target.hasAttribute(MARKER) &&
+        holdsSettledContent(d.target)) {
+      d.target.setAttribute(SETTLED, '1');
+      reporterFor(d.target);
+    }
+    d.target.__htmxoSwapStyle = closestSwap(d.elt);
+  });
+
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var d = evt.detail; if (!d) return;
+    var target = d.target;
+    var resp = d.serverResponse;
+
+    // (A) Re-fetch of a settled live element that came back a poller:
+    //     keep the content, divert the poller into the reporter.
+    if (target && isLive(target) && target.hasAttribute(SETTLED) && isPoller(resp)) {
+      // Resolve the diverted terminal's style from THIS request: an ajax
+      // `swap:` option or `HX-Reswap` header first, then the requester's
+      // `hx-swap` stashed at request start, then the target's own attribute
+      // (the periodic self-poll shape), then the legacy default. A `none`
+      // style swaps nothing at all — there is no flash to prevent, so let
+      // htmx no-op naturally instead of diverting.
+      var style = d.swapOverride || target.__htmxoSwapStyle ||
+                  target.getAttribute('hx-swap') || 'outerHTML';
+      if (bareSwapStyle(style) === 'none') return;
+      d.shouldSwap = false;
+      if (target.hasAttribute(BUSY)) {
+        // A prior refresh is still polling in the reporter — drop this re-fire.
+        // But if that reporter has stalled/errored (no live poller left), recover
+        // so a transient failure cannot pause refreshes for good.
+        var r = target.__htmxoReporter;
+        if (r && r.querySelector && r.querySelector('.treebar-poller-inner[hx-trigger]')) return;
+        target.removeAttribute(BUSY);
+      }
+      target.setAttribute(BUSY, '1');
+      var rep = reporterFor(target);
+      rep.__htmxoLiveTarget = target;
+      // Per-cycle state on the reporter: immune to a later request
+      // re-stashing the target mid-cycle.
+      rep.__htmxoSwapStyle = style;
+      rep.hidden = false;
+      rep.innerHTML = resp;
+      if (window.htmx && window.htmx.process) window.htmx.process(rep);
+      return;
+    }
+
+    // (B) The diverted poll loop resolved (terminal reached the reporter):
+    //     move the result to the live target, clear + hide the reporter.
+    var rep2 = target && target.closest ? target.closest('.htmxo-live-reporter') : null;
+    if (rep2 && rep2.__htmxoLiveTarget && isTerminal(resp)) {
+      d.shouldSwap = false;
+      var live = rep2.__htmxoLiveTarget;
+      var tmp = document.createElement('template');
+      tmp.innerHTML = resp;
+      var term = tmp.content.querySelector('.treebar-terminal-content');
+      // The result content the route rendered, applied to the live target with
+      // the diverted request's swap style — so `outerHTML`/`morph:outerHTML`
+      // replaces the element (in place for morph) while
+      // `innerHTML`/`morph:innerHTML` reconciles its children.
+      var content = term ? term.innerHTML : null;
+      if (content != null) {
+        swapTerminal(live, content, rep2.__htmxoSwapStyle ||
+                     live.getAttribute('hx-swap') || 'outerHTML');
+      }
+      rep2.innerHTML = '';
+      rep2.hidden = true;
+      var still = live.id ? document.getElementById(live.id) : live;
+      if (still && still.removeAttribute) still.removeAttribute(BUSY);
+      return;
+    }
+  });
+})();
+</script><script>(function() {
+  if (window.__htmxoAutoTerminal) return;
+  window.__htmxoAutoTerminal = true;
+  function marked(el) {
+    return !!(el && el.getAttribute && el.classList &&
+                el.classList.contains('treebar-terminal-content') &&
+                el.hasAttribute('data-htmxo-auto-terminal'));
+  }
+  function unwrapOne(el) {
+    if (!marked(el)) return;
+    // Live-refresh owns reporter-diverted terminals (its beforeSwap already
+    // took over the swap, so afterSwap never fires for them — this is belt
+    // and braces).
+    if (el.closest && el.closest('.htmxo-live-reporter')) return;
+    var p = el.parentElement;
+    if (!p || !p.classList ||
+        (!p.classList.contains('treebar-poller') &&
+         !p.classList.contains('treebar-terminal'))) return;
+    var content = el.innerHTML;
+    if (window.htmx && window.htmx.swap) {
+      window.htmx.swap(p, content, { swapStyle: 'outerHTML' });
+    } else {
+      p.outerHTML = content;
+    }
+  }
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    var d = (evt && evt.detail) || {};
+    unwrapOne(d.elt);
+    if (evt.target && evt.target !== d.elt) unwrapOne(evt.target);
+    // A marked node swapped in as part of a larger fragment (never the
+    // direct swap node): catch it by scan. Naturally idempotent — an
+    // unwrapped node is gone, and bare content carries no marker.
+    var root = d.target;
+    if (root && root.querySelectorAll) {
+      root.querySelectorAll('[data-htmxo-auto-terminal]').forEach(unwrapOne);
+    }
+  });
+})();
+</script><style>[data-static-disabled]{opacity:.45;pointer-events:none;cursor:not-allowed}</style></head><body><div class="htmxo-app-layout"><aside><nav><ul><li><a href="//" hx-get="//" hx-target="#content" hx-push-url="//" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Table</a></li><li><a href="//gallery" hx-get="//gallery" hx-target="#content" hx-push-url="//gallery" class="secondary" _="on click remove .contrast from &lt;a/&gt; in closest &lt;nav/&gt; then add .secondary to &lt;a/&gt; in closest &lt;nav/&gt; then remove .secondary from me then add .contrast to me">Gallery</a></li></ul></nav></aside><main id="content"><div><h2>WarmupHMC Posterior Gallery (147 posteriors)</h2><div class="htmxo-gallery"><article><h4>GLMM_Poisson_data-GLMM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLMM_data-GLMM1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Binomial_data-GLM_Binomial_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>GLM_Poisson_Data-GLM_Poisson_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>M0_data-M0_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mb_data-Mb_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mh_data-Mh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mt_data-Mt_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mtbh_data-Mtbh_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Mth_data-Mth_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_1_data-Rate_1_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_2_data-Rate_2_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_3_data-Rate_3_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_4_data-Rate_4_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Rate_5_data-Rate_5_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>Survey_data-Survey_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arK-arK</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>arma-arma11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_0-hmm_drive_0</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bball_drive_event_1-hmm_drive_1</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>bones_data-bones_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>butterfly-multi_occupancy</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>diamonds-diamonds</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_hierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_log</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dogs-dogs_nonhierarchical</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>dugongs_data-dugongs_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-log10earn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_height_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>earnings-logearn_logheight_male</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0401-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ecdc0501-covid19imperial_v3</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>eight_schools-eight_schools_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>election88-election88_full</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>fims_Aus_Jpn_irt-2pl_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>garch-garch11</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_pois_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>gp_pois_regr-gp_regr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_example-hmm_example</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hmm_gaussian_simulated-hmm_gaussian</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>hudson_lynx_hare-lotka_volterra</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>iohmm_reg_simulated-iohmm_reg</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>irt_2pl-irt_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_interaction</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momhsiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq-kidscore_momiq</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_c2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_interaction_z</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kidiq_with_mom_work-kidscore_mom_work</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>kilpisjarvi_mod-kilpisjarvi</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>loss_curves-losscurve_sislob</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix-low_dim_gauss_mix</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>low_dim_gauss_mix_collapse-low_dim_gauss_mix_collapse</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>lsat_data-lsat_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_gp-accel_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mcycle_splines-accel_splines</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logva</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvas</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvash</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-logmesquite_logvolume</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mesquite-mesquite</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist-nn_rbm1bJ100</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>mnist_100-nn_rbm1bJ10</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1972-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1976-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1980-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1984-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1988-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1992-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes1996-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes2000-nes</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>nes_logit_data-nes_logit_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_2-normal_mixture</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>normal_5-normal_mixture_k</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>one_comp_mm_elim_abs-one_comp_mm_elim_abs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>ovarian-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>pilots-pilots</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_chapter-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prideprejudice_paragraph-ldaK5</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>prostate-logistic_regression_rhs</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_all-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_county_intercept</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_hierarchical_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_partially_pooled_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_pooled</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_intercept_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_centered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mn-radon_variable_slope_noncentered</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>radon_mod-radon_county</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rats_data-rats_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>rstan_downloads-prophet</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sat-hier_2pl</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblrc-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sblri-blr</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>science_irt-grsm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_centered_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>seeds_data-seeds_stanified_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sesame_data-sesame_one_pred_a</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>sir-sir</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>soil_carbon-soil_incubation</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>state_wide_presidential_votes-hierarchical_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>surgical_data-surgical_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>synthetic_grid_RBF_kernels-kronecker_gp</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_docs1200-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men1-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men2-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>three_men3-ldaK2</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>timssAusTwn_irt-gpcm_latent_reg_irt</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>traffic_accident_nyc-bym2_offset_only</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>uk_drivers-state_space_stochastic_level_stochastic_seasonal</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_daae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_inter_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dae_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_dist100ars_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_c_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article><article><h4>wells_data-wells_interaction_model</h4><ul><li><span>Compiles: </span><span class="u-text-muted">-</span></li><li><span>WarmupHMC: </span><span class="u-text-muted">-</span></li><li><span>DynamicHMC: </span><span class="u-text-muted">-</span></li><li><span>AdvancedHMC: </span><span class="u-text-muted">-</span></li><li><span>Reparam: </span><span class="u-text-muted">-</span></li></ul><span></span></article></div></div></main></div><style>.htmxo-status-banner section { margin-bottom: 0.5rem; }</style></body></html>

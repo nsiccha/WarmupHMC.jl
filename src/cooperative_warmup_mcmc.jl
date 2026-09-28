@@ -139,11 +139,13 @@ cooperative_chain(
     # One retained halo state per `thin` leaf evaluations, so a window fills the ring.
     recorder = LimitedRecorder2(recording_target, max(1, n_evaluations ÷ recording_target))
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     nonlinear_recorder = NonlinearRecorder(
         lpdf;
         mode=nonlinear_evidence,
         trajectory_weighting=nonlinear_trajectory_weighting,
         good_leaf_threshold=nonlinear_good_leaf_threshold,
+        capacity=recording_target,
     )
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     scale_options = (;
@@ -216,7 +218,7 @@ advance_window!(chain::CooperativeChain) = begin
         chain.position_and_gradient, stats = DynamicHMC.sample_tree(
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
-        finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
+        finalize_leaf_recording!(recording_lpdf, stats.depth)   # finalize leaf weights; the halo was filled during the tree
         nonlinear_adapt && record_nonlinear!(
             chain.nonlinear_recorder,
             chain.lpdf,

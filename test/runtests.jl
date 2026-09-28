@@ -42,6 +42,9 @@ end
     @testset "Invariant candidate scoring" begin
         include("invariant_scoring.jl")
     end
+    @testset "Window selection plans" begin
+        include("window_selection.jl")
+    end
     include("active_reparametrization_state.jl")
     @testset "WrappedLogDensityProblems + AD" begin
         include("wrapped_logdensity.jl")

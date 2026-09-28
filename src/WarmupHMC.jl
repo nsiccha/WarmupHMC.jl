@@ -25,7 +25,7 @@ using DifferentiationInterface: value_and_gradient, Constant
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, clustered_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
-    CandidateScoringPlan, candidate_scoring_losses,
+    CandidateScoringPlan, candidate_scoring_losses, WindowSelectionPlan,
     stream_mcmc, open_stream, completion_warmup_mcmc
 
 include("kwarg_validation.jl")

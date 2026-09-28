@@ -1,3 +1,11 @@
+@testitem "WrappedLogDensityProblems + AD" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Unit tests for src/WrappedLogDensityProblems.jl (the forwarding wrappers)
 # and the ext/DifferentiationInterfaceExt.jl gradient path.
 
@@ -65,4 +73,5 @@ end
     ld, g = LogDensityProblems.logdensity_and_gradient(rp, x)
     @test ld ≈ LogDensityProblems.logdensity(rp, x)
     @test g ≈ fd_gradient(z -> LogDensityProblems.logdensity(rp, z), x) rtol = 1e-4
+end
 end

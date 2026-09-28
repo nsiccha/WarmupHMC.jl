@@ -1,3 +1,11 @@
+@testitem "Readme" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # The README names every export, and nothing but this file forces that.
 #
 # WHY THIS TEST EXISTS
@@ -41,4 +49,5 @@
     for n in exported
         @test occursin("`$n`", rendered)
     end
+end
 end

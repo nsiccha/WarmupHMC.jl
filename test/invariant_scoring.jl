@@ -1,3 +1,11 @@
+@testitem "Invariant candidate scoring" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Focused contract tests for strict-online candidate scoring. The concrete
 # triangular frame here is a synthetic correlated-random-effect control; the
 # package API remains model-agnostic.
@@ -264,4 +272,5 @@ end
         rp, positions, gradients; weights=[-1.0; ones(7)],
     )
     @test_throws ArgumentError WarmupHMC.candidate_scoring_losses((; other=1))
+end
 end

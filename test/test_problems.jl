@@ -1,3 +1,7 @@
+@testmodule WarmupHMCSharedFixtures begin
+using LogDensityProblems, WarmupHMC
+export DiagGaussian, NaNProblem, BadGradientProblem, fd_gradient, CaptureProgress, _Treebars
+
 # Shared LogDensityProblems fixtures + helpers for the WarmupHMC test suite.
 # Kept at top level (struct defs + method extensions can't live inside a @testset).
 
@@ -90,3 +94,27 @@ _Treebars.update_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(
 _Treebars.finalize_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); nothing)
 _Treebars.fail_progress!(p::CaptureProgress, args...; kwargs...) = (_capture!(p, args, kwargs); nothing)
 Base.show(io::IO, ::_Treebars.ProgressNode{<:CaptureProgress}) = print(io, "CaptureProgress")
+end
+
+@testitem "DiagGaussian fixture sanity" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
+@testset "DiagGaussian fixture sanity" begin
+    n = 4
+    mu = randn(n); sigma = rand(n) .+ 0.5
+    p = DiagGaussian(mu, sigma)
+    x = randn(n)
+    @test LogDensityProblems.dimension(p) == n
+    @test LogDensityProblems.capabilities(typeof(p)) == LogDensityProblems.LogDensityOrder{1}()
+    # matches Distributions exactly (normalizing constant included)
+    @test LogDensityProblems.logdensity(p, x) ≈ logpdf(MvNormal(mu, Diagonal(sigma .^ 2)), x)
+    # analytic gradient matches finite differences
+    _, g = LogDensityProblems.logdensity_and_gradient(p, x)
+    @test g ≈ fd_gradient(z -> LogDensityProblems.logdensity(p, z), x) rtol = 1e-5
+end
+end

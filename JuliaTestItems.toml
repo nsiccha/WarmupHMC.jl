@@ -1,0 +1,5 @@
+# Scope `@run_package_tests` discovery (which walks the whole package root) to
+# the package suite. `web/src/test/` is a separate suite with its own test env
+# and runner (see web/src/test/runtests.jl), and worktree snapshots at the root
+# must never join discovery.
+include = ["/test/"]

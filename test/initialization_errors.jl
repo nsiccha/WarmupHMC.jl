@@ -1,3 +1,11 @@
+@testitem "Initialization errors" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # The initialization error contract.
 #
 # A non-finite log density at the starting point used to surface as
@@ -106,4 +114,5 @@ end
     end
     @test err isa ErrorException
     @test occursin("Initialization failed", sprint(showerror, err))
+end
 end

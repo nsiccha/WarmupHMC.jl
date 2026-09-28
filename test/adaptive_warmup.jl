@@ -1,3 +1,11 @@
+@testitem "adaptive_warmup_mcmc (end-to-end)" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # End-to-end test: adaptive_warmup_mcmc recovers a known posterior.
 #
 # Runs the full windowed adaptive NUTS warm-up + sampling pipeline (Pathfinder
@@ -49,4 +57,5 @@ end
         @test size(r.posterior_position, 1) == n
         @test size(r.posterior_position, 2) ≥ 300
     end
+end
 end

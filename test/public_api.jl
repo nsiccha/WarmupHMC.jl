@@ -1,3 +1,11 @@
+@testitem "PublicAPI" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # The committed public surface, pinned so that changing it is a deliberate act.
 #
 # WHY A LITERAL LIST HERE, WHEN `test/readme.jl` DELIBERATELY REFUSES ONE
@@ -185,4 +193,5 @@ const PUBLIC_INITIALIZER_KWARGS = [
     @test_throws ArgumentError adaptive_warmup_mcmc(
         Xoshiro(20260728), problem; n_draws=10, progress=nothing,
         definitely_not_a_warmuphmc_keyword=1)
+end
 end

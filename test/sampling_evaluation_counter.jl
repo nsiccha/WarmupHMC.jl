@@ -1,3 +1,11 @@
+@testitem "sampling_evaluation_counter" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # `sampling_evaluation_counter`: the exact retained-epoch sampling cost.
 #
 # `total_evaluation_counter` is the RUN total over every MCMC transition — the
@@ -123,4 +131,5 @@ end
         @test size(r.posterior_position, 2) >= 700
         @test 0 < r.sampling_evaluation_counter <= r.total_evaluation_counter
     end
+end
 end

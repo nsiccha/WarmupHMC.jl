@@ -1,3 +1,11 @@
+@testitem "Compat" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # `Project.toml`'s [compat] table, checked against the [deps] table and against
 # what the dependencies themselves require.
 #
@@ -93,4 +101,5 @@ end
     # Guard the guard: stdlibs carry no julia compat and every dep could be
     # skipped, leaving the loop above asserting nothing at all.
     @test checked > 0
+end
 end

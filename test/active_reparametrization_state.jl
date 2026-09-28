@@ -1,3 +1,11 @@
+@testitem "ActiveReparametrizationState" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # The selected centering may change, but a warmup restart must retain the same
 # physical chain state. Large locations make stale-source reuse unmistakable.
 @testset "nonlinear restart preserves the active physical point" begin
@@ -65,4 +73,5 @@ end
     value,g=LogDensityProblems.logdensity_and_gradient(rp,point.q)
     @test point.ℓq == value
     @test point.∇ℓq == g
+end
 end

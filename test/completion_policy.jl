@@ -1,3 +1,11 @@
+@testitem "completion_warmup_mcmc" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Focused invocation (root environment; no private data or AD backend needed):
 # julia --startup-file=no --project=. -t4 -e 'using Test, WarmupHMC, Random,
 # LinearAlgebra, Statistics, LogDensityProblems, Distributions;
@@ -351,4 +359,5 @@ end
     @test_throws DimensionMismatch completion_warmup_mcmc([Xoshiro(1)], [p, p])
     @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; resume=true)
     @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; n_draw=5)
+end
 end

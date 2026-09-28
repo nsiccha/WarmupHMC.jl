@@ -1,3 +1,11 @@
+@testitem "Window selection plans" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # WindowSelectionPlan: a user rule chooses the controls at every restarting
 # window, and a reparametrizer that is not an IndexedReparametrization adapts
 # through the controls interface. The block below is dense (non-triangular), so
@@ -179,4 +187,5 @@ end
     plain = WarmupHMC.ReparametrizedProblem(RotScaleBlock(), DenseGaussian(WS_Q, WS_S), AutoEnzyme())
     @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(7), plain; n_draws=300,
         progress=nothing, checkpoint_dir=dir, resume=true)
+end
 end

@@ -1,3 +1,11 @@
+@testitem "interruptible stream_mcmc" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Fixed-kernel interruptible streaming sampler (`stream_mcmc` / `open_stream`).
 #
 # The core promise is "a process killed mid-sample or mid-write resumes from the
@@ -229,4 +237,5 @@ try
     end
 finally
     LinearAlgebra.BLAS.set_num_threads(_blas_threads)
+end
 end

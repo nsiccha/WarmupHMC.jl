@@ -46,12 +46,10 @@ _reset_halo!(p::RecordingPosterior2) = (reset!(p.halo_position); reset!(p.halo_g
     default_weighting(halo_position, halo_gradient) -> weights
 
 Default state-weighting for the pooled mass-matrix estimate (decision
-`1s8blg3`): every recorded halo state gets weight 1. On `dev` the recorder
-([`RecordingPosterior2`](@ref)) already stores each halo state by sampling one
-NUTS leaf per transition PROPORTIONAL to its proper marginal proposal
-probability (`sample_leaf`/`finalize_leaf_weights!`, the `myvkgz` leaf-weights
-work), so equal weights here already realise proper leaf-weighting via that
-selection. A weighting is any `(halo_position, halo_gradient) -> AbstractVector`
+`1s8blg3`): every recorded halo state gets weight 1. The recorder
+([`RecordingPosterior2`](@ref)) keeps one random good leaf per `thin` leaf
+evaluations, not a proposal-weighted leaf per transition, so equal weights here
+weight every retained good leaf equally. A weighting is any `(halo_position, halo_gradient) -> AbstractVector`
 of per-column weights; swap in another scheme via the `weighting` kwarg.
 """
 default_weighting(halo_position, halo_gradient) = Ones(size(halo_position, 2))
@@ -191,7 +189,7 @@ advance_chain!(chain::ClusteredChain) = begin
         chain.position_and_gradient, stats = DynamicHMC.sample_tree(
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
-        finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
+        finalize_leaf_recording!(recording_lpdf, stats.depth)   # finalize leaf weights; the halo was filled during the tree
         chain.total_evaluation_counter += stats.steps
         current_evaluation_counter += stats.steps
         is_divergent = DynamicHMC.is_divergent(stats.termination)

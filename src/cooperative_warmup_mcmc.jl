@@ -218,7 +218,7 @@ advance_window!(chain::CooperativeChain) = begin
         chain.position_and_gradient, stats = DynamicHMC.sample_tree(
             rng, algorithm, hamiltonian, chain.position_and_gradient, chain.stepsize
         )
-        finalize_leaf_recording!(recording_lpdf, stats.depth)   # sample one leaf ∝ proper weight → halo
+        finalize_leaf_recording!(recording_lpdf, stats.depth)   # finalize leaf weights; the halo was filled during the tree
         nonlinear_adapt && record_nonlinear!(
             chain.nonlinear_recorder,
             chain.lpdf,

@@ -53,12 +53,20 @@ The log density the sampler actually runs against during warm-up: `posterior`,
 plus the four matrices adaptation reads from.
 
 `posterior_position` / `posterior_gradient` collect the accepted draws.
-`halo_position` / `halo_gradient` collect the **halo** — one intermediate state
-per NUTS trajectory, sampled from the exact marginal proposal probabilities over
-that trajectory's leaves (`sample_leaf`, called by `finalize_leaf_recording!`),
-which is what both the linear-transformation selection and
-`find_reparametrization!` are fitted on. A `LimitedRecorder2` in `recorder`
-caps the halo at `recording_target` columns by overwriting in a ring.
+`halo_position` / `halo_gradient` collect the **halo**: intermediate NUTS leaves,
+recorded by `record!` while the tree is built. Only good leaves are eligible,
+meaning not the trajectory's initial point and with energy error
+`Δ > log(1e-2)`. With `recorder=nothing` every good leaf is appended. A
+`LimitedRecorder2` instead keeps one random good leaf per `thin` leaf
+evaluations, in a ring of `recording_target` columns. A block of `thin`
+evaluations with no good leaf keeps nothing. Warm-up sets
+`thin = max(1, n_evaluations ÷ recording_target)` for each window, so one window
+fills the ring. The halo is not proposal-weighted: `finalize_leaf_recording!`
+only finalizes the trajectory's leaf weights in `leaves` and does not write to
+the halo.
+
+The halo is what the linear-transformation selection,
+`linear_restart_source=:halo` and `nonlinear_evidence=:linear_pool` read.
 
 `reset!` empties all four and is what a restarting warm-up window does.
 """

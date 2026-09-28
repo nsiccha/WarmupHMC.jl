@@ -2,8 +2,14 @@ _initial_diagonal_scale(squared_scale::AbstractMatrix) =
     Diagonal(sqrt.(Float64.(diag(squared_scale))))
 
 function _initial_pathfinder_scale(squared_scale::AbstractMatrix, dimension)
-    decomposition = factorize(squared_scale)
-    factor = decomposition isa Diagonal ? _initial_diagonal_scale(squared_scale) : decomposition.L
+    # `factorize(::Matrix)` may return a `BunchKaufman` decomposition for a
+    # symmetric covariance. That decomposition can be upper-factorized and has
+    # no `.L` property, so selecting `.L` from the generic factorization is not
+    # a portable way to recover a covariance square root. This value is a
+    # squared scale by contract: ask for its Cholesky factor explicitly.
+    factor = squared_scale isa Diagonal ?
+             _initial_diagonal_scale(squared_scale) :
+             cholesky(Symmetric(squared_scale)).L
     MatrixFactorization(factor, Diagonal(ones(dimension)))
 end
 
@@ -18,9 +24,101 @@ initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 
     end
 end
 pathfinder_callback(progress) = (state, args...) -> (update_progress!(progress, state.iter); false)
+
+# ── Initialization diagnostics ──────────────────────────────────────────────
+#
+# A non-finite log density at the starting point used to surface five frames
+# downstream, as a bare length check on `elbo_estimates` — an ELBO diagnostic for
+# what is really a broken model or a broken starting point. The chain: Pathfinder's
+# `OptimizationCallback` runs with `fail_on_nonfinite=true`, so a non-finite
+# objective OR gradient halts L-BFGS at iteration 0; a zero-length trajectory
+# leaves no fit distributions to score; `maximize_elbo` returns an empty ELBO
+# vector; and `pathfinder` does not throw — it warns and hands back a structurally
+# valid `PathfinderResult` carrying that empty vector.
+#
+# BOTH checks below are needed, and the second is not made redundant by the first:
+# an empty `elbo_estimates` can also follow a first-step line-search failure or
+# convergence at iteration 0, both from a perfectly finite starting point.
+
+"Bounded one-line summary of `v`'s non-finite entries, so a large vector stays readable."
+function _nonfinite_summary(v; limit=5)
+    bad = findall(!isfinite, v)
+    isempty(bad) && return "all $(length(v)) components finite"
+    shown = first(bad, limit)
+    detail = join(("[$i] = $(v[i])" for i in shown), ", ")
+    length(bad) > length(shown) && (detail *= ", …")
+    "$(length(bad)) of $(length(v)) components non-finite ($detail)"
+end
+
+_nonfinite_init_message(logdensity, gradient, init) = """
+    Initialization failed: $(
+        !isfinite(logdensity) && !all(isfinite, gradient) ? "the log density and its gradient are" :
+        !isfinite(logdensity)                             ? "the log density is" :
+                                                            "the gradient of the log density is"
+    ) not finite at the initial point.
+
+      log density at init: $logdensity
+      gradient at init:    $(_nonfinite_summary(gradient))
+      init:                $(length(init)) components, extrema \
+    $(isempty(init) ? "(empty)" : string(extrema(init)))
+
+    An optimizer cannot move away from such a point. Pathfinder's optimization
+    callback runs with `fail_on_nonfinite=true`, so L-BFGS halts at iteration 0 and
+    no variational approximation is ever formed.
+
+    WarmupHMC only sees the numbers your log-density callable returned. If that
+    callable catches the model's own exception and returns NaN — a common pattern
+    around BridgeStan — then the underlying message (e.g. "Exception: ... at line N
+    of model.stan") exists only inside that callable and never reaches WarmupHMC.
+    Surface it there if you need the cause.
+
+    Usual causes: the model errors, overflows or underflows at this parameter value;
+    a badly scaled parameterization; or an `init=` outside the model's support.
+    """
+
+_empty_elbo_message(result) = """
+    Initialization failed: Pathfinder produced no ELBO estimates, so there is no
+    variational fit to initialize from.
+
+    An empty `elbo_estimates` means the L-BFGS trajectory had length zero — not one
+    step was ever accepted, so no approximating distribution was formed and there was
+    nothing to score. Pathfinder does not throw for this: it warns ("Pathfinder failed
+    after N tries") and returns a structurally valid result whose ELBO vector is empty.
+    This one reports num_tries = $(result.num_tries), fit_iteration = $(result.fit_iteration).
+
+    Three ways to get here:
+      * a non-finite log density or gradient at the starting point — the optimization
+        callback halts L-BFGS at iteration 0. When the result came from WarmupHMC's own
+        Pathfinder call that case is already checked and reported explicitly BEFORE
+        Pathfinder runs, so reaching THIS message points at one of the other two.
+      * the line search failed on its very first step, from a finite but pathological
+        starting point.
+      * the optimizer declared convergence at iteration 0 — the starting point is
+        already stationary.
+
+    Pathfinder does not retry from a fresh point by default (`mypathfinder` sets
+    `ntries=1`); `initialize_mcmc(lpdf, ::Distribution)` is the retry loop, and it
+    draws a new random starting point each time.
+    """
+
+"""
+    _check_finite_init(lpdf, init)
+
+Evaluate `lpdf` and its gradient at `init`, and throw an explicit, actionable error
+when either is non-finite.
+
+The evaluation itself is not optional — it also works around
+https://github.com/roualdes/bridgestan/issues/272, which is why its result used to
+be computed and discarded here.
+"""
+function _check_finite_init(lpdf, init)
+    logdensity, gradient = LogDensityProblems.logdensity_and_gradient(lpdf, init)
+    (isfinite(logdensity) && all(isfinite, gradient)) && return nothing
+    error(_nonfinite_init_message(logdensity, gradient, init))
+end
+
 initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs...) = with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
-    # Work around https://github.com/roualdes/bridgestan/issues/272
-    LogDensityProblems.logdensity_and_gradient(lpdf, init)
+    _check_finite_init(lpdf, init)
     initialize_mcmc(
         lpdf,
         mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
@@ -28,7 +126,7 @@ initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs.
     )
 end
 initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin
-    @assert length(init.elbo_estimates) > 0
+    isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
     position = collect(init.draws[:, 1])::Vector{Float64}
     dimension = length(position)
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
@@ -184,6 +282,12 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     stepsize_state::SS
     n_evaluations::Int
     total_evaluation_counter::Int
+    # Gradient evaluations for the RETAINED posterior epoch only: accumulated
+    # exclusively for transitions actually appended to `posterior_position`
+    # (those past `stepsize_adaptation_limit`), and zeroed wherever the
+    # retained draws are discarded (a restart reset). The cost denominator for
+    # min-ESS-per-gradient reporting over the draws the run keeps.
+    sampling_evaluation_counter::Int
     outer_counter::Int
     current_transition_counter::Int
     total_transition_counter::Int
@@ -330,11 +434,13 @@ init_state(
         max(1, n_evaluations ÷ recording_target),
     )
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     nonlinear_recorder = NonlinearRecorder(
         lpdf;
         mode=nonlinear_evidence,
         trajectory_weighting=nonlinear_trajectory_weighting,
         good_leaf_threshold=nonlinear_good_leaf_threshold,
+        capacity=recording_target,
     )
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
@@ -375,6 +481,11 @@ init_state(
     )
     # For monitoring purposes: Keep track of the number of gradient evaluations during warm-up
     total_evaluation_counter = 0
+    # ... and of the gradient evaluations behind the RETAINED draws only (see
+    # the `sampling_evaluation_counter` field). Starts at zero: Pathfinder, the
+    # initial step-size search, and the initial `evaluate_ℓ` all run before
+    # this and are counted by neither counter.
+    sampling_evaluation_counter = 0
     # For monitoring purposes: Keep track of the number of warm-up windows so far
     outer_counter = 0
     # For monitoring purposes: Keep track of the number of the total number of MCMC transitions
@@ -412,7 +523,8 @@ init_state(
         variance_position, variance_gradient,
         transformed_adaptation, variance_cond, scale_changes, 0,
         position_and_gradient, stepsize, stepsize_state, n_evaluations,
-        total_evaluation_counter, outer_counter, current_transition_counter,
+        total_evaluation_counter, sampling_evaluation_counter, outer_counter,
+        current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples,
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
@@ -476,6 +588,12 @@ run_outer_iteration!(state::AWMState) = begin
             append!(recording_lpdf.posterior_position, state.position_and_gradient.q)
             append!(recording_lpdf.posterior_gradient, state.position_and_gradient.∇ℓq)
             is_divergent && (state.n_divergent_samples += 1)
+            # ... and charge this transition's gradient evaluations to the
+            # retained-epoch sampling counter: this is the ONLY arm that appends
+            # a draw, so the counter holds exactly the sampling cost behind
+            # `posterior_position` — never the step-size-adaptation transitions
+            # above, never a discarded epoch's.
+            state.sampling_evaluation_counter += stats.steps
         end
         if current_evaluation_counter >= state.n_evaluations
             scale = state.scale_options[state.active_transformation]
@@ -528,6 +646,9 @@ run_outer_iteration!(state::AWMState) = begin
     state.steps_per_draw = OnlineStatsBase.Mean()
     state.n_divergent = 0
     state.n_divergent_samples = 0
+    # The draws are gone with `reset!(recording_lpdf)` below, so their sampling
+    # cost goes with them: the next epoch re-accumulates from zero.
+    state.sampling_evaluation_counter = 0
     # `reset!(recording_lpdf)` below empties `posterior_position`, and `n_samples`
     # mirrors `size(posterior_position, 2)` — so it must be zeroed with the other
     # counters. Leaving it stale is invisible internally (every read is preceded by
@@ -584,8 +705,8 @@ finalize_warmup!(state::AWMState) = begin
     # frames as if they were one.
     #
     # Safe unconditionally: `reparametrizer(::Any)` is an empty
-    # `IndexedReparametrization` and `reparametrize!` returns immediately on
-    # `isempty(ir.pairs)`, so this is a no-op for a plain lpdf and for a
+    # `IndexedReparametrization` and `reparametrize!` returns immediately unless
+    # `has_reparametrization(ir)`, so this is a no-op for a plain lpdf and for a
     # `ReparametrizedProblem` carrying no spec.
     reparametrize!(lpdf, recording_lpdf.posterior_position)
     (;
@@ -603,6 +724,7 @@ finalize_warmup!(state::AWMState) = begin
         linear_metric_fallbacks=state.linear_metric_fallbacks,
         stepsize=state.stepsize,
         total_evaluation_counter=state.total_evaluation_counter,
+        sampling_evaluation_counter=state.sampling_evaluation_counter,
         n_divergent_samples=state.n_divergent_samples,
         position_and_gradient=state.position_and_gradient,
         scale_changes=state.scale_changes,
@@ -614,7 +736,7 @@ end
 # non-serializable native problem) and the reparametrizer's index-extraction
 # closures are NOT serialized; on resume these `source` values are restored onto
 # a freshly supplied lpdf. Empty for a plain lpdf.
-reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(lpdf).pairs]
+reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 
 # A serializable snapshot of the TRANSIENT SAMPLER STATE at a checkpoint —
 # nothing else.
@@ -662,6 +784,22 @@ reparam_sources(lpdf) = [idx => value.source for (idx, value) in reparametrizer(
 # move for them, so existing readers are unaffected and new readers use
 # `get(payload, key, default)`.
 #
+# EVALUATION COUNTERS. `total_evaluation_counter` is the RUN total: every
+# `DynamicHMC.stats.steps` from every MCMC transition — step-size-adaptation
+# transitions and discarded restart epochs included — and it is never reset.
+# It EXCLUDES everything before the transition loop: Pathfinder, the initial
+# step-size search, and the initial `evaluate_ℓ` (the counter starts at zero in
+# `init_state`, after all three). `sampling_evaluation_counter` is the
+# RETAINED-EPOCH sampling total: only transitions actually appended to
+# `posterior_position`, zeroed with the draws on a restart. It is the exact
+# gradient-cost denominator for min-ESS-per-evaluation over the draws the run
+# keeps; `total` minus `sampling` still contains the retained epoch's own
+# step-size-adaptation transitions, so it is NOT that denominator. The sampling
+# key is ADDITIVE like `dropped_*` (no schema move): checkpoints written before
+# it existed resume with the counter starting at zero at resume time — exact
+# from resume onward, with the pre-resume sampling cost of the live epoch
+# unrecoverable and never estimated.
+#
 # `nonlinear_recorder.mode` and `custom_candidate_scoring` are both DECLARED
 # state. The EFFECTIVE evidence mode is a function of the two rather than a
 # stored key, because a plan silently reads `:linear_pool` as online
@@ -687,6 +825,7 @@ checkpoint_payload(state::AWMState) = (;
     state.variance_cond, state.scale_changes,
     state.linear_metric_fallbacks, state.position_and_gradient, state.stepsize,
     state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
+    state.sampling_evaluation_counter,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
     state.restart, state.n_samples,
@@ -845,16 +984,18 @@ _reparam_pairs_with_sources(ir, sources) = [
     for ((idx, value), (_, src)) in zip(ir.pairs, sources)
 ]
 
-# Restore the reparametrizer's scalar `source` centerings (from `reparam_sources`)
-# onto a freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
-# structure (targets + index-extraction closures); only the mutated `source`
-# scalars are overwritten. No-op for a plain lpdf (empty `sources`).
+# Restore the reparametrizer's controls (from `reparam_sources`) onto a
+# freshly-supplied lpdf, in place. The lpdf brings its own reparametrizer
+# structure (targets + index-extraction closures); only the adapted controls —
+# the scalar `source` centerings of an `IndexedReparametrization` — are
+# overwritten. No-op for a plain lpdf (empty `sources`).
 restore_reparam_sources!(lpdf, sources) = begin
     ir = reparametrizer(lpdf)
-    isempty(sources) || (ir.pairs .= _reparam_pairs_with_sources(ir, sources))
+    _is_empty_controls(sources) || restore_reparam_controls!(ir, sources)
     _synchronize_scoring!(lpdf)
     lpdf
 end
+_is_empty_controls(sources) = sources isa AbstractVector && isempty(sources)
 
 # Validate a payload/lpdf pair for `back_transform` and build the reparametrizer
 # that boundary's draws were sampled under. Returns `nothing` when there is
@@ -881,6 +1022,13 @@ _back_transform_reparametrizer(payload, lpdf, n_rows) = begin
         "checkpoint holds a $(payload.dimension)-dimensional problem but the supplied " *
         "lpdf has dimension $lpdf_dimension."
     ))
+    # A custom reparametrizer validates its own controls in
+    # `restore_reparam_controls!`; the copy leaves `lpdf` untouched.
+    if !(ir isa IndexedReparametrization)
+        out = snapshot_reparametrization(ir)
+        restore_reparam_controls!(out, sources)
+        return out
+    end
     length(ir.pairs) == length(sources) || throw(ArgumentError("""
     the supplied log density's reparametrization cannot be the one that wrote this
     checkpoint: it reparametrizes $(length(ir.pairs)) coordinate(s), the checkpoint
@@ -1007,15 +1155,15 @@ function _check_candidate_scoring_compatible(p, lpdf)
     checkpoint_custom == supplied_custom && return nothing
     if checkpoint_custom
         throw(ArgumentError(
-            "this checkpoint was written with a custom CandidateScoringPlan, but " *
+            "this checkpoint was written with a custom scoring or selection plan, but " *
             "the supplied log density has only the default scoring plan; reconstruct " *
             "the ReparametrizedProblem with scoring_plan=plan before resuming",
         ))
     end
     throw(ArgumentError(
         "this checkpoint was written with the default candidate scoring plan, but " *
-        "the supplied log density has a custom CandidateScoringPlan; resume with the " *
-        "same scoring strategy that wrote the checkpoint",
+        "the supplied log density has a custom scoring or selection plan; resume with " *
+        "the same strategy that wrote the checkpoint",
     ))
 end
 
@@ -1042,6 +1190,7 @@ restore_state(p, lpdf, progress;
 ) = begin
     check_checkpoint_compatible(p, :adaptive, (:adaptive,))
     _check_candidate_scoring_compatible(p, lpdf)
+    _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     lpdf_dimension = LogDensityProblems.dimension(lpdf)
     p.dimension == lpdf_dimension || throw(DimensionMismatch(
         "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *
@@ -1085,6 +1234,7 @@ restore_state(p, lpdf, progress;
         mode=restored_mode,
         trajectory_weighting=restored_weighting,
         good_leaf_threshold=restored_threshold,
+        capacity=p.recorder.target,
     )
     saved_linear_recorder = get(p, :linear_recorder, nothing)
     restored_linear_source = something(
@@ -1121,7 +1271,8 @@ restore_state(p, lpdf, progress;
         transformed_adaptation, p.variance_cond, p.scale_changes,
         get(p, :linear_metric_fallbacks, 0),
         p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
-        p.total_evaluation_counter, p.outer_counter, p.current_transition_counter,
+        p.total_evaluation_counter, get(p, :sampling_evaluation_counter, 0),
+        p.outer_counter, p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
         p.restart, p.n_samples,
         # Carried forward, never read back into the sampler. `get` (not `p.x`) so
@@ -1285,8 +1436,18 @@ For the single-chain method, a `NamedTuple` with fields including
 `initial_position`, `halo_position`, `halo_gradient`,
 `posterior_position`, `posterior_gradient`, `ess`, `scale_options`,
 `active_transformation`, `stepsize`, `total_evaluation_counter`,
+`sampling_evaluation_counter`,
 `n_divergent_samples`, `position_and_gradient`, `scale_changes`.
 For the multi-chain method, a `Vector` of such `NamedTuple`s.
+
+Two evaluation counters, different scopes. `total_evaluation_counter` is the
+RUN total over every MCMC transition — the retained epoch's
+step-size-adaptation transitions and all discarded restart epochs included —
+but it excludes Pathfinder, the initial step-size search, and the initial
+evaluation. `sampling_evaluation_counter` counts only the transitions actually
+appended to the returned `posterior_position` (past
+`stepsize_adaptation_limit`, in the retained epoch): the exact gradient-cost
+denominator for min-ESS-per-evaluation over the draws the run keeps.
 """
 adaptive_warmup_mcmc(
     rng, lpdf;

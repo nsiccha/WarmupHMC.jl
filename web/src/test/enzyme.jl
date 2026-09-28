@@ -32,6 +32,7 @@
         PartiallyCentered(1.0), PartiallyCentered(c), 0.0, x -> x[1] / 2)
         for (i, c) in enumerate(cs)])
 
+    const BARE = AutoEnzyme()
     const CONST_ONLY = AutoEnzyme(; function_annotation = Enzyme.Const)
     const RUNTIME_ACTIVITY = AutoEnzyme(; mode = set_runtime_activity(Enzyme.Reverse),
                                           function_annotation = Enzyme.Const)
@@ -116,36 +117,22 @@
         @test err < 1e-6
     end
 
-    # --- site 0: the documented landmine ------------------------------------
+    # --- site 0: the documented default -------------------------------------
     #
-    # A BARE `AutoEnzyme()` throws on any `ReparametrizedProblem` — the
-    # differentiated objective closes over the reparametrizer and the frozen
-    # `g_y`, which Enzyme cannot prove read-only.
-    #
-    # This is pinned FIRST because it is the one assertion here that can go stale
-    # in the REASSURING direction. Every other test in this item fails loudly if
-    # the behaviour it describes changes. This one would simply start passing for
-    # the wrong reason: if a future Enzyme or DifferentiationInterface release
-    # makes that closure provably read-only, the bare form begins working and the
-    # `!!! warning` in the `ReparametrizedProblem` docstring becomes a false
-    # claim in the public manual with nothing to catch it. When this test fails,
-    # the fix is to update that docstring — not to delete this.
-    @testset "a bare `AutoEnzyme()` still throws" begin
+    # A bare `AutoEnzyme()` is the public recommendation. Both AD sites pass
+    # their non-differentiated arrays as `Constant` contexts, so the callable
+    # itself carries no mutable captured state. Pin correctness, not merely the
+    # absence of the old `EnzymeMutabilityException`.
+    @testset "a bare `AutoEnzyme()` matches the closed form" begin
+        cs = fill(0.5, K)
         x = 0.5 .* randn(Xoshiro(1), K + 1)
-        rp = ReparametrizedProblem(spec(fill(0.5, K)), Funnel(K), AutoEnzyme())
-        err = try
-            LogDensityProblems.logdensity_and_gradient(rp, x)
-            nothing
-        catch e
-            e
-        end
-        @test err !== nothing
-        # Not merely "something threw": that would let an unrelated MethodError
-        # from a version bump keep this green while testing nothing at all. Pin
-        # that it threw for the readonly/annotation reason the docstring names.
-        msg = err === nothing ? "" : sprint(showerror, err)
-        println("  site 0  bare AutoEnzyme() threw: ", nameof(typeof(err)))
-        @test occursin("function_annotation", msg) || occursin("readonly", msg)
+        ref_lp, ref = analytic_value_and_gradient(cs, x)
+        rp = ReparametrizedProblem(spec(cs), Funnel(K), BARE)
+        lp, g = LogDensityProblems.logdensity_and_gradient(rp, x)
+        @test lp ≈ ref_lp
+        err = maximum(abs, g .- ref)
+        println("  site 0  bare AutoEnzyme() max err vs closed form=", err)
+        @test err < 1e-12
     end
 
     # --- site 1: the gradient hot path (`reparam_objective`) ----------------
@@ -153,7 +140,8 @@
         cs = fill(0.5, K)
         x = 0.5 .* randn(Xoshiro(1), K + 1)
         ref_lp, ref = analytic_value_and_gradient(cs, x)
-        for (name, be) in (("Const", CONST_ONLY),
+        for (name, be) in (("bare", BARE),
+                           ("Const", CONST_ONLY),
                            ("Const+set_runtime_activity", RUNTIME_ACTIVITY),
                            ("Duplicated", DUPLICATED))
             rp = ReparametrizedProblem(spec(cs), Funnel(K), be)

@@ -1,3 +1,11 @@
+@testitem "Reparametrizations" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Unit tests for src/Reparametrizations.jl — the 4 exported reparametrization
 # types (ReparametrizedProblem, IndexedReparametrization, PartiallyCentered,
 # Reparametrization): round-trip / inverse correctness + logdensity wiring.
@@ -145,4 +153,5 @@ end
         @test ljac ≈ ljac_expected
         @test y0 ≈ c_t * loc
     end
+end
 end

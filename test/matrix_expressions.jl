@@ -1,3 +1,11 @@
+@testitem "MatrixExpressions" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # Unit tests for src/MatrixExpressions.jl — matrix-free operators.
 #
 # These types subtype `AbstractMatrix` for the operator interface
@@ -122,4 +130,5 @@ end
     # The matrix-free contract itself: element indexing is deliberately unsupported.
     @test_throws Base.CanonicalIndexError mk_mf()[1, 1]
     @test_throws Base.CanonicalIndexError mk_sr()[1, 1]
+end
 end

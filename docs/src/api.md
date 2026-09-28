@@ -7,12 +7,15 @@ only worth reading if it says what it is *about*, so here is the whole of it.
 
 **Covered — a breaking change to any of these needs a major version:**
 
-* **The nine exported names** listed on this page
+* **The exported names** listed on this page
   ([`adaptive_warmup_mcmc`](@ref), [`cooperative_warmup_mcmc`](@ref),
+  [`completion_warmup_mcmc`](@ref), [`stream_mcmc`](@ref), [`open_stream`](@ref),
   [`clustered_warmup_mcmc`](@ref), [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
-  [`CandidateScoringPlan`](@ref)) and the behaviour their docstrings describe.
+  [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref),
+  [`WindowSelectionPlan`](@ref)) and the
+  behaviour their docstrings describe.
 * **The keywords [`adaptive_warmup_mcmc`](@ref) accepts.** Passing one it does not
   accept is an error rather than a silent no-op, which makes the accepted set
   part of the interface — so removing or renaming one breaks callers.
@@ -43,6 +46,9 @@ change is breaking.
 ```@docs
 WarmupHMC.adaptive_warmup_mcmc
 WarmupHMC.cooperative_warmup_mcmc
+WarmupHMC.completion_warmup_mcmc
+WarmupHMC.stream_mcmc
+WarmupHMC.open_stream
 WarmupHMC.clustered_warmup_mcmc
 WarmupHMC.resume_warmup_mcmc
 ```
@@ -52,6 +58,8 @@ WarmupHMC.resume_warmup_mcmc
 ```@docs
 WarmupHMC.ReparametrizedProblem
 WarmupHMC.CandidateScoringPlan
+WarmupHMC.candidate_scoring_losses
+WarmupHMC.WindowSelectionPlan
 WarmupHMC.IndexedReparametrization
 WarmupHMC.PartiallyCentered
 WarmupHMC.Reparametrization

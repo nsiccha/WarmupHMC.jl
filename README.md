@@ -23,9 +23,15 @@ file instead of saying what you get is not much of a README.
 
 Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 `clustered_warmup_mcmc`, plus `resume_warmup_mcmc` to continue a checkpointed
-run; the reparametrization types `ReparametrizedProblem`,
+run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
+read its output back; the reparametrization types `ReparametrizedProblem`,
 `IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
-`CandidateScoringPlan` for steering candidate adaptation.
+`CandidateScoringPlan` for steering candidate adaptation, with
+`candidate_scoring_losses` to inspect or retrospectively recompute its loss
+curve, and `WindowSelectionPlan` to replace candidate adaptation with your own
+per-window selection rule. The opt-in
+`completion_warmup_mcmc` runs independent adaptive chains with a completion
+quorum and finishes each running chain's current round before returning.
 
 The main method takes a (set of) `rng[s]`, a problem adhering to the LogDensityProblems.jl interface, and optional keyword arguments:
 ```julia
@@ -43,6 +49,23 @@ The result is a NamedTuple, with its `posterior_position` field containing the p
 
 Results should come in faster than with "standard" methods, and should often be better.
 
+Once the kernel is fixed — a mass-matrix scale, a step size and a tree depth,
+whether hand-supplied or read from a warm-up checkpoint — `stream_mcmc` runs pure
+sampling with no adaptation and streams the draws into a zeroed, memory-mappable
+file. It persists only the RNG state and the last safe draw index into a
+crash-safe "safe ring" beside that file, so a process killed mid-sample or
+mid-write resumes byte-for-byte from the immediately preceding state on the next
+call to the same `path`. `open_stream` re-maps a finished or in-progress run for
+reading.
+
+```julia
+stream_mcmc(rng, problem, position; path, n_draws, metric, stepsize)  # start
+stream_mcmc(problem; path, n_draws, metric, stepsize)                  # resume the same path
+stream_mcmc(checkpoint, problem; path, n_draws)                        # seed from a WarmupHMC checkpoint
+stream_mcmc(checkpoint, problem, position; path, n_draws)             # checkpoint kernel, explicit start point
+stream_mcmc(checkpoint, problem, positions; path, n_draws)            # N chains under path/chain_<i>, one per start
+```
+
 That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`
 runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and
 [WarmupHMC vs other samplers](https://nsiccha.github.io/WarmupHMC.jl/dev/sampler-comparison)
@@ -54,6 +77,46 @@ not move. Wall-clock is a different story, and the page says so out of its own
 rows rather than in a caveat: its verdict changes between repeats of the *same*
 seeds, because the timing noise is wider than the band used to call a winner.
 Nothing here measures whether the draws are correct.
+
+## Completion quorum (opt-in)
+
+```julia
+using Random, WarmupHMC
+out = completion_warmup_mcmc([Xoshiro(i) for i in 1:16], problem;
+    n_draws=1000, min_completed=12,
+    checkpoint_dir="completion-run")
+chain_ids = [r.chain_index for r in out.results]
+draw_count = out.completion.n_samples
+```
+
+The twelfth completed chain calls the last round: each unfinished worker
+finishes its current initialization or sampling window, then stops at the
+checkpoint boundary. Every chain that completes its requested draws is
+included, even if it finishes during shutdown. There is no grace period or
+admission cutoff. Workers are joined before return, so initialization or a
+long window can still delay the return. All returned chains carry their
+original identities.
+Warmup windows do not count as completed production draws. Chain failures and
+omissions are explicit in `out.completion`; an unmet quorum throws
+`WarmupHMC.CompletionQuorumError` carrying the settled `outcome`.
+
+**Selecting faster chains can bias inference** when runtime depends on sampled
+states or modes. R-hat, bulk/tail ESS and divergences describe only retained
+draws and cannot rule out this bias. Report the policy, omissions and actual
+returned counts. The ordinary samplers retain their existing behavior.
+
+Checkpoints keep original `chain_<i>` identities and adaptive resume state.
+An interrupted run can resume with the same ordered RNG/density slots;
+already-complete checkpoints are admitted before scheduling. Reopening a
+successfully finished run with `resume=true` returns its recorded outcome and
+selection, even if omitted checkpoints have since advanced. Changing the
+terminal draw target or policy requires a new run. Each invocation records its
+policy and terminal counts under the returned `completion.attempt_directory`;
+the full contract is in `?completion_warmup_mcmc`.
+
+The former `grace_seconds` keyword is removed. Previously finished runs still
+reopen their saved selections and metadata unchanged (omit that keyword);
+unfinished legacy runs resume with the finish-current-round policy.
 
 ## Stability
 

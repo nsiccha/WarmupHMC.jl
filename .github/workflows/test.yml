@@ -168,6 +168,13 @@ jobs:
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
+          # Julia 1.13 persists the two `develop` paths into the active
+          # Project.toml's `[sources]` table. The Manifest already holds the
+          # resolved paths, so restore the tracked project before the driver
+          # records provenance; otherwise this job makes its own
+          # `.worktree_dirty == false` assertion impossible.
+          git restore --source=HEAD -- docs/benchmark/Project.toml
+          git diff --exit-code -- docs/benchmark/Project.toml
       - name: Run the linear evidence smoke
         env:
           WHMC_LINEAR_BENCH_SEEDS: '2'

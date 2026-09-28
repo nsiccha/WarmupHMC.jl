@@ -1,3 +1,11 @@
+@testitem "Compat" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # `Project.toml`'s [compat] table, checked against the [deps] table and against
 # what the dependencies themselves require.
 #
@@ -54,6 +62,15 @@ const PROJECT = TOML.parsefile(joinpath(@__DIR__, "..", "Project.toml"))
     @test "julia" in compat
 end
 
+@testset "Pathfinder compat includes the Turing 0.46 release" begin
+    compat = Pkg.Types.semver_spec(PROJECT["compat"]["Pathfinder"])
+
+    @test v"0.9.31" in compat
+    @test !(v"0.10.6" in compat)
+    @test v"0.10.7" in compat
+    @test !(v"0.11.0" in compat)
+end
+
 @testset "declared julia bound is not below any dependency's" begin
     ours = compat_lower_bound(PROJECT["compat"]["julia"])
     @test ours !== nothing
@@ -84,4 +101,5 @@ end
     # Guard the guard: stdlibs carry no julia compat and every dep could be
     # skipped, leaving the loop above asserting nothing at all.
     @test checked > 0
+end
 end

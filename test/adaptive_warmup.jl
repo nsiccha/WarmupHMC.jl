@@ -1,3 +1,11 @@
+@testitem "adaptive_warmup_mcmc (end-to-end)" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using Pkg, TOML
+    using Distributions
+    using DifferentiationInterface, Enzyme
+
 # End-to-end test: adaptive_warmup_mcmc recovers a known posterior.
 #
 # Runs the full windowed adaptive NUTS warm-up + sampling pipeline (Pathfinder
@@ -17,7 +25,8 @@
     # Returned NamedTuple carries the documented fields.
     for f in (:initial_position, :halo_position, :halo_gradient, :posterior_position,
               :posterior_gradient, :ess, :scale_options, :active_transformation,
-              :stepsize, :total_evaluation_counter, :n_divergent_samples,
+              :stepsize, :total_evaluation_counter, :sampling_evaluation_counter,
+              :n_divergent_samples,
               :position_and_gradient, :scale_changes)
         @test hasproperty(result, f)
     end
@@ -48,4 +57,5 @@ end
         @test size(r.posterior_position, 1) == n
         @test size(r.posterior_position, 2) ≥ 300
     end
+end
 end

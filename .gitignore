@@ -32,3 +32,15 @@ docs/src/public/live-*/
 # records each file's source URL and sha256 in the artifact instead, so a rerun
 # that silently picked up different data is still detectable.
 docs/benchmark/brm/data/
+
+# HEAD-only big-file migration (todo 1mjfrn0): artifact classes that must
+# never re-enter git. History evidence: 27-40 MB examples/_freeze SVGs and
+# docs/quarto/figs PNGs. Going forward, large build-time inputs ship as
+# release-asset manifests and archival fits as KB capsules (Claude:artifacts
+# brief 1hdei1f) — never as tracked files. (*.svg and *.jls are covered above.)
+*.png
+_freeze/
+*.tar.gz
+*.tgz
+*.jls.gz
+*.csv.gz

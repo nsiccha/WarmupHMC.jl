@@ -1301,8 +1301,13 @@ function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
         _, y = old_ir(x_old)
         _, transported_position = _inverse_with_logabsdet_jacobian(new_ir, y)
         x_new .= transported_position
+        # Differentiate at a plain Vector, not the halo column view. The
+        # default `AbstractReparametrization` call copies its argument, so a
+        # view into the ElasticMatrix halo becomes an ElasticVector output,
+        # and Enzyme on Julia 1.13 cannot prove that type's storage
+        # activity (EnzymeRuntimeActivityError).
         _, transported_gradient = value_and_gradient(
-            _transport_objective, backend, x_new,
+            _transport_objective, backend, collect(x_new),
             Constant(new_ir), Constant(old_ir), Constant(collect(g_old)),
         )
         g_new .= transported_gradient

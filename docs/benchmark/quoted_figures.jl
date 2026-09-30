@@ -128,7 +128,7 @@ const RESULTS_DIR = joinpath(REPO, RESULTS)
 # The one live driver pair. Kept in step with `backend_bands.jl`'s DRIVER_SHA
 # deliberately: two scripts naming two different "live" drivers would let a
 # superseded run answer for a current claim in one place and not the other.
-const DRIVER_SHA = "d68d680"
+const DRIVER_SHA = "be6fb23"
 
 """
     live_json(path)

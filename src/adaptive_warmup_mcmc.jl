@@ -925,9 +925,10 @@ samplers that lay out `dir/chain_<i>/` subdirectories rather than a single
 `cp_*.jls` set.
 
 Same rule: a directory that already holds a run is ambiguous, so it requires an
-explicit `resume=true` or `overwrite=true`. This is worth having even where
-`resume` is not yet implemented — without it, pointing a second run at a live
-checkpoint directory silently interleaves two runs' chain state.
+explicit `resume=true` or `overwrite=true`. On `resume=true` the guard returns
+normally and the caller restores each chain from its `chain_<i>/cp_latest.jls`
+— the per-payload sampler tag (checked at restore) is what rejects a directory
+written by a different sampler, not this guard.
 """
 guard_run_dir!(::Nothing, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
     (resume || overwrite) && throw(ArgumentError(
@@ -948,10 +949,7 @@ guard_run_dir!(dir, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
         foreach(f -> rm(joinpath(dir, f); recursive=true), existing)
         return nothing
     end
-    resume && throw(ArgumentError(
-        "`resume=true` is not supported by `$(sampler)_warmup_mcmc` yet — only " *
-        "`adaptive_warmup_mcmc` can resume. Use `overwrite=true` to start fresh, " *
-        "or point `checkpoint_dir` somewhere empty."))
+    resume && return nothing
     throw(ArgumentError("""
     $(repr(dir)) already contains a run: $(join(existing, ", ")).
 
@@ -1149,6 +1147,20 @@ check_checkpoint_compatible(p, reader::Symbol, accepted) = begin
     """))
 end
 
+# The fail-loudly half of the `checkpoint_schema_version` policy: additive keys
+# never bump, so a version NEWER than this reader means existing semantics
+# changed and the payload must be refused rather than misread. An absent version
+# reads as 1 — pre-tag payloads predate the field and stay readable.
+_check_schema_version(p) = begin
+    v = get(p, :schema_version, 1)
+    v <= checkpoint_schema_version() && return nothing
+    throw(ArgumentError(
+        "this checkpoint uses schema version $v, newer than this WarmupHMC " *
+        "knows ($(checkpoint_schema_version())): existing key semantics may " *
+        "have changed. Update WarmupHMC to resume it."
+    ))
+end
+
 function _check_candidate_scoring_compatible(p, lpdf)
     checkpoint_custom = get(p, :custom_candidate_scoring, false)
     supplied_custom = _has_custom_candidate_scoring(lpdf)
@@ -1165,6 +1177,42 @@ function _check_candidate_scoring_compatible(p, lpdf)
         "the supplied log density has a custom scoring or selection plan; resume with " *
         "the same strategy that wrote the checkpoint",
     ))
+end
+
+# Resolve the nonlinear evidence config for a restored chain. An explicit call
+# value wins (rebuilding the accumulator from scratch); otherwise the
+# checkpoint's persisted recorder is reused verbatim. Shared by the adaptive
+# and cooperative restores — the mode/weighting/threshold triple means the same
+# thing everywhere it appears, so it resolves in one place.
+_restore_nonlinear_recorder(p, lpdf, capacity;
+    nonlinear_evidence=nothing,
+    nonlinear_trajectory_weighting=nothing,
+    nonlinear_good_leaf_threshold=nothing) = begin
+    saved = get(p, :nonlinear_recorder, nothing)
+    restored_mode = something(
+        nonlinear_evidence,
+        isnothing(saved) ? :linear_pool : saved.mode,
+    )
+    restored_threshold = something(
+        nonlinear_good_leaf_threshold,
+        isnothing(saved) ? log(1e-2) : saved.good_leaf_threshold,
+    )
+    restored_weighting = something(
+        nonlinear_trajectory_weighting,
+        isnothing(saved) ? :unit : saved.trajectory_weighting,
+    )
+    can_reuse = !isnothing(saved) &&
+        saved.mode === restored_mode &&
+        saved.trajectory_weighting === restored_weighting &&
+        saved.good_leaf_threshold == restored_threshold
+    can_reuse && return saved
+    NonlinearRecorder(
+        lpdf;
+        mode=restored_mode,
+        trajectory_weighting=restored_weighting,
+        good_leaf_threshold=restored_threshold,
+        capacity,
+    )
 end
 
 # Reconstruct a live `AWMState` from a deserialized checkpoint `p`, a freshly
@@ -1189,6 +1237,7 @@ restore_state(p, lpdf, progress;
     kwargs...
 ) = begin
     check_checkpoint_compatible(p, :adaptive, (:adaptive,))
+    _check_schema_version(p)
     _check_candidate_scoring_compatible(p, lpdf)
     _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     lpdf_dimension = LogDensityProblems.dimension(lpdf)
@@ -1212,30 +1261,9 @@ restore_state(p, lpdf, progress;
         lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
         NUTSLeaves(p.dimension), p.recorder, p.rng,
     )
-    saved_nonlinear_recorder = get(p, :nonlinear_recorder, nothing)
-    restored_mode = something(
-        nonlinear_evidence,
-        isnothing(saved_nonlinear_recorder) ? :linear_pool : saved_nonlinear_recorder.mode,
-    )
-    restored_threshold = something(
-        nonlinear_good_leaf_threshold,
-        isnothing(saved_nonlinear_recorder) ? log(1e-2) : saved_nonlinear_recorder.good_leaf_threshold,
-    )
-    restored_weighting = something(
-        nonlinear_trajectory_weighting,
-        isnothing(saved_nonlinear_recorder) ? :unit : saved_nonlinear_recorder.trajectory_weighting,
-    )
-    can_reuse_nonlinear = !isnothing(saved_nonlinear_recorder) &&
-        saved_nonlinear_recorder.mode === restored_mode &&
-        saved_nonlinear_recorder.trajectory_weighting === restored_weighting &&
-        saved_nonlinear_recorder.good_leaf_threshold == restored_threshold
-    nonlinear_recorder = can_reuse_nonlinear ? saved_nonlinear_recorder : NonlinearRecorder(
-        lpdf;
-        mode=restored_mode,
-        trajectory_weighting=restored_weighting,
-        good_leaf_threshold=restored_threshold,
-        capacity=p.recorder.target,
-    )
+    nonlinear_recorder = _restore_nonlinear_recorder(p, lpdf, p.recorder.target;
+        nonlinear_evidence, nonlinear_trajectory_weighting,
+        nonlinear_good_leaf_threshold)
     saved_linear_recorder = get(p, :linear_recorder, nothing)
     restored_linear_source = something(
         linear_restart_source,
@@ -1631,6 +1659,42 @@ end
 # Per-chain checkpoint subdirectory, so chains never collide on `cp_*.jls`.
 _chain_dir(::Nothing, i) = nothing
 _chain_dir(dir, i) = joinpath(dir, "chain_$i")
+
+# Sorted chain indices present under a run directory (`chain_<i>/`). Names that
+# are not exactly `chain_<digits>` are ignored — a stray file must not kill a
+# resume.
+_chain_dir_indices(dir) = begin
+    idxs = Int[]
+    for f in readdir(dir)
+        m = match(r"^chain_(\d+)$", f)
+        isnothing(m) && continue
+        isdir(joinpath(dir, f)) || continue
+        push!(idxs, parse(Int, m.captures[1]))
+    end
+    sort!(idxs)
+end
+
+# Read chain `i`'s restorable state, or `nothing` when the chain never wrote one
+# (crash before its first window completed — its slot restarts fresh). Prefers
+# `cp_latest.jls`; when that is missing but per-window files exist (crash between
+# the window write and the latest-pointer overwrite), falls back to the newest
+# `cp_window_<n>.jls`, which holds the identical payload — zero windows lost
+# instead of one. A present-but-unreadable file is corruption, not a crash
+# artifact (writes are atomic), so deserialization errors propagate loudly.
+_read_chain_payload(dir, i) = begin
+    d = joinpath(dir, "chain_$i")
+    isdir(d) || return nothing
+    latest = joinpath(d, "cp_latest.jls")
+    isfile(latest) && return deserialize(latest)
+    numbered = Tuple{Int,String}[]
+    for f in readdir(d)
+        m = match(r"^cp_window_(\d+)\.jls$", f)
+        isnothing(m) && continue
+        push!(numbered, (parse(Int, m.captures[1]), joinpath(d, f)))
+    end
+    isempty(numbered) && return nothing
+    deserialize(last(sort!(numbered))[2])
+end
 
 # Scalar-lpdf multi-chain entry point: each chain gets its OWN `deepcopy(lpdf)`,
 # matching `cooperative_warmup_mcmc` and `clustered_warmup_mcmc`.

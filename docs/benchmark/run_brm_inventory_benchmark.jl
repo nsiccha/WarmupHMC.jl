@@ -655,12 +655,13 @@ Run one standard-warmup comparison arm.
 the externally counted version of that density, so the adaptive-centering arm
 keeps its `ReparametrizedProblem` outer type while every sampler is counted at
 the same inner logdensity-and-gradient boundary.
+
+Returns `(; row, raised)`. `raised` separates an arm that threw -- a harness,
+adapter or model failure, which would fail every seed -- from one that sampled
+and produced degenerate draws, which is a measured outcome. Both yield
+`row.ok == false`; only the preflight needs the difference, so it is not stored
+in the row. `run_standard_arm` returns the row alone.
 """
-"""One standard-arm run as `(; row, raised)`. `raised` separates an arm that
-threw -- a harness, adapter or model failure, which would fail every seed --
-from one that sampled and produced degenerate draws, which is a measured
-outcome. Both yield `row.ok == false`; only the preflight needs the difference,
-so it is not stored in the row."""
 function attempt_standard_arm(; spec_key, arm, sampler, parameterization,
                               base_problem, build_problem, model, names, shared,
                               nonlinear_adapt, seed, n_draws=N_DRAWS)

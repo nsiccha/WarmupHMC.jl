@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html hx-ext="preload"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/dist/sse.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-preload@2.1.2/dist/preload.min.js"></script><script>(function() {
+<html hx-ext="preload"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.8/dist/htmx.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/dist/sse.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-ws@2.0.4/dist/ws.min.js"></script><script src="https://cdn.jsdelivr.net/npm/htmx-ext-preload@2.1.2/dist/preload.min.js"></script><script>(function() {
     if (window.htmxoPreloadClient) return;
     var bytes = new Uint8Array(16), id = '';
     crypto.getRandomValues(bytes);
@@ -745,7 +745,7 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
-</script><script src="/WarmupHMC.jl/dev/live-whmc/overlay/bar.js" defer="true"></script><style>@layer htmxo {
+</script><style>@layer htmxo {
 /* === Generic behavior conventions === */
 /* Any element triggering an htmx action is clickable. */
 [hx-get], [hx-post], [hx-put], [hx-patch], [hx-delete] { cursor: pointer; }

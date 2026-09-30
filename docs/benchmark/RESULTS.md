@@ -523,10 +523,10 @@ Both centerings, `annotation_sweep.jl`:
 | target | `d` | `Duplicated` ÷ `Const` | absolute penalty |
 |---|---|---|---|
 | `funnel` | 10 | 1.2–6.2× | ~0–2 µs |
-| `eight_schools` | 10 | 1.2–2.7× | ~0–1 µs |
+| `eight_schools` | 10 | 1.2–2.7× | ~0–2 µs |
 | `seeds` | 26 | 1.4–1.7× | ~3–7 µs |
 | `radon_partially_pooled` | 88 | 1.1–1.3× | ~7–16 µs |
-| `radon_variable_intercept` | 89 | 0.7–1.0× | ~−74–−14 µs |
+| `radon_variable_intercept` | 89 | 0.7–1.0× | −74 to −14 µs (`Duplicated` faster) |
 
 `radon_variable_intercept` reads `Duplicated` *faster* than `Const`, and a repeat
 run of the identical script flips the direction of 8 of the 10 cells — the gap

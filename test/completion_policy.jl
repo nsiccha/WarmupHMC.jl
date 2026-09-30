@@ -360,4 +360,86 @@ end
     @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; resume=true)
     @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; n_draw=5)
 end
+
+@testset "progress tree labels chains by slot and shows quorum" begin
+    p = DiagGaussian([0.5, -1.0], [1.0, 1.5])
+    # Finished run: one quorum parent plus exactly one subtree per original slot.
+    root = Ref{Any}(nothing)
+    out = _Treebars.with_progress(:state; description="probe") do probe
+        root[] = probe
+        completion_warmup_mcmc([Xoshiro(31), Xoshiro(32)], p;
+            n_draws=40, min_completed=2, progress=probe)
+    end
+    @test out.completion.stop_reason === :all_completed
+    done = _Treebars.render_text(root[])
+    @test occursin("MCMC (2/2)", done)
+    @test occursin("all_completed: 2 of 2 chains completed", done)
+    mcmc_lines = filter(l -> occursin("MCMC", l), split(done, '\n'))
+    @test length(mcmc_lines) == 3  # parent plus MCMC.1 and MCMC.2, no same-named duplicates
+    @test count("MCMC.1", done) == 1
+    @test count("MCMC.2", done) == 1
+    @test occursin("finished", done) && occursin("2 of 2", done)
+    @test occursin("stop requested", done)
+    @test occursin("stopped", done)
+    @test occursin("not started", done)
+    @test occursin("failed", done)
+    # Live run: the first callback parks one chain behind a gate while the main
+    # task snapshots the mid-flight tree — labelled subtrees and quorum state
+    # must already be visible, before any chain has completed.
+    entered = Channel{Nothing}(1)
+    release = Channel{Nothing}(1)
+    gated = Ref(false)
+    glock = ReentrantLock()
+    gate_callback = (state, stage) -> begin
+        take_gate = lock(glock) do
+            if !gated[]
+                gated[] = true
+                true
+            else
+                false
+            end
+        end
+        take_gate && (put!(entered, nothing); take!(release))
+        false
+    end
+    live_root = Ref{Any}(nothing)
+    task = Threads.@spawn _Treebars.with_progress(:state; description="live") do probe
+        live_root[] = probe
+        completion_warmup_mcmc([Xoshiro(41), Xoshiro(42)], p;
+            n_draws=40, min_completed=1, progress=probe, callback=gate_callback)
+    end
+    fired = timedwait(() -> isready(entered), 120)
+    @test fired === :ok
+    live = ""
+    if fired === :ok
+        take!(entered)
+        live = _Treebars.render_text(live_root[])
+    end
+    put!(release, nothing)
+    live_out = fetch(task)
+    @test live_out.completion.quorum_met
+    if fired === :ok
+        @test occursin(r"MCMC \([01]/1\)", live)
+        @test occursin(r"MCMC\.[12]", live)
+        @test occursin("stop requested", live)
+        @test occursin(r"[01] of 1", live)
+    end
+    # Over-quorum completions stay exact in the labels: the rendered counter
+    # clamps at N, so the `finished` label (not the bar) is the source of truth.
+    s = WarmupHMC._CompletionState(ReentrantLock(), () -> 0.0, 0.0, 2,
+        1.0, [:completed, :completed, :completed],
+        Any[_completion_fixture(i) for i in 1:3],
+        Any[nothing, nothing, nothing],
+        Union{Nothing,Float64}[1.0, 1.0, 1.0])
+    over_root = Ref{Any}(nothing)
+    _Treebars.with_progress(:state; description="over") do probe
+        over_root[] = probe
+        _Treebars.with_progress(probe, 2; description="MCMC") do c
+            WarmupHMC._update_completion_progress!(c, s)
+        end
+    end
+    over = _Treebars.render_text(over_root[])
+    @test occursin("MCMC (2/2)", over)
+    @test occursin("3 of 2", over)
+end
 end

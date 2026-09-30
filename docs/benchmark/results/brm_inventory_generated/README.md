@@ -7,20 +7,23 @@ not test catalogue-to-BRM generation.
 
 ## Exact scope
 
-`run_brm_inventory_benchmark.jl` selects these three `inferred-family` rows
-from BRM's checked-in `research/historical_model_inventory/translations.tsv`:
+`run_brm_inventory_benchmark.jl` runs every spec in its `SPECS` list — the eight
+published controls plus the historical-gallery tranche, 16 rows from BRM's
+checked-in `research/historical_model_inventory/translations.tsv`:
+`lme4:dyestuff_re`, `lme4:sleepstudy_slope`, `bambi:sleepstudy`,
+`mixed_models_jl:penicillin_crossed`, `bambi:radon_partial`, `bambi:radon_floor`,
+`bambi:radon_slopes`, `bambi:dietox`, `vasishth:meta_sbi`,
+`kruschke:fruitfly_anhecova`, `burkner_papers:epilepsy_simple`,
+`kruschke:therapeutic_touch`, `bambi:hierarchical_binomial_partial`,
+`mixed_models_jl:contraception_glmm`, `bambi:predict_new_groups`,
+`vasishth:n400_crossed`.
 
-- `lme4:dyestuff_re`
-- `lme4:sleepstudy_slope`
-- `bambi:dietox`
-
-For every row, the runner asserts `translation_status=ready` and
-`surface_support_class=already-expressible-verbatim`, cross-checks the body and
-finite-gradient capability receipt against `model_matrix.tsv`, and evaluates
-the row's `current_brm_body` through BRM's `_brm` and `SBBRMI` path. No formula
-is copied into the runner. The inventory has no generic real-data loader, so
-the runner owns only the documented column adapters and records each input
-CSV's URL and SHA-256.
+For every row, the runner asserts the translation is ready, cross-checks the
+body and finite-gradient capability receipt against `model_matrix.tsv`, and
+evaluates the row's `current_brm_body` through BRM's `_brm` and `SBBRMI` path. No
+formula is copied into the runner. The inventory has no generic real-data
+loader, so the runner owns only the documented column adapters and records each
+input CSV's URL and SHA-256.
 
 Each generated model is exercised as BRM's default non-centered model, BRM's
 static centered model, and `BRM.adaptive_centering_problem`. Both values of
@@ -31,29 +34,57 @@ negative controls.
 
 - Host: `strato2`
 - Julia: 1.10.11; BLAS threads: 1
-- WarmupHMC: `9039668d8ce1f1f62c7eb3d235ac7dac19a12d5a`
-- BRM canonical bit-exact fix merge: `aed667cfdb304718978750251547819bf5120bda`
-- StanBlocks: `329a178a7ad7877da0b58ad2c360d417ddd663f9`
-- 12 seeds × 500 retained draws × 3 arms × 2 flag values × 3 models = 216 rows
+- WarmupHMC: `da7e99cc38bdde6c05d9040de8662a42e1c0ce7a` (`src/` clean)
+- BRM: `a5e118b0119e29c137d80d887b571db2d77af8e1`
+- StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
+- 12 seeds × 500 retained draws × 3 arms × 2 flag values × 16 models = 1152 rows
 - Every arm/flag path received a 50-draw untimed preflight; recorded flag order
   alternated by seed to remove systematic JIT/order bias from wall comparisons
-- Process exit: 0; elapsed: 641 seconds; summed in-row sampling time: 353.86 seconds
-- Result: 216/216 rows completed; zero exceptions or crashes
-- Controls: all 6 `(model, bare arm)` flag pairs were identical for all 12 seeds
-  on gradient count and constrained-space minimum ESS
+- Process exit: 0; elapsed: 9498 seconds; summed in-row sampling time: 6431.32 seconds
+- Result: 1149/1152 rows usable; zero exceptions or crashes. The three failed
+  rows are one trajectory: `bambi:sleepstudy` seed 9 on the non-centered model
+  (both flag values) and the adaptive wrapper with the flag off, which follows
+  the same path — all draws constant (902 coordinates), recorded as an explicit
+  statistical failure
+- Controls: all 384 `(model, bare arm, seed)` flag pairs were identical on
+  gradient count and constrained-space minimum ESS
 
-The generated adaptive path had zero divergences. The generated static-centered
-dyestuff path had 219 divergences across its 12 distinct seed trajectories and
-static-centered sleepstudy had one; the flag-on control rows repeat those same
-trajectories rather than representing additional distinct failures.
+Divergences over distinct trajectories (flag off): 865 non-centered, 586 static
+centered.
 
-Adaptive centering selected a different trajectory only for dietox, in all 12
-seeds. Its paired median constrained-space ESS per gradient improved by 1.25×,
-but the added runtime made paired ESS per second 0.87× the flag-off value.
-Dyestuff and sleepstudy remained at the non-centered endpoint: their ESS per
-gradient ratios were exactly 1.0, while wrapper/adaptation runtime reduced ESS
-per second to 0.97× and 0.93× respectively. The docs page derives the full
-gradient and runtime comparison tables from the raw rows.
+`nonlinear_adapt=true` on the adaptive wrapper, paired against the flag-off run
+of the same seed (medians over seeds with both rows usable):
+
+| spec | seeds whose trajectory changed | ESS/gradient, on ÷ off | ESS/second, on ÷ off |
+|---|---|---|---|
+| `lme4:dyestuff_re` | 12/12 | 2.74 | 1.61 |
+| `lme4:sleepstudy_slope` | 12/12 | 2.25 | 1.15 |
+| `bambi:sleepstudy` | 11/12 | 3.04 | 1.16 |
+| `mixed_models_jl:penicillin_crossed` | 12/12 | 4.89 | 1.25 |
+| `bambi:radon_partial` | 12/12 | 1.05 | 0.46 |
+| `bambi:radon_floor` | 12/12 | 0.89 | 0.29 |
+| `bambi:radon_slopes` | 12/12 | 1.18 | 0.30 |
+| `bambi:dietox` | 6/12 | 1.00 | 0.57 |
+| `vasishth:meta_sbi` | 12/12 | 1.91 | 0.70 |
+| `kruschke:fruitfly_anhecova` | 9/12 | 1.02 | 0.54 |
+| `burkner_papers:epilepsy_simple` | 12/12 | 2.06 | 0.59 |
+| `kruschke:therapeutic_touch` | 2/12 | 1.00 | 0.42 |
+| `bambi:hierarchical_binomial_partial` | 8/12 | 1.00 | 0.30 |
+| `mixed_models_jl:contraception_glmm` | 12/12 | 0.69 | 0.50 |
+| `bambi:predict_new_groups` | 12/12 | 7.44 | 3.73 |
+| `vasishth:n400_crossed` | 12/12 | 1.17 | 0.89 |
+
+Adaptation pays per gradient on seven rows (1.9–7.4×), is roughly neutral on
+the three radon rows and five others (0.89–1.18), and costs 31% on
+`contraception_glmm` (0.69); in wall-clock it wins only where the per-gradient
+gain is large (five rows), because the wrapper's runtime is paid on every
+call. The previous checked-in run (three specs, WarmupHMC
+`9039668`, BRM `aed667cf`) found adaptation left `dyestuff_re` and
+`sleepstudy_slope` at the non-centered endpoint (ratio exactly 1.0) and gained
+1.25× on `dietox`; on this base it moves both of the former and not the
+latter. Sampler and BRM both changed in between, so this table does not
+attribute the difference. The docs page derives the full gradient and runtime
+comparison tables from the raw rows.
 
 The earlier generated run against BRM tree `79cc4a7` is preserved under
 `regression_79cc4a7/`, not as supported performance evidence. That accessor was
@@ -64,11 +95,12 @@ invalid implementation. Keeping that rejected artifact makes the performance
 cost auditable without allowing its timings into the headline tables.
 
 `rows.json` is the source of truth. Its SHA-256 is
-`3e92a1e66112592c0b70ae92a9e438ff3da7b0a5afe5a7ffb5421269dcaa0875`.
+`e228147ef11b557ad3d22ae11818dd4e7be735ac93d11f85d0c0cc2fc99e7aef`.
 
 ## Reproduction
 
-Use a Julia environment developed at the three package commits recorded above:
+Use a Julia environment developed at the three package commits recorded above
+(the six-path `develop` call is in `docs/benchmark/brm/Project.toml`'s header):
 
 ```sh
 KB_COMPACT_KEEP_LOG=1 \
@@ -80,6 +112,6 @@ julia --startup-file=no --project=/path/to/pinned/environment \
   docs/benchmark/run_brm_inventory_benchmark.jl
 ```
 
-This is evidence for three cheap, ready, verbatim inventory rows. It is not a
-claim that all 359 historical catalogue rows have real-data loaders or runnable
+This is evidence for the sixteen inventory rows above. It is not a claim that
+all 359 historical catalogue rows have real-data loaders or runnable
 translations.

@@ -31,7 +31,7 @@ function _completion_stop(s::_CompletionState)
     end
 end
 
-function _completion_worker!(run_chain, s::_CompletionState, i)
+function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing)
     started = lock(s.lock) do
         if s.statuses[i] === :completed
             false
@@ -43,37 +43,91 @@ function _completion_worker!(run_chain, s::_CompletionState, i)
             true
         end
     end
-    started || return
-    try
-        result, complete = run_chain(i, () -> _completion_stop(s))
-        lock(s.lock) do
-            now = _completion_elapsed(s)
-            s.results[i] = result
-            s.finished_at[i] = now
-            # Quorum requests a stop at the next checkpoint; it never closes
-            # admission. A full result from the final round is still complete.
-            s.statuses[i] = complete ? :completed : :stopped
-            if isnothing(s.quorum_at) && count(==(:completed), s.statuses) >= s.min_completed
-                s.quorum_at = now
+    if started
+        try
+            result, complete = run_chain(i, () -> _completion_stop(s))
+            lock(s.lock) do
+                now = _completion_elapsed(s)
+                s.results[i] = result
+                s.finished_at[i] = now
+                # Quorum requests a stop at the next checkpoint; it never closes
+                # admission. A full result from the final round is still complete.
+                s.statuses[i] = complete ? :completed : :stopped
+                if isnothing(s.quorum_at) && count(==(:completed), s.statuses) >= s.min_completed
+                    s.quorum_at = now
+                end
+            end
+        catch err
+            # A failed chain cannot strand a worker or masquerade as a completion.
+            # Preserve the exception AND backtrace, then join the other workers.
+            failure = CapturedException(err, catch_backtrace())
+            lock(s.lock) do
+                s.errors[i] = failure
+                s.finished_at[i] = _completion_elapsed(s)
+                s.statuses[i] = :failed
             end
         end
-    catch err
-        # A failed chain cannot strand a worker or masquerade as a completion.
-        # Preserve the exception AND backtrace, then join the other workers.
-        failure = CapturedException(err, catch_backtrace())
-        lock(s.lock) do
-            s.errors[i] = failure
-            s.finished_at[i] = _completion_elapsed(s)
-            s.statuses[i] = :failed
-        end
     end
+    # Every exit settles a slot — including quorum-already-met `:not_started`
+    # markings, which never reach `run_chain`.
+    _update_completion_progress!(progress, s)
+    nothing
+end
+
+_completion_slots_text(slots) = isempty(slots) ? "none" : string(slots)
+
+# Publish one live quorum snapshot to the parent node: the counter advances per
+# completed chain against the quorum target, and the labels carry the exact
+# finished count (the rendered counter clamps at N, so over-quorum completions
+# would otherwise be invisible), the stop state, and every non-completed slot.
+# Concurrent settlers each publish their own snapshot; last-writer-wins races
+# are harmless because the caller re-publishes the settled truth afterwards.
+function _update_completion_progress!(progress, s::_CompletionState)
+    isnothing(progress) && return nothing
+    snap = lock(s.lock) do
+        (; n_completed=count(==(:completed), s.statuses),
+           stop_requested=!isnothing(s.quorum_at),
+           stopped=findall(==(:stopped), s.statuses),
+           not_started=findall(==(:not_started), s.statuses),
+           failed=findall(==(:failed), s.statuses))
+    end
+    update_progress!(progress, snap.n_completed;
+        finished="$(snap.n_completed) of $(s.min_completed)",
+        stop_requested=string(snap.stop_requested),
+        stopped=_completion_slots_text(snap.stopped),
+        not_started=_completion_slots_text(snap.not_started),
+        failed=_completion_slots_text(snap.failed))
+    nothing
+end
+
+# Settle the quorum parent from the joined outcome: absolute counter and labels
+# (correcting any last-writer-wins race between concurrent settlers), then the
+# final message naming the stop reason, the finished count, and the pooled
+# divergence rate over retained draws. Runs before the quorum throw, so a failed
+# run's tree still shows the outcome. No pooled ESS: retained chains can carry
+# different draw counts, so their positions do not stack.
+function _finish_completion_progress!(cprogress, completion)
+    isnothing(cprogress) && return nothing
+    c = completion
+    stopped = [ch.chain_index for ch in c.chains if ch.status === :stopped]
+    not_started = [ch.chain_index for ch in c.chains if ch.status === :not_started]
+    update_progress!(cprogress, c.n_completed;
+        finished="$(c.n_completed) of $(c.min_completed)",
+        stop_requested=string(!isnothing(c.quorum_at_seconds)),
+        stopped=_completion_slots_text(stopped),
+        not_started=_completion_slots_text(not_started),
+        failed=_completion_slots_text(c.failed_chain_indices))
+    divergent = c.n_samples > 0 ?
+        ", divergent: $(short_string(100 * c.n_divergent_samples / c.n_samples))%" : ""
+    update_progress!(cprogress,
+        "$(c.stop_reason): $(c.n_completed) of $(c.min_completed) chains completed$(divergent)")
     nothing
 end
 
 # The injected runner/clock are internal seams for controlled scheduling tests;
 # the public method below always runs the real adaptive sampler and monotonic time.
 function _completion_batch(run_chain, n; min_completed,
-        initial_results=Dict{Int,Any}(), clock=() -> time_ns() / 1e9)
+        initial_results=Dict{Int,Any}(), clock=() -> time_ns() / 1e9, progress=nothing)
     s = _CompletionState(ReentrantLock(), clock, Float64(clock()), min_completed,
         nothing, fill(:pending, n),
         Any[nothing for _ in 1:n], Any[nothing for _ in 1:n],
@@ -88,8 +142,9 @@ function _completion_batch(run_chain, n; min_completed,
     if length(initial_results) >= min_completed
         s.quorum_at = 0.0
     end
+    _update_completion_progress!(progress, s)
     @sync for i in 1:n
-        Threads.@spawn _completion_worker!(run_chain, s, i)
+        Threads.@spawn _completion_worker!(run_chain, s, i; progress)
     end
     # All workers are joined before any result or terminal file is published.
     completed = findall(==(:completed), s.statuses)
@@ -198,6 +253,11 @@ density, initialization and RNG slot. There is no cross-chain adaptation.
 adaptive single-chain keywords, including `callback(state, stage)`: returning
 `true` there stops only that chain and does not count an incomplete chain.
 Callbacks may run concurrently and must be observational and thread-safe.
+`progress=` builds one quorum parent node — chains completed of `min_completed`,
+the stop state, and the stopped/never-started/failed slots — with one
+`"<description>.<i>"` child subtree per original chain slot, as multi-chain
+adaptive. A worker that never starts leaves no child; its slot is named by the
+parent's labels instead.
 
 Quorum requests a cooperative stop at the next checkpoint boundary. An active
 initialization or adaptive window must finish; this is **not a hard wall-time
@@ -249,7 +309,8 @@ These run records do not change chain payloads.
 function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         min_completed=length(rngs), n_draws=1000,
         init=missing, checkpoint_dir=nothing, resume=false, overwrite=false,
-        callback=nothing, kwargs...)
+        callback=nothing, progress=nothing, description="MCMC",
+        monitor_ess=!isnothing(progress), kwargs...)
     n = length(rngs)
     Base.require_one_based_indexing(rngs, lpdfs)
     n > 0 || throw(ArgumentError("At least one RNG is required."))
@@ -291,32 +352,41 @@ function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             "selection_warning" => _COMPLETION_SELECTION_WARNING])
     end
     @warn _COMPLETION_SELECTION_WARNING
-    run_chain = function (i, should_stop)
-        dir = _chain_dir(checkpoint_dir, i)
-        resume_chain = resume && !isempty(_checkpoint_files(dir))
-        boundary = (state, stage) -> begin
-            user_stop = _fire_callback(callback, state, stage)
-            should_stop() || user_stop
+    # One quorum parent over the whole batch, as multi-chain adaptive: the
+    # counter fills at `min_completed`, each chain hangs its ordinary adaptive
+    # subtree under it labelled by ORIGINAL slot index.
+    outcome = with_progress(progress, Int(min_completed); description) do cprogress
+        run_chain = function (i, should_stop)
+            dir = _chain_dir(checkpoint_dir, i)
+            resume_chain = resume && !isempty(_checkpoint_files(dir))
+            boundary = (state, stage) -> begin
+                user_stop = _fire_callback(callback, state, stage)
+                should_stop() || user_stop
+            end
+            result = adaptive_warmup_mcmc(rngs[i], densities[i]; n_draws, init=deepcopy(inits[i]),
+                checkpoint_dir=dir, resume=resume_chain, callback=boundary,
+                progress=cprogress, description=description * ".$i", monitor_ess, kwargs...)
+            result, size(result.posterior_position, 2) >= n_draws
         end
-        result = adaptive_warmup_mcmc(rngs[i], densities[i]; n_draws, init=deepcopy(inits[i]),
-            checkpoint_dir=dir, resume=resume_chain, callback=boundary, kwargs...)
-        result, size(result.posterior_position, 2) >= n_draws
-    end
-    initial_results = Dict{Int,Any}()
-    if resume
-        for i in 1:n
-            latest = joinpath(_chain_dir(checkpoint_dir, i), "cp_latest.jls")
-            isfile(latest) || continue
-            payload = deserialize(latest)
-            if size(payload.posterior_position, 2) >= n_draws
-                result, complete = run_chain(i, () -> false)
-                complete || error("Complete checkpoint did not restore as a complete chain.")
-                initial_results[i] = result
+        initial_results = Dict{Int,Any}()
+        if resume
+            for i in 1:n
+                latest = joinpath(_chain_dir(checkpoint_dir, i), "cp_latest.jls")
+                isfile(latest) || continue
+                payload = deserialize(latest)
+                if size(payload.posterior_position, 2) >= n_draws
+                    result, complete = run_chain(i, () -> false)
+                    complete || error("Complete checkpoint did not restore as a complete chain.")
+                    initial_results[i] = result
+                end
             end
         end
+        out = _completion_batch(run_chain, n; min_completed=Int(min_completed),
+            initial_results, progress=cprogress)
+        out = (; out.results, completion=merge(out.completion, (; n_draws, attempt_directory)))
+        _finish_completion_progress!(cprogress, out.completion)
+        out
     end
-    outcome = _completion_batch(run_chain, n; min_completed=Int(min_completed), initial_results)
-    outcome = (; outcome.results, completion=merge(outcome.completion, (; n_draws, attempt_directory)))
     if outcome.completion.quorum_met && !isnothing(terminal_path)
         _atomic_serialize(terminal_path, (; schema_version=2, n_draws, outcome))
     end

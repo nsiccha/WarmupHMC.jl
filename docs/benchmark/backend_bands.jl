@@ -45,7 +45,7 @@ include(joinpath(@__DIR__, "artifact_currency.jl"))
 import JSON
 using Printf
 
-const DRIVER_SHA = "be6fb23"   # the one live driver pair; see `superseded_reason`
+const DRIVER_SHA = "7b1757a"   # the one live driver pair; see `superseded_reason`
 
 # posteriordb names carry the data set and the parametrization; the tables use
 # the model alone. Derived rather than tabulated, but NOT silently: an

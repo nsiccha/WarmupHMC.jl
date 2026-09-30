@@ -530,10 +530,19 @@ function historical_block_widths(formula)
     out
 end
 
+# `total_groups=()` keeps the CONVENTIONAL representation. BRM's default became
+# `total_groups=:auto`, which samples exact totals and integrates the population
+# intercept out of eligible independent random effects: a posterior-preserving
+# marginalization, but one coordinate fewer and a different geometry. Taking the
+# default silently turned the "non-centered" arm (and the adaptive wrapper built
+# on it) into that marginalized program on 10 of 16 specs, which the docs build
+# rejects (`dim_noncentered != dim_centered`). The centered build is unaffected --
+# explicit `centered_groups` take precedence -- but is opted out too so both arms
+# state the representation they measure.
 function materialize(row, data; centered_groups=Symbol[])
     body = row["current_brm_body"]
     brmi = Core.eval(@__MODULE__, BRM._brm(body; df=data))
-    sb = SBBRMI(brmi; mod=@__MODULE__, centered_groups)
+    sb = SBBRMI(brmi; mod=@__MODULE__, centered_groups, total_groups=())
     name = Symbol(replace(row["source"] * "_" * row["key"], r"\W" => "_"))
     descriptor = brm_descriptor(sb; name)
     (; brmi, sb, descriptor)

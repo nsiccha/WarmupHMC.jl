@@ -18,7 +18,7 @@ brmc_spec_keys(d) = [m["spec"] for m in brmc_models(d)]
 brmc_arm_order() = ["noncentered", "centered", "adaptive_centering"]
 
 brmc_arm_label(a) = get(Dict(
-    "noncentered" => "non-centered (BRM default)",
+    "noncentered" => "non-centered (conventional)",
     "centered" => "static centered",
     "adaptive_centering" => "adaptive centering",
 ), a, a)

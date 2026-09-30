@@ -25,8 +25,9 @@ formula is copied into the runner. The inventory has no generic real-data
 loader, so the runner owns only the documented column adapters and records each
 input CSV's URL and SHA-256.
 
-Each generated model is exercised as BRM's default non-centered model, BRM's
-static centered model, and `BRM.adaptive_centering_problem`. Both values of
+Each generated model is exercised as BRM's conventional non-centered model
+(`total_groups=()`, opting out of BRM's automatic exact totals), BRM's static
+centered model, and `BRM.adaptive_centering_problem`. Both values of
 WarmupHMC's `nonlinear_adapt` flag are run so the bare generated models act as
 negative controls.
 

@@ -992,6 +992,20 @@ end
 _fire_callback(::Nothing, state::AWMState, stage::Symbol) = false
 _fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage) === true
 
+# Opt-in early stop through Treebars: `request_interrupt!` on a progress node
+# stops every sampler reporting into that node or below it, at its next stop
+# point, exactly as a `callback` returning `true` would — partial results kept,
+# no error, the node finalized normally. Scope is Treebars' subtree rule: a
+# request on one chain's node stops that chain, on the caller's node all of
+# them. `progress=nothing` is never interrupted.
+_interrupted(progress) = Treebars.interrupt_requested(progress)
+
+# The callback is fired FIRST at every boundary: it is observational, and a
+# checkpoint a caller relies on must not be skipped because a stop was also
+# requested through the progress tree.
+_stop_requested(callback, state::AWMState, stage::Symbol) =
+    _fire_callback(callback, state, stage) || _interrupted(state.progress)
+
 # The pair vector `sources` implies for `ir`'s structure: every
 # `Reparametrization` keeps the `target` and the accessor closures it was built
 # with, and takes its `source` centering from `sources`.
@@ -1460,7 +1474,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   running transformed marginal correction to that diagonal metric. Other
   families continue to use their ordinary halo fit.
 * `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
-  diagnostic reporting via Treebars.
+  diagnostic reporting via Treebars. `Treebars.request_interrupt!` on the node
+  passed here (or on one chain's node, or an ancestor) stops the affected
+  chains at their next checkpoint boundary exactly as a `callback` returning
+  `true` would: partial draws kept, no error.
 * `parallel=true` (multi-chain only) — run chains on `Threads.@threads`.
 * `callback=nothing` — observational checkpoint callback (see below).
 * `checkpoint_dir=nothing` — opt-in on-disk checkpointing (see below).
@@ -1581,7 +1598,7 @@ adaptive_warmup_mcmc(
                 kwargs..., pathfinder_kw...
             )
             _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
-            s, _fire_callback(callback, s, :init)
+            s, _stop_requested(callback, s, :init)
         else
             restore_state(
                 resumed, lpdf, progress;
@@ -1597,7 +1614,7 @@ adaptive_warmup_mcmc(
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
             run_outer_iteration!(state)
             _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
-            stop = _fire_callback(callback, state, :window)
+            stop = _stop_requested(callback, state, :window)
         end
         finalize_warmup!(state)
     end
@@ -1644,7 +1661,7 @@ resume_warmup_mcmc(lpdf, checkpoint_path;
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
             run_outer_iteration!(state)
             _write_checkpoint(checkpoint_dir, state, :window)
-            stop = _fire_callback(callback, state, :window)
+            stop = _stop_requested(callback, state, :window)
         end
         finalize_warmup!(state)
     end

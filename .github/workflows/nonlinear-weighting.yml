@@ -39,12 +39,13 @@
 #     honoured from Julia 1.11 only, and no `Manifest.toml` is committed
 #     anywhere in this repo (they are all gitignored). Hence the explicit clone
 #     and `Pkg.develop`.
-#   * `--branch dev` is not decoration. `Treebars.round2`, which WarmupHMC's
-#     `src/progress.jl` adds a method to AT LOAD TIME, exists on `origin/dev`
-#     and NOT on `origin/main`, so a default-branch clone dies at precompile
-#     with `UndefVarError: round2` before a single line of this benchmark runs.
-#     It fails before the job does anything, so it is invisible until it bites.
-#     `test.yml` and `Docs.yml` both carry the same pin.
+#   * `--branch perf/step5-typed-slots` is not decoration: it is Treebars'
+#     canonical line (Treebars decision 1k6d86p). `origin/dev` DIVERGED from it
+#     (3 ahead, 60 behind) and lacks `interrupt_requested`, which every
+#     WarmupHMC sampler calls; `origin/main` lacks `round2`, which
+#     `src/progress.jl` extends AT LOAD TIME. Either fails before a single line
+#     of this benchmark runs, so it is invisible until it bites. `test.yml` and
+#     the shared docs install script carry the same pin.
 #   * This job needs NO PAT. `docs/benchmark/Project.toml` used to declare
 #     `HTMX`, `HTMXObjects` and `DynamicObjects` — inherited from the canonical
 #     resolve, never imported by any file under `docs/benchmark/` — and one of
@@ -129,7 +130,7 @@ jobs:
         # branch pin and the absence of a PAT are explained in the header.
         # Batched into one `Pkg.develop` so the resolver sees both paths at once.
         run: |
-          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch perf/step5-typed-slots https://github.com/nsiccha/Treebars.jl.git
           julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),

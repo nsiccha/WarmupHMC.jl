@@ -35,7 +35,9 @@ function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing
     started = lock(s.lock) do
         if s.statuses[i] === :completed
             false
-        elseif !isnothing(s.quorum_at)
+        elseif !isnothing(s.quorum_at) || _interrupted(progress)
+            # Quorum met, or a stop requested through the progress tree before
+            # this slot started: never pay a fresh chain's initialization.
             s.statuses[i] = :not_started
             false
         else
@@ -252,6 +254,9 @@ density, initialization and RNG slot. There is no cross-chain adaptation.
 `init` accepts the adaptive multi-chain per-chain forms. Other `kwargs` are
 adaptive single-chain keywords, including `callback(state, stage)`: returning
 `true` there stops only that chain and does not count an incomplete chain.
+`Treebars.request_interrupt!` behaves the same way through the progress tree: on
+one chain's node it stops that chain, on the node passed as `progress` (or an
+ancestor) it stops every running chain and starts no further slot.
 Callbacks may run concurrently and must be observational and thread-safe.
 `progress=` builds one quorum parent node — chains completed of `min_completed`,
 the stop state, and the stopped/never-started/failed slots — with one

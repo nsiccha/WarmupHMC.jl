@@ -40,24 +40,26 @@ one number.
 - Widest block among rows the published benchmark can actually run: **K = 2
   under both readings**. Recorded as `max_historical_k_among_publishable_rows`
   and `max_generated_k_among_publishable_rows`.
-- Total probe time: 19.068 seconds.
+- Total probe time: 104.049 seconds.
 
-None of the three candidates is publishable, and each stops somewhere different:
+None of the three candidates is publishable by the main runner:
 
-| card | historical K | generated K | furthest stage on real data | what stopped it |
+| card | historical K | generated K | furthest stage on real data | why it is not in the matrix |
 | --- | ---: | ---: | --- | --- |
-| `kruschke:income_famsize` | 3 | 3 | `after-sbbrmi-lowered` | `StanBlocksError [transpile]: model` — `Could not find nu in model, builtin, Main or Main!` |
+| `kruschke:income_famsize` | 3 | 3 | `sampled` | support class `already-expressible-via-semantic-rewrite`; the main runner admits only verbatim rows |
 | `flocker:single_season_repvarying` | 3 | 0 | `no-real-data-adapter` | dataset receipt is `synthetic`; translation is `route-specific` |
 | `flocker:augmented_multispecies` | 3 | 0 | `no-real-data-adapter` | dataset receipt is `synthetic`; translation is `route-specific` |
 
-The one candidate with a fetchable dataset was carried onto that data:
-`kruschke:income_famsize` downloaded, adapted, parsed, and lowered through
-BRM's surface, then failed to transpile because `nu` is still symbolic. That is
-exactly the limitation the inventory's own translation note predicts — *"the
-surface is executable, but `nu` remains symbolic until the historical
-degrees-of-freedom value/prior is recovered"* — so the stop is a confirmation of
-a known gap, not a new discovery. It is a `semantic-rewrite` row and therefore
-outside the published benchmark's readiness gate regardless of its width.
+The one candidate with a fetchable dataset was carried onto that data, and on
+this BRM it goes all the way: `kruschke:income_famsize` downloads, adapts,
+parses, lowers, instantiates, evaluates a finite log density and gradient, and
+samples (164 dimensions, a K = 3 block on `State`). At the previous pins it
+stopped at transpile because `nu` was still symbolic; the inventory has since
+recovered the historical prior (`nu ~ Exponential(29)`, from the source's
+`exponential(rate = 1/29)`) and marks the row `ready`. It stays out of the
+published matrix for one remaining reason: it is a `semantic-rewrite` row, not
+a verbatim one, and the main runner's gate admits only verbatim rows. That is
+now the single remaining gate between the matrix and a K = 3 model.
 
 The two `flocker` rows never had row-level historical data to run: their dataset
 receipts are `synthetic`. Their `generated_max_k` of 0 is not a narrower block —
@@ -71,20 +73,21 @@ published matrix can carry is two coefficients**, and that this is a property of
 the *inventory's* current translation and data reach — not of WarmupHMC, and not
 of a runtime or eligibility rule imposed here.
 
-It does not establish that wide blocks are unreachable in principle. Two of the
-three stops are upstream work items with named owners: recovering the historical
-degrees-of-freedom for `kruschke:income_famsize`, and a `stanblocks_plate`
-implementation plus real data for the `flocker` rows.
+It does not establish that wide blocks are unreachable in principle: one K = 3
+row already samples on real data. Admitting it is a question about the main
+runner's verbatim-only gate, not about reach; the `flocker` rows still need a
+`stanblocks_plate` implementation plus real data.
 
 ## Provenance
 
 - Logical compute host: `strato2`; Julia 1.10.11
-- WarmupHMC: `dc9636f8e8cdf6437e69980b3336d2e5659fecbf` (src clean)
-- BayesianRegressionModels: `d452e97a90974d5bef5472978f3d2379255fbfbc`
-- StanBlocks: `7a02d30ffb28215e79470ce9689c0f65902b10df`
-- `translations.tsv` sha256: `8443c0a15bfe22bee55bd241dbf9b26c4ffe3de6596ddb71d2213d632a597f25`
-- `model_matrix.tsv` sha256: `1e76f72dd7ec518e29c7e6fd0875a51f959842059453228c1d0146be4a6bc9d3`
-- Runner sha256: `9ac61aef1a1733654839ebcc306ab606f7332c7fdc5fc0e2933bce9b9ff777e5`
+- WarmupHMC: `133093d0f32c` (src clean; code-identical to the standard artifact's `6adc5ea6`)
+- BayesianRegressionModels: `a5e118b0119e29c137d80d887b571db2d77af8e1`
+- StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
+- `translations.tsv` sha256: `3abb3199a194f74754c8e02b725dfac42081bc7e302c796cdf097ad1504b633d`
+- `model_matrix.tsv` sha256: `edeed76f24931af8f53e296538d4d4b98c6768c9c5665f3f4dec55919ae78aeb`
+- Runner sha256: `cca69a6173ff7413322020ff2d599d48c954ffdd04d39dbcf031160eba034266`
+- `rows.json` sha256: `7c2834f750da7c5f3bd650f71a69ef93de9a7946036352bce44155ba512c1738`
 - Probe draws per stage: 50
 
 The two inventory checksums are the same ones the standard-warmup artifact

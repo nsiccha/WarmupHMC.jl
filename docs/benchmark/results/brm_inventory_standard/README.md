@@ -13,13 +13,13 @@ which the script takes as an optional second argument and which comes out of
 git rather than off anyone's disk:
 
 ```sh
-git show 0d654a92:docs/benchmark/results/brm_inventory_standard/rows.json > "$TMPDIR/base.json"
+git show 06cd053:docs/benchmark/results/brm_inventory_standard/rows.json > "$TMPDIR/base.json"
 julia --startup-file=no --project=docs docs/benchmark/brm_inventory_report.jl \
   docs/benchmark/results/brm_inventory_standard/rows.json "$TMPDIR/base.json"
 ```
 
-The base is the artifact this one replaced (measured at WarmupHMC `dc9636f8`,
-checked in on `dev` at `0d654a92`). Name the version being replaced, not the
+The base is the artifact this one replaced (measured at WarmupHMC `6adc5ea6`,
+checked in on `dev` at `06cd053`). Name the version being replaced, not the
 commit an artifact records — those are different files.
 
 ## Six arms
@@ -48,7 +48,7 @@ counters.
 
 - Logical compute host: `strato2`
 - Julia: 1.10.11; BLAS threads: 1
-- WarmupHMC: `6adc5ea679722d3b7b13a5b5d6c12d497b10c2d7`
+- WarmupHMC: `b5c0b956e3373ee35070200f24e490b56cc43ea4`
 - BayesianRegressionModels: `a5e118b0119e29c137d80d887b571db2d77af8e1`
 - StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
 - DynamicHMC: 3.6.1
@@ -57,40 +57,47 @@ counters.
 - Inventory `model_matrix.tsv`: `edeed76f24931af8f53e296538d4d4b98c6768c9c5665f3f4dec55919ae78aeb`
 - 12 seeds × 500 retained draws × 6 arms × 16 models = 1152 rows
 - One 50-draw untimed preflight per arm; recorded arm order rotates by seed
-- Runner elapsed: 10594.485 seconds
-- Summed recorded sampling time: 9090.667 seconds
+- Runner elapsed: 18737.439 seconds
+- Summed recorded sampling time: 14493.394 seconds
 - Result: 1152/1152 usable trajectories
-- Total divergences, including any failed trajectory: 2329
-- `rows.json` SHA-256: `321fa5b4d274672cbefa93ebb34437ef26a7f5a121a09505f64c4902139d34a0`
+- Total divergences, including any failed trajectory: 1420
+- `rows.json` SHA-256: `b86dcafba1afffd5a5cf0f451bf68246c922bb070721b2d53f2d958ba1bd7c53`
 - Run from one environment developed against fixed clones (BRM and StanBlocks
   above, MutatingFunctions `18dd9e5`, OutputSignatures `7e16ea9`, Treebars
   `8bde866`), so a shared checkout moving mid-campaign cannot change what runs.
 
-Every model/arm/seed cell returned a usable trajectory. One 50-draw untimed
-preflight in this run was statistically degenerate and was logged and passed
-over (an earlier, stopped run at the same `src/` showed the degenerate
-preflights on `lme4:dyestuff_re`'s centered and fixed-wrapper arms). The runner
-aborts only on an arm that raises: a degenerate preflight says nothing the
-per-seed rows do not record as data.
+Every model/arm/seed cell returned a usable trajectory, and no 50-draw untimed
+preflight in this run was statistically degenerate. The runner logs and passes
+over one that is: it aborts only on an arm that raises, because a degenerate
+preflight says nothing the per-seed rows do not record as data. An earlier
+attempt at this same `src/` was stopped by the host's out-of-memory guard
+during its last spec; this artifact is a clean full re-run, not a splice of
+that partial one.
 
 ## Divergences by arm
 
 | default-warmup arm | divergences | trajectories with any |
 | --- | ---: | ---: |
-| WarmupHMC — generated non-centered | 248 | 9/192 |
-| WarmupHMC — generated centered | 586 | 30/192 |
-| WarmupHMC — nonlinear wrapper fixed at c=0 | 248 | 9/192 |
-| WarmupHMC — adaptive centering | 449 | 10/192 |
+| WarmupHMC — generated non-centered | 69 | 11/192 |
+| WarmupHMC — generated centered | 459 | 28/192 |
+| WarmupHMC — nonlinear wrapper fixed at c=0 | 69 | 11/192 |
+| WarmupHMC — adaptive centering | 25 | 9/192 |
 | DynamicHMC — generated non-centered | 12 | 4/192 |
 | DynamicHMC — generated centered | 786 | 30/192 |
 
-`mixed_models_jl:penicillin_crossed` carries almost all non-centered and
-adaptive divergences: 242 and 437 here, against 66 and 0 in the artifact this
-replaced. The centered totals are dominated by `kruschke:fruitfly_anhecova` (518
-WarmupHMC, 422 DynamicHMC); DynamicHMC's centered arm also records 312 on
-`bambi:radon_slopes`, where the replaced artifact had none. DynamicHMC does not
-run any WarmupHMC code, so that change — and the others on the DynamicHMC arms —
-comes from the generated models: BRM and StanBlocks moved too (below).
+The WarmupHMC non-centered and adaptive totals fell from 248 and 449 in the
+artifact this replaced to 69 and 25. `mixed_models_jl:penicillin_crossed`, which
+carried almost all of them, fell from 921 divergences across its arms to 112;
+`vasishth:meta_sbi` rose from 30 to 71. The centered totals are dominated by
+`kruschke:fruitfly_anhecova` (848 across its arms, from 940), and
+DynamicHMC's centered arm still records 312 on `bambi:radon_slopes`.
+
+The DynamicHMC arms are an exact control here. Only the WarmupHMC pin moved
+between the two artifacts (BRM, StanBlocks, inventory, host, Julia and BLAS
+threads are unchanged, below), DynamicHMC runs no WarmupHMC code, and its two
+arms reproduce the replaced artifact's divergence totals (12 and 786) and every
+one of their 32 model × arm median gradient counts. Every change on the
+WarmupHMC arms is therefore WarmupHMC's own, `6adc5ea6` → `b5c0b956`.
 
 ## Seed-paired headline ratios
 
@@ -99,97 +106,113 @@ DynamicHMC on that target:
 
 | model | ESS/gradient | gradients | wall time | ESS/second | paired seeds |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| dyestuff | 3.13× | 0.32× | 0.52× | 2.02× | 12 |
-| sleepstudy slope | 6.21× | 0.19× | 0.22× | 4.96× | 12 |
-| sleepstudy (Bambi) | 4.08× | 0.18× | 0.22× | 3.50× | 12 |
-| penicillin crossed | 1.67× | 0.11× | 0.11× | 1.60× | 12 |
-| radon partial pooling | 3.33× | 0.24× | 0.25× | 3.28× | 12 |
-| radon floor | 3.48× | 0.25× | 0.27× | 3.12× | 12 |
-| radon slopes | 4.26× | 0.26× | 0.27× | 4.00× | 12 |
-| dietox | 3.37× | 0.33× | 0.33× | 2.92× | 12 |
-| SBI meta-analysis | 2.37× | 0.37× | 0.68× | 1.29× | 12 |
-| fruitfly ANCOVA | 3.81× | 0.17× | 0.21× | 3.40× | 12 |
-| epilepsy counts | 5.22× | 0.14× | 0.19× | 3.83× | 12 |
-| therapeutic touch | 2.63× | 0.38× | 0.42× | 2.17× | 12 |
-| baseball binomial | 2.68× | 0.30× | 0.54× | 1.38× | 12 |
-| contraception | 12.67× | 0.08× | 0.09× | 10.27× | 12 |
-| pulmonary slopes | 4.88× | 0.21× | 0.25× | 4.11× | 12 |
-| N400 crossed | 5.00× | 0.11× | 0.11× | 4.85× | 12 |
+| dyestuff | 3.14× | 0.31× | 0.81× | 1.34× | 12 |
+| sleepstudy slope | 6.03× | 0.19× | 0.31× | 3.39× | 12 |
+| sleepstudy (Bambi) | 3.81× | 0.18× | 0.33× | 2.10× | 12 |
+| penicillin crossed | 2.51× | 0.11× | 0.13× | 2.22× | 12 |
+| radon partial pooling | 2.76× | 0.24× | 0.26× | 2.72× | 12 |
+| radon floor | 2.85× | 0.25× | 0.25× | 3.11× | 12 |
+| radon slopes | 3.40× | 0.25× | 0.27× | 3.16× | 12 |
+| dietox | 3.13× | 0.34× | 0.35× | 2.94× | 12 |
+| SBI meta-analysis | 2.65× | 0.37× | 1.69× | 0.71× | 12 |
+| fruitfly ANCOVA | 3.91× | 0.16× | 0.31× | 2.07× | 12 |
+| epilepsy counts | 5.07× | 0.16× | 0.25× | 3.00× | 12 |
+| therapeutic touch | 3.32× | 0.34× | 0.45× | 2.20× | 12 |
+| baseball binomial | 2.22× | 0.28× | 0.49× | 1.32× | 12 |
+| contraception | 9.16× | 0.08× | 0.09× | 8.27× | 12 |
+| pulmonary slopes | 4.72× | 0.21× | 0.25× | 4.25× | 12 |
+| N400 crossed | 4.71× | 0.11× | 0.11× | 4.35× | 12 |
 
-ESS/gradient favours WarmupHMC on all sixteen (1.67×–12.67×), and so does
-ESS/second (1.29×–10.27×) — including the SBI meta-analysis, which trailed at
-0.74× in the replaced artifact.
+ESS/gradient favours WarmupHMC on all sixteen (2.22×–9.16×). ESS/second favours
+it on fifteen (1.32×–8.27×) and trails on the SBI meta-analysis (0.71×; 1.29× in
+the replaced artifact): a millisecond-scale density on which WarmupHMC's wall
+time per gradient more than doubled between the pins, while DynamicHMC's did not
+(next section).
 
-On the generated *centered* target the same comparison ranges 0.53×–50.52× in
+On the generated *centered* target the same comparison ranges 0.45×–52.65× in
 ESS/gradient: WarmupHMC leads on fifteen of sixteen and trails only on
-`vasishth:pulmonary_slopes` (0.53×). Every row pairs 12 seeds.
+pulmonary slopes (`bambi:predict_new_groups`, 0.45×). Every row pairs 12 seeds.
 
 ## The nonlinear wrapper's cost, across the pins
 
 The fixed wrapper still preserves seed-level ESS/gradient **exactly**: the
 ratio is 1.00× with identical gradient counts on all sixteen models, which is
 the invariant this arm exists to check. Its wall-time cost over the unwrapped
-non-centered arm is 1.01×–2.97× (N400 crossed to the SBI meta-analysis), down
-from the 1.24×–4.86× the replaced artifact recorded.
+non-centered arm is 1.04×–2.09× (N400 crossed to baseball binomial), against
+1.01×–2.97× in the replaced artifact.
 
-Per gradient, against the replaced artifact (`dc9636f8` / BRM `d452e97a` /
-StanBlocks `7a02d30f` → `6adc5ea6` / `a5e118b0` / `d520980f`):
+Per gradient, against the replaced artifact. Only WarmupHMC moved
+(`6adc5ea6` → `b5c0b956`; BRM `a5e118b0` and StanBlocks `d520980f` on both), so
+the DynamicHMC column — identical gradient counts on both sides — measures the
+host, not the code:
 
-| median µs per gradient | non-centered | centered | fixed wrapper | adaptive |
-| --- | ---: | ---: | ---: | ---: |
-| dyestuff | 8.6 → 5.6 | 5.1 → 4.7 | 25.9 → 12.5 | 28.2 → 19.8 |
-| sleepstudy slope | 23.4 → 14.1 | 22.3 → 20.9 | 50.5 → 22.0 | 65.6 → 45.7 |
-| penicillin crossed | 13.9 → 14.1 | 12.2 → 11.6 | 51.0 → 17.0 | 82.5 → 59.6 |
-| radon partial pooling | 50.7 → 49.7 | 43.2 → 46.5 | 127.2 → 60.5 | 245.5 → 189.6 |
-| radon slopes | 58.7 → 71.6 | 90.7 → 103.4 | 146.1 → 93.9 | 233.0 → 376.7 |
-| dietox | 54.4 → 50.6 | 87.1 → 84.9 | 126.8 → 58.8 | 222.9 → 162.1 |
-| N400 crossed | 2249.6 → 1853.5 | 2284.6 → 2443.8 | 2789.9 → 1894.0 | 3359.2 → 2565.3 |
+| median µs per gradient | non-centered | centered | fixed wrapper | adaptive | DynamicHMC non-centered |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| dyestuff | 5.6 → 10.0 | 4.7 → 4.7 | 12.5 → 16.4 | 19.8 → 24.9 | 3.5 → 3.3 |
+| sleepstudy slope | 14.1 → 21.4 | 20.9 → 22.1 | 22.0 → 30.3 | 45.7 → 53.0 | 12.0 → 12.3 |
+| SBI meta-analysis | 4.2 → 9.9 | 3.6 → 5.4 | 10.3 → 15.3 | 25.7 → 31.2 | 1.9 → 2.1 |
+| fruitfly ANCOVA | 13.0 → 21.4 | 12.5 → 12.7 | 21.0 → 26.3 | 39.4 → 38.6 | 11.3 → 10.7 |
+| penicillin crossed | 14.1 → 14.1 | 11.6 → 13.6 | 17.0 → 17.7 | 59.6 → 60.0 | 13.3 → 13.3 |
+| radon slopes | 71.6 → 71.1 | 103.4 → 101.4 | 93.9 → 90.6 | 376.7 → 353.8 | 69.5 → 63.8 |
+| contraception | 79.9 → 80.5 | 70.2 → 71.7 | 88.1 → 87.9 | 171.3 → 185.2 | 71.6 → 74.3 |
+| N400 crossed | 1853.5 → 2421.7 | 2443.8 → 3326.1 | 1894.0 → 2960.3 | 2565.3 → 4677.5 | 1772.6 → 3144.5 |
 
-(Selected rows; the report prints all sixteen.) The fixed wrapper's
-per-gradient cost roughly halved on most models, and the adaptive arm fell too
-except on `radon_slopes`. **This cannot be attributed to WarmupHMC alone**: all
-three pins moved, only 25 of 96 shared model × arm median gradient counts are
-identical across the two artifacts (the report lists the rest), and the
-DynamicHMC arms moved as well. Read the column as "what the published stack
-costs now", not as a WarmupHMC change.
+(Selected rows; the report prints all sixteen and all six arms.) Two different
+things moved. On the small densities, where sampler bookkeeping and per-run
+fixed costs are a visible share of each gradient, the WarmupHMC non-centered
+and fixed-wrapper arms got slower per gradient (dyestuff, both sleepstudy
+models, the SBI meta-analysis and fruitfly: +42% to +138% non-centered), while
+DynamicHMC on the same models, interleaved in the same run, stayed within 11%.
+That is a WarmupHMC-side change between the pins; on the larger densities
+(radon, penicillin, contraception, pulmonary) it disappears into the density
+cost. On N400 crossed, every arm got slower, DynamicHMC's included (1.77×
+non-centered, 1.32× centered) — that is host load, covered below. The per-arm
+gradient counts that do differ between the two artifacts are all WarmupHMC's
+(64 of 96 model × arm cells; the report lists them).
 
 ## Fitting centerings
 
 Isolated from the wrapper — adaptive over fixed, so the wrapper's overhead
-divides out — fitting centerings improves ESS/gradient on ten of sixteen models
-and degrades it on one (`bambi:radon_floor`, 0.89×). The large wins are
-penicillin crossed (4.87×) and epilepsy counts (2.06×); contraception (1.31×),
-dietox (1.21×), radon partial pooling and radon slopes (1.18× each), baseball
-binomial and N400 crossed (1.17× each), therapeutic touch (1.16×) and fruitfly
-(1.01×) follow. The other five sit at exactly 1.00×, i.e. the fitted centering
-returns the generated endpoint.
+divides out — fitting centerings improves ESS/gradient on nine of sixteen models
+and degrades it on one (`bambi:dietox`, 0.98×). The large wins are penicillin
+crossed (4.15×), epilepsy counts (1.90×) and radon slopes (1.85×);
+contraception (1.70×), radon partial pooling (1.56×), baseball binomial
+(1.50×), radon floor (1.39×), N400 crossed (1.26×) and therapeutic touch
+(1.06×) follow. `bambi:radon_floor`, the one degradation in the replaced
+artifact (0.89×), now gains. The other six sit at exactly 1.00×, i.e. the
+fitted centering returns the generated endpoint.
 
 Its extra differentiation and adaptation work means those gradient
 improvements do not become ESS/second improvements except on penicillin
-crossed (1.27×).
+crossed (1.28×); N400 crossed comes closest otherwise (0.97×).
 
 ## N400 wall times and box load
 
-`vasishth:n400_crossed` is 7777.2 s of the run's 9090.7 s of recorded sampling
-(86%). Unlike the replaced artifact's single contention window, `strato2`
-carried other agents' jobs throughout this run (load 11–30 on 8 cores), so the
-question is whether that load shows in the rows. Normalising each cell's
-`wall_s` by its own gradient count leaves the per-gradient cost, which varies by
-at most 7% across the twelve seeds in every arm:
+`vasishth:n400_crossed` is 13111.5 s of the run's 14493.4 s of recorded sampling
+(90%). This run's `strato2` was far more loaded than the replaced artifact's
+(1-minute load 61 on 8 cores when it started), and this time the load does
+show in the rows. Normalising each cell's `wall_s` by its own gradient count
+leaves the per-gradient cost, which now spans up to 3.2× across the twelve
+seeds of an arm (it was within 7% before):
 
 | arm | s/gradient range | max/median | median wall s | max wall s |
 | --- | --- | ---: | ---: | ---: |
-| WarmupHMC — generated non-centered | 0.00178–0.00198 | 1.07 | 20.65 | 29.65 |
-| WarmupHMC — generated centered | 0.00239–0.00261 | 1.07 | 65.09 | 136.50 |
-| WarmupHMC — nonlinear wrapper fixed at c=0 | 0.00181–0.00197 | 1.04 | 20.59 | 30.03 |
-| WarmupHMC — adaptive centering | 0.00248–0.00268 | 1.05 | 25.21 | 41.13 |
-| DynamicHMC — generated non-centered | 0.00174–0.00189 | 1.06 | 188.44 | 206.01 |
-| DynamicHMC — generated centered | 0.00237–0.00255 | 1.05 | 312.59 | 353.71 |
+| WarmupHMC — generated non-centered | 0.00191–0.00531 | 2.19 | 32.38 | 83.55 |
+| WarmupHMC — generated centered | 0.00247–0.00719 | 2.16 | 117.03 | 418.43 |
+| WarmupHMC — nonlinear wrapper fixed at c=0 | 0.00194–0.00559 | 1.89 | 36.60 | 87.96 |
+| WarmupHMC — adaptive centering | 0.00256–0.01026 | 2.19 | 51.71 | 118.55 |
+| DynamicHMC — generated non-centered | 0.00177–0.00575 | 1.83 | 318.87 | 583.14 |
+| DynamicHMC — generated centered | 0.00240–0.00612 | 1.91 | 416.54 | 807.19 |
 
-The widest raw cell is WarmupHMC generated-centered seed 1 at 2.10× its arm
-median: 56,199 gradients, so geometry, not load. The large per-gradient
-spreads elsewhere on this page are on millisecond-scale densities, where a
-shared host shows; the N400 medians are not.
+Two things confirm load rather than sampler behaviour. The DynamicHMC arms,
+whose gradient counts and ESS reproduce the replaced artifact exactly, cost
+1.77× (non-centered) and 1.32× (centered) more per gradient than they did
+there. And seed 7 accounts for three of the five widest raw cells: WarmupHMC
+generated-centered seed 7 is 3.58× its arm's median wall time (418.43 s), but
+only 2.2× its arm's median gradient count (59,602 against 27,121); the rest is
+load. Read this spec's wall times and ESS/second as load-inflated. ESS/gradient
+and gradient counts are unaffected, and the seed-paired wall-time ratios above
+pair arms that ran interleaved under the same load.
 
 ## Figures and provenance
 
@@ -198,7 +221,7 @@ the AlgebraOfVega figures from `rows.json`; no plotted summary is stored beside
 the raw rows.
 
 `rows.json` is the source of truth. Its SHA-256 is
-`321fa5b4d274672cbefa93ebb34437ef26a7f5a121a09505f64c4902139d34a0`.
+`b86dcafba1afffd5a5cf0f451bf68246c922bb070721b2d53f2d958ba1bd7c53`.
 
 ## Reproduction
 

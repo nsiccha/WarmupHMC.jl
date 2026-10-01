@@ -156,7 +156,7 @@
   ],
   "config": {
     "brm_sha": "a5e118b0119e29c137d80d887b571db2d77af8e1",
-    "generated_at": "2026-10-01T03:09:03.241",
+    "generated_at": "2026-10-01T09:10:15.604",
     "host": "strato2",
     "julia": "1.10.11",
     "max_generated_k_among_publishable_rows": 2,
@@ -171,9 +171,9 @@
     "runner": "docs/benchmark/run_brm_high_k_preflight.jl",
     "runner_sha256": "cca69a6173ff7413322020ff2d599d48c954ffdd04d39dbcf031160eba034266",
     "stanblocks_sha": "d520980f98cc90141967a47dd6520fb5bb6e3f31",
-    "total_elapsed_s": 104.049,
+    "total_elapsed_s": 147.807,
     "translations_sha256": "3abb3199a194f74754c8e02b725dfac42081bc7e302c796cdf097ad1504b633d",
-    "warmuphmc_sha": "133093d0f32c8e9814f9118877cae61559d90717",
+    "warmuphmc_sha": "b5c0b956e3373ee35070200f24e490b56cc43ea4",
     "warmuphmc_src_dirty": false
   }
 }

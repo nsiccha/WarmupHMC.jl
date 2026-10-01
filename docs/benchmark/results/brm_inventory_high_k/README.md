@@ -40,7 +40,7 @@ one number.
 - Widest block among rows the published benchmark can actually run: **K = 2
   under both readings**. Recorded as `max_historical_k_among_publishable_rows`
   and `max_generated_k_among_publishable_rows`.
-- Total probe time: 104.049 seconds.
+- Total probe time: 147.807 seconds.
 
 None of the three candidates is publishable by the main runner:
 
@@ -81,13 +81,13 @@ runner's verbatim-only gate, not about reach; the `flocker` rows still need a
 ## Provenance
 
 - Logical compute host: `strato2`; Julia 1.10.11
-- WarmupHMC: `133093d0f32c` (src clean; code-identical to the standard artifact's `6adc5ea6`)
+- WarmupHMC: `b5c0b956e337` (src clean; the same base as the standard artifact)
 - BayesianRegressionModels: `a5e118b0119e29c137d80d887b571db2d77af8e1`
 - StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
 - `translations.tsv` sha256: `3abb3199a194f74754c8e02b725dfac42081bc7e302c796cdf097ad1504b633d`
 - `model_matrix.tsv` sha256: `edeed76f24931af8f53e296538d4d4b98c6768c9c5665f3f4dec55919ae78aeb`
 - Runner sha256: `cca69a6173ff7413322020ff2d599d48c954ffdd04d39dbcf031160eba034266`
-- `rows.json` sha256: `7c2834f750da7c5f3bd650f71a69ef93de9a7946036352bce44155ba512c1738`
+- `rows.json` sha256: `ea1d5e662b3584ba806706398b35f32e6a852d6530b269f14436dcc3bd25ac37`
 - Probe draws per stage: 50
 
 The two inventory checksums are the same ones the standard-warmup artifact

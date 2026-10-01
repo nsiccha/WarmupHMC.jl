@@ -1,0 +1,3 @@
+base 7b1757a, Enzyme — superseded by results/enzyme-b5c0b95/
+Re-measured on b5c0b95 after 7b1d694 restored Pathfinder's low-rank factor (todo 1c1ewm8), which changes sampler output for every Pathfinder init.
+Kept as the evidence for what changed between the runs; DRIVER_SHA moved to b5c0b95 in the same commit.

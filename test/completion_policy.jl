@@ -6,11 +6,11 @@
     using Distributions
     using DifferentiationInterface, Enzyme
 
-# Focused invocation (root environment; no private data or AD backend needed):
-# julia --startup-file=no --project=. -t4 -e 'using Test, WarmupHMC, Random,
-# LinearAlgebra, Statistics, LogDensityProblems, Distributions;
-# BLAS.set_num_threads(1); include("test/test_problems.jl");
-# include("test/completion_policy.jl")'
+# Focused invocation from the package root (test environment instantiates per
+# .github/workflows/test.yml; `@run_package_tests` from `-e` mis-discovers, so
+# pass the root explicitly):
+# julia --startup-file=no --project=test -t4 -e 'using TestItemRunner; using LinearAlgebra;
+# BLAS.set_num_threads(1); TestItemRunner.run_tests(pwd(); filter=ti->endswith(ti.filename, "completion_policy.jl"))'
 
 _completion_fixture(i; n=5) = (; posterior_position=fill(Float64(i), 2, n),
     n_divergent_samples=i % 2)

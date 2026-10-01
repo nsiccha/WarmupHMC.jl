@@ -180,9 +180,24 @@ base six of the eight never leave the centered start — every learned `c` ends 
 exactly 1.0 — and the arm's median gradient count equals `plain`'s. Per-gradient
 columns are counts, bit-reproducible on a given `src/`, so this is a behaviour
 change somewhere in the 31 `src/` commits between the two bases, not a
-measurement artefact. It is being bisected (WarmupHMC todo
-`2026-09-30T23-53-01-378-185dkdv`); until that settles, read this row as the
-sampler's current behaviour, not as the method's ceiling.
+measurement artefact.
+
+**Cause, bisected to `f210206`:**
+- The centering is refit only at a window that restarts.
+- Whether a window restarts is decided per coordinate, in the frame of
+  whichever square root of the metric is active. The test is
+  `variance_cond_target`, default 2.
+- `f210206` changed which square root the initial Pathfinder scale uses. In the
+  new frame, `seeds`' restart statistic sits at 1.46–1.96, so most runs never
+  restart and never evaluate the centering.
+- Across four square roots of the same covariance, 12 seeds adapt 5, 12, 0 and
+  1 times. This is a scratch experiment with the square root swapped in, not a
+  checked-in artifact; it is recorded in the WarmupHMC primer.
+
+Keeping this behaviour, and documenting it, was a deliberate choice (decision
+`2026-10-01T06-43-03-508-1312sap`). The frame-invariant alternatives measured
+on `seeds` are recorded in the WarmupHMC primer. Read this row as the sampler's
+current behaviour, not as the method's ceiling.
 
 Read as one sentence: **where none of the fixed options is good, adaptive beats
 all of them; where a good noncentered parametrization exists, adaptive reaches
@@ -860,10 +875,10 @@ exactly 1.0, and the arm's median gradient count is `plain`'s, 15973. Only seeds
 `final source c` column now reads 1.0.
 
 These columns are counts, bit-reproducible on a given `src/`, so this is a
-behaviour change, not seed noise. It is under bisection over the 31 `src/`
-commits between the two bases (WarmupHMC todo
-`2026-09-30T23-53-01-378-185dkdv`); the numbers above describe the sampler as it
-ships today.
+behaviour change, not seed noise. Its cause is the frame dependence described
+under the Verdict's ‡: whether a window restarts, and so whether the centering
+is refit at all, depends on which square root of the metric is active. The
+numbers above describe the sampler as it ships today.
 
 Wall-clock follows: adaptive is break-even with plain under Enzyme (806.1 vs
 848.2 ESS/sec, 0.95×) and 2.0× *slower* under ForwardDiff (374.2 vs 736.8), where

@@ -193,10 +193,11 @@ backend object only works once you load the AD package behind it — `AutoEnzyme
 needs `using Enzyme`. Constructing the backend object alone is not enough.
 
 Enzyme is the backend this package is developed and measured against, and a
-bare `AutoEnzyme()` is the right spelling — it is both the fastest and the one
-with the least to configure.
+bare `AutoEnzyme()` is the right spelling: it has the least to configure.
+`docs/benchmark/results/annotation_sweep.json` measures the annotated spellings
+at the same cost within run-to-run noise.
 
-!!! note "`function_annotation` is accepted but is no longer needed, and now costs"
+!!! note "`function_annotation` is accepted but is no longer needed"
     Earlier revisions **required** `AutoEnzyme(; function_annotation =
     Enzyme.Const)` here, and said so emphatically. That requirement is gone.
 
@@ -215,7 +216,7 @@ with the least to configure.
     Both sites now pass their non-differentiated operands as
     DifferentiationInterface `Constant` contexts to a top-level function, so
     nothing mutable rides on the callable. `Const` still works and is still
-    correct — it is simply slower now, because the annotation it applies has
+    correct. It is simply unnecessary now, because the annotation it applies has
     nothing left to fix. If you are carrying it from an older version, drop it.
 
     Enzyme's error text used to suggest `function_annotation =
@@ -411,16 +412,12 @@ end
 # callable inactive, and that is how callers had to spell the backend. But
 # `function_annotation` is a property of the WHOLE backend, so the workaround for
 # this one site taxed every gradient. Passing the operands as `Constant` contexts
-# instead leaves nothing mutable on the callable, so a bare `AutoEnzyme()` works —
-# and is the fastest of the three spellings. Measured at d=11 on a funnel, with
-# every arm agreeing with central differences to 1.98e-11:
-#
-#     AutoEnzyme()                                 0.390 us/grad   4.66x bare model
-#     AutoEnzyme(; function_annotation = Const)    0.646 us/grad   7.71x
-#     ... + mode = set_runtime_activity(Reverse)   0.670 us/grad   8.00x
-#
-# So `Const` is now a ~1.7x PESSIMIZATION rather than a requirement. It stays
-# accepted — it is still correct, just slower.
+# instead leaves nothing mutable on the callable, so a bare `AutoEnzyme()` works.
+# What the three spellings cost is measured in
+# `docs/benchmark/results/annotation_sweep.json` (5 rounds, backend order
+# rotated); figures are deliberately not copied here. A single funnel
+# measurement once put `Const` at ~1.7x bare; the rotated sweep did not
+# replicate it. `Const` stays accepted and is still correct.
 #
 # Deliberately NOT `prepare_gradient`d. A cached preparation was measured under
 # Enzyme and is a wash (1.14x either way, sign flipping with dimension) while

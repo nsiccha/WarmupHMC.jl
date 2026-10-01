@@ -23,8 +23,11 @@ LogDensityProblems.logdensity_and_gradient(p::ChainGaussian, x) =
     (LogDensityProblems.logdensity(p, x), [-x[1] + (x[2] - x[1]), -(x[2] - x[1])])
 
 # Coordinate 2 starts with a scale far too small to move it from 1.0 in Float64,
-# so the first window records it with zero position spread.
-const FROZEN_INIT = (; position=[0.0, 1.0], squared_scale=[1.0, 1e-40])
+# so the first window records it with zero position spread. A power of two, so
+# the Pathfinder frame's `L \ p` is exact too and EVERY frame sees exactly zero
+# spread (with 1e-40, summation rounding in `std` leaked a spurious nonzero spread
+# into that frame and unfroze the coordinate by accident).
+const FROZEN_INIT = (; position=[0.0, 1.0], squared_scale=[1.0, 2.0^-140])
 
 @testset "update_loss!(::Diagonal) never writes an unusable scale" begin
     rng = Xoshiro(1)
@@ -34,8 +37,12 @@ const FROZEN_INIT = (; position=[0.0, 1.0], squared_scale=[1.0, 1e-40])
     D = Diagonal([0.5, 0.25, 0.75])
     @test WarmupHMC.update_loss!(D, p, g) == Inf
     @test D.diag[1] ≈ sqrt(std(p[1, :]) / std(g[1, :]))   # a healthy coordinate still updates
-    @test D.diag[2] == 0.25                                # degenerate ones keep the previous scale
-    @test D.diag[3] == 0.75
+    @test D.diag[2] ≈ 1 / std(g[2, :])                     # frozen: sized from the gradient alone
+    @test D.diag[3] == 0.75                                # non-finite: keeps the previous scale
+    # A frozen coordinate's scale never shrinks: it was already too small.
+    D5 = Diagonal([5.0])
+    @test WarmupHMC.update_loss!(D5, fill(1.0, 1, 50), randn(rng, 1, 50)) == Inf
+    @test D5.diag == [5.0]
 
     # Laplace branch with a zero mean gradient used to write `Inf`.
     D0 = Diagonal([2.0])
@@ -73,10 +80,12 @@ end
     @test WarmupHMC._select_transformation!(options(), :diagonal, p, g) === :diagonal
 end
 
-@testset "a frozen coordinate no longer crashes warm-up" begin
+@testset "a frozen coordinate recovers instead of crashing warm-up" begin
     r = adaptive_warmup_mcmc(Xoshiro(2), ChainGaussian(); init=FROZEN_INIT, n_draws=300)
     @test size(r.posterior_position, 2) >= 300
     @test all(isfinite, r.posterior_position)
+    # x2's marginal standard deviation is sqrt(2); a frozen coordinate reads 0.
+    @test 0.8 < std(r.posterior_position[2, :]) < 2.0
 
     out = cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], ChainGaussian();
         init=FROZEN_INIT, n_cores=1, n_evaluations_budget=20_000, nonlinear_adapt=false)

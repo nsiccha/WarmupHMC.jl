@@ -188,18 +188,31 @@ _usable_scale(s) = isfinite(s) && s >= floatmin(s)
 # Per coordinate, the window's position spread `s1` and gradient spread `s2`
 # estimate the scale `sqrt(s1/s2)` and the loss `s1*s2`: for a Gaussian
 # coordinate with standard deviation σ, s1 ≈ σ and s2 ≈ 1/σ, so the estimate is σ
-# and the loss is 1 when the frame fits. Degenerate evidence — a coordinate whose
-# recorded positions never moved (s1 = 0), non-finite spreads, an estimate that
-# under- or overflows — yields no usable scale: the coordinate keeps its previous
-# one and the frame scores `Inf`, so it can never look BETTER fitted than a frame
-# with real evidence (s1 = 0 used to score 0, the best loss possible, and won).
+# and the loss is 1 when the frame fits. Degenerate evidence — non-finite spreads,
+# an estimate that under- or overflows — yields no usable scale: the coordinate
+# keeps its previous one. Any degenerate coordinate, including one whose recorded
+# positions never moved (s1 = 0), makes the frame score `Inf`, so it can never
+# look BETTER fitted than a frame with real evidence (s1 = 0 used to score 0, the
+# best loss possible, and won).
 update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i
     pi, gi = view(p, i, :), view(g, i, :)
     s1, s2 = std(pi), std(gi)
     # s1 = std(pi; mean=cv_mean(pi, gi))
     # @info (i, cor(pi, gi), mean(pi)=>cv_mean(pi, gi), std(pi)=>s1)
-    # s2 == 0: constant gradient, assume Laplace.
-    scale, loss = s2 == 0 ? (sqrt(2.) / abs(mean(gi)), Inf) : (sqrt(s1 / s2), s1 * s2)
+    scale, loss = if s2 == 0
+        # Constant gradient: assume Laplace.
+        sqrt(2.) / abs(mean(gi)), Inf
+    elseif s1 == 0
+        # The positions never moved, so the previous scale was too small to
+        # resolve even one step there, and keeping it keeps the coordinate frozen
+        # for good. The gradient still varied: size the coordinate from its spread
+        # alone, 1/std(gradient) (the scale a Gaussian's gradient spread implies),
+        # never below the scale that was already too small. A restart point, not
+        # evidence of fit, so the frame still scores `Inf`.
+        max(t[i,i], inv(s2)), Inf
+    else
+        sqrt(s1 / s2), s1 * s2
+    end
     _usable_scale(scale) || return Inf
     t[i,i] = scale
     loss

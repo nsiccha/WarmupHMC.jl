@@ -324,6 +324,9 @@ self-adaptation) — the two share primitives, not a joint driver.
   once it has this many draws SINCE ITS LAST RESTART).
 * `max_windows` — hard cap on cooperative windows.
 * `n_evaluations_budget` — optional global gradient-eval ceiling.
+* `progress` — used for initialization; `Treebars.request_interrupt!` on it (or
+  an ancestor) ends the run between windows, keeping every chain's draws, with
+  `stop_reason = :interrupted` in the run summary.
 * `cluster_fn` / `weighting` / `metric` / `threshold` — the tuneable knobs
   (defaults: greedy clustering, |dH|-halo weights, cond-number metric at √2).
 * `parallel=true` — advance chains on `Threads.@threads` within each window.
@@ -417,6 +420,13 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     early = resume ? _clustered_stop_reason(chains, n_evaluations_budget) : nothing
     stop_reason = something(early, :max_windows)
     for _ in 1:(isnothing(early) ? max(0, max_windows - windows_done) : 0)
+        # A stop requested through the progress tree (`Treebars.request_interrupt!`
+        # on the node passed as `progress`, or an ancestor) ends the run between
+        # windows, keeping every chain's draws — as the other samplers do.
+        if _interrupted(progress)
+            stop_reason = :interrupted
+            break
+        end
         n_windows += 1
         clusters = clustered_step!(chains; cluster_fn, metric, threshold, parallel)
         # AFTER the step, so `cluster_id` and any restart are already reflected.

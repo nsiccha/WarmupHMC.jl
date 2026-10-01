@@ -75,31 +75,36 @@ are `using`ed above.
 
 # Why `function_annotation = Enzyme.Const`, and not the bare `AutoEnzyme()`
 
-**A bare `AutoEnzyme()` does not work here.** It raises
+**Continuity, not necessity.** Every checked-in Enzyme artifact was measured
+with `Const`, and changing the backend re-stales all of them at once. Whether to
+switch is an open question (todo `1h9w2kl`), and this function is where the
+switch would go.
 
-    EnzymeMutabilityException: Function argument passed to autodiff cannot be
-    proven readonly
+Until `1a395ce` ("make a bare AutoEnzyme() work at both AD sites"), a bare
+`AutoEnzyme()` raised `EnzymeMutabilityException: Function argument passed to
+autodiff cannot be proven readonly`, because both AD sites handed Enzyme a
+callable carrying mutable data. `Const` was the workaround. Since that commit,
+the bare backend works, and `docs/src/reparametrization.md` (the note "If you
+are carrying `function_annotation` or `mode`, drop them") reports `Const` as a
+~1.7× pessimization: 0.627 vs 0.385 µs/gradient on the 11-d funnel. That figure
+is prose only; no checked-in artifact backs it yet.
 
-because the differentiated objective is a *closure* over the
-`ReparametrizedProblem` — capturing the reparametrizer and the frozen inner
-gradient `g_y` — and Enzyme cannot prove that captured state is only read.
+So the Enzyme numbers in `RESULTS.md` describe `AutoEnzyme(; function_annotation
+= Enzyme.Const)`, the configuration those docs tell users to drop. They are
+not the recommended configuration's cost.
 
-`Const` says the closure carries no derivative information, which is exactly
-true: `g_y` is held fixed by construction and the reparametrizer's parameters
-are not what we are differentiating with respect to. Measured on the funnel,
-2000 gradients:
+Pre-`1a395ce` measurement, kept because it is why `Duplicated` is never the
+answer (funnel, 2000 gradients):
 
 | backend | ns/gradient |
 |---|---|
 | `AutoForwardDiff()` | 931 |
-| `AutoEnzyme(; function_annotation = Enzyme.Const)` | **545** |
+| `AutoEnzyme(; function_annotation = Enzyme.Const)` | 545 |
 | `AutoEnzyme(; function_annotation = Enzyme.Duplicated)` | 4786 |
 
-All three agree to 3.3e-16, so this is purely a cost choice — but note that
-**Enzyme's own error message suggests `Duplicated`**, which is 5.1× slower than
-the ForwardDiff it was meant to replace. `Duplicated` allocates and propagates a
-shadow copy of the closure on every call; `Const` does not. Take the hint as a
-diagnosis of the problem, not as the fix.
+All three agreed to 3.3e-16. **Enzyme's own error message suggested
+`Duplicated`**, which was 5.1× slower than ForwardDiff: it allocates and
+propagates a shadow copy of the callable on every call.
 """
 function bench_ad_backend()
     name = lowercase(get(ENV, "WHMC_BENCH_AD", "enzyme"))

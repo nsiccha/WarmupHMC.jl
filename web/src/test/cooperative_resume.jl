@@ -166,6 +166,29 @@
             open(io -> serialize(io, p), joinpath(cdir, "cp_window_1.jls"), "w")
             @test _read_chain_payload(d, 1).window == 1
         end
+        mktempdir() do d
+            # The window file is written BEFORE the latest pointer, so a crash
+            # between the two leaves `cp_latest.jls` one window behind a durable
+            # `cp_window_<n>.jls`. The newer window file wins: zero windows lost,
+            # and the resumed run never re-writes an immutable window file.
+            chain = _chain()
+            cdir = joinpath(d, "chain_1")
+            mkpath(cdir)
+            advance_window!(chain)
+            p1 = cooperative_checkpoint_payload(chain)
+            open(io -> serialize(io, p1), joinpath(cdir, "cp_window_1.jls"), "w")
+            open(io -> serialize(io, p1), joinpath(cdir, "cp_latest.jls"), "w")
+            @test _read_chain_payload(d, 1).window == 1
+            advance_window!(chain)
+            p2 = cooperative_checkpoint_payload(chain)
+            open(io -> serialize(io, p2), joinpath(cdir, "cp_window_2.jls"), "w")
+            @test _read_chain_payload(d, 1).window == 2
+            # ... while a latest pointer newer than every window file (a consumer
+            # pruned window files) still wins.
+            rm(joinpath(cdir, "cp_window_2.jls"))
+            open(io -> serialize(io, p2), joinpath(cdir, "cp_latest.jls"), "w")
+            @test _read_chain_payload(d, 1).window == 2
+        end
     end
 
     @testset "crash-resume end to end" begin
@@ -203,19 +226,41 @@
         end
     end
 
-    @testset "time budget counts live time only" begin
+    @testset "time budget accumulates live time across the crash" begin
         mktempdir() do d
-            cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
+            part1 = cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
                 n_cores=1, n_evaluations_budget=1500, nonlinear_adapt=false,
                 checkpoint_dir=d, init=_init())
             rm(joinpath(d, "run_summary.json"))
+            # Every checkpoint records the run's live seconds so far.
+            recorded = _read_chain_payload(d, 1).run_elapsed
+            @test 0 < recorded <= part1.elapsed
             sleep(2)   # the outage: downtime must not eat the resumed budget
+            t0 = time()
             resumed = cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
-                n_cores=1, n_evaluations_budget=4000, time_budget=30.0,
+                n_cores=1, n_evaluations_budget=4000, time_budget=recorded + 30.0,
                 nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init())
-            # Without a re-based clock the 2 s outage would already show up here.
-            @test resumed.elapsed < 2.0
+            wall = time() - t0
+            # Cumulative: the pre-crash live time carries over ...
+            @test resumed.elapsed >= recorded
+            # ... but the outage does not: at most this call's own wall time on top.
+            @test resumed.elapsed <= recorded + wall
             @test resumed.total_evaluation_counter >= 4000
+        end
+        mktempdir() do d
+            # A budget the pre-crash live time already spent stops the resumed
+            # run before any new work — exactly where the uninterrupted run stopped.
+            part1 = cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
+                n_cores=1, n_evaluations_budget=1500, nonlinear_adapt=false,
+                checkpoint_dir=d, init=_init())
+            rm(joinpath(d, "run_summary.json"))
+            recorded = _read_chain_payload(d, 1).run_elapsed
+            resumed = cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
+                n_cores=1, time_budget=recorded / 2, nonlinear_adapt=false,
+                checkpoint_dir=d, resume=true, init=_init())
+            @test resumed.total_evaluation_counter == part1.total_evaluation_counter
+            @test occursin("\"stop_reason\":\"time_budget\"",
+                read(joinpath(d, "run_summary.json"), String))
         end
     end
 
@@ -256,6 +301,19 @@
             @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
                 n_cores=1, n_evaluations_budget=1000, nonlinear_adapt=false,
                 checkpoint_dir=d, resume=true, init=_init())
+        end
+        mktempdir() do d
+            # A FINALIZED run is refused: run_summary.json is write-once and its
+            # existence is the run-completed signal, so resuming would either
+            # rewrite it or leave it standing over a run that samples again.
+            cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
+                n_cores=1, n_evaluations_budget=1000, nonlinear_adapt=false,
+                checkpoint_dir=d, init=_init())
+            summary = read(joinpath(d, "run_summary.json"), String)
+            @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(1)], _Gauss3();
+                n_cores=1, n_evaluations_budget=3000, nonlinear_adapt=false,
+                checkpoint_dir=d, resume=true, init=_init())
+            @test read(joinpath(d, "run_summary.json"), String) == summary
         end
     end
 end

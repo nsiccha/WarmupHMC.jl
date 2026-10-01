@@ -351,9 +351,12 @@ Point a later call at the same directory with `resume=true` to continue after a
 crash: the whole ensemble is restored together (each chain's pooled-estimate
 accumulator with it) and the run continues for the remaining windows.
 `max_windows` and `n_draws` are totals across the resume — raise either to
-extend; the eval budget continues from the restored counters. `overwrite=true`
-discards the directory's run and starts fresh; without either flag a non-empty
-directory is refused. A custom `weighting` must be re-passed on resume (it has
+extend; the eval budget continues from the restored counters, and a restored
+ensemble that already meets a bound stops before stepping. `resume=true`
+continues an unfinished run only: a directory holding `run_summary.json` is
+finalized and refused, since that file is write-once. `overwrite=true` discards
+the directory's run and starts fresh; without either flag a non-empty directory
+is refused. A custom `weighting` must be re-passed on resume (it has
 no payload copy). Pointing [`resume_warmup_mcmc`](@ref) at this directory
 throws — the payload is a different shape, not a subset; resume through this
 sampler's own `resume=true`.
@@ -406,18 +409,21 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     # partition comes from the as-checkpointed cluster ids.
     clusters = resume ? _clusters_from_ids(chains) : [collect(eachindex(chains))]
     n_windows = windows_done
-    stop_reason = :max_windows
-    for _ in 1:max(0, max_windows - windows_done)
+    # A restored ensemble can ALREADY meet a stopping bound (a crash between its
+    # last checkpoint and finalize, or a resuming call with a lower budget), so a
+    # resume checks before stepping — stopping where the uninterrupted run did
+    # rather than running one window past it. A fresh run has done no work yet,
+    # so its loop is unchanged.
+    early = resume ? _clustered_stop_reason(chains, n_evaluations_budget) : nothing
+    stop_reason = something(early, :max_windows)
+    for _ in 1:(isnothing(early) ? max(0, max_windows - windows_done) : 0)
         n_windows += 1
         clusters = clustered_step!(chains; cluster_fn, metric, threshold, parallel)
         # AFTER the step, so `cluster_id` and any restart are already reflected.
         _write_clustered_checkpoints(checkpoint_dir, chains, n_windows)
-        if all(c -> c.status === :done, chains)
-            stop_reason = :n_draws
-            break
-        end
-        if sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget
-            stop_reason = :eval_budget
+        reason = _clustered_stop_reason(chains, n_evaluations_budget)
+        if !isnothing(reason)
+            stop_reason = reason
             break
         end
     end
@@ -643,16 +649,23 @@ _restore_clustered_pool(dir, rngs, lpdf; n_draws, weighting, init, progress, pat
     (chains, windows_done)
 end
 
+# The bound a clustered ensemble has met, checked in the run loop's order, or
+# `nothing` to keep going.
+_clustered_stop_reason(chains, n_evaluations_budget) =
+    all(c -> c.status === :done, chains) ? :n_draws :
+    sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget ? :eval_budget :
+    nothing
+
 # Partition chain indices by their as-checkpointed `cluster_id`, for a resumed
 # run with no windows left to run (no re-clustering happens, so the output
-# partition comes from the payloads). Fresh slots carry `cluster_id == 0` —
-# never pooled — so each stands alone.
+# partition comes from the payloads). Ordered by id, so the output's per-cluster
+# `cluster_id` (its position) agrees with each chain's own `cluster_id` —
+# `cluster_and_adapt!` numbers clusters 1..K. Fresh slots carry `cluster_id == 0`
+# — never pooled — so each stands alone, after the pooled clusters.
 _clusters_from_ids(chains) = begin
-    by_id = Dict{Int,Vector{Int}}()
-    for (i, chain) in enumerate(chains)
-        push!(get!(by_id, chain.cluster_id > 0 ? chain.cluster_id : -i, Int[]), i)
-    end
-    collect(values(by_id))
+    ids = sort!(unique(c.cluster_id for c in chains if c.cluster_id > 0))
+    clusters = [[i for (i, c) in enumerate(chains) if c.cluster_id == id] for id in ids]
+    append!(clusters, [[i] for (i, c) in enumerate(chains) if c.cluster_id <= 0])
 end
 
 # Atomic temp+rename per file, so a crash mid-write cannot strand a truncated

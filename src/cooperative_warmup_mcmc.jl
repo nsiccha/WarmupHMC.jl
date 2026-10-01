@@ -404,7 +404,8 @@ mutable struct CooperativeState{RS,L,CFG}
     const target_ess::Float64
     const eval_budget::Int
     const time_budget::Float64
-    const start_time::UInt64
+    const start_time::UInt64        # this SEGMENT's start; re-based on every resume
+    const prior_elapsed::Float64    # live seconds earlier segments spent (0 on a fresh run)
     const lock::ReentrantLock
     const checkpoint_dir::Union{Nothing,String}
     chains::Vector{CooperativeChain}
@@ -417,7 +418,10 @@ end
 _alive(state::CooperativeState) =
     count(c -> c.status === :sampling || c.status === :warming, state.chains) + state.n_starting
 _total_evals(state::CooperativeState) = sum(c -> c.total_evaluation_counter, state.chains; init=0)
-_elapsed(state::CooperativeState) = (time_ns() - state.start_time) / 1e9
+# Live run time, accumulated across resumes: the earlier segments' live seconds
+# (restored from the checkpoints) plus this segment's. Downtime between a crash
+# and its resume is never counted — `start_time` is re-based per segment.
+_elapsed(state::CooperativeState) = state.prior_elapsed + (time_ns() - state.start_time) / 1e9
 
 # CHEAP proxy: sum of each chain's own min-ESS (`c.ess[1]`), over ALL sampling/done
 # chains. Ignores between-chain disagreement and short-chain noise, so it
@@ -512,7 +516,8 @@ _release!(state::CooperativeState, chain) = begin
         end
     end
     paths = _chain_checkpoint_paths(state.checkpoint_dir, chain)
-    isnothing(paths) ? nothing : (paths, cooperative_checkpoint_payload(chain))
+    isnothing(paths) ? nothing :
+        (paths, cooperative_checkpoint_payload(chain; run_elapsed=_elapsed(state)))
 end
 
 # Atomic temp+rename, so a crash mid-write cannot truncate a checkpoint — the
@@ -684,7 +689,7 @@ Policy (the contract, not just the number):
 checkpoint_schema_version() = 2
 
 """
-    cooperative_checkpoint_payload(chain) -> NamedTuple
+    cooperative_checkpoint_payload(chain; run_elapsed=nothing) -> NamedTuple
 
 Serializable snapshot of `chain` at a window boundary.
 
@@ -704,8 +709,15 @@ needs scheduler intent and lives in the run summary instead.
 reset precedes the write); `dropped_posterior_position` holds what that restart
 discarded. Same additive contract and same consumer rule as the adaptive
 payload — see the comment above `checkpoint_payload`.
+
+`run_elapsed` is the RUN's live seconds when this checkpoint was written
+(cumulative across resumes; `nothing` when the payload was built outside a
+scheduler run). A resume re-seeds the time budget's clock from the largest value
+among the restored chains, so live time spent before a crash still counts while
+the downtime does not. Additive key: absent on payloads written before it
+existed, which resume as zero prior live time.
 """
-cooperative_checkpoint_payload(chain::CooperativeChain) = (;
+cooperative_checkpoint_payload(chain::CooperativeChain; run_elapsed=nothing) = (;
     schema_version=checkpoint_schema_version(),
     sampler=:cooperative,
     chain_index=chain.chain_index,
@@ -733,6 +745,7 @@ cooperative_checkpoint_payload(chain::CooperativeChain) = (;
     chain.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(chain.lpdf),
     custom_candidate_scoring=_has_custom_candidate_scoring(chain.lpdf),
+    run_elapsed,
 )
 
 # Per-chain checkpoint paths. `chain_<i>/` reuses the adaptive layout, and the
@@ -860,14 +873,20 @@ end
 # checkpoint (crash before its first window completed, or a crash mid-write that
 # left the directory empty) starts fresh in place — its previous occupant wrote
 # nothing, so reusing the slot cannot mix two chains' draws. Returns
-# `(chains, n_started, inherited)`, where `inherited` is the recorder/evidence
-# config a resumed run builds subsequently started chains with (`nothing` when
-# the directory holds no restorable chain, so fresh defaults apply).
+# `(chains, n_started, inherited, prior_elapsed)`, where `inherited` is the
+# recorder/evidence config a resumed run builds subsequently started chains with
+# (`nothing` when the directory holds no restorable chain, so fresh defaults
+# apply) and `prior_elapsed` the run's live seconds as of its newest checkpoint
+# (the time budget continues from there; the in-flight window's time is lost
+# with its work, exactly as its evals are).
 _restore_cooperative_pool(dir, lpdf, rngs, chain_cfg) = begin
     idxs = _chain_dir_indices(dir)
-    isempty(idxs) && return (CooperativeChain[], 0, nothing)
+    isempty(idxs) && return (CooperativeChain[], 0, nothing, 0.0)
     n_started = maximum(idxs)
     payloads = map(i -> _read_chain_payload(dir, i), 1:n_started)
+    prior_elapsed = maximum(payloads; init=0.0) do p
+        isnothing(p) ? 0.0 : Float64(something(get(p, :run_elapsed, nothing), 0.0))
+    end
     chains = Vector{CooperativeChain}(undef, n_started)
     inherited = nothing
     for idx in 1:n_started
@@ -896,7 +915,7 @@ _restore_cooperative_pool(dir, lpdf, rngs, chain_cfg) = begin
         @warn "chain_$idx has no checkpoint (crash before its first write); starting it fresh" maxlog=10
         chains[idx] = cooperative_chain(rngs[idx], deepcopy(lpdf); chain_index=idx, fresh_cfg...)
     end
-    (chains, n_started, inherited)
+    (chains, n_started, inherited, prior_elapsed)
 end
 
 """
@@ -1001,10 +1020,14 @@ shared), advanced one window at a time via [`advance_window!`](@ref).
 write-once `run_manifest.json` (at start) and `run_summary.json` (at finalize).
 Point a later call at the same directory with `resume=true` to continue after a
 crash: every chain is restored from its latest checkpoint, the eval budget
-continues from the restored counters, and the time budget counts only live
-sampling time (the clock re-bases at resume — downtime never eats the budget).
-`overwrite=true` discards the directory's run and starts fresh; without either
-flag a non-empty directory is refused.
+continues from the restored counters, and the time budget accumulates live
+sampling time across resumes — each checkpoint records the run's live seconds,
+the clock resumes from the newest one, and downtime never eats the budget (the
+returned `elapsed` is that cumulative live time). `resume=true` continues an
+unfinished run only: a directory holding `run_summary.json` is finalized and
+refused, since that file is write-once. `overwrite=true` discards the
+directory's run and starts fresh; without either flag a non-empty directory is
+refused.
 
 The published guarantee is per-chain determinism with a nondeterministic pool
 (decision `y72yij`): each restored chain's trajectory is byte-identical given
@@ -1033,10 +1056,10 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     nonlinear_adapt=true,
     progress=nothing,
     checkpoint_dir=nothing,
-    # Continue from `checkpoint_dir`'s per-chain checkpoints instead of starting
-    # over. Config comes from THIS call (a larger `n_draws` extends finished
-    # chains); the eval budget continues from the restored counters and the
-    # clock re-bases, so `time_budget` counts live sampling time only.
+    # Continue an unfinished run from `checkpoint_dir`'s per-chain checkpoints
+    # instead of starting over. Config comes from THIS call (a larger `n_draws`
+    # extends finished chains); the eval budget continues from the restored
+    # counters and `time_budget` from the restored live time (downtime excluded).
     resume=false,
     # Discard whatever `checkpoint_dir` already holds and start fresh.
     overwrite=false,
@@ -1049,9 +1072,9 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
     chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs..., pathfinder_kw...)
     pool_target = min(length(rngs), max(min_chains, n_cores))
-    chains, n_started, inherited = resume ?
+    chains, n_started, inherited, prior_elapsed = resume ?
         _restore_cooperative_pool(checkpoint_dir, lpdf, rngs, chain_cfg) :
-        (CooperativeChain[], 0, nothing)
+        (CooperativeChain[], 0, nothing, 0.0)
     # Chains the resumed run starts later build under the checkpoint's
     # recorder/evidence config unless the call overrode it — `chain_cfg`
     # (caller-passed) wins the merge.
@@ -1059,7 +1082,7 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     state = CooperativeState(
         rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
         Float64(target_ess), n_evaluations_budget, Float64(time_budget),
-        time_ns(), ReentrantLock(), checkpoint_dir,
+        time_ns(), prior_elapsed, ReentrantLock(), checkpoint_dir,
         chains, Base.IdSet{CooperativeChain}(), n_started, 0, false,
     )
     # The manifest is write-once: a resumed run keeps the original's identity

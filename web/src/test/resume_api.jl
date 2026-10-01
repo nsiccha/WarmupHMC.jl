@@ -137,8 +137,13 @@
             # a second run into the same dir would interleave — refuse
             @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
                 n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, init=_init(lpdf))
-            # resume continues the run instead of throwing (deep coverage lives
-            # in cooperative_resume.jl; here the guard routes it, not refuses it)
+            # a FINALIZED run is not resumable: its run_summary.json is
+            # write-once, and its existence is the run-completed signal
+            @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
+                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
+            # an unfinished (crashed) one continues instead of throwing (deep
+            # coverage lives in cooperative_resume.jl; here the guard routes it)
+            rm(joinpath(d, "run_summary.json"))
             resumed = cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
                 n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
             @test resumed.n_started >= 1

@@ -926,9 +926,14 @@ samplers that lay out `dir/chain_<i>/` subdirectories rather than a single
 
 Same rule: a directory that already holds a run is ambiguous, so it requires an
 explicit `resume=true` or `overwrite=true`. On `resume=true` the guard returns
-normally and the caller restores each chain from its `chain_<i>/cp_latest.jls`
+normally and the caller restores each chain from its `chain_<i>/` checkpoints
 — the per-payload sampler tag (checked at restore) is what rejects a directory
 written by a different sampler, not this guard.
+
+`resume=true` continues an UNFINISHED run only. A directory holding
+`run_summary.json` is a finalized run and is refused: that file is write-once
+and its existence is the run-completed signal, so a resumed run could only
+rewrite it or leave it standing over a run that is sampling again.
 """
 guard_run_dir!(::Nothing, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
     (resume || overwrite) && throw(ArgumentError(
@@ -949,7 +954,18 @@ guard_run_dir!(dir, resume::Bool, overwrite::Bool, sampler::Symbol) = begin
         foreach(f -> rm(joinpath(dir, f); recursive=true), existing)
         return nothing
     end
-    resume && return nothing
+    if resume
+        "run_summary.json" in existing && throw(ArgumentError("""
+        $(repr(dir)) holds a FINALIZED $(sampler) run: run_summary.json exists.
+
+        `resume=true` continues an unfinished (crashed) run only. The summary is
+        write-once and its existence is the run-completed signal, so resuming
+        would either rewrite it or leave it standing over a run that is sampling
+        again. Read the finished run as it is, or pass `overwrite=true` to start
+        over.
+        """))
+        return nothing
+    end
     throw(ArgumentError("""
     $(repr(dir)) already contains a run: $(join(existing, ", ")).
 
@@ -1675,25 +1691,35 @@ _chain_dir_indices(dir) = begin
 end
 
 # Read chain `i`'s restorable state, or `nothing` when the chain never wrote one
-# (crash before its first window completed — its slot restarts fresh). Prefers
-# `cp_latest.jls`; when that is missing but per-window files exist (crash between
-# the window write and the latest-pointer overwrite), falls back to the newest
-# `cp_window_<n>.jls`, which holds the identical payload — zero windows lost
-# instead of one. A present-but-unreadable file is corruption, not a crash
-# artifact (writes are atomic), so deserialization errors propagate loudly.
+# (crash before its first window completed — its slot restarts fresh).
+#
+# Every boundary writes `cp_window_<n>.jls` FIRST and then overwrites
+# `cp_latest.jls`, so a crash between the two leaves the latest pointer one
+# window BEHIND a durable window file (or absent, at the first boundary). The
+# newer of the two wins: zero windows lost instead of one, and the resumed run
+# never re-writes a window file that already exists (those are immutable). The
+# latest pointer still wins when it is newer than every window file — a consumer
+# may prune window files. A payload without a `window` key is returned as-is so
+# the restore's sampler-tag check, not this reader, rejects a foreign directory.
+# A present-but-unreadable file is corruption, not a crash artifact (writes are
+# atomic), so deserialization errors propagate loudly.
 _read_chain_payload(dir, i) = begin
     d = joinpath(dir, "chain_$i")
     isdir(d) || return nothing
-    latest = joinpath(d, "cp_latest.jls")
-    isfile(latest) && return deserialize(latest)
-    numbered = Tuple{Int,String}[]
+    newest = nothing
     for f in readdir(d)
         m = match(r"^cp_window_(\d+)\.jls$", f)
         isnothing(m) && continue
-        push!(numbered, (parse(Int, m.captures[1]), joinpath(d, f)))
+        n = parse(Int, m.captures[1])
+        (isnothing(newest) || n > first(newest)) && (newest = (n, joinpath(d, f)))
     end
-    isempty(numbered) && return nothing
-    deserialize(last(sort!(numbered))[2])
+    latest = joinpath(d, "cp_latest.jls")
+    if isfile(latest)
+        p = deserialize(latest)
+        w = get(p, :window, nothing)
+        (isnothing(newest) || isnothing(w) || first(newest) <= w) && return p
+    end
+    isnothing(newest) ? nothing : deserialize(last(newest))
 end
 
 # Scalar-lpdf multi-chain entry point: each chain gets its OWN `deepcopy(lpdf)`,

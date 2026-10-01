@@ -165,12 +165,39 @@
                 max_windows=1, checkpoint_dir=d, init=_init())
             rm(joinpath(d, "run_summary.json"))
             # The restored counters already hold part 1's evals, so a budget at
-            # that level stops after one more window rather than running five.
-            resumed = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
+            # exactly that level is already spent: the resumed run stops BEFORE
+            # stepping, where the uninterrupted run stopped — no extra window.
+            spent = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
                 max_windows=5, n_evaluations_budget=part1.total_evaluation_counter,
+                checkpoint_dir=d, resume=true, init=_init())
+            @test spent.n_windows == 1
+            @test spent.total_evaluation_counter == part1.total_evaluation_counter
+            @test occursin("\"stop_reason\":\"eval_budget\"",
+                read(joinpath(d, "run_summary.json"), String))
+            rm(joinpath(d, "run_summary.json"))
+            # One eval above it runs exactly one more window rather than five.
+            resumed = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
+                max_windows=5, n_evaluations_budget=part1.total_evaluation_counter + 1,
                 checkpoint_dir=d, resume=true, init=_init())
             @test resumed.n_windows == 2
             @test resumed.total_evaluation_counter > part1.total_evaluation_counter
+        end
+    end
+
+    @testset "an ensemble already done stops before stepping" begin
+        mktempdir() do d
+            part1 = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
+                n_draws=5, max_windows=20, checkpoint_dir=d, init=_init())
+            @test occursin("\"stop_reason\":\"n_draws\"",
+                read(joinpath(d, "run_summary.json"), String))
+            rm(joinpath(d, "run_summary.json"))
+            # Same `n_draws`: every restored chain is `:done`, so no window runs.
+            again = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
+                n_draws=5, max_windows=20, checkpoint_dir=d, resume=true, init=_init())
+            @test again.n_windows == part1.n_windows
+            @test again.total_evaluation_counter == part1.total_evaluation_counter
+            @test occursin("\"stop_reason\":\"n_draws\"",
+                read(joinpath(d, "run_summary.json"), String))
         end
     end
 
@@ -187,6 +214,17 @@
         end
     end
 
+    @testset "no-windows-left partition agrees with the chains' cluster ids" begin
+        # The output names cluster `k` by its position, so the partition must be
+        # ordered by id for `clusters[k]` to hold the chains with `cluster_id == k`.
+        chains = [_chain(s) for s in 1:3]
+        foreach(((c, id),) -> c.cluster_id = id, zip(chains, (2, 1, 2)))
+        @test WarmupHMC._clusters_from_ids(chains) == [[2], [1, 3]]
+        # A fresh slot (`cluster_id == 0`, never pooled) stands alone, after the pools.
+        foreach(((c, id),) -> c.cluster_id = id, zip(chains, (1, 0, 1)))
+        @test WarmupHMC._clusters_from_ids(chains) == [[1, 3], [2]]
+    end
+
     @testset "run-dir guard" begin
         mktempdir() do d
             clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
@@ -194,7 +232,14 @@
             # A second run into the same dir would interleave — refuse.
             @test_throws ArgumentError clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
                 max_windows=1, checkpoint_dir=d, init=_init())
-            # ... while resume and overwrite keep working.
+            # A FINALIZED run is refused too: run_summary.json is write-once and
+            # its existence is the run-completed signal.
+            summary = read(joinpath(d, "run_summary.json"), String)
+            @test_throws ArgumentError clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
+                max_windows=2, checkpoint_dir=d, resume=true, init=_init())
+            @test read(joinpath(d, "run_summary.json"), String) == summary
+            # ... while an unfinished (crashed) run resumes and overwrite clears.
+            rm(joinpath(d, "run_summary.json"))
             resumed = clustered_warmup_mcmc([Xoshiro(s) for s in 1:2], _Gauss3();
                 max_windows=2, checkpoint_dir=d, resume=true, init=_init())
             @test resumed.n_windows == 2

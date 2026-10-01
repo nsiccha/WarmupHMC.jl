@@ -335,7 +335,7 @@ Returns a `NamedTuple`: `clusters` (a per-cluster `NamedTuple` of `chain_indices
 + pooled `ess`/`rhat`/`n_draws`, decision `1bfkc9a`), the per-chain
 `chains`/`results`, `n_windows`, and `total_evaluation_counter`.
 
-## Checkpointing
+## Checkpointing and crash-resume
 
 `checkpoint_dir=path` writes the SAME layout and payload contract as
 [`cooperative_warmup_mcmc`](@ref), so one consumer read path serves both:
@@ -347,22 +347,30 @@ at the root. Payloads carry `sampler === :clustered` and the clustered-only
 Like the cooperative sampler this writes no `cp_init.jls` — the first
 checkpoint is `cp_window_1.jls`, so a reader must not require one.
 
-**Writing is not resuming.** These files let a consumer inspect, list and
-materialize a clustered run exactly as it does an adaptive or cooperative one,
-but there is no `resume_clustered_warmup_mcmc`, and pointing
-[`resume_warmup_mcmc`](@ref) at this directory will throw — the payload is a
-different shape, not a subset. Disk resume remains scoped out (decision
-`1nfpfei`); in-memory resume below is unaffected.
+Point a later call at the same directory with `resume=true` to continue after a
+crash: the whole ensemble is restored together (each chain's pooled-estimate
+accumulator with it) and the run continues for the remaining windows.
+`max_windows` and `n_draws` are totals across the resume — raise either to
+extend; the eval budget continues from the restored counters, and a restored
+ensemble that already meets a bound stops before stepping. `resume=true`
+continues an unfinished run only: a directory holding `run_summary.json` is
+finalized and refused, since that file is write-once. `overwrite=true` discards
+the directory's run and starts fresh; without either flag a non-empty directory
+is refused. A custom `weighting` must be re-passed on resume (it has
+no payload copy). Pointing [`resume_warmup_mcmc`](@ref) at this directory
+throws — the payload is a different shape, not a subset; resume through this
+sampler's own `resume=true`.
 
 ## Resumability
 
-The run is assembled from resumable pieces (decision `1nfpfei` scoped *disk*
-resume out of v1; in-memory resume is free here): [`clustered_chains`](@ref)
-builds the per-chain state, [`clustered_step!`](@ref) advances every chain one
-window and re-clusters, and [`clustered_output`](@ref) finalizes. All mutable
-state — including each chain's RNG — lives in the returned `chains`, so a run
-split across several `clustered_step!` calls is BIT-IDENTICAL to a single loop;
-hold the `chains`, checkpoint or inspect, and continue where you left off.
+The run is assembled from resumable pieces: [`clustered_chains`](@ref) builds
+the per-chain state, [`clustered_step!`](@ref) advances every chain one window
+and re-clusters, and [`clustered_output`](@ref) finalizes. All mutable state —
+including each chain's RNG — lives in the returned `chains`, so a run split
+across several `clustered_step!` calls is BIT-IDENTICAL to a single loop; hold
+the `chains`, checkpoint or inspect, and continue where you left off. Disk
+resume above is the crash-safe counterpart (decision `1nfpfei` scoped it out of
+v1; this entry point is the follow-up).
 """
 clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_draws=1000,
@@ -376,29 +384,46 @@ clustered_warmup_mcmc(rngs::AbstractVector, lpdf;
     init=missing,
     progress=nothing,
     checkpoint_dir=nothing,
+    # Continue from `checkpoint_dir`'s per-chain checkpoints instead of starting
+    # over. `max_windows`/`n_draws` are totals across the resume; config comes
+    # from THIS call.
+    resume=false,
+    # Discard whatever `checkpoint_dir` already holds and start fresh.
+    overwrite=false,
     # Forwarded verbatim to the Pathfinder initializer; see `_check_kwargs`.
     pathfinder_kw=(;),
     kwargs...
 ) = begin
     # Validate BEFORE any side effect, so a rejected call writes no manifest.
     _check_kwargs(:clustered_warmup_mcmc, kwargs)
-    write_clustered_run_manifest(checkpoint_dir, rngs,
+    guard_run_dir!(checkpoint_dir, resume, overwrite, :clustered)
+    chains, windows_done = resume ?
+        _restore_clustered_pool(checkpoint_dir, rngs, lpdf;
+            n_draws, weighting, init, progress, pathfinder_kw, kwargs...) :
+        (clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, pathfinder_kw, kwargs...), 0)
+    # The manifest is write-once: a resumed run keeps the original's identity
+    # and criteria, it does not rewrite them with this call's.
+    resume || write_clustered_run_manifest(checkpoint_dir, rngs,
         (; n_draws, max_windows, n_evaluations_budget, threshold))
-    chains = clustered_chains(rngs, lpdf; n_draws, weighting, init, parallel, progress, pathfinder_kw, kwargs...)
-    clusters = [collect(eachindex(chains))]
-    n_windows = 0
-    stop_reason = :max_windows
-    for _ in 1:max_windows
+    # A resumed run with no windows left never re-clusters, so its output
+    # partition comes from the as-checkpointed cluster ids.
+    clusters = resume ? _clusters_from_ids(chains) : [collect(eachindex(chains))]
+    n_windows = windows_done
+    # A restored ensemble can ALREADY meet a stopping bound (a crash between its
+    # last checkpoint and finalize, or a resuming call with a lower budget), so a
+    # resume checks before stepping — stopping where the uninterrupted run did
+    # rather than running one window past it. A fresh run has done no work yet,
+    # so its loop is unchanged.
+    early = resume ? _clustered_stop_reason(chains, n_evaluations_budget) : nothing
+    stop_reason = something(early, :max_windows)
+    for _ in 1:(isnothing(early) ? max(0, max_windows - windows_done) : 0)
         n_windows += 1
         clusters = clustered_step!(chains; cluster_fn, metric, threshold, parallel)
         # AFTER the step, so `cluster_id` and any restart are already reflected.
         _write_clustered_checkpoints(checkpoint_dir, chains, n_windows)
-        if all(c -> c.status === :done, chains)
-            stop_reason = :n_draws
-            break
-        end
-        if sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget
-            stop_reason = :eval_budget
+        reason = _clustered_stop_reason(chains, n_evaluations_budget)
+        if !isnothing(reason)
+            stop_reason = reason
             break
         end
     end
@@ -485,6 +510,163 @@ clustered_checkpoint_payload(chain::ClusteredChain, chain_index::Int, window::In
     reparam_sources=reparam_sources(chain.lpdf),
     custom_candidate_scoring=_has_custom_candidate_scoring(chain.lpdf),
 )
+
+"""
+    restore_clustered_chain(payload, lpdf; n_draws, stepsize_adaptation_limit,
+                            target_acceptance_rate, max_tree_depth,
+                            max_window_evaluations, weighting, kwargs...) -> ClusteredChain
+
+Reconstruct a live [`ClusteredChain`](@ref) from a deserialized clustered
+checkpoint payload and a freshly supplied `lpdf` (one `deepcopy` per chain, as
+on the fresh path) — the clustered counterpart of `restore_state`, under the
+same payload invariant: learned state from the payload, configuration from THIS
+call.
+
+The restored chain carries its accumulating pooled-estimate input
+(`adaptation`) with it, so a resumed ensemble re-clusters from the same
+estimates the crash interrupted — per-chain resume is meaningless here except
+as part of the whole-ensemble restore (`cluster_and_adapt!` pools across
+cluster-mates).
+
+* `n_draws` is a total: a chain restored `:done` resumes `:sampling` when the
+  call raises it past the retained draws (resume-and-extend).
+* `recording_target`, `regularizing_n` and `regularizing_var` default to
+  `nothing`, which inherits the checkpoint's values; an explicit different value
+  is refused — all three are baked into persisted accumulators.
+* `weighting` has no payload copy (an arbitrary function is not serializable
+  state) and always comes from the call: re-pass a custom weighting on resume,
+  or the resumed windows accumulate under the default.
+* `n_evaluations`, `init`, `progress` and `pathfinder_kw` are accepted and
+  ignored — the window budget continues from the payload, and initialization
+  already happened — so the resuming call can repeat the original verbatim.
+"""
+restore_clustered_chain(p, lpdf;
+    expected_chain_index=nothing,   # pool resume passes the slot; direct callers omit it
+    n_draws=1000,
+    n_evaluations=1000,             # ignored: the payload's (doubled) budget continues
+    recording_target=nothing,       # nothing inherits the checkpoint's ring size
+    stepsize_adaptation_limit=50,
+    target_acceptance_rate=.8,
+    max_tree_depth=10,
+    max_window_evaluations=4000,
+    init=missing,                   # ignored: initialization already happened
+    regularizing_n=nothing,         # nothing inherits the checkpoint's prior strength
+    regularizing_var=nothing,       # nothing inherits the checkpoint's prior scale
+    weighting=default_weighting,    # always from the call — see above
+    progress=nothing,               # ignored: init-only handle
+    pathfinder_kw=(;),              # ignored: init-only, accepted so the call repeats verbatim
+    kwargs...                       # init-only remainder (see `clustered_chain`); dropped, not stored
+) = begin
+    check_checkpoint_compatible(p, :clustered, (:clustered,))
+    _check_schema_version(p)
+    # Slot check AFTER the tag check: a foreign payload has no `chain_index` at
+    # all, and its masquerade error is the informative one.
+    found_index = get(p, :chain_index, nothing)
+    isnothing(expected_chain_index) || found_index == expected_chain_index || throw(ArgumentError(
+        "chain_$expected_chain_index holds " *
+        (isnothing(found_index) ? "a payload with no chain index" :
+            "a checkpoint for chain $found_index") *
+        ": chain directories were moved or mixed. Restore them and resume again."
+    ))
+    _check_candidate_scoring_compatible(p, lpdf)
+    lpdf_dimension = LogDensityProblems.dimension(lpdf)
+    p.dimension == lpdf_dimension || throw(DimensionMismatch(
+        "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *
+        "lpdf has dimension $lpdf_dimension."
+    ))
+    # Same rule as `restore_state`: the recorder's target sizes a persisted ring,
+    # so it can only be inherited, never changed.
+    isnothing(recording_target) || recording_target == p.recorder.target || throw(ArgumentError(
+        "`recording_target` cannot change on resume (checkpoint has " *
+        "$(p.recorder.target), got $recording_target): the recorder's ring buffer " *
+        "and its retained contents are part of the persisted state. Omit it to inherit."
+    ))
+    # The regularizing pair is the prior baked into the persisted pooled-estimate
+    # accumulator — changing it mid-run would silently re-weight every estimate.
+    saved_regularizing = p.adaptation.position_variances
+    for (name, value, saved) in (
+        (:regularizing_n, regularizing_n, saved_regularizing.regularizing_n),
+        (:regularizing_var, regularizing_var, saved_regularizing.regularizing_var),
+    )
+        isnothing(value) || value == saved || throw(ArgumentError(
+            "`$name` cannot change on resume (checkpoint has $saved, got $value): " *
+            "it is baked into the persisted pooled-estimate accumulator. Omit it to inherit."
+        ))
+    end
+    restore_reparam_sources!(lpdf, p.reparam_sources)
+    recording_lpdf = RecordingPosterior2(
+        lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
+        NUTSLeaves(p.dimension), p.recorder, p.rng,
+    )
+    # Resume-and-extend, as on the other two samplers.
+    status = p.status === :done && size(p.posterior_position, 2) < n_draws ? :sampling : p.status
+    ClusteredChain(
+        p.rng, lpdf, recording_lpdf,
+        DynamicHMC.NUTS(; max_depth=max_tree_depth),
+        DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
+        p.recorder.target, stepsize_adaptation_limit, n_draws, max_window_evaluations,
+        weighting,
+        p.position_and_gradient, p.scale, _diagonal_energy(p.scale),
+        p.stepsize, p.stepsize_state, p.n_evaluations, p.adaptation,
+        p.cluster_id, p.total_evaluation_counter,
+        p.current_transition_counter, p.n_divergent_samples, p.n_samples,
+        status, p.checkpoints,
+        p.dropped_posterior_position, p.dropped_posterior_gradient,
+        p.dropped_n_divergent_samples,
+    )
+end
+
+# Rebuild the clustered ensemble from a run directory: slot `i` restores from
+# `chain_<i>/`, or starts fresh in place when it has no restorable checkpoint
+# (crash before its first window completed — its previous occupant wrote
+# nothing, so reusing the slot cannot mix two chains' draws). The ensemble is
+# fixed — unlike the cooperative scheduler nothing refills it later — so every
+# slot is filled here. Returns `(chains, windows_done)`, where `windows_done`
+# is the highest completed window over the restored chains (fresh slots
+# contribute 0); the resumed run's `max_windows` counts from there as a total.
+_restore_clustered_pool(dir, rngs, lpdf; n_draws, weighting, init, progress, pathfinder_kw, kwargs...) = begin
+    idxs = _chain_dir_indices(dir)
+    n = max(length(rngs), isempty(idxs) ? 0 : maximum(idxs))
+    inits = ensurevector(init, n)
+    chains = Vector{ClusteredChain}(undef, n)
+    windows_done = 0
+    for i in 1:n
+        p = _read_chain_payload(dir, i)
+        if isnothing(p)
+            i > length(rngs) && throw(ArgumentError(
+                "chain_$i has no checkpoint and needs a fresh start, but only " *
+                "$(length(rngs)) rngs were supplied. Pass at least $i rngs to resume."
+            ))
+            @warn "chain_$i has no checkpoint (crash before its first write); starting it fresh" maxlog=10
+            chains[i] = clustered_chain(rngs[i], deepcopy(lpdf);
+                n_draws, weighting, init=inits[i], progress, pathfinder_kw, kwargs...)
+        else
+            chains[i] = restore_clustered_chain(p, deepcopy(lpdf);
+                expected_chain_index=i, n_draws, weighting, init=inits[i], pathfinder_kw, kwargs...)
+            windows_done = max(windows_done, p.window)
+        end
+    end
+    (chains, windows_done)
+end
+
+# The bound a clustered ensemble has met, checked in the run loop's order, or
+# `nothing` to keep going.
+_clustered_stop_reason(chains, n_evaluations_budget) =
+    all(c -> c.status === :done, chains) ? :n_draws :
+    sum(c -> c.total_evaluation_counter, chains) >= n_evaluations_budget ? :eval_budget :
+    nothing
+
+# Partition chain indices by their as-checkpointed `cluster_id`, for a resumed
+# run with no windows left to run (no re-clustering happens, so the output
+# partition comes from the payloads). Ordered by id, so the output's per-cluster
+# `cluster_id` (its position) agrees with each chain's own `cluster_id` —
+# `cluster_and_adapt!` numbers clusters 1..K. Fresh slots carry `cluster_id == 0`
+# — never pooled — so each stands alone, after the pooled clusters.
+_clusters_from_ids(chains) = begin
+    ids = sort!(unique(c.cluster_id for c in chains if c.cluster_id > 0))
+    clusters = [[i for (i, c) in enumerate(chains) if c.cluster_id == id] for id in ids]
+    append!(clusters, [[i] for (i, c) in enumerate(chains) if c.cluster_id <= 0])
+end
 
 # Atomic temp+rename per file, so a crash mid-write cannot strand a truncated
 # checkpoint — same writer the adaptive and cooperative paths use.

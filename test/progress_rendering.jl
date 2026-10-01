@@ -32,8 +32,11 @@ label(L) = string(WarmupHMC.ActiveTransformation(
         @test length(s) < 200
         @test !occursin("0.0 0.0", s)
     end
-    # The dense Cholesky factor gets its own name.
-    @test startswith(label(WarmupHMC._initial_pathfinder_scale(Σ, d)), "Pathfinder(dense, d = $d)")
+    # A Pathfinder init keeps the low-rank factor and its `Pathfinder(k)` label;
+    # only a caller-supplied dense matrix gets the dense Cholesky label.
+    @test startswith(label(WarmupHMC._initial_pathfinder_scale(Σ, d)), "Pathfinder(")
+    @test !occursin("dense", label(WarmupHMC._initial_pathfinder_scale(Σ, d)))
+    @test startswith(label(WarmupHMC._initial_pathfinder_scale(dense, d)), "Pathfinder(dense, d = $d)")
     # The adaptive and diagonal options keep their existing labels.
     adaptive = WarmupHMC.MatrixFactorization(WarmupHMC.SuccessiveReflections(d), Diagonal(ones(d)))
     @test startswith(label(adaptive), "Adaptive(")

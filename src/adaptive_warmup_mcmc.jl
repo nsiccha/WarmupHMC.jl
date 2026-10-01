@@ -1,16 +1,25 @@
 _initial_diagonal_scale(squared_scale::AbstractMatrix) =
     Diagonal(sqrt.(Float64.(diag(squared_scale))))
 
+# EVERYTHING HERE MUST SCALE LINEARLY IN THE DIMENSION (user rule, decision
+# `1o12joq`). Pathfinder's covariance is a low-rank-plus-diagonal
+# `WoodburyPDMat`, and its own factorization keeps that structure: O(d k)
+# memory and O(d k) per product. `f210206` replaced it with a dense
+# `cholesky(Symmetric(Σ)).L` for every init — O(d²) memory, O(d³) to build,
+# O(d²) per leapfrog step (425 µs against 35 µs per product at d = 2000) — as
+# a side effect of fixing plain-matrix inits. The methods below keep the
+# structure wherever the input has one.
+_initial_pathfinder_scale(squared_scale::Pathfinder.WoodburyPDMat, dimension) =
+    MatrixFactorization(factorize(squared_scale).L, Diagonal(ones(dimension)))
+_initial_pathfinder_scale(squared_scale::Diagonal, dimension) =
+    MatrixFactorization(_initial_diagonal_scale(squared_scale), Diagonal(ones(dimension)))
 function _initial_pathfinder_scale(squared_scale::AbstractMatrix, dimension)
-    # `factorize(::Matrix)` may return a `BunchKaufman` decomposition for a
-    # symmetric covariance. That decomposition can be upper-factorized and has
-    # no `.L` property, so selecting `.L` from the generic factorization is not
-    # a portable way to recover a covariance square root. This value is a
-    # squared scale by contract: ask for its Cholesky factor explicitly.
-    factor = squared_scale isa Diagonal ?
-             _initial_diagonal_scale(squared_scale) :
-             cholesky(Symmetric(squared_scale)).L
-    MatrixFactorization(factor, Diagonal(ones(dimension)))
+    # Only a caller-supplied DENSE squared scale (an explicit `init` NamedTuple)
+    # lands here, and it is already O(d²): the caller chose dense. Ask for the
+    # Cholesky factor explicitly — `factorize(::Matrix)` may return a
+    # `BunchKaufman` decomposition, which can be upper-factorized and has no
+    # `.L`, so the generic factorization is not a portable square root.
+    MatrixFactorization(cholesky(Symmetric(squared_scale)).L, Diagonal(ones(dimension)))
 end
 
 initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)

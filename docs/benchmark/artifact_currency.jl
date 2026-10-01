@@ -240,6 +240,40 @@ function dirty_reason(path)
         "be read as clean; re-run the harness (both flags are recorded as of this commit)"
 end
 
+const LABELED_DIR_RE = r"^(enzyme|forwarddiff)-([0-9a-f]{7,40})$"
+const BACKEND_RE = r"\"ad_backend\"\s*:\s*\"([A-Za-z]+)\""
+
+"""Why a driver run directory's NAME disagrees with what its artifact recorded,
+or `nothing`.
+
+`run_reparam_benchmark.jl` takes its backend from `WHMC_BENCH_AD` and its
+output directory from `WHMC_BENCH_OUT`, and nothing ties the two together. A
+run with `WHMC_BENCH_OUT=.../forwarddiff-<sha>` and `WHMC_BENCH_AD` unset
+measured Enzyme, recorded `"ad_backend": "enzyme"` correctly, and was filed
+under the ForwardDiff name; `backend_bands.jl` and `quoted_figures.jl` pick the
+pair by directory name, so an Enzyme-vs-Enzyme ratio was quoted as the backend
+comparison. Currency alone cannot see this -- the base was code-identical.
+
+So the name is checked against the record: the backend must match, and so must
+the base, since the `<sha>` half is what `DRIVER_SHA` selects on."""
+function mislabel_reason(path, sha)
+    m = nothing
+    for part in splitpath(dirname(path))
+        m = match(LABELED_DIR_RE, part)
+        m === nothing || break
+    end
+    m === nothing && return nothing
+    label, dir_sha = m.captures
+    found = unique(b.captures[1] for b in eachmatch(BACKEND_RE, read(joinpath(REPO, path), String)))
+    isempty(found) && return "directory names backend `$label`, but no `ad_backend` is recorded"
+    length(found) == 1 || return "records $(length(found)) different `ad_backend` values: $found"
+    lowercase(only(found)) == label ||
+        return "directory names backend `$label`, but the artifact records `ad_backend` = `$(only(found))`"
+    startswith(sha, dir_sha) ||
+        return "directory names base `$dir_sha`, but the artifact records `warmuphmc_sha` = `$(sha[1:7])`"
+    nothing
+end
+
 function main_currency(args)
     tip = isempty(args) ? "HEAD" : args[1]
     resolves(tip) || error("tip revision `$tip` does not resolve")
@@ -258,6 +292,13 @@ function main_currency(args)
         if sha === nothing
             push!(red, p)
             println(rpad(p, 56), "  NO warmuphmc_sha — cannot be checked; record one, or mark the run SUPERSEDED")
+            continue
+        end
+
+        mislabel = mislabel_reason(p, sha)
+        if mislabel !== nothing
+            push!(red, p)
+            println(rpad(p, 56), "  MISLABELED — ", mislabel)
             continue
         end
 

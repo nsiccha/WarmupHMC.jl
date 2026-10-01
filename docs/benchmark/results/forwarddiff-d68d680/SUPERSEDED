@@ -1,0 +1,3 @@
+base d68d680, ForwardDiff — superseded by results/forwarddiff-7b1757a/
+Re-measured on 7b1757a during the artifact-currency re-green (todo 02jg16v).
+Kept as the evidence for what changed between the runs; DRIVER_SHA now points at 7b1757a.

@@ -1,0 +1,2 @@
+Rejected last-bit-drift reference kept as regression evidence only — do not quote its runtime or ESS/s (see README in this directory).
+Marked 2026-09-30 during the artifact-currency re-green (todo 02jg16v).

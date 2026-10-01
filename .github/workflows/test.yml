@@ -52,12 +52,12 @@ jobs:
           arch: ${{ matrix.julia-arch }}
       - uses: julia-actions/cache@v2
       - name: Instantiate the test environment
-        # `--branch perf/step5-typed-slots` is load-bearing, as in Docs.yml: it is
-        # Treebars' canonical line (Treebars decision 1k6d86p). `origin/dev`
-        # DIVERGED from it (3 ahead, 60 behind) and lacks `interrupt_requested`,
-        # which every sampler calls; `origin/main` lacks `round2`, which
-        # `src/progress.jl` adds a method to at load time. Either stale branch
-        # fails before any test runs.
+        # `--branch main` is load-bearing, as in the docs install: `main` is
+        # Treebars' integration branch (Treebars decision 09eterf), and it has
+        # both `round2` (extended at load time by `src/progress.jl`) and
+        # `interrupt_requested` (called by every sampler). `dev` diverged and
+        # lacks the latter; `perf/step5-typed-slots` is frozen. A clone of a
+        # stale branch fails before any test runs.
         #
         # The explicit `Pkg.develop` is needed on every matrix row, not just as a
         # pin: `[sources]` is honoured from Julia 1.11 only, so on `lts` (1.10)
@@ -67,7 +67,7 @@ jobs:
         # environment, so this cannot be dropped on the strength of a local run.
         # Batched (§ the one-resolve rule) so Pkg sees both paths in one resolve.
         run: |
-          git clone --branch perf/step5-typed-slots https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
@@ -123,7 +123,7 @@ jobs:
         # Identical to the matrix job's step, and for the same reasons — the two
         # now share one environment, so keep them in step.
         run: |
-          git clone --branch perf/step5-typed-slots https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
@@ -152,10 +152,9 @@ jobs:
       - name: Instantiate the benchmark environment
         # `Treebars` is unregistered, so no resolve can find it and no
         # `Manifest.toml` is committed anywhere in this repo — hence the clone.
-        # `--branch perf/step5-typed-slots` is load-bearing: it is Treebars'
-        # canonical line. `origin/dev` diverged and lacks `interrupt_requested`
-        # (called by every sampler); `origin/main` lacks `round2` (extended AT
-        # LOAD TIME by `src/progress.jl`). See the instantiate step above.
+        # `--branch main` is load-bearing: Treebars' integration branch, with
+        # `round2` and `interrupt_requested`. `dev` diverged; `perf/step5-typed-slots`
+        # is frozen. See the instantiate step above.
         #
         # No PAT: `docs/benchmark/Project.toml` no longer declares `HTMX`,
         # `HTMXObjects` or `DynamicObjects`. They were inherited from the
@@ -165,7 +164,7 @@ jobs:
         # secret. SHARED with `.github/workflows/nonlinear-weighting.yml`; keep
         # the two in step.
         run: |
-          git clone --branch perf/step5-typed-slots https://github.com/nsiccha/Treebars.jl.git
+          git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),

@@ -1,0 +1,2 @@
+Kept as history: rows.json is unread (the brm-catalogue page loads brm_inventory_* only; no in-repo, BRM, or bruno readers as of 2026-09-30) and regression_68edfeab/ is a crash receipt, not a result (see its README).
+Marked 2026-09-30 during the artifact-currency re-green (todo 02jg16v). To revive the catalogue pipeline, delete this marker and re-measure rows.json on the current tip.

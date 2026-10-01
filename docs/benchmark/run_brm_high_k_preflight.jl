@@ -181,7 +181,10 @@ function probe(row_key, body, groups)
 
         brmi = Core.eval(@__MODULE__, BRM._brm(body; df = data))
         record("brm-parsed")
-        sb = SBBRMI(brmi; mod = @__MODULE__, centered_groups = Symbol[])
+        # Conventional representation, as in run_brm_inventory_benchmark.jl's
+        # `materialize`: BRM's automatic exact totals would marginalize the
+        # population intercept and change what "reached a gradient" means.
+        sb = SBBRMI(brmi; mod = @__MODULE__, centered_groups = Symbol[], total_groups = ())
         record("sbbrmi-lowered")
         problem = StanBlocks.stan_instantiate(sb.model)
         record("bridgestan-instantiated")

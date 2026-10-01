@@ -530,10 +530,19 @@ function historical_block_widths(formula)
     out
 end
 
+# `total_groups=()` keeps the CONVENTIONAL representation. BRM's default became
+# `total_groups=:auto`, which samples exact totals and integrates the population
+# intercept out of eligible independent random effects: a posterior-preserving
+# marginalization, but one coordinate fewer and a different geometry. Taking the
+# default silently turned the "non-centered" arm (and the adaptive wrapper built
+# on it) into that marginalized program on 10 of 16 specs, which the docs build
+# rejects (`dim_noncentered != dim_centered`). The centered build is unaffected --
+# explicit `centered_groups` take precedence -- but is opted out too so both arms
+# state the representation they measure.
 function materialize(row, data; centered_groups=Symbol[])
     body = row["current_brm_body"]
     brmi = Core.eval(@__MODULE__, BRM._brm(body; df=data))
-    sb = SBBRMI(brmi; mod=@__MODULE__, centered_groups)
+    sb = SBBRMI(brmi; mod=@__MODULE__, centered_groups, total_groups=())
     name = Symbol(replace(row["source"] * "_" * row["key"], r"\W" => "_"))
     descriptor = brm_descriptor(sb; name)
     (; brmi, sb, descriptor)
@@ -655,10 +664,16 @@ Run one standard-warmup comparison arm.
 the externally counted version of that density, so the adaptive-centering arm
 keeps its `ReparametrizedProblem` outer type while every sampler is counted at
 the same inner logdensity-and-gradient boundary.
+
+Returns `(; row, raised)`. `raised` separates an arm that threw -- a harness,
+adapter or model failure, which would fail every seed -- from one that sampled
+and produced degenerate draws, which is a measured outcome. Both yield
+`row.ok == false`; only the preflight needs the difference, so it is not stored
+in the row. `run_standard_arm` returns the row alone.
 """
-function run_standard_arm(; spec_key, arm, sampler, parameterization,
-                            base_problem, build_problem, model, names, shared,
-                            nonlinear_adapt, seed, n_draws=N_DRAWS)
+function attempt_standard_arm(; spec_key, arm, sampler, parameterization,
+                              base_problem, build_problem, model, names, shared,
+                              nonlinear_adapt, seed, n_draws=N_DRAWS)
     try
         timed = WarmupHMC.count_and_time(base_problem) do counted
             problem = build_problem(counted)
@@ -672,25 +687,29 @@ function run_standard_arm(; spec_key, arm, sampler, parameterization,
         grad = Int(timed.n_evaluations)
         diagnostic = sampling_diagnostic_error(
             draws, n_ok, ess_unc, ess_con, n_constant, ndiv)
-        (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
-         seed, ok=isempty(diagnostic),
-         wall_s=timed.elapsed, grad_evals=grad,
-         n_draws_actual=size(draws, 2),
-         ess_min_unconstrained=ess_unc,
-         ess_min_shared_constrained=ess_con,
-         ess_min_per_grad=ess_con / max(grad, 1),
-         n_draws_constrained=n_ok, n_constant,
-         n_divergent=Int(ndiv), error=diagnostic)
+        row = (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
+               seed, ok=isempty(diagnostic),
+               wall_s=timed.elapsed, grad_evals=grad,
+               n_draws_actual=size(draws, 2),
+               ess_min_unconstrained=ess_unc,
+               ess_min_shared_constrained=ess_con,
+               ess_min_per_grad=ess_con / max(grad, 1),
+               n_draws_constrained=n_ok, n_constant,
+               n_divergent=Int(ndiv), error=diagnostic)
+        (; row, raised=false)
     catch err
-        (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
-         seed, ok=false,
-         wall_s=NaN, grad_evals=0, n_draws_actual=0,
-         ess_min_unconstrained=NaN,
-         ess_min_shared_constrained=NaN, ess_min_per_grad=NaN,
-         n_draws_constrained=0, n_constant=0, n_divergent=0,
-         error=first(sprint(showerror, err, catch_backtrace()), 1200))
+        row = (; spec=spec_key, arm, sampler, parameterization, nonlinear_adapt,
+               seed, ok=false,
+               wall_s=NaN, grad_evals=0, n_draws_actual=0,
+               ess_min_unconstrained=NaN,
+               ess_min_shared_constrained=NaN, ess_min_per_grad=NaN,
+               n_draws_constrained=0, n_constant=0, n_divergent=0,
+               error=first(sprint(showerror, err, catch_backtrace()), 1200))
+        (; row, raised=true)
     end
 end
+
+run_standard_arm(; kwargs...) = attempt_standard_arm(; kwargs...).row
 
 sanitize(x) = x isa AbstractFloat && !isfinite(x) ? nothing : x
 sanitize(x::AbstractDict) = Dict(k => sanitize(v) for (k, v) in x)
@@ -921,13 +940,24 @@ function main()
                  names=names_c, nonlinear_adapt=false),
             ]
 
+            # The preflight keeps compilation out of the timed rows. It aborts
+            # only when the arm RAISED: that fails every seed, so hours of
+            # sampling would record nothing. A statistically degenerate
+            # preflight is not that -- `warmuphmc_centered` on `dyestuff_re`
+            # sticks in the funnel on some seeds (one of 12 recorded ones at
+            # dc9636f), and a 50-draw preflight that happens to be such a
+            # seed says nothing the per-seed rows below do not record as data.
             for (i, a) in enumerate(standard_arms)
-                preflight = run_standard_arm(;
+                preflight = attempt_standard_arm(;
                     spec_key, a..., shared,
                     seed=0x6b645000 + i, n_draws=PREFLIGHT_DRAWS,
                 )
-                preflight.ok || error(
-                    "standard comparison preflight failed for $(a.arm): $(preflight.error)")
+                preflight.raised && error(
+                    "standard comparison preflight failed for $(a.arm): $(preflight.row.error)")
+                preflight.row.ok || @warn(
+                    "standard comparison preflight was statistically degenerate; " *
+                    "continuing, the per-seed rows record each outcome",
+                    spec=spec_key, arm=a.arm, diagnostic=preflight.row.error)
             end
 
             for seed in 1:N_SEEDS

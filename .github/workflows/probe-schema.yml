@@ -70,6 +70,7 @@ on:
       - 'docs/make.jl'
       - 'docs/src/**.md'
       - '.github/workflows/probe-schema.yml'
+      - '.github/scripts/install-docs-deps.sh'
   push:
     branches: [main, dev]
     paths:
@@ -79,6 +80,7 @@ on:
       - 'docs/make.jl'
       - 'docs/src/**.md'
       - '.github/workflows/probe-schema.yml'
+      - '.github/scripts/install-docs-deps.sh'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -99,12 +101,16 @@ jobs:
 
       - name: Instantiate the benchmark and docs environments
         run: |
-          git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+          # The docs env needs the same unregistered closure Docs.yml builds
+          # with; one shared script, so the two lists cannot drift again.
+          bash .github/scripts/install-docs-deps.sh
           julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
-          julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Record WarmupHMCWeb for the docs
+        run: julia --project=web docs/record_gallery.jl
 
       - name: Seed a results dir WITHOUT the files these probes write
         run: |

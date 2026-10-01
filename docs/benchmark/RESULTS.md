@@ -73,6 +73,19 @@ is correct by construction. The statement worth having is not "this document's
 base is fine" but "nothing checked in has quietly gone stale", and the script is
 the only thing that can say it.
 
+"Stale" means "some file under `src/` changed" unless the artifact says
+otherwise. A gradient-only probe can say so with a `<stem>.SCOPE` file beside
+its JSON. Line 1 is the reason; each further line is one `src/*.jl` file the
+measurement exercises: the files line coverage of that harness executes, plus
+`src/WarmupHMC.jl` for the imports and include order they compile under. The
+script then compares only those files. It prints the scope
+and the out-of-scope files it ignored on that artifact's line, and it reports a
+scope naming a path outside `src/` or absent at the tip as red. Anything that
+runs the sampler carries no scope and keeps the whole-`src/` rule. Without
+this, a commit that only relabels progress text re-stales every gradient
+timing, and re-measuring those on a contended host flips their direction from
+run to run.
+
 Reading `git diff` was the old check and it is the weak one here: those two
 commits produce a 138-line diff under `src/` — the 76 changed lines above plus
 context — in files whose docstrings are long enough to bury a one-line code

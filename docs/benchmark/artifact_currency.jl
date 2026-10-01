@@ -60,6 +60,25 @@
 # objects and `git for-each-ref --contains` returns nothing for either. Telling
 # a reader to set `fetch-depth: 0` for those sends them to fix a checkout config
 # that is already correct. See `unresolvable_reason`.
+#
+# WHY A PER-ARTIFACT SCOPE, AND WHY IT IS NOT THE DEFAULT
+#
+# The rule above compares all of `src/`. That is right for anything that runs
+# the sampler and wrong for a micro-benchmark that only times one gradient: a
+# commit relabelling completion-policy progress text cannot reach the AD path,
+# yet it re-stales every gradient timing, and re-measuring those on a contended
+# host flips their direction from run to run (2026-09-30: 22 artifacts went red
+# for exactly that). So an artifact MAY carry `<stem>.SCOPE` beside its
+# `<stem>.json`: line 1 is the reason, every further non-blank, non-`#` line a
+# repo-relative `src/*.jl` file the measurement exercises, and only those files
+# are compared. Per artifact, not per directory like `SUPERSEDED`, because the
+# gradient-only probes sit flat in results/ next to everything else.
+#
+# A scope is a claim that the other files cannot change the number, so it is
+# held to the same standard as the rest of this script: a scope naming a path
+# outside `src/`, or a file the tip does not have, is RED, not ignored; every
+# line it applies to prints the scope, and the out-of-scope files that differ
+# are listed rather than hidden. No `SCOPE` keeps the whole-`src/` rule.
 
 include(joinpath(@__DIR__, "code_identical.jl"))
 
@@ -274,6 +293,35 @@ function mislabel_reason(path, sha)
     nothing
 end
 
+"""The artifact's `<stem>.SCOPE`, as `(; reason, files)`; `nothing` when it has
+none (whole-`src/` rule); a `String` naming the defect when it is malformed.
+See the header for the format and why a malformed scope is red."""
+function scope_of(path, tip)
+    file = joinpath(REPO, splitext(path)[1] * ".SCOPE")
+    isfile(file) || return nothing
+    lines = strip.(readlines(file))
+    reason = isempty(lines) ? "" : first(lines)
+    isempty(reason) && return "$(relpath(file, REPO)) has no reason on line 1"
+    files = [String(l) for l in lines[2:end] if !isempty(l) && !startswith(l, "#")]
+    isempty(files) && return "$(relpath(file, REPO)) names no files"
+    outside = [f for f in files if !(startswith(f, "src/") && endswith(f, ".jl"))]
+    isempty(outside) || return "$(relpath(file, REPO)) names non-`src/*.jl` path(s): $(join(outside, ", "))"
+    missing_at_tip = setdiff(files, src_files(tip))
+    isempty(missing_at_tip) || return "$(relpath(file, REPO)) names file(s) absent at $tip: $(join(missing_at_tip, ", "))"
+    (; reason, files = sort(unique(files)))
+end
+
+"""Files whose code differs between the two sides, split by the scope."""
+function scoped_differences(base, head, scope)
+    all_differing = sort([f for f in union(keys(base), keys(head)) if get(base, f, nothing) != get(head, f, nothing)])
+    scope === nothing && return (all_differing, String[])
+    (filter(in(scope.files), all_differing), filter(!in(scope.files), all_differing))
+end
+
+scope_note(scope, ignored) = scope === nothing ? "" :
+    " [SCOPE: $(join(scope.files, ", ")) — $(rstrip(scope.reason, '.'))" *
+    (isempty(ignored) ? "" : "; out of scope, ignored: $(join(ignored, ", "))") * "]"
+
 function main_currency(args)
     tip = isempty(args) ? "HEAD" : args[1]
     resolves(tip) || error("tip revision `$tip` does not resolve")
@@ -302,6 +350,13 @@ function main_currency(args)
             continue
         end
 
+        scope = scope_of(p, tip)
+        if scope isa String
+            push!(red, p)
+            println(rpad(p, 56), "  BAD SCOPE — ", scope)
+            continue
+        end
+
         # Checked BEFORE the base is resolved, because it outranks the result.
         # A dirty tree does not make the currency comparison fail — it makes it
         # MEANINGLESS: `code_identical.jl` would compare the recorded revision
@@ -324,24 +379,23 @@ function main_currency(args)
             # count toward `checked` -- a base nobody else can resolve is not a
             # verified one, whatever the comparison says.
             if resolves(sha)
-                base, head = src_reprs(sha), src_reprs(tip)
-                differing = [f for f in union(keys(base), keys(head))
-                             if get(base, f, nothing) != get(head, f, nothing)]
+                differing, ignored = scoped_differences(src_reprs(sha), src_reprs(tip), scope)
                 println(" "^58, "(locally: ", isempty(differing) ?
                     "code-identical to $tip anyway" :
-                    "also differs in " * join(sort(differing), ", "), ")")
+                    "also differs in " * join(differing, ", "), ")", scope_note(scope, ignored))
             end
             continue
         end
 
         checked += 1
-        base, head = src_reprs(sha), src_reprs(tip)
-        differing = [f for f in union(keys(base), keys(head)) if get(base, f, nothing) != get(head, f, nothing)]
+        differing, ignored = scoped_differences(src_reprs(sha), src_reprs(tip), scope)
         if isempty(differing)
-            println(rpad(p, 56), "  current — $(sha[1:7]) is code-identical to $tip")
+            println(rpad(p, 56), "  current — $(sha[1:7]) is code-identical to $tip",
+                    scope === nothing ? "" : " in scope", scope_note(scope, ignored))
         else
             push!(red, p)
-            println(rpad(p, 56), "  STALE — $(sha[1:7]) differs from $tip in ", join(sort(differing), ", "))
+            println(rpad(p, 56), "  STALE — $(sha[1:7]) differs from $tip in ", join(differing, ", "),
+                    scope_note(scope, ignored))
         end
     end
 

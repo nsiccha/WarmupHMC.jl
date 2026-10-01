@@ -1436,7 +1436,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   These settings change only the nonlinear fit: selection/application remains
   subordinate to a restart independently requested by the linear criterion.
 * `variance_cond_target=2.0` — restart threshold on the marginal-scale
-  condition number.
+  condition number. With `nonlinear_adapt=true` it also decides whether the
+  centering is refit, since that happens only at a restarting window. The scales
+  are computed per coordinate in the active linear transformation's frame, so
+  two square roots of the same metric can restart differently.
 * `linear_restart_source=:halo` — source for that condition number. The
   running alternatives above replace (rather than supplement) the halo-only
   criterion and retain `sum(w)` plus `sum(w^2)` for general weighted moments.

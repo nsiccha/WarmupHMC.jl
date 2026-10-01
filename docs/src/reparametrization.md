@@ -743,6 +743,23 @@ means the `lpdf` you hand to a resume has to be rebuilt by you, exactly as you
 built it the first time. Nothing checks that you did; the only validation on
 resume is that the dimension matches.
 
+**Whether the centering is fitted at all depends on the linear frame.** With
+`nonlinear_adapt=true`, the centering is refit only at the end of a warm-up
+window that restarts. Whether a window restarts is decided by
+`variance_cond_target`, from per-coordinate scale ratios computed in the frame
+of the active linear transformation: whichever square root of the metric is
+in use, not the metric alone.
+
+Two square roots of the same covariance can therefore decide differently. On
+posteriordb `seeds`, different square roots led the same seeds to adapt anywhere
+from almost never to always; `docs/benchmark/RESULTS.md` records the
+measurement. In the frames that never restart, the centering stays at its
+starting value for the whole run, however much it would improve. This is the
+shipped behaviour, kept deliberately.
+
+If a run's centering never moves, check whether any window restarted before
+concluding that the start was already optimal.
+
 **The transform is on the gradient hot path.** Every `logdensity_and_gradient`
 call costs one inner gradient evaluation, one extra forward pass through the
 transform, and one AD pass over it. Your location and log-scale accessors run
@@ -757,9 +774,10 @@ a perfectly valid-looking object and blows up further in:
   under `logdensity`, and then throw `EnzymeMutabilityException` on the first
   `logdensity_and_gradient`; `Const` alone then died at the first restarting
   window with `EnzymeRuntimeActivityError`. Both call sites were rewritten to take
-  `Constant` contexts, so a bare `AutoEnzyme()` is now correct and is the fastest
-  spelling — see the tip at the top of this page. A `function_annotation=` or
-  `mode=` argument in an older script still works; it just costs.
+  `Constant` contexts, so a bare `AutoEnzyme()` is now correct — see the tip at
+  the top of this page. A `function_annotation=` or `mode=` argument in an older
+  script still works. It is unnecessary, and the checked-in sweep measures no
+  cost beyond run-to-run noise ([Dropping the annotation, measured](@ref)).
 * **Omitting the AD backend.** `ReparametrizedProblem(r, p)` — the two-argument
   form — stores `ad_backend === nothing`. `logdensity` works fine on that object,
   so nothing looks wrong until the first `logdensity_and_gradient`, which hands

@@ -35,56 +35,60 @@ negative controls.
 
 - Host: `strato2`
 - Julia: 1.10.11; BLAS threads: 1
-- WarmupHMC: `da7e99cc38bdde6c05d9040de8662a42e1c0ce7a` (`src/` clean)
+- WarmupHMC: `6adc5ea679722d3b7b13a5b5d6c12d497b10c2d7` (`src/` clean)
 - BRM: `a5e118b0119e29c137d80d887b571db2d77af8e1`
 - StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
+- Run from one environment developed against fixed clones of those two and of
+  MutatingFunctions `18dd9e5`, OutputSignatures `7e16ea9` and Treebars
+  `8bde866`, so a shared checkout moving mid-campaign cannot change what runs
 - 12 seeds × 500 retained draws × 3 arms × 2 flag values × 16 models = 1152 rows
 - Every arm/flag path received a 50-draw untimed preflight; recorded flag order
   alternated by seed to remove systematic JIT/order bias from wall comparisons
-- Process exit: 0; elapsed: 9498 seconds; summed in-row sampling time: 6431.32 seconds
-- Result: 1149/1152 rows usable; zero exceptions or crashes. The three failed
-  rows are one trajectory: `bambi:sleepstudy` seed 9 on the non-centered model
-  (both flag values) and the adaptive wrapper with the flag off, which follows
-  the same path — all draws constant (902 coordinates), recorded as an explicit
-  statistical failure
+- Process exit: 0; elapsed: 6639 seconds; summed in-row sampling time: 5037.05 seconds
+- Result: 1152/1152 rows usable; zero exceptions or crashes
 - Controls: all 384 `(model, bare arm, seed)` flag pairs were identical on
   gradient count and constrained-space minimum ESS
+- Non-centered and centered programs have equal unconstrained dimension on all
+  16 models (the docs build asserts it)
 
-Divergences over distinct trajectories (flag off): 865 non-centered, 586 static
+Divergences over distinct trajectories (flag off): 248 non-centered, 586 static
 centered.
 
 `nonlinear_adapt=true` on the adaptive wrapper, paired against the flag-off run
-of the same seed (medians over seeds with both rows usable):
+of the same seed (medians over seeds):
 
 | spec | seeds whose trajectory changed | ESS/gradient, on ÷ off | ESS/second, on ÷ off |
 |---|---|---|---|
-| `lme4:dyestuff_re` | 12/12 | 2.74 | 1.61 |
-| `lme4:sleepstudy_slope` | 12/12 | 2.25 | 1.15 |
-| `bambi:sleepstudy` | 11/12 | 3.04 | 1.16 |
-| `mixed_models_jl:penicillin_crossed` | 12/12 | 4.89 | 1.25 |
-| `bambi:radon_partial` | 12/12 | 1.05 | 0.46 |
-| `bambi:radon_floor` | 12/12 | 0.89 | 0.29 |
-| `bambi:radon_slopes` | 12/12 | 1.18 | 0.30 |
-| `bambi:dietox` | 6/12 | 1.00 | 0.57 |
-| `vasishth:meta_sbi` | 12/12 | 1.91 | 0.70 |
-| `kruschke:fruitfly_anhecova` | 9/12 | 1.02 | 0.54 |
-| `burkner_papers:epilepsy_simple` | 12/12 | 2.06 | 0.59 |
-| `kruschke:therapeutic_touch` | 2/12 | 1.00 | 0.42 |
-| `bambi:hierarchical_binomial_partial` | 8/12 | 1.00 | 0.30 |
-| `mixed_models_jl:contraception_glmm` | 12/12 | 0.69 | 0.50 |
-| `bambi:predict_new_groups` | 12/12 | 7.44 | 3.73 |
+| `lme4:dyestuff_re` | 0/12 | 1.00 | 0.31 |
+| `lme4:sleepstudy_slope` | 0/12 | 1.00 | 0.30 |
+| `bambi:sleepstudy` | 0/12 | 1.00 | 0.39 |
+| `mixed_models_jl:penicillin_crossed` | 12/12 | 4.89 | 1.38 |
+| `bambi:radon_partial` | 12/12 | 1.20 | 0.40 |
+| `bambi:radon_floor` | 12/12 | 0.89 | 0.27 |
+| `bambi:radon_slopes` | 12/12 | 1.18 | 0.32 |
+| `bambi:dietox` | 12/12 | 1.22 | 0.41 |
+| `vasishth:meta_sbi` | 0/12 | 1.00 | 0.20 |
+| `kruschke:fruitfly_anhecova` | 9/12 | 1.02 | 0.47 |
+| `burkner_papers:epilepsy_simple` | 12/12 | 2.06 | 0.42 |
+| `kruschke:therapeutic_touch` | 7/12 | 1.16 | 0.39 |
+| `bambi:hierarchical_binomial_partial` | 12/12 | 1.17 | 0.25 |
+| `mixed_models_jl:contraception_glmm` | 12/12 | 1.32 | 0.68 |
+| `bambi:predict_new_groups` | 0/12 | 1.00 | 0.36 |
 | `vasishth:n400_crossed` | 12/12 | 1.17 | 0.89 |
 
-Adaptation pays per gradient on seven rows (1.9–7.4×), is roughly neutral on
-the three radon rows and five others (0.89–1.18), and costs 31% on
-`contraception_glmm` (0.69); in wall-clock it wins only where the per-gradient
-gain is large (five rows), because the wrapper's runtime is paid on every
-call. The previous checked-in run (three specs, WarmupHMC
-`9039668`, BRM `aed667cf`) found adaptation left `dyestuff_re` and
-`sleepstudy_slope` at the non-centered endpoint (ratio exactly 1.0) and gained
-1.25× on `dietox`; on this base it moves both of the former and not the
-latter. Sampler and BRM both changed in between, so this table does not
-attribute the difference. The docs page derives the full gradient and runtime
+On five models adaptation keeps the generated non-centered endpoint on every
+seed (ratio exactly 1.00); where it moves, it pays per gradient on all but
+`radon_floor` (0.89), most on `penicillin_crossed` (4.89) and
+`epilepsy_simple` (2.06). In wall-clock it wins only on `penicillin_crossed`
+(1.38), because the wrapper's runtime is paid on every call whether or not the
+trajectory changes. The three specs of the previous checked-in run (WarmupHMC
+`9039668`, BRM `aed667cf`) read the same way — `dyestuff_re` and
+`sleepstudy_slope` exactly 1.0, `dietox` 1.25 then and 1.22 now. An earlier
+draft of this revision showed 2–7× gains on `dyestuff_re`, `sleepstudy_slope`,
+`meta_sbi` and `predict_new_groups`; those came from BRM's new default exact-
+totals representation having replaced the non-centered program (one coordinate
+fewer), not from adaptation, and the runner now opts out of it
+(`total_groups=()`). The docs page derives the full gradient and runtime
 comparison tables from the raw rows.
 
 The earlier generated run against BRM tree `79cc4a7` is preserved under
@@ -96,7 +100,7 @@ invalid implementation. Keeping that rejected artifact makes the performance
 cost auditable without allowing its timings into the headline tables.
 
 `rows.json` is the source of truth. Its SHA-256 is
-`e228147ef11b557ad3d22ae11818dd4e7be735ac93d11f85d0c0cc2fc99e7aef`.
+`ab03898f37e97eeb983c286675ea8f9ded219796b485a1d38f5720bd0f5ce2f9`.
 
 ## Reproduction
 

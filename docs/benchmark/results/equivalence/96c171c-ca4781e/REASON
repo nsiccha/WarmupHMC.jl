@@ -1,0 +1,3 @@
+Between 96c171c and ca4781e the code changes are 89077cd's (resume/restore/guard helpers and :resume/:overwrite in an accepted-kwarg list, never executed by a fresh benchmark run; see 96c171c-0e7d050) plus ca4781e's progress-label methods in src/progress.jl, which only format a string for display; the driver evidence here is identical outside timing over 46 runs on all 5 targets.
+
+Evidence: before/ is the 96c171c run from 96c171c-0e7d050 (byte copy); after/ is docs/benchmark/run_reparam_benchmark.jl with WHMC_BENCH_SEEDS=2 (all targets, all arms, Enzyme) at ca4781e on strato2, 2026-10-01.

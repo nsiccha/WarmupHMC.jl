@@ -40,6 +40,16 @@ Base.string(x::Speed) = "$(x.n) in $(short_string(x.dt/1e9)) seconds ($(_rate_or
 Base.string(x::ActiveTransformation) = "$(short_string(x.kinetic_energy.M⁻¹.m1)) (marginal scale changes = $(short_string(x.scale_changes)))"
 
 Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose}) = short_string(parent(x.m1))
+# `_initial_pathfinder_scale` takes a DENSE Cholesky factor of the squared scale
+# since `f210206`. Without this method the label below fell through to the
+# generic `string` of a d×d matrix: ~43k characters at d = 50, ~2.7M at d = 400,
+# rebuilt on every progress render.
+Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.LowerTriangular}) =
+    "Pathfinder(dense, d = $(size(x.m1, 1)))"
+# Any other factor: name it, never print it. A progress label must stay O(1) in
+# the dimension whatever factor a future init path produces.
+Treebars.short_string(x::WarmupHMC.MatrixFactorization) =
+    "$(nameof(typeof(x.m1)))(d = $(size(x.m1, 1)))"
 Treebars.short_string(x::Pathfinder.WoodburyPDRightFactor) = "Pathfinder($(size(x.V, 1)))"
 Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.SuccessiveReflections}) = "Adaptive($(length(x.m1.reflections)))"
 Treebars.short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"

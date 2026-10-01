@@ -86,6 +86,23 @@ this, a commit that only relabels progress text re-stales every gradient
 timing, and re-measuring those on a contended host flips their direction from
 run to run.
 
+Code that differs is not always code that a measurement runs. When a commit
+changes only code no benchmark executes, such as resume plumbing or run-directory
+guards, `results/equivalence/<from>-<to>/` can record that the two revisions
+produce the same output. Artifacts measured at a base code-identical to
+`<from>` then stay current at a tip code-identical to `<to>`. The record has to
+carry its evidence, and the script re-checks that evidence on every run:
+- a `REASON` file;
+- the benchmark driver's `runs.json` from each revision, run with the same
+  settings, each recording its own SHA and a clean `src/`;
+- the two files identical line for line, except the host-timing fields and the
+  provenance header.
+
+A record that fails any of this is red. It covers one hop, so the next code
+change re-stales everything as usual. The driver's evidence covers its own
+targets and arms. For artifacts from other harnesses, the claim rests on the
+stated reason, which is printed on every line that relies on it.
+
 Reading `git diff` was the old check and it is the weak one here: those two
 commits produce a 138-line diff under `src/` — the 76 changed lines above plus
 context — in files whose docstrings are long enough to bury a one-line code

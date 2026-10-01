@@ -79,6 +79,37 @@
 # outside `src/`, or a file the tip does not have, is RED, not ignored; every
 # line it applies to prints the scope, and the out-of-scope files that differ
 # are listed rather than hidden. No `SCOPE` keeps the whole-`src/` rule.
+#
+# WHY AN EQUIVALENCE RECORD, AND WHAT IT MUST CARRY
+#
+# Code-identity is a sufficient condition for "these numbers still describe the
+# sampler", not a necessary one. A commit can change code that no measurement
+# executes -- resume plumbing, run-directory guards -- and the whole-file rule
+# then reds every sampler artifact although re-running them would reproduce
+# every count bit for bit (2026-10-01: `89077cd`, 13 artifacts). Re-measuring
+# then buys nothing but fresh host noise in the wall-clock figures.
+#
+# So results/equivalence/<from>-<to>/ may record that the two revisions produce
+# the same output. It must carry the evidence, and the evidence is re-checked
+# on every run here; nothing is taken on trust:
+#
+#   * `REASON`: line 1 says why the changed code cannot reach a measurement.
+#   * `before/runs.json` and `after/runs.json`: the benchmark driver run once
+#     at each revision with the same settings. Each must record its
+#     `warmuphmc_sha` (matching the directory name, on a ref) and
+#     `src_dirty: false`.
+#   * Every line of the two files must be identical, except the host-timing
+#     fields and the provenance header. Those are named explicitly in
+#     `EQUIV_VOLATILE`, so a new field differs by default rather than being
+#     ignored by default.
+#
+# An artifact measured at a base code-identical to `<from>` then counts as
+# current at a tip code-identical to `<to>`. Its line says so, and names the
+# record. A malformed or failing record is RED, never skipped. One hop only:
+# the record says nothing about any revision past `<to>`, so the next code
+# change re-stales the artifacts as usual. The driver evidence covers the
+# driver's targets and arms. For the other harnesses the claim rests on
+# `REASON`, which is why the reason is printed on every line it is used for.
 
 include(joinpath(@__DIR__, "code_identical.jl"))
 
@@ -110,10 +141,14 @@ function recorded_src_flag(text)
     missing
 end
 
-"""Tracked `*.json` under results/, as repo-relative paths."""
+const EQUIV = joinpath(RESULTS, "equivalence")
+
+"""Tracked `*.json` under results/, as repo-relative paths. The equivalence
+evidence under `results/equivalence/` is excluded: it is verified as evidence
+(see `verify_equivalence`), not reported as a measurement."""
 function artifacts()
     out = git("ls-files", "--", RESULTS)
-    sort([f for f in split(strip(out), '\n') if endswith(f, ".json")])
+    sort([f for f in split(strip(out), '\n') if endswith(f, ".json") && !startswith(f, EQUIV * "/")])
 end
 
 """The recorded `warmuphmc_sha`, or `nothing`. Matched by regex rather than by
@@ -322,12 +357,87 @@ scope_note(scope, ignored) = scope === nothing ? "" :
     " [SCOPE: $(join(scope.files, ", ")) — $(rstrip(scope.reason, '.'))" *
     (isempty(ignored) ? "" : "; out of scope, ignored: $(join(ignored, ", "))") * "]"
 
+const EQUIV_DIR_RE = r"^([0-9a-f]{7,40})-([0-9a-f]{7,40})$"
+# The ONLY lines allowed to differ between the two evidence runs: host timing and
+# the provenance header. Named, so a field added later differs by default.
+const EQUIV_VOLATILE = r"^\s*\"(wall_s|ess_min_per_s|warmuphmc_sha|src_dirty|worktree_dirty)\"\s*:"
+
+"""Verify one `results/equivalence/<from>-<to>/` record against its evidence.
+Returns `(; name, from, to, reason)` with the full recorded SHAs, or a `String`
+naming the first defect. See the header for the contract."""
+function verify_equivalence(name)
+    m = match(EQUIV_DIR_RE, name)
+    m === nothing && return "directory name must be `<from-sha>-<to-sha>`"
+    dir = joinpath(REPO, EQUIV, name)
+    reason_file = joinpath(dir, "REASON")
+    isfile(reason_file) || return "no REASON file"
+    lines = readlines(reason_file)
+    reason = isempty(lines) ? "" : strip(first(lines))
+    isempty(reason) && return "REASON has no reason on line 1"
+    shas, texts = String[], Vector{String}[]
+    for (side, want) in (("before", m.captures[1]), ("after", m.captures[2]))
+        rel = joinpath(EQUIV, name, side, "runs.json")
+        isfile(joinpath(REPO, rel)) || return "missing `$side/runs.json`"
+        sha = recorded_sha(rel)
+        sha === nothing && return "`$side/runs.json` records no warmuphmc_sha"
+        startswith(sha, want) || return "`$side/runs.json` records $(sha[1:7]), the directory names $want"
+        resolves(sha) && containing_refs(sha) > 0 ||
+            return "`$side` base $(sha[1:7]) is unusable — " * unresolvable_reason(sha)
+        recorded_src_flag(read(joinpath(REPO, rel), String)) === false ||
+            return "`$side/runs.json` does not record `src_dirty: false`"
+        kept = [l for l in readlines(joinpath(REPO, rel)) if !occursin(EQUIV_VOLATILE, l)]
+        any(l -> occursin("\"arm\"", l), kept) || return "`$side/runs.json` holds no runs"
+        push!(shas, sha); push!(texts, kept)
+    end
+    a, b = texts
+    if a != b
+        i = something(findfirst(i -> i > length(a) || i > length(b) || a[i] != b[i],
+                                1:max(length(a), length(b))), 0)
+        return "before/after differ outside timing and provenance, first at kept line $i: " *
+               "`$(strip(get(a, i, "<end>")))` vs `$(strip(get(b, i, "<end>")))`"
+    end
+    (; name, from = shas[1], to = shas[2], reason)
+end
+
+"""Every record under results/equivalence/, verified; prints one line each.
+Failing records are pushed to `red` and not returned."""
+function load_equivalences!(red)
+    dir = joinpath(REPO, EQUIV)
+    isdir(dir) || return NamedTuple[]
+    ok = NamedTuple[]
+    for name in sort(readdir(dir))
+        isdir(joinpath(dir, name)) || continue
+        v = verify_equivalence(name)
+        label = rpad(joinpath(EQUIV, name), 56)
+        if v isa String
+            push!(red, joinpath(EQUIV, name))
+            println(label, "  BAD EQUIVALENCE — ", v)
+        else
+            push!(ok, v)
+            println(label, "  verified — $(v.from[1:7]) and $(v.to[1:7]) produce identical output: ", v.reason)
+        end
+    end
+    ok
+end
+
+"""The first verified record that carries `sha` to `tip`: `sha` code-identical
+to its `from`, and its `to` code-identical to `tip` (both within `scope`)."""
+function covering_equivalence(equivs, sha, tip, scope)
+    for e in equivs
+        isempty(first(scoped_differences(src_reprs(sha), src_reprs(e.from), scope))) &&
+            isempty(first(scoped_differences(src_reprs(e.to), src_reprs(tip), scope))) &&
+            return e
+    end
+    nothing
+end
+
 function main_currency(args)
     tip = isempty(args) ? "HEAD" : args[1]
     resolves(tip) || error("tip revision `$tip` does not resolve")
 
     paths = artifacts()
     checked, red = 0, String[]
+    equivs = load_equivalences!(red)
 
     for p in paths
         reason = superseded_reason(p)
@@ -389,9 +499,15 @@ function main_currency(args)
 
         checked += 1
         differing, ignored = scoped_differences(src_reprs(sha), src_reprs(tip), scope)
+        eq = isempty(differing) ? nothing : covering_equivalence(equivs, sha, tip, scope)
         if isempty(differing)
             println(rpad(p, 56), "  current — $(sha[1:7]) is code-identical to $tip",
                     scope === nothing ? "" : " in scope", scope_note(scope, ignored))
+        elseif eq !== nothing
+            println(rpad(p, 56), "  current by equivalence — $(sha[1:7]) is code-identical to ",
+                    "$(eq.from[1:7]), and $(joinpath(EQUIV, eq.name)) shows it output-identical to ",
+                    "$(eq.to[1:7]) ≡ $tip (code differs in ", join(differing, ", "), ") [",
+                    eq.reason, "]", scope_note(scope, ignored))
         else
             push!(red, p)
             println(rpad(p, 56), "  STALE — $(sha[1:7]) differs from $tip in ", join(differing, ", "),

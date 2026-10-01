@@ -1,0 +1,3 @@
+89077cd (coop-resume) changed only resume/restore helpers, the run-directory guard and chain-directory helpers (src/adaptive_warmup_mcmc.jl), the cooperative/clustered samplers, and added :resume/:overwrite to an accepted-kwarg list (src/kwarg_validation.jl); a fresh benchmark run sets neither checkpoint_dir nor resume, so it executes none of the changed behaviour, and the driver evidence here is identical outside timing over 46 runs on all 5 targets.
+
+Evidence: docs/benchmark/run_reparam_benchmark.jl with WHMC_BENCH_SEEDS=2 (all targets, all arms, Enzyme), run at 96c171c (before/) and at 0e7d050 (after/) on strato2, 2026-10-01. Only wall_s and ess_min_per_s (host timing) and the provenance header differ; artifact_currency.jl re-checks that on every run.

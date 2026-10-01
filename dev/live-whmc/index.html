@@ -214,6 +214,16 @@
     function init() {
         restoreDrafts(document);
         bindTextareas(document);
+        // Bind on swap as well as settle: a swap whose nodes an `afterSwap`
+        // listener detaches (the `:auto` terminal unwrap) fires afterSwap but
+        // never afterSettle, and boxes arriving with it would stay dead
+        // (snag compose-afterswa-9ae50ac9). The rebind is idempotent per
+        // element (dataset flags), so the settle pass is a no-op for boxes
+        // the swap pass already bound.
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            restoreDrafts(evt.detail && evt.detail.elt);
+            bindTextareas(evt.detail && evt.detail.elt);
+        });
         document.body.addEventListener('htmx:afterSettle', function(evt) {
             restoreDrafts(evt.detail && evt.detail.elt);
             bindTextareas(evt.detail && evt.detail.elt);
@@ -1295,37 +1305,87 @@ function htmxoMdRetry(s) {
 .treebar-pill:hover { opacity: 0.8; }
 .treebar-header { display: flex; gap: 0.5ch; align-items: baseline; flex-wrap: wrap; }
 .treebar-duration { font-size: 0.85em; color: var(--pico-muted-color, #888); }
-.treebar-stop { padding: 0.1rem 0.4rem; font-size: 0.7em; float: right; margin-right: 3.5rem; }
+.treebar-interrupt { font-size: 0.85em; font-style: italic; color: var(--pico-muted-color, #888); }
+.treebar-stop { padding: 0.1rem 0.4rem; font-size: 0.7em; float: right; }
 .treebar-node { margin-bottom: 0.25rem; }
 
-/* Pause/resume control. Sits top-right of the persistent .treebar-poller
-   wrapper. The margin-right above keeps the (float:right) Stop button clear
-   of this absolutely-positioned button when cancel_url is set — a constant
-   margin, NOT the inherited-custom-prop visibility scheme, so it does not
-   interact with the nested-poller data-show-* logic below. */
+/* Polling badge chrome. Each live `.treebar-poller` carries one
+   `.treebar-badge`: a hairline strip plus a panel (pause/play control,
+   poll label, status word, progress bar, elapsed) above the live tree.
+   The panel and tree render EXPANDED by default, so a first-load region —
+   nothing on screen yet — shows progress immediately instead of a bare
+   hairline (snag first-load-polle-9728d9da). Quiet chrome (hairline that
+   expands on hover/focus) is opt-in per poller via `data-chrome="quiet"`
+   (the `chrome=:quiet` kwarg), or automatic for a poller diverted into
+   HTMXObjects' live-refresh reporter (`.htmxo-live-reporter`), where
+   settled content is already on screen and the poller is background
+   progress. Visual constraints (binding): no gradient accents, no glowing
+   shadows, no emoji icons (the pause/play glyphs are text), no lift/scale
+   hover effects, and the polling pulse is gated on
+   `prefers-reduced-motion`. */
 .treebar-poller { position: relative; }
 .treebar-terminal { position: static; }
-.treebar-pause {
-    display: none;
-    position: absolute; top: 0.25rem; right: 0.4rem; z-index: 2;
-    margin: 0; padding: 0.1rem 0.5rem; font-size: 0.7rem; line-height: 1.4;
-    width: auto; cursor: pointer;
+.treebar-badge { display: block; padding: 0.3rem 0 0.15rem; }
+.treebar-badge-strip {
+    display: block; height: 2px; border-radius: 1px;
+    background: var(--pico-muted-color, #888);
+    opacity: 0.55;
 }
-/* Reveal the pause control ONLY while this poller is actively polling — i.e. its
-   DIRECT-CHILD inner still carries hx-trigger (running). The done inner and the
-   error article (article[aria-invalid]) drop hx-trigger, so :has() goes false and
-   the button auto-hides with zero server change. The `>` is load-bearing: without
-   it an outer (done) poller would match a NESTED still-running inner and keep its
-   own button visible (the same nested-poller trap the data-show-* scheme avoids,
-   see comment below). Pause cancels the request via JS but keeps the element (and
-   its hx-trigger), so a paused poller still matches → button stays → Resume works. */
-.treebar-poller:has(> .treebar-poller-inner[hx-trigger]) .treebar-pause { display: inline-block; }
-/* Push transports (WebSocket / SSE) put the connection on the wrapper and send
-   inners without hx-trigger: there, a direct-child .treebar-poller-inner is the
-   running state, and the terminal frame (.treebar-terminal-content) hides the
-   button the same way. */
-.treebar-poller[ws-connect]:has(> .treebar-poller-inner) > .treebar-pause,
-.treebar-poller[sse-connect]:has(> .treebar-poller-inner) > .treebar-pause { display: inline-block; }
+/* The pulse says "polling" without moving anything: the strip never changes
+   size or position, and reduced-motion users get the static strip plus the
+   glyph and status text, which carry the same state. A paused poller holds
+   still at low opacity. */
+@media (prefers-reduced-motion: no-preference) {
+    .treebar-poller[data-paused="0"] .treebar-badge-strip {
+        animation: tb-badge-pulse 1.6s ease-in-out infinite;
+    }
+}
+@keyframes tb-badge-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+.treebar-poller[data-paused="1"] .treebar-badge-strip { opacity: 0.3; }
+/* The quiet panel is CLIPPED when collapsed, never `display: none` — the
+   pause button stays keyboard-focusable, so tabbing to it matches
+   `:focus-within` and expands the badge in the same frame (no
+   invisible-focus trap). The quiet live tree is `display: none` until
+   then: it carries no focusable controls of its own that must stay
+   reachable (pills reappear with it), and a hidden inner still polls and
+   swaps — htmx never checks visibility. The inner rules use the
+   DIRECT-CHILD `>` so expanding an outer poller never auto-expands a
+   nested one (the same nested-poller trap the data-show-* scheme avoids,
+   see comment below). */
+.treebar-badge-panel {
+    display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+}
+.treebar-poller > .treebar-poller-inner { display: block; }
+.treebar-poller[data-chrome="quiet"] .treebar-badge-panel,
+.htmxo-live-reporter .treebar-poller .treebar-badge-panel {
+    max-height: 0; overflow: hidden;
+}
+.treebar-poller[data-chrome="quiet"]:hover .treebar-badge-panel,
+.treebar-poller[data-chrome="quiet"]:focus-within .treebar-badge-panel,
+.htmxo-live-reporter .treebar-poller:hover .treebar-badge-panel,
+.htmxo-live-reporter .treebar-poller:focus-within .treebar-badge-panel { max-height: none; }
+.treebar-poller[data-chrome="quiet"] > .treebar-poller-inner,
+.htmxo-live-reporter .treebar-poller > .treebar-poller-inner { display: none; }
+.treebar-poller[data-chrome="quiet"]:hover > .treebar-poller-inner,
+.treebar-poller[data-chrome="quiet"]:focus-within > .treebar-poller-inner,
+.htmxo-live-reporter .treebar-poller:hover > .treebar-poller-inner,
+.htmxo-live-reporter .treebar-poller:focus-within > .treebar-poller-inner { display: block; }
+.treebar-pause {
+    margin: 0; padding: 0.1rem 0.45rem; font-size: 0.75rem; line-height: 1.4;
+    width: auto; cursor: pointer; flex: none;
+}
+/* The badge label WRAPS, never clips: a poller label is read content, so no
+   max-width / overflow / ellipsis / nowrap here (snag
+   poller-badge-lab-78301564). The panel flex-wraps so the status siblings
+   drop below the label on narrow widths instead of crushing it, and the
+   quiet hover/focus expansion above caps nothing (max-height: none) so a
+   wrapped multi-line label is never cut there either. */
+.treebar-badge-label {
+    font-size: 0.8rem; color: var(--pico-muted-color, #888);
+}
+.treebar-badge-status { font-size: 0.8rem; flex: none; }
+.treebar-badge-bar { width: 6rem; margin: 0; flex: none; }
+.treebar-badge-elapsed { font-size: 0.8rem; color: var(--pico-muted-color, #888); flex: none; }
 .treebar-children { padding-left: 1rem; margin-left: 0.25rem; border-left: 2px solid color-mix(in srgb, var(--pico-muted-color, #888) 40%, transparent); }
 /* Message-bearing nodes now use the same treebar-node + treebar-header structure
    as container nodes, so treebar-label/treebar-value/treebar-description classes
@@ -1479,8 +1539,8 @@ function htmxoMdRetry(s) {
         // integer minute/hour, so those ticks are mostly no-ops.
         if (el._tbLast !== s){ el.textContent = s; el._tbLast = s; }
     }
-    function terminalizePoller(evt){ terminalize(evt && evt.detail && evt.detail.elt); }
-    function terminalize(el){
+    function terminalizePoller(evt){
+        var el = evt && evt.detail && evt.detail.elt;
         if (!el || !el.classList || !el.classList.contains('treebar-terminal-content')) return;
         var p = el.parentElement;
         if (!p || !p.classList.contains('treebar-poller')) return;
@@ -1488,10 +1548,93 @@ function htmxoMdRetry(s) {
         ['paused', 'showFinished', 'showPending', 'showFailed', 'showSkipped'].forEach(function(key){
             delete p.dataset[key];
         });
-        var pause = p.querySelector(':scope > .treebar-pause');
-        if (pause) pause.remove();
-        p._tbHeld = undefined;
+        var badge = p.querySelector(':scope > .treebar-badge');
+        if (badge) badge.remove();
     }
+    // Mirror the live inner into the wrapper's badge: the badge lives on the
+    // never-swapped wrapper (so the pause control keeps focus and state across
+    // polls), which means its status line would go stale without this. Reads
+    // the same nodes the tree renders — the first determinate bar, the first
+    // duration span — so the badge can never disagree with the tree it
+    // summarizes. Also re-derives the pause glyph from data-paused, so a
+    // hand-edited dataset (DevTools) shows the matching control, exactly as a
+    // click would. Exposed as window.__tbSyncBadge so the pause onclick can
+    // refresh the badge in the same frame as the toggle.
+    function syncBadge(p){
+        var badge = p.querySelector(':scope > .treebar-badge');
+        if (!badge) return;
+        var paused = p.dataset.paused === '1';
+        var btn = badge.querySelector('.treebar-pause');
+        if (btn){
+            btn.textContent = paused ? '▶' : '❚❚';
+            btn.setAttribute('aria-label', paused ? 'Resume live updates' : 'Pause live updates');
+        }
+        var st = badge.querySelector('.treebar-badge-status');
+        if (st){
+            var s = paused ? 'Paused' : 'Polling';
+            if (st._tbLast !== s){ st.textContent = s; st._tbLast = s; }
+        }
+        var inner = p.querySelector(':scope > .treebar-poller-inner');
+        var bar = badge.querySelector('.treebar-badge-bar');
+        if (bar){
+            var src = inner ? inner.querySelector('progress.treebar-progress') : null;
+            if (src && src.hasAttribute('value') && src.hasAttribute('max')){
+                bar.setAttribute('value', src.getAttribute('value'));
+                bar.setAttribute('max', src.getAttribute('max'));
+            } else {
+                bar.removeAttribute('value');
+                bar.removeAttribute('max');
+            }
+        }
+        var el = badge.querySelector('.treebar-badge-elapsed');
+        if (el){
+            var d = inner ? inner.querySelector('.treebar-duration') : null;
+            var t = d ? d.textContent : '';
+            if (el._tbLast !== t){ el.textContent = t; el._tbLast = t; }
+        }
+    }
+    // Incremental active-progress tracking: the ticker NEVER scans the
+    // document. Two live sets — running duration spans and poller wrappers —
+    // are seeded once at startup and kept current by a MutationObserver
+    // below, so each tick costs work proportional to the active progress
+    // nodes and each swap costs work proportional to the changed fragment;
+    // settled hidden trees cost nothing. (Was: document-wide
+    // querySelectorAll on every 100ms tick and every swap — ~0.3 CPU-s per
+    // 30s on a 16k-node page. Snag browser-progress-573fb052.)
+    var liveRunning = new Set();
+    var livePollers = new Set();
+    var RUNNING_SEL = '.treebar-duration[data-treebar-status="running"]';
+    var POLLER_SEL = '.treebar-poller';
+    function trackRunning(el){
+        if (el._tbAnchor === undefined) anchor(el);
+        liveRunning.add(el);
+    }
+    function collectRunning(root){
+        if (root.nodeType === 1 && root.matches(RUNNING_SEL)) trackRunning(root);
+        if (root.nodeType !== 1 && root.nodeType !== 9) return;
+        var q = root.querySelectorAll(RUNNING_SEL);
+        for (var i = 0; i < q.length; i++) trackRunning(q[i]);
+    }
+    function collectPollers(root){
+        if (root.nodeType === 1 && root.matches(POLLER_SEL)) livePollers.add(root);
+        if (root.nodeType !== 1 && root.nodeType !== 9) return;
+        var q = root.querySelectorAll(POLLER_SEL);
+        for (var j = 0; j < q.length; j++) livePollers.add(q[j]);
+    }
+    function collect(root){ collectRunning(root); collectPollers(root); }
+    // Lazy prune: removals and terminalizations drop out on the next tick.
+    function runningAlive(el){
+        if (!el.isConnected || el.dataset.treebarStatus !== 'running'){ liveRunning.delete(el); return false; }
+        return true;
+    }
+    function syncBadgeLive(p){
+        if (!p.isConnected || !p.classList.contains('treebar-poller')){ livePollers.delete(p); return; }
+        syncBadge(p);
+    }
+    function syncAllBadges(){
+        livePollers.forEach(syncBadgeLive);
+    }
+    window.__tbSyncBadge = syncBadge;
     // Re-anchor only spans whose server value changed (or that are new). A swap
     // replaces the spans it delivers, so fresh ones anchor from their own
     // data-elapsed-ms; a span the swap did NOT touch keeps its anchor. Blindly
@@ -1499,25 +1642,54 @@ function htmxoMdRetry(s) {
     // board item between its 1s polls, a sibling poller) back to the
     // server value it was rendered with, so it would jump backwards.
     function reanchorAll(){
-        document.querySelectorAll('.treebar-duration[data-treebar-status="running"]').forEach(function(el){
-            if (el._tbAnchor === undefined || el._tbAnchoredFrom !== el.dataset.elapsedMs) anchor(el);
+        liveRunning.forEach(function(el){
+            if (runningAlive(el) && (el._tbAnchoredFrom === undefined || el._tbAnchoredFrom !== el.dataset.elapsedMs)) anchor(el);
         });
     }
     function tickAll(){
-        document.querySelectorAll('.treebar-duration[data-treebar-status="running"]').forEach(tick);
+        liveRunning.forEach(function(el){ if (runningAlive(el)) tick(el); });
+        syncAllBadges();
     }
-    function reanchorAndTick(evt){ terminalizePoller(evt); reanchorAll(); tickAll(); }
+    function reanchorAndTick(evt){
+        terminalizePoller(evt);
+        // Scope the synchronous refresh to the swapped target; the observer
+        // below backstops every other insertion path (OOB inserts outside
+        // the target, ws frames, in-place morphs), so this never needs a
+        // document-wide scan.
+        var t = evt && evt.detail && (evt.detail.target || evt.detail.elt);
+        if (t && (t.nodeType === 1 || t.nodeType === 9)) collect(t);
+        reanchorAll();
+        tickAll();
+    }
+    // Backstop: every DOM insertion and every status/estimate edit lands
+    // here, so nodes the swap handler cannot see still join or leave the
+    // live sets. Each callback costs work proportional to the changed nodes
+    // only. Poller wrappers are born by insertion (childList) and die by
+    // terminalization or removal (lazy prune in syncBadgeLive) — never by a
+    // class flip a filter would need to watch, so `class` stays unobserved.
+    var tbObserver = new MutationObserver(function(records){
+        for (var i = 0; i < records.length; i++){
+            var r = records[i];
+            if (r.type === 'childList'){
+                for (var j = 0; j < r.addedNodes.length; j++) collect(r.addedNodes[j]);
+            } else if (r.type === 'attributes' && r.target.nodeType === 1){
+                var el = r.target;
+                if (!el.classList.contains('treebar-duration')) continue;
+                if (r.attributeName === 'data-treebar-status'){
+                    if (el.dataset.treebarStatus === 'running') trackRunning(el);
+                    else liveRunning.delete(el);
+                } else if ((r.attributeName === 'data-elapsed-ms' || r.attributeName === 'data-eta-ms') &&
+                           el.dataset.treebarStatus === 'running'){
+                    // A morph refreshed the server estimate in place:
+                    // re-anchor so the ticker counts from the fresh value.
+                    anchor(el);
+                    liveRunning.add(el);
+                }
+            }
+        }
+    });
     document.addEventListener('htmx:afterSwap', reanchorAndTick);
     document.addEventListener('htmx:oobAfterSwap', reanchorAndTick);
-    // A WebSocket frame keeps the inner's id, and htmx "settles" an element
-    // whose id survives a swap: until the swap's settle tasks run — after
-    // htmx:oobAfterSwap — the new element still wears the old element's
-    // attributes, class included, so the check above cannot recognise a
-    // terminal frame yet. htmx:wsAfterMessage fires once they have run.
-    document.addEventListener('htmx:wsAfterMessage', function(evt){
-        var id = frameId(evt.detail && evt.detail.message);
-        if (id) terminalize(document.getElementById(id));
-    });
 
     // --- Keyed board (htmx_render_board) -----------------------------------
     // Every update — a poll response, a WebSocket frame, treebarUpdateBoard —
@@ -1616,6 +1788,10 @@ function htmxoMdRetry(s) {
         var ncount = incoming.querySelector(':scope > .treebar-board-header > .treebar-board-count');
         if (count && ncount) count.replaceWith(document.importNode(ncount, true));
         boardEmpty(board);
+        // The reconciler inserts spans through DOM APIs, not an htmx swap, so
+        // track them synchronously (scoped to the board); the observer below
+        // backstops the same insertions idempotently.
+        collect(board);
         reanchorAll(); tickAll();
     }
     function parseBoards(html){
@@ -1685,51 +1861,15 @@ function htmxoMdRetry(s) {
             if (b && b.dataset.paused === '1') evt.preventDefault();
         }
     });
-    // Pause for push transports (WebSocket / SSE): there is no request to
-    // cancel, so hold back running frames while the wrapper is data-paused.
-    // The newest held frame is applied on Resume: the server sends a frame only
-    // when the tree changes, so without it a resumed view could stay stale
-    // until the next change. The terminal frame is never held back.
-    function isTerminalFrame(html){
-        return /^\s*<[^>]*\btreebar-terminal-content\b/.test(html);
-    }
-    // The id on a frame's top-level element (WebSocket frames swap by id).
-    function frameId(html){
-        var m = typeof html === 'string' && /^\s*<[^>]*\sid="([^"]+)"/.exec(html);
-        return m ? m[1] : null;
-    }
-    function holdIfPaused(evt, p, html){
-        if (!p || !p.classList.contains('treebar-poller') || p.dataset.paused !== '1') return;
-        evt.preventDefault();
-        p._tbHeld = html;
-    }
-    document.addEventListener('htmx:wsBeforeMessage', function(evt){
-        var d = evt.detail || {}, html = d.message;
-        if (typeof html !== 'string' || isTerminalFrame(html)) return;
-        // Frames swap by id, so the poller is the parent of the element with
-        // the frame's id; without an id, fall back to the socket's element.
-        var id = frameId(html), p;
-        if (id){ var t = document.getElementById(id); p = t && t.parentElement; }
-        else p = d.elt && d.elt.closest && d.elt.closest('.treebar-poller');
-        holdIfPaused(evt, p, html);
-    });
-    document.addEventListener('htmx:sseBeforeMessage', function(evt){
-        // detail is the MessageEvent: type is the SSE event name.
-        var d = evt.detail || {}, html = d.data;
-        if (d.type === 'done' || typeof html !== 'string' || isTerminalFrame(html)) return;
-        holdIfPaused(evt, d.elt && d.elt.closest && d.elt.closest('.treebar-poller'), html);
-    });
-    // Resume. A document listener runs after the button's own onclick, so
-    // data-paused has already flipped back to '0' here.
-    document.addEventListener('click', function(evt){
-        var b = evt.target && evt.target.closest && evt.target.closest('.treebar-pause');
-        var p = b && b.parentElement;
-        if (!p || p.dataset.paused === '1' || !p._tbHeld) return;
-        var html = p._tbHeld, inner = p.querySelector(':scope > .treebar-poller-inner');
-        p._tbHeld = undefined;
-        if (inner && window.htmx && htmx.swap) htmx.swap(inner, html, {swapStyle: 'outerHTML'});
-    });
     function start(){
+        // The ONE full-document pass: seeds both live sets. Everything
+        // after this is incremental (scoped swap refresh + observer).
+        collect(document);
+        if (!window.__tbObserverStarted){
+            window.__tbObserverStarted = true;
+            tbObserver.observe(document.documentElement, {childList: true, subtree: true,
+                attributes: true, attributeFilter: ['data-treebar-status', 'data-elapsed-ms', 'data-eta-ms']});
+        }
         reanchorAndTick();
         if (!window.__tbTickerStarted){ window.__tbTickerStarted = true; setInterval(tickAll, 100); }
     }
@@ -1997,7 +2137,7 @@ function htmxoMdRetry(s) {
                 el.classList.contains('treebar-terminal-content') &&
                 el.hasAttribute('data-htmxo-auto-terminal'));
   }
-  function unwrapOne(el) {
+  function unwrapOne(el, detail) {
     if (!marked(el)) return;
     // Live-refresh owns reporter-diverted terminals (its beforeSwap already
     // took over the swap, so afterSwap never fires for them — this is belt
@@ -2039,18 +2179,38 @@ function htmxoMdRetry(s) {
         if (af && af.focus) af.focus();
         if (window.htmx.trigger) window.htmx.trigger(m, 'htmx:load');
       }
+      // htmx's own `htmx:afterSettle` fires on the inserted top-level nodes —
+      // the wrapper just removed — so it lands on the detached husk and never
+      // reaches document-level listeners (afterSwap yes / afterSettle no / no
+      // error). Mirror it on the moved nodes so every body-level settle
+      // consumer (compose rebind, show-when, live-region resync, …) sees
+      // :auto resolutions exactly like ordinary swaps (snag
+      // compose-afterswa-9ae50ac9). The detail is a shallow copy: the trigger
+      // writes `detail.elt` per dispatch, and the original object is shared
+      // with later afterSwap listeners.
+      if (window.htmx.trigger && detail) {
+        var dd = {};
+        for (var k in detail) { dd[k] = detail[k]; }
+        for (var j = 0; j < moved.length; j++) {
+          var n = moved[j];
+          if (!n || n.nodeType !== 1) continue;
+          window.htmx.trigger(n, 'htmx:afterSettle', dd);
+        }
+      }
     }
   }
   document.addEventListener('htmx:afterSwap', function(evt) {
     var d = (evt && evt.detail) || {};
-    unwrapOne(d.elt);
-    if (evt.target && evt.target !== d.elt) unwrapOne(evt.target);
+    unwrapOne(d.elt, d);
+    if (evt.target && evt.target !== d.elt) unwrapOne(evt.target, d);
     // A marked node swapped in as part of a larger fragment (never the
     // direct swap node): catch it by scan. Naturally idempotent — an
     // unwrapped node is gone, and bare content carries no marker.
     var root = d.target;
     if (root && root.querySelectorAll) {
-      root.querySelectorAll('[data-htmxo-auto-terminal]').forEach(unwrapOne);
+      root.querySelectorAll('[data-htmxo-auto-terminal]').forEach(function(n) {
+        unwrapOne(n, d);
+      });
     }
   });
 })();

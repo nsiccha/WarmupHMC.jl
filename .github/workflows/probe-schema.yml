@@ -54,9 +54,9 @@
 #
 # Same policy as nonlinear-weighting.yml. docs/benchmark needs Treebars, which is
 # unregistered, hence the clone (in the shared install script); it clones
-# `--branch perf/step5-typed-slots`, Treebars' canonical line: `main` lacks
-# `round2` (extended by src/progress.jl at load time) and `dev` diverged and
-# lacks `interrupt_requested`, so either dies before any job code runs. docs/
+# `--branch main`, Treebars' integration branch, which carries `round2`
+# (extended by src/progress.jl at load time) and `interrupt_requested`; `dev`
+# diverged and `perf/step5-typed-slots` is frozen. docs/
 # itself resolves WarmupHMC through [sources] and needs nothing cloned.
 
 name: Probe schema

@@ -37,11 +37,12 @@
 #     model's own frame and this harness transforms nothing itself. That is true
 #     from `b109210` ("report draws in the model frame even when
 #     nonlinear_adapt=false"); before it, the fixed arms came back in the source
-#     frame and this file compensated with one `reparametrize!`. Re-measured on
-#     this base — a centered funnel sampled through a noncentered source returns
-#     coordinate 1 at mean -0.006, sd 2.934 against the known `Normal(0, 3)`
-#     marginal, and applying `reparametrize!` on top inflates the leg sds to
-#     100-300. If you are pinning an older WarmupHMC, put the compensation back.
+#     frame and this file compensated with one `reparametrize!`. `frame_check.jl`
+#     re-measures it — a centered funnel sampled through a noncentered source
+#     returns coordinate 1 on the known `Normal(0, 3)` marginal, and applying
+#     `reparametrize!` on top inflates the leg sds by two orders of magnitude;
+#     the current figures are in `results/frame_check.json` and quoted in
+#     RESULTS.md. If you are pinning an older WarmupHMC, put the compensation back.
 #   - `result.ess` is all zeros unless `monitor_ess=true`; this harness never
 #     reads it and computes ESS from the draws instead.
 #   - `n_draws` is a floor, so every rate is normalized by the actual draw count.

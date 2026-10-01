@@ -129,7 +129,7 @@ const RESULTS_DIR = joinpath(REPO, RESULTS)
 # The one live driver pair. Kept in step with `backend_bands.jl`'s DRIVER_SHA
 # deliberately: two scripts naming two different "live" drivers would let a
 # superseded run answer for a current claim in one place and not the other.
-const DRIVER_SHA = "7b1757a"
+const DRIVER_SHA = "b5c0b95"
 
 """
     live_json(path)
@@ -385,6 +385,89 @@ let sw = live_json("docs/benchmark/results/annotation_sweep.json")
     vi0 = only(r for r in rows if short_target(r["target"]) == "radon_variable_intercept" && r["c_source"] == 0)
     literal("annotation_sweep re-measured radon_variable_intercept c=0 Enzyme ÷ ForwardDiff",
             "re-measurement reads " * string(round(vi0["ns_const"] / vi0["ns_forwarddiff"], digits = 3)) * "×")
+end
+
+# ------------------------------------------------------------ driver verdict
+#
+# The Verdict table and the wall-clock table beneath it. Both were hand-typed
+# from summarize.jl output, and the `seeds` row is the one that has flipped
+# twice — a 1.5× win at `d68d680`, −37% at `7b1757a` when six of eight seeds
+# stopped adapting, a win again at `b5c0b95` — so its margin, the claim that
+# every seed adapts, and the noise floor the wall-clock reading leans on are
+# recomputed here rather than trusted. "Best fixed alternative" is every arm
+# but `adaptive`, `plain` included: it is the centered parametrization, and
+# leaving it out would let a plain row that beats the endpoints go unreported.
+let runs = live_json("docs/benchmark/results/enzyme-$DRIVER_SHA/runs.json")["runs"],
+    fdruns = live_json("docs/benchmark/results/forwarddiff-$DRIVER_SHA/runs.json")["runs"]
+    sel(rs, t, a) = [r for r in rs if r["ok"] && r["target"] == t && r["arm"] == a]
+    med(rs, t, a, k) = median([Float64(r[k]) for r in sel(rs, t, a)])
+    perk(t, a) = 1000 * med(runs, t, a, "ess_min_per_grad")
+    f1(x) = Printf.@sprintf("%.1f", x)
+    f2(x) = Printf.@sprintf("%.2f", x)
+    for t in unique(r["target"] for r in runs)
+        ad = perk(t, "adaptive")
+        fixed = [a for a in ("plain", "fixed_centered", "fixed_noncentered", "sibling_plain")
+                 if !isempty(sel(runs, t, a))]
+        best = maximum(perk(t, a) for a in fixed)
+        r = ad / best
+        literal("verdict $(short_target(t)): adaptive vs best fixed per 1k grad",
+                r >= 1 ? "**$(f2(ad))** | $(f2(best)) (" : "| $(f2(ad)) | $(f2(best)) (")
+        literal("verdict $(short_target(t)): margin",
+                r >= 1 ? string(round(r, digits = 1), "× win") :
+                         string("loses, −", round(Int, 100 * (1 - r)), "%"))
+        # The wall-clock column for this base, Enzyme bold then ForwardDiff.
+        we = med(runs, t, "adaptive", "ess_min_per_s") / med(runs, t, "plain", "ess_min_per_s")
+        wf = med(fdruns, t, "adaptive", "ess_min_per_s") / med(fdruns, t, "plain", "ess_min_per_s")
+        literal("wall-clock $(short_target(t)): adaptive vs plain, both backends",
+                "**$(f1(we))× faster** | $(f1(wf))× faster |")
+    end
+
+    seeds = "seeds_data-seeds_centered_model"
+    ad = sel(runs, seeds, "adaptive")
+    # A claim of absence ("no seed is stuck") has no figure to recompute, so the
+    # expected text is chosen by the predicate: if any seed ends with every
+    # learned `c` at its start, the sentence the prose carries is not offered.
+    stuck = count(r -> all(==(1.0), r["c_after"]), ad)
+    literal("seeds: every seed adapts",
+            stuck == 0 ? "**every seed adapts**" : "($stuck of 8 seeds never left c = 1)")
+    meds = [median(Float64.(r["c_after"])) for r in ad]
+    literal("seeds: per-seed median c band",
+            "per-seed medians $(round(minimum(meds), digits = 1))–$(round(maximum(meds), digits = 1))")
+    pl, fc = med(runs, seeds, "plain", "ess_min_per_s"), med(runs, seeds, "fixed_centered", "ess_min_per_s")
+    literal("seeds: plain vs fixed c = centered ESS/sec, bit-identical trajectories",
+            string(round(Int, 100 * abs(fc / pl - 1)), "% *", fc > pl ? "higher" : "lower",
+                   "* (", f1(fc), " against ", f1(pl), ")"))
+end
+
+# ----------------------------------------------------------- typical_positions
+#
+# The evaluation-position bullet. The `randn` and typical columns are SEPARATE
+# timing loops over different positions (see the pairing note above), so only
+# within-column statistics and range overlap are computed — never a round-i by
+# round-i quotient across the two, which an earlier revision of the prose
+# quoted as "per-round shift ranges".
+let tp = live_json("docs/benchmark/results/typical_positions.json")
+    ratio(r, k) = Float64.(r[k]["samples"]["const"]) ./ Float64.(r[k]["samples"]["fd"])
+    x2(x) = Printf.@sprintf("%.2f×", x)
+    for r in tp["rows"]
+        literal("typical_positions randn → typical $(short_target(r["target"]))",
+                "`$(short_target(r["target"]))` $(x2(r["const_over_fd_randn"])) → $(x2(r["const_over_fd_typical"]))")
+    end
+    overlap(r) = (a = extrema(ratio(r, "typical")); b = extrema(ratio(r, "randn"));
+                  a[1] <= b[2] && b[1] <= a[2])
+    literal("typical_positions: round ranges overlap on every target",
+            all(overlap, tp["rows"]) ? "ranges overlap on every target" :
+            "(separated: " * join([short_target(r["target"]) for r in tp["rows"] if !overlap(r)], ", ") * ")")
+    spreads = [(maximum(v) - minimum(v)) / median(v)
+               for r in tp["rows"] for v in (ratio(r, "typical"), ratio(r, "randn"))]
+    literal("typical_positions ratio spread band",
+            Printf.@sprintf("spread runs %.1f%% to %.1f%% of", 100 * minimum(spreads), 100 * maximum(spreads)))
+    es = only(r for r in tp["rows"] if short_target(r["target"]) == "eight_schools")
+    literal("typical_positions eight_schools median shift",
+            string("`eight_schools`' +", round(Int, 100 * (es["const_over_fd_typical"] / es["const_over_fd_randn"] - 1)), "%"))
+    lo, hi = extrema(ratio(es, "randn"))
+    literal("typical_positions eight_schools randn round span",
+            Printf.@sprintf("span %.2f× to %.2f×", lo, hi))
 end
 
 function main_figures()

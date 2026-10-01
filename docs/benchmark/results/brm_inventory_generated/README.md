@@ -35,7 +35,7 @@ negative controls.
 
 - Host: `strato2`
 - Julia: 1.10.11; BLAS threads: 1
-- WarmupHMC: `6adc5ea679722d3b7b13a5b5d6c12d497b10c2d7` (`src/` clean)
+- WarmupHMC: `b5c0b956e3373ee35070200f24e490b56cc43ea4` (`src/` clean)
 - BRM: `a5e118b0119e29c137d80d887b571db2d77af8e1`
 - StanBlocks: `d520980f98cc90141967a47dd6520fb5bb6e3f31`
 - Run from one environment developed against fixed clones of those two and of
@@ -44,14 +44,16 @@ negative controls.
 - 12 seeds × 500 retained draws × 3 arms × 2 flag values × 16 models = 1152 rows
 - Every arm/flag path received a 50-draw untimed preflight; recorded flag order
   alternated by seed to remove systematic JIT/order bias from wall comparisons
-- Process exit: 0; elapsed: 6639 seconds; summed in-row sampling time: 5037.05 seconds
+- Detached run, so no process exit status was captured; `run_finished_at` is
+  recorded and the runner logged its final write of all 1152 rows. Elapsed:
+  6262 seconds; summed in-row sampling time: 4416.45 seconds
 - Result: 1152/1152 rows usable; zero exceptions or crashes
 - Controls: all 384 `(model, bare arm, seed)` flag pairs were identical on
   gradient count and constrained-space minimum ESS
 - Non-centered and centered programs have equal unconstrained dimension on all
   16 models (the docs build asserts it)
 
-Divergences over distinct trajectories (flag off): 248 non-centered, 586 static
+Divergences over distinct trajectories (flag off): 69 non-centered, 459 static
 centered.
 
 `nonlinear_adapt=true` on the adaptive wrapper, paired against the flag-off run
@@ -59,32 +61,40 @@ of the same seed (medians over seeds):
 
 | spec | seeds whose trajectory changed | ESS/gradient, on ÷ off | ESS/second, on ÷ off |
 |---|---|---|---|
-| `lme4:dyestuff_re` | 0/12 | 1.00 | 0.31 |
-| `lme4:sleepstudy_slope` | 0/12 | 1.00 | 0.30 |
-| `bambi:sleepstudy` | 0/12 | 1.00 | 0.39 |
-| `mixed_models_jl:penicillin_crossed` | 12/12 | 4.89 | 1.38 |
-| `bambi:radon_partial` | 12/12 | 1.20 | 0.40 |
-| `bambi:radon_floor` | 12/12 | 0.89 | 0.27 |
-| `bambi:radon_slopes` | 12/12 | 1.18 | 0.32 |
-| `bambi:dietox` | 12/12 | 1.22 | 0.41 |
-| `vasishth:meta_sbi` | 0/12 | 1.00 | 0.20 |
-| `kruschke:fruitfly_anhecova` | 9/12 | 1.02 | 0.47 |
-| `burkner_papers:epilepsy_simple` | 12/12 | 2.06 | 0.42 |
-| `kruschke:therapeutic_touch` | 7/12 | 1.16 | 0.39 |
-| `bambi:hierarchical_binomial_partial` | 12/12 | 1.17 | 0.25 |
-| `mixed_models_jl:contraception_glmm` | 12/12 | 1.32 | 0.68 |
-| `bambi:predict_new_groups` | 0/12 | 1.00 | 0.36 |
-| `vasishth:n400_crossed` | 12/12 | 1.17 | 0.89 |
+| `lme4:dyestuff_re` | 0/12 | 1.00 | 0.49 |
+| `lme4:sleepstudy_slope` | 0/12 | 1.00 | 0.45 |
+| `bambi:sleepstudy` | 0/12 | 1.00 | 0.42 |
+| `mixed_models_jl:penicillin_crossed` | 12/12 | 4.17 | 1.25 |
+| `bambi:radon_partial` | 12/12 | 1.56 | 0.44 |
+| `bambi:radon_floor` | 12/12 | 1.39 | 0.41 |
+| `bambi:radon_slopes` | 12/12 | 1.85 | 0.52 |
+| `bambi:dietox` | 12/12 | 0.98 | 0.31 |
+| `vasishth:meta_sbi` | 0/12 | 1.00 | 0.35 |
+| `kruschke:fruitfly_anhecova` | 5/12 | 1.00 | 0.62 |
+| `burkner_papers:epilepsy_simple` | 12/12 | 1.91 | 0.52 |
+| `kruschke:therapeutic_touch` | 9/12 | 1.06 | 0.38 |
+| `bambi:hierarchical_binomial_partial` | 12/12 | 1.50 | 0.29 |
+| `mixed_models_jl:contraception_glmm` | 12/12 | 1.71 | 0.79 |
+| `bambi:predict_new_groups` | 0/12 | 1.00 | 0.34 |
+| `vasishth:n400_crossed` | 12/12 | 1.26 | 0.94 |
 
 On five models adaptation keeps the generated non-centered endpoint on every
 seed (ratio exactly 1.00); where it moves, it pays per gradient on all but
-`radon_floor` (0.89), most on `penicillin_crossed` (4.89) and
-`epilepsy_simple` (2.06). In wall-clock it wins only on `penicillin_crossed`
-(1.38), because the wrapper's runtime is paid on every call whether or not the
-trajectory changes. The three specs of the previous checked-in run (WarmupHMC
-`9039668`, BRM `aed667cf`) read the same way — `dyestuff_re` and
-`sleepstudy_slope` exactly 1.0, `dietox` 1.25 then and 1.22 now. An earlier
-draft of this revision showed 2–7× gains on `dyestuff_re`, `sleepstudy_slope`,
+`dietox` (0.98) and `fruitfly_anhecova` (1.00, with 5 of 12 seeds moved), most on
+`penicillin_crossed` (4.17), `epilepsy_simple` (1.91) and `radon_slopes` (1.85).
+In wall-clock it wins only on `penicillin_crossed` (1.25), because the wrapper's
+runtime is paid on every call whether or not the trajectory changes.
+
+Against the artifact this one replaced (WarmupHMC `6adc5ea6`, the same BRM and
+StanBlocks pins), the per-gradient ratio rose on six of the eleven models where
+adaptation moves and fell on five; `radon_floor`, the one model that paid there
+(0.89), now gains (1.39), and `dietox` went from 1.22 to 0.98. Only WarmupHMC
+moved between the two artifacts. Its `src/` changes in that span include
+`7b1d694`, which restored Pathfinder's low-rank initial factor; nothing here
+isolates which change moved which row. `dyestuff_re` and `sleepstudy_slope`
+read exactly 1.0 at every pin, including the three-spec run before that
+(WarmupHMC `9039668`, BRM `aed667cf`). An earlier
+draft of the `6adc5ea6` revision showed 2–7× gains on `dyestuff_re`, `sleepstudy_slope`,
 `meta_sbi` and `predict_new_groups`; those came from BRM's new default exact-
 totals representation having replaced the non-centered program (one coordinate
 fewer), not from adaptation, and the runner now opts out of it
@@ -100,7 +110,7 @@ invalid implementation. Keeping that rejected artifact makes the performance
 cost auditable without allowing its timings into the headline tables.
 
 `rows.json` is the source of truth. Its SHA-256 is
-`ab03898f37e97eeb983c286675ea8f9ded219796b485a1d38f5720bd0f5ce2f9`.
+`3c0890d9d60094dadf08ebf03c2ea43016412cb97ae77b8758032e4330a2f495`.
 
 ## Reproduction
 

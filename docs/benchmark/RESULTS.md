@@ -1,10 +1,11 @@
 # Measured: adaptive reparametrization vs the fixed centering endpoints
 
-**Measured on WarmupHMC `7b1757a`, with `src/` clean.** 8 pinned seeds per arm,
+**Measured on WarmupHMC `b5c0b95`, with `src/` clean.** 8 pinned seeds per arm,
 `n_draws` floor 1000, Julia 1.10.11, single-threaded BLAS, on `strato2`. 184 runs
-per backend, 0 failed. The worktree outside `src/` was not clean — this file's
-in-progress revision was uncommitted — so both runs record `worktree_dirty: true`
-beside `src_dirty: false`, the combination `artifact_currency.jl` accepts.
+per backend, 0 failed. The worktree outside `src/` was not clean — the same
+campaign's other harnesses were writing their own artifacts beside these — so
+both runs record `worktree_dirty: true` beside `src_dirty: false`, the
+combination `artifact_currency.jl` accepts.
 
 That base is the one the artifacts **record**, not the one this sentence claims.
 Each `runs.json` carries `warmuphmc_sha` and `worktree_dirty`, and the result
@@ -34,15 +35,15 @@ tree for exactly that reason, and the discarded dirty pair turned out to agree
 with them **bit-for-bit on all 184 runs** in every field except wall-clock. That
 is the evidence the flag itself could not supply. Harnesses have since recorded
 the narrower `src_dirty`, which names the one part of the tree that can change
-what runs; the pair below is `src_dirty: false`, and the same bit-for-bit
-agreement holds between its Enzyme run and an earlier code-identical one
-(`be6fb23`): all 184 runs, every field except wall-clock.
+what runs; the pair below is `src_dirty: false`. The previous pair (`7b1757a`)
+showed the same bit-for-bit agreement between its Enzyme run and an earlier
+code-identical one (`be6fb23`): all 184 runs, every field except wall-clock.
 
-`7b1757a` will fall behind the tip, so the gap is **checked** rather than stated.
+`b5c0b95` will fall behind the tip, so the gap is **checked** rather than stated.
 `docs/benchmark/code_identical.jl` parses every file under `src/` at two
 revisions, strips docstrings and line numbers, and compares the resulting ASTs:
 
-    julia docs/benchmark/code_identical.jl 7b1757a <tip>
+    julia docs/benchmark/code_identical.jl b5c0b95 <tip>
 
 The worked example is from the previous base. Against `3597dbc`, canonical when
 `d68d680` was measured, it reported **CODE-IDENTICAL across all 12 files**.
@@ -120,17 +121,21 @@ infrastructure: `docs/src/.vitepress/` gains a Vega figure component and
 differentiate — moved at all.
 
 This base was measured **twice, under both AD backends**, changing nothing else:
-`results/enzyme-7b1757a/` (the default, `AutoEnzyme(; function_annotation =
-Enzyme.Const)`) and `results/forwarddiff-7b1757a/` (`AutoForwardDiff()`). The
-runs were sequential, back to back, never concurrent with each other — but
-`strato2` was carrying other agents' jobs throughout (load 11–30 on 8 cores), and
-[the wall-clock section](#it-converts-into-wall-clock-on-four-targets) measures
-what that does to ESS/sec. `summarize.jl` regenerates
+`results/enzyme-b5c0b95/` (the default, `AutoEnzyme(; function_annotation =
+Enzyme.Const)`) and `results/forwarddiff-b5c0b95/` (`AutoForwardDiff()`). The
+runs were sequential and never concurrent with each other — both queued on the
+same compute token, with one other harness between them — but `strato2` was
+carrying two BRM inventory sweeps from the same campaign and other agents' jobs
+throughout, and [the wall-clock section](#it-converts-into-wall-clock-on-all-five-targets)
+measures what that does to ESS/sec. `summarize.jl` regenerates
 every table below from those records; `compare.jl` regenerates the backend diff.
 
-Superseded runs are kept: `results/enzyme-d68d680/` and
-`results/forwarddiff-d68d680/` (the previous live pair, replaced by the one
-above), `results/enzyme-5637fcf/` and `results/forwarddiff-5637fcf/` (the pair
+Superseded runs are kept: `results/enzyme-7b1757a/` and
+`results/forwarddiff-7b1757a/` (the previous live pair, replaced by the one
+above because `7b1d694` restored Pathfinder's low-rank factor and so changed
+every Pathfinder-initialised trajectory), `results/enzyme-d68d680/` and
+`results/forwarddiff-d68d680/` (the pair before that),
+`results/enzyme-5637fcf/` and `results/forwarddiff-5637fcf/` (the pair
 before that), `results/enzyme-7556a15/` and `results/forwarddiff-7556a15/` (the
 dirty-worktree run this pair replaced, kept as the evidence that the dirty tree
 changed nothing), `results/enzyme-b5c7dee/` and `results/forwarddiff-b5c7dee/` (the
@@ -174,56 +179,65 @@ no ref, and the script distinguishes the two cases in its own output.
 ## Verdict
 
 **Adaptive partial centering, started from the centered parametrization, beats
-the plain sampler on every target measured** — 1.4× to 127× per gradient
+the plain sampler on every target measured** — 3.3× to 137× per gradient
 evaluation. It gets there without being told which parametrization to use.
 
-**Against the best available *fixed* parametrization the picture splits three
+**Against the best available *fixed* parametrization the picture splits two
 ways:**
 
 | target | adaptive | best fixed alternative | |
 |---|---|---|---|
-| radon partially_pooled | **82.53** | 20.33 (hand-written noncentered) | **4.1× win** |
-| radon variable_intercept | **79.19** | 21.00 (centered endpoint) | **3.8× win** |
-| funnel (synthetic) | 111.96 | 111.24 (noncentered endpoint) | ties, +1% |
-| eight_schools centered | 48.29 | 60.11 (hand-written noncentered) | loses, −20% |
-| seeds centered | 7.61 | 12.06 (noncentered endpoint) | **loses, −37%** ‡ |
+| radon partially_pooled | **77.44** | 19.09 (hand-written noncentered) | **4.1× win** |
+| radon variable_intercept | **75.25** | 22.72 (plain centered model) | **3.3× win** |
+| seeds centered | **21.75** | 14.42 (noncentered endpoint) | **1.5× win** ‡ |
+| funnel (synthetic) | 96.43 | 108.57 (noncentered endpoint) | loses, −11% |
+| eight_schools centered | 46.47 | 57.32 (noncentered endpoint) | loses, −19% |
 
-(min ESS per 1000 gradient evaluations, median over 8 seeds, Enzyme run; the
-ForwardDiff run is within 0.01 of it on every adaptive row.)
+(min ESS per 1000 gradient evaluations, median over 8 seeds, Enzyme run. The
+ForwardDiff run is identical on every adaptive row except `eight_schools`,
+45.64; two of the comparators drift between backends — see
+[What each arm is](#what-each-arm-is).)
 
-‡ **`seeds` changed, and not by noise.** At `d68d680` all eight seeds adapted to
-an interior `c` (0.1–0.6) and adaptive *won* 1.5× (16.92 against 11.28). On this
-base six of the eight never leave the centered start — every learned `c` ends at
-exactly 1.0 — and the arm's median gradient count equals `plain`'s. Per-gradient
-columns are counts, bit-reproducible on a given `src/`, so this is a behaviour
-change somewhere in the 31 `src/` commits between the two bases, not a
-measurement artefact.
+‡ **`seeds` adapts again.** At `7b1757a`, the previous base, six of the eight
+seeds never left the centered start — every learned `c` ended at exactly 1.0 —
+and adaptive trailed the noncentered endpoint by 37% (7.61 against 12.06). On
+this base all eight seeds settle at an interior per-plate `c` (per-seed medians
+0.2–0.4, no coordinate left at 1.0) and adaptive wins 1.5× (21.75 against
+14.42), as it did at `d68d680` (16.92 against 11.28). Per-gradient columns are
+counts, bit-reproducible on a given `src/`, so the reversal is the code change,
+not noise.
 
-**Cause, bisected to `f210206`:**
+**Why it stopped, and why it is back:**
 - The centering is refit only at a window that restarts.
 - Whether a window restarts is decided per coordinate, in the frame of
   whichever square root of the metric is active. The test is
   `variance_cond_target`, default 2.
-- `f210206` changed which square root the initial Pathfinder scale uses. In the
-  new frame, `seeds`' restart statistic sits at 1.46–1.96, so most runs never
-  restart and never evaluate the centering.
+- `f210206` replaced the initial Pathfinder scale's low-rank factor with a
+  dense Cholesky factor. In that frame `seeds`' restart statistic sat at
+  1.46–1.96, so most runs never restarted and never evaluated the centering.
+- `7b1d694` restored the low-rank factor (decision
+  `2026-10-01T10-27-50-121-1o12joq`), and with it a frame in which `seeds`
+  restarts.
 - Across four square roots of the same covariance, 12 seeds adapt 5, 12, 0 and
   1 times. This is a scratch experiment with the square root swapped in, not a
   checked-in artifact; it is recorded in the WarmupHMC primer.
 
-Keeping this behaviour, and documenting it, was a deliberate choice (decision
-`2026-10-01T06-43-03-508-1312sap`). The frame-invariant alternatives measured
-on `seeds` are recorded in the WarmupHMC primer. Read this row as the sampler's
-current behaviour, not as the method's ceiling.
+The frame dependence itself is unchanged. Keeping it, and documenting it, was a
+deliberate choice (decision `2026-10-01T06-43-03-508-1312sap`), and the
+frame-invariant alternatives measured on `seeds` are recorded in the WarmupHMC
+primer. The restored factor is a frame in which `seeds` restarts; the next
+change to the initial scale can move that again, so read this row as the
+sampler's current behaviour, not as a property of the method.
 
-Read as one sentence: **where none of the fixed options is good, adaptive beats
-all of them; where a good noncentered parametrization exists, adaptive reaches
-it on the funnel and falls short on `eight_schools` and `seeds`.** Both radon
-models are the first case — centered, noncentered and posteriordb's own
+Read as one sentence: **where the best centering is interior, adaptive beats
+every fixed option; where an endpoint is exactly right, adaptive finds it but
+trails the fixed endpoint by 11–19%.** Both radon models and `seeds` are the
+first case. On the radon models centered, noncentered and posteriordb's own
 hand-written noncentered model all land within seed noise of each other around
-15–21, and adaptive gets 79–83 by settling at an *interior* `c ≈ 0.4–0.5` that no
-hand-written model offers. That interior optimum is the strongest result here,
-and it is stronger on this base than on `d68d680` (62.6–68.1 then).
+16–23, and adaptive gets 75–77 by settling at an *interior* `c ≈ 0.4–0.5` that no
+hand-written model offers. That interior optimum is the strongest result here;
+on this base it sits between `d68d680`'s 62.6–68.1 and `7b1757a`'s 79.2–82.5.
+The funnel and `eight_schools` are the second case.
 
 **The verdict is backend-independent, and that is measured rather than
 assumed.** Every `plain`, `fixed_centered` and hand-written arm is identical
@@ -232,35 +246,39 @@ the hand-written model never touch the wrapper, and `fixed_centered`'s exact
 identity transform differentiates to bit-identical gradients under both
 backends. Of the five `adaptive`
 arms, four (both radon models, `seeds`, the funnel) are identical on all eight
-seeds; `eight_schools` is bit-identical on four seeds and moves −0.7% in median
-gradient count. Final `c` vectors agree between backends on every seed of every target
-except two `eight_schools` seeds. All 368 runs completed. So the backend can
-change *which trajectory* a seed happens to take; it does not change what the
-method learns.
+seeds; `eight_schools` differs in gradient count on six seeds and moves +3.3% in
+median gradient count (ForwardDiff relative to Enzyme). Final `c` vectors agree
+between backends on every seed of every target except two `eight_schools`
+seeds. All 368 runs completed. So the backend can change *which trajectory* a
+seed happens to take; it does not change what the method learns, and no row of
+the verdict changes sign under it.
 
-### It converts into wall-clock on four targets
+### It converts into wall-clock on all five targets
 
 Under Enzyme, adaptive reparametrization is faster **in seconds**, not just per
-gradient, on four of the five targets, and break-even on `seeds`:
+gradient, on all five targets, and under ForwardDiff too:
 
-| target | adaptive vs plain, Enzyme/Const | | | ForwardDiff |
-|---|---|---|---|---|
-| | boxed base `b5c7dee` | `d68d680` | **this base** | this base |
-| funnel (synthetic) | 17.9× faster | 19.3× faster | **22.2× faster** | 34.5× faster |
-| eight_schools centered | 21.0× faster | 18.9× faster | **10.5× faster** | 6.3× faster |
-| radon partially_pooled | 3.5× **slower** | 2.1× faster | **3.2× faster** | 2.4× faster |
-| radon variable_intercept | 2.3× **slower** | 2.0× faster | **2.7× faster** | 2.1× faster |
-| seeds centered | 6.1× **slower** | 1.6× faster | **0.95× — break-even** | 2.0× **slower** |
+| target | adaptive vs plain, Enzyme/Const | | | | ForwardDiff |
+|---|---|---|---|---|---|
+| | boxed base `b5c7dee` | `d68d680` | `7b1757a` | **this base** | this base |
+| funnel (synthetic) | 17.9× faster | 19.3× faster | 22.2× faster | **38.6× faster** | 33.2× faster |
+| eight_schools centered | 21.0× faster | 18.9× faster | 10.5× faster | **25.3× faster** | 16.2× faster |
+| radon partially_pooled | 3.5× **slower** | 2.1× faster | 3.2× faster | **2.4× faster** | 2.0× faster |
+| radon variable_intercept | 2.3× **slower** | 2.0× faster | 2.7× faster | **2.1× faster** | 1.6× faster |
+| seeds centered | 6.1× **slower** | 1.6× faster | 0.95× — break-even | **4.9× faster** | 3.5× faster |
 
 (min ESS/sec, median over 8 seeds, sequential runs.)
 
 Between the boxed base and `d68d680`, three losses became wins, and the three
 that moved are precisely the three whose specs were boxed; `funnel` and
-`eight_schools` were never boxed and stayed in the high band. Between `d68d680`
-and this base the moves have sampling causes, not cost causes: `seeds` fell back
-to break-even because its adaptive arm mostly stopped adapting (the Verdict's ‡),
-and `eight_schools` roughly halved because its *plain* arm doubled per gradient
-(1.55 → 3.01) while adaptive held, so the denominator moved, not the method.
+`eight_schools` were never boxed and stayed in the high band. The moves since
+have sampling causes, not cost causes. At `7b1757a` `seeds` fell back to
+break-even because its adaptive arm mostly stopped adapting, and
+`eight_schools` roughly halved because its *plain* arm doubled per gradient
+(1.55 → 3.01) while adaptive held. On this base both moved back: `seeds` adapts
+again (the Verdict's ‡), and `eight_schools`' plain arm is back to 1.60 per 1k
+gradients. In both cases the denominator or the adaptation moved, not the
+transform's cost.
 
 **How much of that last digit is real: measured, not estimated.** When
 `d68d680` was the base, the same matrix was run on two bases, `5637fcf` (run A)
@@ -287,25 +305,29 @@ method changed between those two columns; only the machine did.
 hand-written model never touch the wrapper, so their
 trajectories are bit-identical between this base's Enzyme and ForwardDiff runs —
 same gradient counts on every seed — and only the clock differs. Their median
-ESS/sec still moved **3% to 58%** between two runs made back to back (`plain`: 4%
-`eight_schools`, 3% and 18% on the two radon models, 15% `seeds`, 58% `funnel`;
-hand-written: 16–35%), on a host carrying other agents' jobs. That is also why
-the ForwardDiff column reads the funnel *higher* than Enzyme's (34.5× against
-22.2×): the adaptive arms took the same trajectories, and the plain denominator
-it is divided by moved 58%.
+ESS/sec still moved **1% to 36%** between two runs made a few minutes apart
+(`plain`: 8% `eight_schools`, 13% and 7% on the two radon models, 9% `seeds`, 9%
+`funnel`; hand-written: 1–36%), on a host carrying other agents' jobs. Within
+one run the floor is wider still: on `seeds`, `plain` and `fixed c = centered`
+take bit-identical trajectories on every seed — and the wrapped arm does
+strictly more work per gradient — yet the wrapped arm's median ESS/sec reads 47%
+*higher* (512.5 against 349.6).
 
 Read the consequences in the strong direction, not the flattering one:
 
-- **The large ratios are robust.** `funnel` and `eight_schools` are 6–35× on
-  every run and every backend. A 58% wobble on a 20× win changes nothing.
-- **`seeds` is not a win.** 0.95× under Enzyme and 0.51× under ForwardDiff on
-  this base, 0.9–1.6× across the four July measurements. The honest entry is "no
-  measured gain under Enzyme"; under ForwardDiff it is a loss, because the
-  adaptive arm pays the wrapper's +148% gradient overhead (below) without, on six
-  of eight seeds, adapting at all.
-- **Both radon models survive.** 2.1–3.2× across both backends on this base,
-  1.5–2.1× across July's four, never crossing parity. A real win, whose *size* is
-  not resolved beyond "two to three times".
+- **The large ratios are robust.** `funnel` and `eight_schools` are 16–39× on
+  both backends of this base and 6–35× on every earlier run. A 36% wobble on a
+  20× win changes nothing.
+- **`seeds` is a win again, of unresolved size.** 4.9× under Enzyme and 3.5×
+  under ForwardDiff on this base, against 0.95× and 0.51× at `7b1757a`, where it
+  mostly did not adapt, and 0.9–1.6× across the four July measurements. Its plain
+  denominator is the noisiest on the page (the 47% above), so the size is not
+  resolved; the direction rests on the per-gradient gain, 3.3× over plain, which
+  the wrapper's +23% (Enzyme) or +181% (ForwardDiff) per-gradient overhead
+  (below) cannot cancel.
+- **Both radon models survive.** 1.6–2.4× across both backends on this base,
+  2.1–3.2× at `7b1757a`, 1.5–2.1× across July's four, never crossing parity. A
+  real win, whose *size* is not resolved beyond "one and a half to three times".
 
 The per-gradient columns carry none of this uncertainty — they are bit-identical
 across all four runs, because they are counts rather than clocks. **Where a
@@ -316,27 +338,27 @@ per-gradient win is not being eaten by transform overhead.
 So the claim the package can now support:
 
 > Starting from a centered parametrization, adaptive partial centering beats
-> every fixed parametrization per gradient evaluation on the two targets where no
-> fixed option is good (both radon models, ~4×), matches the best one on the
-> funnel, and trails the noncentered parametrizations on `eight_schools` (−20%)
-> and `seeds` (−37%, where it mostly does not adapt on this base — under
-> investigation). Under Enzyme that converts into wall-clock wins of 2.7× to 22×
-> on four targets and break-even on `seeds`.
+> every fixed parametrization per gradient evaluation on the three targets whose
+> best centering is interior (both radon models, 3.3–4.1×; `seeds`, 1.5×), and
+> finds the exactly-right noncentered endpoint on the funnel and
+> `eight_schools` but trails it there (−11% and −19%). Under Enzyme that
+> converts into wall-clock wins over the plain sampler on all five targets, from
+> 2.1× to 39×.
 
 **The overhead is still not the transform's arithmetic.** A wrapper configured
 as an exact identity costs the same as a live one, under both backends and on
-every target — on this base, Enzyme ×1.07 no-op vs ×1.08 live on
-`radon_partially_pooled`, ×1.06 vs ×1.07 on `radon_variable_intercept`. What
+every target — on this base, Enzyme ×1.07 no-op vs ×1.07 live on
+`radon_partially_pooled`, ×1.05 vs ×1.09 on `radon_variable_intercept`. What
 remains is the cost of carrying the AD re-differentiation of
-`ljac_(x_) + dot(g_y, y_)` at all. Under Enzyme that is now **+7% of a gradient
-on `radon_variable_intercept`, +8% on `radon_partially_pooled` and +25% on
+`ljac_(x_) + dot(g_y, y_)` at all. Under Enzyme that is now **+9% of a gradient
+on `radon_variable_intercept`, +7% on `radon_partially_pooled` and +23% on
 `seeds`** — small enough to be paid out of the sampling gain wherever there is
-one, which is what the wall-clock table above shows. It is +70% on
-`eight_schools` and 6.8× (+578%) on the funnel, but those are the two targets
-whose *bare* gradient costs 479 ns and 46 ns, where a roughly fixed per-call AD
-cost has to dominate; both still come out 10–22× ahead overall because the
+one, which is what the wall-clock table above shows. It is +72% on
+`eight_schools` and 6.5× (+552%) on the funnel, but those are the two targets
+whose *bare* gradient costs 456 ns and 46 ns, where a roughly fixed per-call AD
+cost has to dominate; both still come out 25–39× ahead overall because the
 sampling gain there is enormous. Under ForwardDiff the same three overheads are
-+67%, +68% and +148%, and the two small targets go to +243% and 18.5× (+1749%) —
++49%, +86% and +181%, and the two small targets go to +382% and 16.0× (+1505%) —
 the backend choice is most of what makes this affordable.
 
 Every one of those figures is a ratio of two medians, which is exactly the shape
@@ -344,13 +366,15 @@ that produced a reversed verdict elsewhere on this page, so the direction is
 checked against the individual rounds rather than assumed from the summary. The
 rounds pair: `gradient_overhead` times all three variants on the *same* `xs`
 within each round, rotating the order, so round `r`'s live and bare timings are
-adjacent in time on identical inputs. Pairing them that way, **68 of the 70
+adjacent in time on identical inputs. Pairing them that way, **67 of the 70
 paired rounds** across both backends and all five targets put the wrapper above
-the bare gradient. The two exceptions are one `radon_partially_pooled` round
-under Enzyme at `0.92×`, against six others from `1.04×` to `1.13×`, and one
-`seeds` round under ForwardDiff at `0.40×`, against six others from `1.60×` to
-`4.93×` — single anomalous rounds on a contended host, not evidence the wrapper
-is ever free.
+the bare gradient. The three exceptions are one `eight_schools` round under
+Enzyme at `0.12×` — its *bare* timing spiked to 6088 ns against ~450 — against
+six others from `1.63×` to `1.95×`; one `seeds` round under Enzyme at `0.83×`,
+against six others from `1.17×` to `1.60×`; and one `radon_variable_intercept`
+round under ForwardDiff at `0.91×`, against six others from `1.22×` to `1.79×`
+— single anomalous rounds on a contended host, not evidence the wrapper is ever
+free.
 So the *sizes* above are medians and carry the usual round-to-round spread, but
 the *sign* does not depend on them.
 
@@ -369,10 +393,10 @@ Enzyme/`Const` to ForwardDiff — below 1.0 means Enzyme is faster:
 
 | target | `d` | Enzyme ÷ ForwardDiff | reading |
 |---|---|---|---|
-| `radon_partially_pooled` | 88 | **0.48–0.63×** | Enzyme 1.6–2.1× faster |
-| `radon_variable_intercept` | 89 | **0.43–0.93×** | Enzyme 1.1–2.3× faster |
-| `seeds` | 26 | **0.41–0.61×** | Enzyme 1.6–2.4× faster |
-| `eight_schools` | 10 | **0.34–0.68×** | Enzyme 1.5–3.0× faster |
+| `radon_partially_pooled` | 88 | **0.48–0.56×** | Enzyme 1.8–2.1× faster |
+| `radon_variable_intercept` | 89 | **0.43–0.66×** | Enzyme 1.5–2.3× faster |
+| `seeds` | 26 | **0.34–0.61×** | Enzyme 1.6–2.9× faster |
+| `eight_schools` | 10 | **0.23–0.68×** | Enzyme 1.5–4.4× faster |
 | `funnel` | 10 | **0.20–0.37×** | Enzyme 2.7–5.1× faster |
 
 **This table is not hand-copied — run `docs/benchmark/backend_bands.jl` and
@@ -395,7 +419,7 @@ calls, median). **Enzyme is faster in all 35 comparisons those four harnesses
 produce.** Until `b35a718` there was one exception, `radon_variable_intercept`
 in `annotation_sweep` at `c = 0`, 1.077×. It was a single 2000-call median from
 a sweep that timed each backend once, in a fixed order. The rotated
-re-measurement reads 0.612×, inside the 0.43–0.93× the other three harnesses
+re-measurement reads 0.612×, inside the 0.43–0.66× the other three harnesses
 give on that target. The two lowest band edges went with it: `seeds` 0.12× and
 `funnel` 0.13× were also fixed-order sweep cells. An earlier draft of this revision
 read "32 of 35, three reversals, all in the driver" — those three came from a
@@ -410,12 +434,12 @@ number measured through a spec you have not inspected.
 
 **What is still not established is the second half of the prediction — that the
 gap should widen with `d`.** It does not, visibly: the widest margins are on
-`funnel` at `d = 10` and `seeds` at `d = 26`, the narrowest on
-`radon_variable_intercept` at `d = 89`. But the spread *within* a single target
-across harnesses is as large as the spread *between* targets — `seeds` alone spans
-0.12 to 0.61, which covers nearly the entire between-target range on its own — so
-these five points cannot resolve a scaling law either way. The direction
-replicates; the slope does not.
+`funnel` and `eight_schools`, both at `d = 10`, and the two radon targets at
+`d = 88`–`89` have the highest lower edges. But the spread *within* a single
+target across harnesses is as large as the spread *between* targets —
+`eight_schools` alone spans 0.23 to 0.68, which covers nearly the entire
+between-target range (0.20–0.68) on its own — so these five points cannot
+resolve a scaling law either way. The direction replicates; the slope does not.
 
 ### Why the earlier numbers said the opposite: a defect in the spec table
 
@@ -492,24 +516,26 @@ Three other things were checked, and none of them changes the ratios either:
   *actually visited* — draws captured in the source frame from the
   `fixed_noncentered` arm itself — **changes no verdict: Enzyme is faster at
   both position sets on all five targets** (`randn` → typical:
-  `radon_partially_pooled` 0.61× → 0.51×; `radon_variable_intercept` 0.93× →
-  0.91×; `seeds` 0.47× → 0.56×; `eight_schools` 0.57× → 0.42×; `funnel` 0.25× →
-  0.20×). Recorded in `results/typical_positions.json`.
+  `radon_partially_pooled` 0.49× → 0.51×; `radon_variable_intercept` 0.61× →
+  0.66×; `seeds` 0.55× → 0.34×; `eight_schools` 0.23× → 0.56×; `funnel` 0.35× →
+  0.36×). Recorded in `results/typical_positions.json`.
 
   **No single target's shift is *stably* separable from repeat-to-repeat noise,
   and the file now carries what proves it.** Each median is over `ROUNDS` timing
   rounds and those rounds are persisted raw, so three independent statistics can be
-  computed by a reader rather than taken on trust: the per-round shift ranges
-  straddle zero on four targets out of five — the exception is `eight_schools`,
-  whose five rounds read −29.4% to −5.0% with `randn` and typical ranges disjoint
-  (last run no target separated, so separation itself flips run to run); the
-  ratio spread runs 15.5% to 856.4% of its own median; and median-to-median
-  across two independent runs of *identical code* moves as much as **71.1%**
-  (`funnel` 0.379 → 0.649), against a smallest-distance-from-1.0× of 7% for any
-  median in the run. A 71% mover cannot resolve a 12-point shift. An earlier
-  revision of this bullet read the funnel's swing in the *opposite direction*
-  (0.70× at `randn` vs 0.38× typical, where this run has 0.25× vs 0.20×) and
-  explained it with a story about a noisy
+  computed by a reader rather than taken on trust: the `randn` and typical round
+  ranges overlap on every target (the previous run separated `eight_schools`, so
+  separation itself flips run to run); the ratio spread runs 30.0% to 185.4% of
+  its own median; and median-to-median across two earlier runs of *identical
+  code* moved as much as **71.1%** (`funnel` 0.379 → 0.649). This run's largest
+  median shift, `eight_schools`' +146%, sits on the widest `randn` column of the
+  four posteriordb targets, whose five rounds span 0.18× to 1.07×. The two
+  columns are separate timing loops over different positions, so they are
+  compared by range, never round by round; an earlier revision of this bullet
+  divided round *i* of one by round *i* of the other, which pairs nothing. An
+  earlier revision still read the funnel's swing in the
+  *opposite direction* (0.70× at `randn` vs 0.38× typical, where this run has
+  0.35× vs 0.36×) and explained it with a story about a noisy
   `bare` column — a sign flip is what a noise column looks like when each cell is
   quoted once and there is nothing checked in to contradict it.
 - **DI preparation.** The hot path calls `value_and_gradient` with **no prep
@@ -605,7 +631,7 @@ The Enzyme numbers elsewhere in this document were measured with `Const`, and
 this table is the evidence that they describe the bare backend too, to within
 that noise.
 
-### The two methods used to disagree. They now reconcile to within a microsecond
+### The two methods used to disagree. They now reconcile to within a few microseconds
 
 The previous revision of this section recorded an unresolved contradiction: on
 the two radon targets the microbenchmark made Enzyme 1.2–1.5× **slower** per
@@ -623,23 +649,27 @@ sampler's own seconds-per-gradient against the microbenchmark's per-call gap:
 
 | target | arm | seeds | end-to-end Δ | microbenchmark Δ |
 |---|---|---|---|---|
-| `radon_partially_pooled` | fixed c = centered | 8 | 19.9 µs | 20.4 µs |
-| `radon_partially_pooled` | adaptive | 8 | 16.7 µs | 20.4 µs |
-| `radon_variable_intercept` | fixed c = centered | 8 | 23.0 µs | 31.2 µs |
-| `radon_variable_intercept` | adaptive | 8 | 15.4 µs | 31.2 µs |
-| `seeds` | fixed c = centered | 8 | 2.8 µs | 2.6 µs |
-| `eight_schools` | fixed c = centered | 8 | 1.2 µs | 1.9 µs |
-| `funnel` | fixed c = centered | 8 | 0.5 µs | 0.5 µs |
+| `radon_partially_pooled` | fixed c = centered | 8 | 16.6 µs | 23.5 µs |
+| `radon_partially_pooled` | adaptive | 8 | 27.0 µs | 23.5 µs |
+| `radon_variable_intercept` | fixed c = centered | 8 | 26.0 µs | 31.8 µs |
+| `radon_variable_intercept` | adaptive | 8 | 37.8 µs | 31.8 µs |
+| `seeds` | fixed c = centered | 8 | 3.3 µs | 4.6 µs |
+| `eight_schools` | fixed c = centered | 8 | 3.2 µs | 2.0 µs |
+| `funnel` | fixed c = centered | 8 | −0.3 µs | 0.5 µs |
 
 (ForwardDiff minus Enzyme, per gradient evaluation; median over seeds on the
 left, the `gradient_overhead` live-wrapper medians on the right.)
 
-Four of five targets agree to within a microsecond or better, which for
-`radon_partially_pooled` means a 20 µs microbenchmark difference showing up as a
-20 µs sampler difference. `radon_variable_intercept` is the loose one — the
-sampler realises 15–23 µs of a predicted 31 µs — and that gap is not explained
-here; it is the same target whose single-shot overhead probe was an outlier in
-earlier revisions, so the microbenchmark side is the more suspect of the two.
+The three small targets agree to within 1.3 µs. On the two radon targets the
+sampler's difference brackets the microbenchmark's rather than matching it: the
+`fixed c = centered` arms realise 16.6 of a predicted 23.5 µs and 26.0 of
+31.8 µs, the adaptive arms 27.0 and 37.8 — 71% to 119% of the prediction, every
+row within 7 µs of it. On the previous base `radon_partially_pooled` matched to
+within 4 µs and `radon_variable_intercept` was the loose one, so which row is
+loose moves between runs. That points at per-gradient clock noise on a
+contended host rather than a stable second cost, though nothing here isolates
+it. The sign agrees on every row except the funnel's, where both differences
+are under a microsecond.
 
 The mechanism the earlier revision guessed at is therefore confirmed by its own
 proposed test, and the two methods are no longer in conflict on any target.
@@ -669,7 +699,7 @@ the sampler may do with the partial-centering parameter `c`
 The tables below are the **Enzyme** run, the current default. Where a number is
 backend-sensitive it is the `ESS/sec` column and only that column; `ESS per 1k
 grad`, `grad evals`, `divergences` and `final source c` are identical in the
-ForwardDiff run except on the four arms noted below.
+ForwardDiff run except on the five arms noted below.
 
 `min ESS` is the minimum over coordinates — the number that governs how long you
 must run. Sub-figures are the min–max across the 8 seeds. `final source c` is
@@ -678,12 +708,14 @@ valid because every run here is single-chain `adaptive_warmup_mcmc`; the
 cooperative and clustered samplers `deepcopy` the problem per chain and would
 silently return the *initial* `c` instead.
 
-> **Where the two backend runs are not sampling-identical.** Four arms drift by
-> ≥2% in median gradient count between backends (ForwardDiff relative to
-> Enzyme) — `seeds`/fixed_noncentered −5.7%, `eight_schools`/fixed_noncentered
-> +5.0%, `radon_variable_intercept`/fixed_noncentered −2.9%,
-> `radon_partially_pooled`/fixed_noncentered +2.0% — and `eight_schools`/adaptive
-> differs on four of eight seeds (−0.7% median gradient count). Every other arm is identical on
+> **Where the two backend runs are not sampling-identical.** All four
+> posteriordb `fixed_noncentered` arms differ on every seed, and drift in median
+> gradient count between backends (ForwardDiff relative to Enzyme) by
+> `seeds` +6.3%, `radon_variable_intercept` −2.6%, `eight_schools` +2.3%,
+> `radon_partially_pooled` −1.9%; `eight_schools`/adaptive differs on six of
+> eight seeds (+3.3% median gradient count). The funnel's `fixed_noncentered`
+> arm differs on one seed, in the fifth significant figure of its ESS and in no
+> gradient count. Every other arm is identical on
 > every seed. `plain` and the hand-written model never touch the wrapper;
 > `fixed_centered` does run its AD, but an exact identity transform differentiates
 > to bit-identical gradients under both backends. The cause of the drift is the
@@ -691,15 +723,19 @@ silently return the *initial* `c` instead.
 > backends' gradients through a non-trivial transform differ at the 1e-13 level
 > and NUTS amplifies that into a different trajectory.
 >
-> **One verdict row depends on it, through its comparator.** Every adaptive
-> median in the verdict is within 0.01 between backends, but `seeds` is compared
-> against its `fixed_noncentered` row, which reads 15.83 under ForwardDiff
-> against Enzyme's 12.06 — so `seeds`' gap is −37% on one trajectory set and −52%
-> on the other; its sign does not move. The `fixed_noncentered` rows are never
+> **Three verdict rows depend on it, and none changes sign.** `eight_schools`
+> drifts on both sides: adaptive reads 45.64 under ForwardDiff against
+> Enzyme's 46.47, and its `fixed_noncentered` comparator 51.85 against 57.32,
+> so its gap is −19% on one trajectory set and −12% on the other. `seeds` is
+> compared against its `fixed_noncentered` row, 13.39 under ForwardDiff
+> against 14.42, so its win is 1.5× or 1.6×. And on `radon_partially_pooled`
+> the drifting `fixed_noncentered` arm reads 22.74 under ForwardDiff — above
+> the hand-written model's 19.09 — which would make it the best fixed option
+> and the margin 3.4× instead of 4.1×. The `fixed_noncentered` rows are never
 > used as a cross-backend wall-clock comparison.
 
 <!-- The TABLES below were generated by docs/benchmark/summarize.jl from
-     results/enzyme-d68d680/runs.json. The PROSE between them was not, and no
+     results/enzyme-b5c0b95/runs.json. The PROSE between them was not, and no
      generator can reproduce it: hand-written analysis, cautions, corrected
      target descriptions and integer formatting.
 
@@ -726,45 +762,48 @@ silently return the *initial* `c` instead.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 58.6 <sub>5.7–143.7</sub> | 830.3 <sub>116.1–2522.6</sub> | 3.01 | 18592 | 6.0 | — |
-| fixed c = centered | 63.8 <sub>4.8–87.2</sub> | 1001.8 <sub>102.0–1713.1</sub> | 2.91 | 20214 | 7.5 | 1.0 |
-| **adaptive** (starts centered) | 517.5 <sub>394.4–654.7</sub> | 8693.9 <sub>4898.6–11895.0</sub> | 48.29 | 10304 | 0.0 | 0.0 |
-| fixed c = noncentered | 462.3 <sub>341.2–662.9</sub> | 17120.9 <sub>512.4–26399.1</sub> | 55.14 | 8426 | 0.0 | 0.0 |
-| hand-written noncentered model | 536.9 <sub>301.3–620.9</sub> | 17162.1 <sub>4952.5–29790.3</sub> | 60.11 | 8607 | 0.0 | — |
+| plain (no wrapper) | 39.5 <sub>19.9–64.2</sub> | 254.4 <sub>55.7–1086.8</sub> | 1.60 | 28560 | 5.0 | — |
+| fixed c = centered | 57.7 <sub>21.0–93.5</sub> | 387.8 <sub>211.5–911.3</sub> | 1.93 | 27879 | 4.0 | 1.0 |
+| **adaptive** (starts centered) | 540.6 <sub>465.7–639.6</sub> | 6438.4 <sub>5081.3–8860.1</sub> | 46.47 | 11304 | 0.0 | 0.0 |
+| fixed c = noncentered | 504.1 <sub>432.2–717.1</sub> | 21055.1 <sub>3248.9–25425.9</sub> | 57.32 | 8423 | 0.0 | 0.0 |
+| hand-written noncentered model | 477.5 <sub>322.9–602.6</sub> | 12599.0 <sub>3807.0–23771.1</sub> | 42.60 | 9548 | 0.0 | — |
 
 Min ESS over the 10 constrained parameters all arms share:
 
 | arm | matched min ESS | per 1k grad |
 |---|---|---|
-| plain (no wrapper) | 58.6 | 3.15 |
-| fixed c = centered | 63.8 | 3.15 |
-| **adaptive** (starts centered) | 517.5 | 50.22 |
-| fixed c = noncentered | 462.3 | 54.86 |
-| hand-written noncentered model | 536.9 | 62.38 |
+| plain (no wrapper) | 39.5 | 1.38 |
+| fixed c = centered | 57.7 | 2.07 |
+| **adaptive** (starts centered) | 540.6 | 47.82 |
+| fixed c = noncentered | 504.1 | 59.85 |
+| hand-written noncentered model | 483.9 | 50.69 |
 
 Adaptive drives `c` to the noncentered endpoint: **59 of the 64 learned values
 (8 seeds × 8 coordinates) are exactly 0.0 and the other 5 are 0.1** — the known
-right answer for this model, found without being told (53 and 11 at `d68d680`).
-Finding the endpoint no longer means matching it, though: adaptive reads 48.29
-per 1k gradients against 55.14 for the noncentered endpoint reached by transform
-and 60.11 for posteriordb's hand-written model — 12% and 20% behind, and 20%
-behind on the matched parameters too (50.22 vs 62.38). It spends 10304 gradient
-evaluations against the endpoint's 8426 (more on 6 of 8 seeds) — plausibly the
-warm-up spent at `c = 1` before switching, though nothing here isolates that.
-Divergences go
-from a median of 6 on plain to 0.
+right answer for this model, found without being told (the same split as at
+`7b1757a`; 53 and 11 at `d68d680`). Finding the endpoint does not mean matching
+it, though: adaptive reads 46.47 per 1k gradients against 57.32 for the
+noncentered endpoint reached by transform — 19% behind, and 20% behind on the
+matched parameters too (47.82 vs 59.85). Against posteriordb's hand-written
+model it is level: 9% ahead on all parameters (46.47 vs 42.60), 6% behind on the
+matched ones (47.82 vs 50.69). The gap to the endpoint is in gradients, not in
+ESS — adaptive's median min ESS is the higher of the two (540.6 vs 504.1), but
+it spends 11304 gradient evaluations against the endpoint's 8423 (more on 6 of
+8 seeds) — plausibly the warm-up spent at `c = 1` before switching, though
+nothing here isolates that. Divergences go from a median of 5 on plain to 0.
 
-Two cautions on this target specifically. Its adaptive spread is wide
-(394.4–654.7 min ESS over 8 seeds), so the 12% gap to the noncentered endpoint
-is not resolvable at 8 seeds; the 20% gap to the hand-written model is larger
-than at `d68d680` (+2% to −13% then), and the per-gradient trajectories behind
-it are bit-reproducible. The ForwardDiff run reads 48.28 / 57.10 / 60.11 for the
-same three arms, so the ordering does not depend on the backend. The safe
-reading is **finds the right endpoint, trails the fixed parametrizations that
-start there by 10–20%**.
+Two cautions on this target specifically. Its min-ESS spreads overlap
+(465.7–639.6 adaptive, 432.2–717.1 at the endpoint), so only the gradient count
+separates the two arms. And it is the one target whose adaptive arm drifts
+between backends: the ForwardDiff run reads 45.64 / 51.85 / 42.60 for the same
+three arms, so the gap to the endpoint is 12% there, and the ordering does not
+depend on the backend. The safe reading is **finds the right endpoint, trails
+the fixed endpoint it converges to by 12–19%, level with the hand-written
+model**.
 
 This is also the target where the pre-fix run over-stated the method: on
-`05aed41` adaptive appeared to *beat* the hand-written model by 41%. It does not.
+`05aed41` adaptive appeared to *beat* the hand-written model by 41%. It is level
+with it.
 
 ### `radon_mn-radon_partially_pooled_centered`
 
@@ -772,28 +811,28 @@ This is also the target where the pre-fix run over-stated the method: on
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 226.1 <sub>175.8–288.7</sub> | 388.3 <sub>271.4–616.0</sub> | 15.16 | 16050 | 0.0 | — |
-| fixed c = centered | 257.5 <sub>140.6–335.1</sub> | 379.8 <sub>156.1–421.1</sub> | 17.58 | 16106 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 868.1 <sub>587.4–1388.8</sub> | 1253.1 <sub>588.4–1620.7</sub> | 82.53 | 11542 | 0.0 | 0.4 |
-| fixed c = noncentered | 256.0 <sub>171.0–315.6</sub> | 437.6 <sub>367.8–616.7</sub> | 17.52 | 16066 | 0.0 | 0.0 |
-| hand-written noncentered model | 297.5 <sub>164.4–473.6</sub> | 442.5 <sub>216.3–747.9</sub> | 20.33 | 15928 | 0.0 | — |
+| plain (no wrapper) | 193.5 <sub>146.0–307.5</sub> | 473.4 <sub>356.8–596.3</sub> | 16.11 | 13470 | 0.0 | — |
+| fixed c = centered | 216.2 <sub>125.9–311.0</sub> | 429.2 <sub>276.6–542.0</sub> | 16.46 | 15122 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 700.7 <sub>525.5–1148.6</sub> | 1117.3 <sub>657.2–1494.2</sub> | 77.44 | 8586 | 0.0 | 0.4 |
+| fixed c = noncentered | 340.2 <sub>221.3–473.3</sub> | 508.4 <sub>254.4–803.7</sub> | 18.05 | 16678 | 0.0 | 0.0 |
+| hand-written noncentered model | 294.3 <sub>173.8–421.5</sub> | 527.9 <sub>384.7–709.6</sub> | 19.09 | 16333 | 0.0 | — |
 
 Min ESS over the 88 constrained parameters all arms share:
 
 | arm | matched min ESS | per 1k grad |
 |---|---|---|
-| plain (no wrapper) | 226.1 | 14.08 |
-| fixed c = centered | 257.5 | 15.99 |
-| **adaptive** (starts centered) | 868.1 | 75.21 |
-| fixed c = noncentered | 256.0 | 15.94 |
-| hand-written noncentered model | 297.5 | 18.68 |
+| plain (no wrapper) | 193.5 | 14.37 |
+| fixed c = centered | 216.2 | 14.30 |
+| **adaptive** (starts centered) | 700.7 | 81.61 |
+| fixed c = noncentered | 340.2 | 20.40 |
+| hand-written noncentered model | 294.3 | 18.02 |
 
 **The headline case for the method.** No fixed parametrization helps: centered
-(17.58), noncentered (17.52) and posteriordb's hand-written noncentered model
-(20.33) are all in the same band. Adaptive gets 82.53 — **4.1× the best fixed
-option** — using 28% fewer gradient evaluations than the noncentered endpoint,
-and it is also the fastest arm in **wall-clock**, at 1253.1 ESS/sec against the
-plain sampler's 388.3. The `final source c` column reports 0.4, but that is
+(16.46), noncentered (18.05) and posteriordb's hand-written noncentered model
+(19.09) are all in the same band. Adaptive gets 77.44 — **4.1× the best fixed
+option** — using 49% fewer gradient evaluations than the noncentered endpoint,
+and it is also the fastest arm in **wall-clock**, at 1117.3 ESS/sec against the
+plain sampler's 473.4. The `final source c` column reports 0.4, but that is
 a **median over 85 counties, not a setting**: see below.
 
 #### What adaptation actually learns is a `c` *per coordinate*
@@ -806,22 +845,22 @@ coordinates, Enzyme run (the ForwardDiff run is identical except on two
 
 | target | n | median | quartiles | at `c = 0` | at `c = 1` |
 |---|---|---|---|---|---|
-| `radon_partially_pooled` | 680 | 0.40 | 0.30 – 0.60 | 1% | 1% |
-| `radon_variable_intercept` | 680 | 0.50 | 0.40 – 0.70 | 1% | 1% |
-| `seeds` | 168 | 1.00 | 0.93 – 1.00 | 1% | 75% |
+| `radon_partially_pooled` | 680 | 0.40 | 0.30 – 0.60 | 1% | 2% |
+| `radon_variable_intercept` | 680 | 0.50 | 0.40 – 0.60 | 1% | 1% |
+| `seeds` | 168 | 0.30 | 0.20 – 0.40 | 2% | 0% |
 | `eight_schools` | 64 | 0.00 | 0.00 – 0.00 | 92% | 0% |
 | `funnel` | 72 | 0.00 | 0.00 – 0.00 | 100% | 0% |
 
-On the radon models **98% of coordinates end strictly between the two
-endpoints**, spread across the whole interval rather than clustered at the
+On the radon models and on `seeds` **98% of coordinates end strictly between the
+two endpoints**, spread across the interval rather than clustered at the
 median. That is the thing no fixed parametrization can express: centered,
 noncentered and posteriordb's hand-written noncentered model each impose *one*
-`c` on all 85 counties, so none of them can represent any of these fits — which
-is the mechanism behind the 4.1× and 3.8× margins, and why those margins appear
-on exactly the two targets where the spread is widest. The `seeds` row is the
-exception this base introduced: at `d68d680` it read median 0.30, quartiles
-0.20–0.50, 0% at `c = 1`; now three quarters of its coordinates never move (see
-its section).
+`c` on all 85 counties (or 21 plates), so none of them can represent any of
+these fits — which is the mechanism behind the 4.1×, 3.3× and 1.5× margins, and
+why those margins appear on exactly the three targets whose fits are interior.
+The `seeds` row is back to its `d68d680` shape (median 0.30, quartiles 0.20–0.50,
+0% at `c = 1` then); at `7b1757a` three quarters of its coordinates never left
+`c = 1` (see its section).
 
 The two ends of the table are the controls. On the funnel, where the noncentered
 parametrization is *exactly* right, all 72 values are exactly 0.0 and adaptation
@@ -836,30 +875,30 @@ answer.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 274.6 <sub>243.0–498.9</sub> | 367.7 <sub>238.2–562.7</sub> | 19.14 | 14989 | 0.0 | — |
-| fixed c = centered | 283.0 <sub>209.0–366.4</sub> | 381.5 <sub>297.9–438.5</sub> | 21.00 | 14366 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 745.1 <sub>631.5–882.4</sub> | 983.0 <sub>799.8–1159.9</sub> | 79.19 | 9002 | 0.0 | 0.5 |
-| fixed c = noncentered | 331.4 <sub>249.3–456.3</sub> | 318.2 <sub>257.0–453.9</sub> | 20.40 | 16434 | 0.0 | 0.0 |
-| hand-written noncentered model | 284.1 <sub>175.0–465.2</sub> | 314.3 <sub>188.4–480.6</sub> | 17.62 | 16916 | 0.0 | — |
+| plain (no wrapper) | 275.7 <sub>212.1–402.2</sub> | 430.3 <sub>195.6–492.2</sub> | 22.72 | 15258 | 0.0 | — |
+| fixed c = centered | 278.1 <sub>180.8–402.2</sub> | 413.2 <sub>291.1–516.5</sub> | 21.10 | 14912 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 734.6 <sub>666.6–1160.2</sub> | 918.3 <sub>716.8–1038.7</sub> | 75.25 | 10378 | 0.0 | 0.5 |
+| fixed c = noncentered | 360.4 <sub>253.8–482.2</sub> | 419.8 <sub>297.6–556.6</sub> | 21.72 | 16298 | 0.0 | 0.0 |
+| hand-written noncentered model | 322.4 <sub>200.7–424.6</sub> | 296.6 <sub>204.2–439.5</sub> | 18.34 | 16749 | 0.0 | — |
 
 Min ESS over the 89 constrained parameters all arms share:
 
 | arm | matched min ESS | per 1k grad |
 |---|---|---|
-| plain (no wrapper) | 274.6 | 18.32 |
-| fixed c = centered | 283.0 | 19.70 |
-| **adaptive** (starts centered) | 745.1 | 82.77 |
-| fixed c = noncentered | 331.4 | 20.17 |
-| hand-written noncentered model | 284.1 | 16.79 |
+| plain (no wrapper) | 275.7 | 18.07 |
+| fixed c = centered | 278.1 | 18.65 |
+| **adaptive** (starts centered) | 734.6 | 70.79 |
+| fixed c = noncentered | 360.4 | 22.11 |
+| hand-written noncentered model | 322.4 | 19.25 |
 
 Same shape as its sibling, and the same per-coordinate story — 98% of the 85
-county centerings land strictly inside `(0, 1)` with quartiles 0.4–0.7, so the
-reported `c = 0.5` is again a median over coordinates. Worth 3.8× the best fixed
-alternative on gradients (here the centered endpoint, 21.00) and 2.7× the plain
-sampler in wall-clock. The `fixed_noncentered` row is one of the arms that
-drifted between backends (−2.9% gradients); the ForwardDiff run puts it at 24.90,
-which would make it the best fixed option and the margin 3.2× instead. The
-adaptive and plain rows are identical across backends.
+county centerings land strictly inside `(0, 1)` with quartiles 0.4–0.6, so the
+reported `c = 0.5` is again a median over coordinates. Worth 3.3× the best fixed
+alternative on gradients (here the plain centered model, 22.72) and 2.1× the
+plain sampler in wall-clock. The `fixed_noncentered` row is one of the arms that
+drifted between backends (−2.6% gradients); the ForwardDiff run puts it at
+14.66, below plain, so the best fixed option and the 3.3× margin are the same
+under both backends. The adaptive and plain rows are identical across backends.
 
 ### `seeds_data-seeds_centered_model`
 
@@ -867,39 +906,45 @@ adaptive and plain rows are identical across backends.
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 80.1 <sub>41.2–176.7</sub> | 848.2 <sub>358.2–1947.7</sub> | 5.58 | 15973 | 0.0 | — |
-| fixed c = centered | 80.1 <sub>41.2–176.7</sub> | 704.0 <sub>330.8–1332.4</sub> | 5.58 | 15973 | 0.0 | 1.0 |
-| **adaptive** (starts centered) | 119.2 <sub>41.2–215.9</sub> | 806.1 <sub>112.1–1493.3</sub> | 7.61 | 15973 | 0.0 | 1.0 |
-| fixed c = noncentered | 214.3 <sub>94.1–338.1</sub> | 1837.9 <sub>915.2–3103.2</sub> | 12.06 | 17537 | 0.0 | 0.0 |
+| plain (no wrapper) | 94.4 <sub>5.6–141.7</sub> | 349.6 <sub>45.0–1675.8</sub> | 6.50 | 14755 | 0.0 | — |
+| fixed c = centered | 94.4 <sub>5.6–141.7</sub> | 512.5 <sub>36.3–1395.5</sub> | 6.50 | 14755 | 0.0 | 1.0 |
+| **adaptive** (starts centered) | 309.7 <sub>212.5–385.2</sub> | 1700.9 <sub>1301.4–2193.0</sub> | 21.75 | 13270 | 0.0 | 0.3 |
+| fixed c = noncentered | 235.7 <sub>199.4–322.2</sub> | 2208.6 <sub>703.0–2921.6</sub> | 14.42 | 16820 | 0.0 | 0.0 |
 
 Min ESS over the 47 constrained parameters all arms share:
 
 | arm | matched min ESS | per 1k grad |
 |---|---|---|
-| plain (no wrapper) | 80.1 | 5.01 |
-| fixed c = centered | 80.1 | 5.01 |
-| **adaptive** (starts centered) | 119.2 | 7.46 |
-| fixed c = noncentered | 214.3 | 12.22 |
+| plain (no wrapper) | 94.4 | 6.40 |
+| fixed c = centered | 94.4 | 6.40 |
+| **adaptive** (starts centered) | 309.7 | 23.34 |
+| fixed c = noncentered | 235.7 | 14.01 |
 
-**The target this base changed.** At `d68d680` adaptive beat the noncentered
-endpoint here (16.92 vs 11.28 per 1k gradients) and every seed settled at an
-interior per-plate optimum, quartiles 0.2–0.5. On this base **six of the eight
-seeds never leave the start**: every one of their 21 learned `c` values is
-exactly 1.0, and the arm's median gradient count is `plain`'s, 15973. Only seeds
-7 and 8 adapt, to the same interior band as before. The arm still edges plain
-(7.61 vs 5.58 per 1k gradients) but trails the noncentered endpoint by 37%
-(12.06; 52% against ForwardDiff's 15.83 for that drifting arm), and the
-`final source c` column now reads 1.0.
+**The target the restored factor gave back.** At `7b1757a` six of the eight
+seeds never left the start: every one of their 21 learned `c` values was exactly
+1.0, the arm's median gradient count equalled `plain`'s, and adaptive trailed
+the noncentered endpoint by 37% (7.61 vs 12.06 per 1k gradients). On this base
+**every seed adapts** — per-seed medians 0.2–0.4, quartiles 0.2–0.4 over all
+168 learned values, none left at 1.0. Adaptive beats the noncentered endpoint
+1.5× (21.75 vs 14.42; 1.6× against ForwardDiff's 13.39 for that drifting arm)
+and the plain sampler 3.3×, on fewer gradients than either on every seed (median
+13270 against 16820 and 14755). The matched parameters agree (23.34 vs 14.01).
+That is the `d68d680` picture (16.92 vs 11.28) again, at a higher level.
 
-These columns are counts, bit-reproducible on a given `src/`, so this is a
-behaviour change, not seed noise. Its cause is the frame dependence described
+These columns are counts, bit-reproducible on a given `src/`, so the reversal is
+a behaviour change, not seed noise. Its cause is the frame dependence described
 under the Verdict's ‡: whether a window restarts, and so whether the centering
-is refit at all, depends on which square root of the metric is active. The
-numbers above describe the sampler as it ships today.
+is refit at all, depends on which square root of the metric is active, and
+`7b1d694` restored the one in which `seeds` restarts. The numbers above describe
+the sampler as it ships today.
 
-Wall-clock follows: adaptive is break-even with plain under Enzyme (806.1 vs
-848.2 ESS/sec, 0.95×) and 2.0× *slower* under ForwardDiff (374.2 vs 736.8), where
-the non-adapting seeds pay the wrapper's +148% gradient overhead for nothing.
+Wall-clock follows against plain: 4.9× under Enzyme (1700.9 vs 349.6 ESS/sec)
+and 3.5× under ForwardDiff (1127.7 vs 319.2), on the noisiest denominator on the
+page (`fixed c = centered`, on bit-identical trajectories, reads 512.5). Against
+the noncentered endpoint the per-gradient win does not show in seconds — 1700.9
+vs 2208.6 under Enzyme, 1127.7 vs 1170.1 under ForwardDiff. Both arms carry the
+same wrapper, and the endpoint's own seeds span 703.0–2921.6 ESS/sec, so a 1.5×
+per-gradient margin is inside this column's clock spread.
 
 ### `funnel` (synthetic)
 
@@ -912,25 +957,28 @@ never as a headline.*
 
 | arm | min ESS | ESS/sec | ESS per 1k grad | grad evals | divergences | final source `c` |
 |---|---|---|---|---|---|---|
-| plain (no wrapper) | 28.8 <sub>7.6–42.9</sub> | 583.3 <sub>242.6–1646.3</sub> | 0.88 | 26630 | 1.5 | — |
-| fixed c = centered | 28.8 <sub>7.6–42.9</sub> | 453.2 <sub>195.2–1095.0</sub> | 0.88 | 26630 | 1.5 | 1.0 |
-| **adaptive** (starts centered) | 886.2 <sub>780.5–929.1</sub> | 12965.8 <sub>5216.2–17776.7</sub> | 111.96 | 7930 | 0.0 | 0.0 |
-| fixed c = noncentered | 893.0 <sub>805.1–964.8</sub> | 33175.9 <sub>20413.3–39947.1</sub> | 111.24 | 7900 | 0.0 | 0.0 |
+| plain (no wrapper) | 22.6 <sub>6.3–37.9</sub> | 377.6 <sub>101.1–1461.8</sub> | 0.70 | 20425 | 1.5 | — |
+| fixed c = centered | 22.6 <sub>6.3–37.9</sub> | 210.6 <sub>100.6–784.9</sub> | 0.70 | 20425 | 1.5 | 1.0 |
+| **adaptive** (starts centered) | 817.7 <sub>733.5–924.0</sub> | 14557.6 <sub>6889.5–16906.6</sub> | 96.43 | 8002 | 0.0 | 0.0 |
+| fixed c = noncentered | 833.6 <sub>721.1–912.1</sub> | 41670.1 <sub>33286.2–61454.0</sub> | 108.57 | 7710 | 0.0 | 0.0 |
 
-Adaptive now **ties** the exact answer on gradient efficiency: 111.96 vs 111.24
-per 1000 gradients. Noncentered is *exactly* right here, so there is nothing to
-discover and the best adaptation can do is reach it; at `d68d680` it fell 13%
-short (93.17 vs 107.05). Against the parametrization a user would actually have
-written it is **127× better** (111.96 vs 0.88), so this row bounds the loss, not
-the gain.
+Adaptive trails the exact answer by **11%** on gradient efficiency: 96.43 vs
+108.57 per 1000 gradients. Noncentered is *exactly* right here, so there is
+nothing to discover and the best adaptation can do is reach it. It did, to
+within 1%, at `7b1757a` (111.96 vs 111.24), and fell 13% short at `d68d680`
+(93.17 vs 107.05) — so this row moves between bases too, and is back near its
+`d68d680` value; nothing here bisects which `src/` change moved it. Against the
+parametrization a user
+would actually have written it is **137× better** (96.43 vs 0.70), so this row
+bounds the loss, not the gain.
 
-The search is nearly free in gradients — 7930 against the endpoint's 7900, 0.4%
-more — and min ESS is level too, 886.2 vs 893.0 on overlapping seed ranges.
-Adaptation converges to the right fixed answer (all 72 learned values exactly
-0.0). What it does not recover is wall-clock against the endpoint (12965.8 vs
-33175.9 ESS/sec): on a 46 ns gradient the wrapper's per-call AD cost is 6.8× the
-gradient itself (§ *Cost on the gradient hot path*), and that is paid on every
-call whether or not `c` is still moving.
+The search costs gradients — 8002 against the endpoint's 7710, 3.8% more and
+more on 6 of 8 seeds — and min ESS is level, 817.7 vs 833.6 on overlapping seed
+ranges. Adaptation converges to the right fixed answer (all 72 learned values
+exactly 0.0). What it does not recover is wall-clock against the endpoint
+(14557.6 vs 41670.1 ESS/sec): on a 46 ns gradient the wrapper's per-call AD cost
+is 6.5× the gradient itself (§ *Cost on the gradient hot path*), and that is
+paid on every call whether or not `c` is still moving.
 
 ## Effect of the halo-recording regression
 
@@ -988,29 +1036,31 @@ calls at random positions**, same base, both backends:
 
 | target | bare | ForwardDiff live | ×bare | bare | Enzyme/Const live | ×bare |
 |---|---|---|---|---|---|---|
-| `radon_variable_intercept` | 49538 | 82518 | ×1.67 | 43460 | 46718 | **×1.07** |
-| `radon_partially_pooled` | 27235 | 45780 | ×1.68 | 26652 | 28735 | **×1.08** |
-| `seeds` | 3464 | 8598 | ×2.48 | 2853 | 3567 | **×1.25** |
-| `eight_schools` | 476 | 1634 | ×3.43 | 479 | 811 | **×1.70** |
-| `funnel` | 47 | 877 | ×18.49 | 46 | 313 | **×6.78** |
+| `radon_variable_intercept` | 54719 | 81712 | ×1.49 | 45919 | 49955 | **×1.09** |
+| `radon_partially_pooled` | 27410 | 50987 | ×1.86 | 25780 | 27508 | **×1.07** |
+| `seeds` | 2908 | 8177 | ×2.81 | 2904 | 3560 | **×1.23** |
+| `eight_schools` | 569 | 2746 | ×4.82 | 456 | 782 | **×1.72** |
+| `funnel` | 51 | 820 | ×16.05 | 46 | 297 | **×6.52** |
 
-(`bare` is given for each run separately; the two agree to 1–3% on three targets
-and differ by 14% on `radon_variable_intercept` and 21% on `seeds` — the same
+(`bare` is given for each run separately; the two agree to within 6% on `seeds`
+and `radon_partially_pooled` and differ by 12–25% on the other three — the same
 call, the same inputs, two runs minutes apart on a contended host. The multiples
 are taken within one run, round by round, so they carry less of that.)
 
 **The multiple tracks how expensive the underlying density is, not `d`.** The
-two most expensive densities carry the wrapper for +7% and +8% under Enzyme; the
-funnel, whose bare gradient is 46 ns of analytic arithmetic, pays 6.8×. This is what a
+two most expensive densities carry the wrapper for +9% and +7% under Enzyme; the
+funnel, whose bare gradient is 46 ns of analytic arithmetic, pays 6.5×. This is what a
 roughly fixed per-call AD cost looks like divided by a varying denominator, and
 it is why the funnel is reported as a bound rather than as a headline.
 
 **The no-op and live configurations cost the same, in both backend runs.** An
 identity reparametrization — source `c` equal to target `c`, so the transform
-provably does nothing — pays the same multiple as a live one: within ±6% on all
-ten rows, with no consistent sign (four of the ten rows put the *no-op* higher,
-which the live transform doing strictly more work cannot produce, so ±6% is the
-probe's floor rather than a measured effect).
+provably does nothing — pays the same multiple as a live one: within ±5% on nine
+of the ten rows, with no consistent sign (four of the ten rows put the *no-op*
+higher, which the live transform doing strictly more work cannot produce, so ±5%
+is the probe's floor rather than a measured effect). The tenth, `seeds` under
+ForwardDiff, reads ×2.37 no-op against ×2.81 live, on per-round multiples that
+span 0.78–4.16 (no-op) and 1.08–4.14 (live) — inside its own spread.
 
 The cost is therefore the AD machinery itself, not the reparametrization. That
 holds regardless of backend. Of the obvious levers on it, two are now spent —
@@ -1031,12 +1081,13 @@ closed form.
 > not the absolute value — which also fell because of the de-boxing. On the
 > boxed base the probe said 214698 ns where the sweeps said ~375000; on `d68d680`
 > it said 77252 where `replicate_backends.jl` said 76072–83671. The outlier was
-> the harness, and the sweeps were right. **On this base the absolute check no
-> longer holds, and the reason is the host, not the harness:** the driver says
-> 82518 ns, while `replicate_backends.jl` — re-measured the same day during
-> heavier contention — has medians of 171194 and 223959 at its two centerings.
-> Its Enzyme÷ForwardDiff ratio on this target, 0.43–0.44, is still in line with
-> the driver's 0.57 and the other harnesses' 0.43–0.93. Read absolute
+> the harness, and the sweeps were right. **On the last two bases the absolute
+> check no longer holds, and the reason is the host, not the harness:** the
+> driver says 81712 ns on this base (82518 on `7b1757a`), while
+> `replicate_backends.jl` — last measured at `fbe9030`, during heavier
+> contention — has medians of 171194 and 223959 at its two centerings. Its
+> Enzyme÷ForwardDiff ratio on this target, 0.43–0.44, is still in line with the
+> driver's 0.61 and the four harnesses' 0.43–0.66 band. Read absolute
 > nanoseconds on this page as same-run comparisons only.
 
 ## Harness correctness
@@ -1056,16 +1107,16 @@ which would each have silently corrupted the fixed-parametrization arms:
   inverted this, so from that commit the compensation is what corrupts the arm.
   It is gone, and the flag now selects only whether the source centering may
   move. `frame_check.jl` pins the new behaviour: a centered funnel sampled
-  through a noncentered source returns coordinate 1 at mean −0.006, sd 2.934
+  through a noncentered source returns coordinate 1 at mean 0.047, sd 3.212
   against the known `Normal(0, 3)` marginal, and applying `reparametrize!` on top
-  inflates the leg sds to 66–301. **Numbers in `results/before`, `results/after`,
+  inflates the leg sds to 143–531 (`results/frame_check.json`). **Numbers in `results/before`, `results/after`,
   `results/forwarddiff-b5c7dee` and `results/enzyme-b5c7dee` were all measured on
   bases predating `b109210`, where the compensation was correct.** Anything
   measured after it must not carry one.
 - **The no-op arm really is a no-op.** `plain` and `fixed c = centered` are
   mathematically the same sampler, and agree to the last gradient evaluation on
-  every seed for `seeds_data` (80.1 min ESS, 15973 grads, both arms) and the
-  funnel (28.8, 26630) — while differing on eight_schools and both radon models.
+  every seed for `seeds_data` (94.4 min ESS, 14755 grads, both arms) and the
+  funnel (22.6, 20425) — while differing on eight_schools and both radon models.
   The predictor is whether the spec's **location** is a constant: it is for
   exactly those two targets and a closure over the position vector for the rest,
   and reconstructing `loc + exp(s)·((x − loc)/exp(s))` is the identity only up to
@@ -1084,8 +1135,8 @@ which would each have silently corrupted the fixed-parametrization arms:
   |---|---|
   | `plain`, `hand-written noncentered model` | 40/40, 24/24 — no wrapper, so no AD path to differ on |
   | `fixed c = centered` | **40/40** |
-  | `adaptive` | 36/40 — 8/8 on both radon models, `seeds` and the funnel, **4/8 on `eight_schools`** |
-  | `fixed c = noncentered` | 8/40 — all eight on the funnel, 0/32 on the posteriordb targets |
+  | `adaptive` | 33/40 — 8/8 on both radon models, `seeds` and the funnel, **1/8 on `eight_schools`** |
+  | `fixed c = noncentered` | 7/40 — seven of eight on the funnel, 0/32 on the posteriordb targets |
 
   The clean split is `fixed c = centered` (source `c` equal to target `c`, so
   the transform is an identity) reproducing exactly on every run, against
@@ -1093,9 +1144,9 @@ which would each have silently corrupted the fixed-parametrization arms:
   wrapped arms that differ are differing through the very AD path this document
   measures, which is why an individual ESS/sec figure is reproducible only
   against a fixed backend — and why the verdict is stated in ESS per gradient,
-  where 36 of 40 adaptive runs are bit-identical between backends and the rest
-  are named above. (`seeds`' 8/8 is partly the regression the verdict flags: six
-  of its adaptive runs never leave the identity transform.)
+  where 33 of 40 adaptive runs are bit-identical between backends and the rest
+  are named above. (`seeds`' 8/8 is now a live transform on every seed; at
+  `7b1757a` six of its adaptive runs never left the identity transform.)
 
 ## What this does not measure
 
@@ -1120,7 +1171,7 @@ which would each have silently corrupted the fixed-parametrization arms:
   defect, and `capture_boxing.jl` is the guard that keeps it at five.
 - **How either backend scales in `d`.** The dimension/boxing confound is gone —
   and the answer is still that this document cannot resolve it. Enzyme's
-  advantage is 1.1–5.1× across all five targets with no visible trend in `d`,
+  advantage is 1.5–5.1× across all five targets with no visible trend in `d`,
   and the spread *within* one target across harnesses is as wide as the spread
   *between* targets, which is the reason: the noise floor is larger than any
   slope five points at three distinct dimensions could show. See § *Which AD
@@ -1167,7 +1218,7 @@ which would each have silently corrupted the fixed-parametrization arms:
      and the reason this table is now generated rather than hand-copied.
      `docs/benchmark/backend_bands.jl` is that generator; across the four live
      harnesses it currently gives `funnel` 0.20–0.37× and `eight_schools`
-     0.34–0.68×.
+     0.23–0.68×.
 
      That is a band over per-harness medians. From the single harness the
      docstring named, over 14 rounds each (7 per centering), the per-round
@@ -1216,7 +1267,7 @@ which would each have silently corrupted the fixed-parametrization arms:
   3. **Its provenance line pointed at a superseded measurement, and one of its
      SHAs was unreachable.** It read "Measured at `b5c7dee` … results checked in
      at `068cdeb`", both of which predate the de-boxing; this revision measures
-     `7b1757a`. Separately, it names the de-boxing commit as
+     `b5c0b95`. Separately, it names the de-boxing commit as
      `f639bb1` — the orphaned **pre-rebase** copy of the same change that landed
      as **`e9bcfd0`**. The distinction is the useful part: `f639bb1` is
      reachable from **no ref**, so it resolves in the worktree that did the

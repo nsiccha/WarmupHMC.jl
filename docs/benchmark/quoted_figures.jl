@@ -121,6 +121,7 @@ include(joinpath(@__DIR__, "artifact_currency.jl"))
 
 import JSON
 import Statistics: median
+import Printf
 
 const RESULTS_MD = joinpath(REPO, "docs", "benchmark", "RESULTS.md")
 const RESULTS_DIR = joinpath(REPO, RESULTS)
@@ -351,6 +352,41 @@ absence("limitation: cooperative_warmup_mcmc unmeasured",
         "`cooperative_warmup_mcmc` was not measured", "cooperative_warmup_mcmc")
 
 # ------------------------------------------------------------------------- run
+# ------------------------------------------------------------- annotation_sweep
+#
+# § *`function_annotation`*. The table was hand-copied from the PREVIOUS sweep and
+# outlived it: the re-measurement with a rotated backend order (`b35a718`)
+# changed every range in it, and the one Enzyme-slower comparison the backend
+# section was built around (`radon_variable_intercept`, `c = 0`, 1.077×) went
+# with it. So each table row is checked WHOLE, recomputed from the artifact, as
+# is every summary range the prose quotes.
+let sw = live_json("docs/benchmark/results/annotation_sweep.json")
+    rows = sw["rows"]
+    f2(x) = Printf.@sprintf("%.2f", x)
+    rng(v) = begin
+        lo, hi = extrema(v)
+        f2(lo) == f2(hi) ? f2(lo) * "×" : f2(lo) * "–" * f2(hi) * "×"
+    end
+    sgn(x) = (x < 0 ? "−" : "+") * f2(abs(x))
+    for t in ("funnel", "eight_schools", "seeds", "radon_partially_pooled", "radon_variable_intercept")
+        rs = [r for r in rows if short_target(r["target"]) == t]
+        cb = [r["ns_const"] / r["ns_bare"] for r in rs]
+        dc = [r["ns_duplicated"] / r["ns_const"] for r in rs]
+        pen = [(r["ns_duplicated"] - r["ns_const"]) / 1000 for r in rs]
+        lo, hi = extrema(pen)
+        literal("annotation_sweep table row $t",
+                "| `$t` | $(rs[1]["dim"]) | $(rng(cb)) | $(rng(dc)) | $(sgn(lo)) to $(sgn(hi)) µs |")
+    end
+    cb = [r["ns_const"] / r["ns_bare"] for r in rows]
+    literal("annotation_sweep Const ÷ bare, all rows",
+            chop(rng(cb)) * "×, median " * f2(median(cb)) * "×")
+    literal("annotation_sweep Duplicated ÷ Const, all rows",
+            "`Duplicated` against `Const`:** " * rng([r["ns_duplicated"] / r["ns_const"] for r in rows]))
+    vi0 = only(r for r in rows if short_target(r["target"]) == "radon_variable_intercept" && r["c_source"] == 0)
+    literal("annotation_sweep re-measured radon_variable_intercept c=0 Enzyme ÷ ForwardDiff",
+            "re-measurement reads " * string(round(vi0["ns_const"] / vi0["ns_forwarddiff"], digits = 3)) * "×")
+end
+
 function main_figures()
     isfile(RESULTS_MD) || (println("FAILED: $RESULTS_MD is missing."); return 1)
     text = read(RESULTS_MD, String)

@@ -1,0 +1,3 @@
+Gradient-only probe: line coverage of docs/benchmark/prep_cost.jl at 96c171c executes src/Reparametrizations.jl alone; src/WarmupHMC.jl is added for the imports and include order that file compiles under.
+src/Reparametrizations.jl
+src/WarmupHMC.jl

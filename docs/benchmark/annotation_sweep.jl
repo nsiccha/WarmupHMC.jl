@@ -16,6 +16,20 @@ using Printf, Enzyme
 const CONST_BE = AutoEnzyme(; function_annotation = Enzyme.Const)
 const DUP_BE   = AutoEnzyme(; function_annotation = Enzyme.Duplicated)
 const FD_BE    = AutoForwardDiff()
+# Since `1a395ce` a bare `AutoEnzyme()` works at both AD sites, and the docs tell
+# users to drop `function_annotation` / `mode`. These two rows are what back that
+# advice with a measurement instead of prose.
+const BARE_BE  = AutoEnzyme()
+const RTA_BE   = AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
+                             function_annotation = Enzyme.Const)
+const BACKENDS = [("fd", FD_BE), ("const", CONST_BE), ("dup", DUP_BE),
+                  ("bare", BARE_BE), ("rta", RTA_BE)]
+
+# Same knobs as `capture_boxing.jl`. Every round times every backend on the SAME
+# positions, and the order is rotated per round so no backend keeps the warm or
+# cold slot; the reported figure is the per-backend median over rounds.
+const NCALLS = parse(Int, get(ENV, "NCALLS", "2000"))
+const ROUNDS = parse(Int, get(ENV, "ROUNDS", "5"))
 
 function ns_per_grad(p, xs)
     LogDensityProblems.logdensity_and_gradient(p, xs[1])   # warm
@@ -26,21 +40,27 @@ end
 
 rows = []
 function bench_spec(label, problem, spec, dim, csrc)
-    xs = [randn(Xoshiro(100 + i), dim) for i in 1:2000]
+    xs = [randn(Xoshiro(100 + i), dim) for i in 1:NCALLS]
     sp = with_source(spec, csrc)
-    gs = Dict{String,Any}()
-    for (nm, be) in (("fd", FD_BE), ("const", CONST_BE), ("dup", DUP_BE))
-        p = ReparametrizedProblem(sp, problem, be)
-        _, g = LogDensityProblems.logdensity_and_gradient(p, xs[1])
-        gs[nm] = (ns_per_grad(p, xs), g)
+    names = first.(BACKENDS)
+    probs = Dict(nm => ReparametrizedProblem(sp, problem, be) for (nm, be) in BACKENDS)
+    grads = Dict(nm => LogDensityProblems.logdensity_and_gradient(probs[nm], xs[1])[2] for nm in names)
+    times = Dict(nm => Float64[] for nm in [names; "inner"])
+    for round in 1:ROUNDS
+        for nm in circshift(names, round - 1)
+            push!(times[nm], ns_per_grad(probs[nm], xs))
+        end
+        # The wrapped model's own gradient, so the wrapper's cost has a unit.
+        push!(times["inner"], ns_per_grad(problem, xs))
     end
-    # correctness: all three must agree
-    dmax = max(maximum(abs.(gs["const"][2] .- gs["fd"][2])),
-               maximum(abs.(gs["dup"][2]   .- gs["fd"][2])))
-    push!(rows, (label, dim, csrc, gs["fd"][1], gs["const"][1], gs["dup"][1], dmax))
-    @printf("%-46s d=%-4d c=%.1f  fd=%8.1f const=%8.1f dup=%9.1f  dup/const=%5.1fx  const/fd=%.2fx  max|Δg|=%.2e\n",
-            label, dim, csrc, gs["fd"][1], gs["const"][1], gs["dup"][1],
-            gs["dup"][1]/gs["const"][1], gs["const"][1]/gs["fd"][1], dmax)
+    ns = Dict(nm => median(v) for (nm, v) in times)
+    # correctness: every Enzyme arm must agree with ForwardDiff
+    dmax = maximum(maximum(abs.(grads[nm] .- grads["fd"])) for nm in names if nm != "fd")
+    push!(rows, (label, dim, csrc, ns["fd"], ns["const"], ns["dup"], dmax,
+                 ns["bare"], ns["rta"], ns["inner"]))
+    @printf("%-46s d=%-4d c=%.1f  fd=%8.1f const=%8.1f dup=%9.1f bare=%8.1f rta=%8.1f inner=%8.1f  const/bare=%.2fx  max|Δg|=%.2e\n",
+            label, dim, csrc, ns["fd"], ns["const"], ns["dup"], ns["bare"], ns["rta"], ns["inner"],
+            ns["const"]/ns["bare"], dmax)
 end
 
 for t in TARGETS
@@ -65,11 +85,13 @@ import JSON
 const PROV = git_provenance()
 open(joinpath(OUT_DIR, "annotation_sweep.json"), "w") do io
     JSON.print(io, Dict(
-        "note" => "Enzyme function_annotation Const vs Duplicated, per target and source centering",
+        "note" => "Enzyme function_annotation Const vs Duplicated vs bare AutoEnzyme() (and Const + runtime activity), per target and source centering; per-backend median over rounds with rotated order",
+        "rounds" => ROUNDS, "ncalls" => NCALLS,
         "julia" => string(VERSION), "blas_threads" => BLAS.get_num_threads(),
         PROV...,
         "rows" => [Dict("target"=>r[1], "dim"=>r[2], "c_source"=>r[3],
                         "ns_forwarddiff"=>r[4], "ns_const"=>r[5], "ns_duplicated"=>r[6],
-                        "max_grad_diff"=>r[7]) for r in rows]), 2)
+                        "max_grad_diff"=>r[7], "ns_bare"=>r[8],
+                        "ns_runtime_activity"=>r[9], "ns_inner"=>r[10]) for r in rows]), 2)
 end
 println("\nwrote results/annotation_sweep.json")

@@ -121,20 +121,13 @@ you fill in.
 
 !!! note "If you are carrying `function_annotation` or `mode`, drop them"
     Both are still **accepted and still correct** — no script breaks. They are
-    simply no longer free.
+    simply no longer needed.
 
-    `function_annotation` is a property of the **whole backend**, so the
-    annotation those two sites needed was charged to every gradient in the run.
-    Measured on a 11-dimensional funnel, with every arm agreeing with central
-    differences to `1.98e-11`:
-
-    | backend | µs/gradient | vs. the wrapped model's own gradient |
-    |---|---|---|
-    | `AutoEnzyme()` | **0.385** | **4.61×** |
-    | `AutoEnzyme(; function_annotation=Enzyme.Const)` | 0.627 | 7.49× |
-    | ` ⋯ + mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` | 0.656 | 7.85× |
-
-    So `Const` is now a ~1.7× pessimization rather than a requirement.
+    `function_annotation` is a property of the **whole backend**, so whatever it
+    costs is charged to every gradient in the run, not only to the two sites
+    that once needed it. That cost, bare against `Const` against `Const` plus
+    runtime activity, is read off the checked-in sweep in
+    [Dropping the annotation, measured](@ref) below rather than typed here.
 
     `mode=Enzyme.set_runtime_activity(Enzyme.Reverse)` has its own history worth
     knowing, because it is the shape to expect if a future change adds a third
@@ -315,6 +308,42 @@ Markdown.parse(
      "is dominates how large that target is." :
      "Dimension may therefore carry part of the variation, though this sweep is " *
      "too small to separate it from target identity."))
+```
+
+### Dropping the annotation, measured
+
+The same sweep also times a bare `AutoEnzyme()` and `Const` with
+`mode=Enzyme.set_runtime_activity(Enzyme.Reverse)`, and the wrapped model's own
+gradient as the unit. Above `1×` in the two middle columns means the extra
+spelling costs time:
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+rows = load_results("annotation_sweep.json")["rows"]
+ratio(a, b) = num(Float64(a) / Float64(b); sig = 3) * "×"
+md_table(
+    ["target", "`d`", "`c`", "bare ns/grad", "`Const` ÷ bare",
+     "runtime activity ÷ bare", "bare ÷ model gradient"],
+    [["`" * r["target"] * "`", r["dim"], num(r["c_source"]), num(r["ns_bare"]),
+      ratio(r["ns_const"], r["ns_bare"]), ratio(r["ns_runtime_activity"], r["ns_bare"]),
+      ratio(r["ns_bare"], r["ns_inner"])] for r in rows])
+```
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+import Markdown, Statistics
+rows = load_results("annotation_sweep.json")["rows"]
+r = [Float64(x["ns_const"]) / Float64(x["ns_bare"]) for x in rows]
+slower = count(>(1), r)
+Markdown.parse(
+    (slower == length(r) ?
+     "`Const` is slower than a bare `AutoEnzyme()` on **all $(length(r)) rows**" :
+     "**`Const` is slower than a bare `AutoEnzyme()` on only $(slower) of " *
+     "$(length(r)) rows**") *
+    ", median `$(num(Statistics.median(r); sig = 3))×`, range " *
+    "`$(num(minimum(r); sig = 3))×`–`$(num(maximum(r); sig = 3))×`. " *
+    "Every Enzyme arm's gradient agrees with ForwardDiff's to within " *
+    "`$(num(maximum(Float64(x["max_grad_diff"]) for x in rows); sig = 2))`.")
 ```
 
 ### Where those gradients were taken

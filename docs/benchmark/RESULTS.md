@@ -73,6 +73,19 @@ is correct by construction. The statement worth having is not "this document's
 base is fine" but "nothing checked in has quietly gone stale", and the script is
 the only thing that can say it.
 
+"Stale" means "some file under `src/` changed" unless the artifact says
+otherwise. A gradient-only probe can say so with a `<stem>.SCOPE` file beside
+its JSON. Line 1 is the reason; each further line is one `src/*.jl` file the
+measurement exercises: the files line coverage of that harness executes, plus
+`src/WarmupHMC.jl` for the imports and include order they compile under. The
+script then compares only those files. It prints the scope
+and the out-of-scope files it ignored on that artifact's line, and it reports a
+scope naming a path outside `src/` or absent at the tip as red. Anything that
+runs the sampler carries no scope and keeps the whole-`src/` rule. Without
+this, a commit that only relabels progress text re-stales every gradient
+timing, and re-measuring those on a contended host flips their direction from
+run to run.
+
 Reading `git diff` was the old check and it is the weak one here: those two
 commits produce a 138-line diff under `src/` — the 76 changed lines above plus
 context — in files whose docstrings are long enough to bury a one-line code
@@ -318,17 +331,17 @@ sweeps of the transform per gradient where reverse mode costs one. The
 prediction that follows is that reverse mode should win, and win *hardest* at
 large `d`.
 
-**Measured on this base, the direction holds on every target, in all but one
+**Measured on this base, the direction holds on every target, in every
 comparison.** Per wrapped `logdensity_and_gradient` call, ratio of
 Enzyme/`Const` to ForwardDiff — below 1.0 means Enzyme is faster:
 
 | target | `d` | Enzyme ÷ ForwardDiff | reading |
 |---|---|---|---|
-| `radon_partially_pooled` | 88 | **0.46–0.63×** | Enzyme 1.6–2.2× faster |
-| `radon_variable_intercept` | 89 | **0.43–1.08×** | Enzyme 0.9–2.3× faster |
-| `seeds` | 26 | **0.12–0.61×** | Enzyme 1.6–8.2× faster |
-| `eight_schools` | 10 | **0.34–0.59×** | Enzyme 1.7–3.0× faster |
-| `funnel` | 10 | **0.13–0.37×** | Enzyme 2.7–8.0× faster |
+| `radon_partially_pooled` | 88 | **0.48–0.63×** | Enzyme 1.6–2.1× faster |
+| `radon_variable_intercept` | 89 | **0.43–0.93×** | Enzyme 1.1–2.3× faster |
+| `seeds` | 26 | **0.41–0.61×** | Enzyme 1.6–2.4× faster |
+| `eight_schools` | 10 | **0.34–0.68×** | Enzyme 1.5–3.0× faster |
+| `funnel` | 10 | **0.20–0.37×** | Enzyme 2.7–5.1× faster |
 
 **This table is not hand-copied — run `docs/benchmark/backend_bands.jl` and
 paste what it prints.** It reads the same four harnesses, takes the live set
@@ -344,13 +357,15 @@ Every range spans **four independent harnesses**, each writing its own JSON:
 `replicate_backends.jl` (7 rounds × 1000 calls, backend order rotated per round,
 both a centering endpoint and an interior `c = 0.5`), `typical_positions.jl`
 (5 rounds, at `randn` *and* at positions the sampler actually visited),
-`annotation_sweep.jl` (2000 calls, both endpoints), and the driver's own
-`gradient_overhead` block (7 rounds × 2000 calls, median). **Enzyme is faster in
-34 of the 35 comparisons those four harnesses produce.** The exception is
-`radon_variable_intercept` in `annotation_sweep` at `c = 0`, 1.077× — one
-2000-call median on a contended host, in the harness whose repeat run flipped
-direction in 8 of 10 cells (§ *`function_annotation`*), against 0.43–0.93× from
-the other three harnesses on the same target. An earlier draft of this revision
+`annotation_sweep.jl` (5 rounds × 2000 calls, backend order rotated per round,
+both endpoints), and the driver's own `gradient_overhead` block (7 rounds × 2000
+calls, median). **Enzyme is faster in all 35 comparisons those four harnesses
+produce.** Until `b35a718` there was one exception, `radon_variable_intercept`
+in `annotation_sweep` at `c = 0`, 1.077×. It was a single 2000-call median from
+a sweep that timed each backend once, in a fixed order. The rotated
+re-measurement reads 0.612×, inside the 0.43–0.93× the other three harnesses
+give on that target. The two lowest band edges went with it: `seeds` 0.12× and
+`funnel` 0.13× were also fixed-order sweep cells. An earlier draft of this revision
 read "32 of 35, three reversals, all in the driver" — those three came from a
 `forwarddiff-be6fb23/` directory that held an Enzyme run (see the top of this
 page); with the genuine ForwardDiff run the driver reverses nothing.
@@ -506,33 +521,40 @@ Three other things were checked, and none of them changes the ratios either:
   nominally part of. The raw rounds are checked in, which is what lets a reader
   tell that case from a timer artefact.
 
-### `function_annotation` is required, and how much it costs is target-dependent
+### `function_annotation` is no longer required, and what it costs is now noise
 
 A bare `AutoEnzyme()` **used to fail outright** on this objective with
 `EnzymeMutabilityException` — the objective is a closure capturing the
 reparametrizer and the frozen `g_y`. `1a395ce` ("make a bare `AutoEnzyme()` work
-at both AD sites") removed that failure, so the live question is only what the
-wrong annotation costs. Enzyme's own error text suggests `Duplicated`; `Const`
-is the correct annotation here, since the closure is not something we
-differentiate with respect to.
+at both AD sites") removed that failure. Two cost questions remain:
+- what an annotation costs against the bare backend;
+- what the wrong one costs against `Const`. The wrong one is `Duplicated`,
+  which Enzyme's own error text suggests.
 
-The cost of getting that wrong **has collapsed to noise around unity** — the
-old "never free / fixed per-call cost" model does not reproduce on this tree.
-Both centerings, `annotation_sweep.jl`:
+`annotation_sweep.jl`, both centerings, 5 rounds × 2000 calls with the backend
+order rotated per round:
 
-| target | `d` | `Duplicated` ÷ `Const` | absolute penalty |
-|---|---|---|---|
-| `funnel` | 10 | 1.2–6.2× | ~0–2 µs |
-| `eight_schools` | 10 | 1.2–2.7× | ~0–2 µs |
-| `seeds` | 26 | 1.4–1.7× | ~3–7 µs |
-| `radon_partially_pooled` | 88 | 1.1–1.3× | ~7–16 µs |
-| `radon_variable_intercept` | 89 | 0.7–1.0× | −74 to −14 µs (`Duplicated` faster) |
+| target | `d` | `Const` ÷ bare | `Duplicated` ÷ `Const` | `Duplicated` − `Const` |
+|---|---|---|---|---|
+| `funnel` | 10 | 1.01–1.48× | 1.02–1.06× | +0.01 to +0.02 µs |
+| `eight_schools` | 10 | 0.86–1.40× | 0.83–0.92× | −0.19 to −0.07 µs |
+| `seeds` | 26 | 1.03× | 1.00–1.31× | −0.01 to +1.17 µs |
+| `radon_partially_pooled` | 88 | 0.98–1.03× | 1.00× | −0.02 to +0.10 µs |
+| `radon_variable_intercept` | 89 | 0.97–1.00× | 1.01–1.03× | +0.60 to +1.28 µs |
 
-`radon_variable_intercept` reads `Duplicated` *faster* than `Const`, and a repeat
-run of the identical script flips the direction of 8 of the 10 cells — the gap
-the old table measured (1.7–27.4×, "never free") is gone, whether by Enzyme
-improvements or the reparametrizer rewrites since is not separated here. Both
-gradients are equally correct (they agree to ≤ 6.8e-13, unchanged).
+**`Const` against bare:** 0.86–1.48×, median 1.02×. The two cells above
+1.4× are `funnel` and `eight_schools` at `c = 0.5`; at `c = 0` the same targets
+read 1.01× and 0.86×. So the "~1.7× pessimization" that
+`docs/src/reparametrization.md` used to quote from one funnel measurement is
+above the top of this range, not its typical value. That page now generates its
+figure from this artifact.
+
+**`Duplicated` against `Const`:** 0.83–1.31×. The 1.7–27.4× gap of earlier
+revisions ("never free") is gone. A repeat run of the old fixed-order sweep
+flipped the direction of 8 of its 10 cells, which is why the sweep now rotates
+the order and takes medians over rounds. Whether Enzyme improvements or the
+reparametrizer rewrites closed the gap is not separated here. Every arm's
+gradient agrees with ForwardDiff's to ≤ 6.8e-13.
 
 **The previous revision of this table said `Duplicated` was free on the three
 larger targets (0.96–1.06×), and it flagged the reason to distrust that: those
@@ -541,12 +563,15 @@ That caveat was right. Unboxed, the same three targets show a 1.7–5.0× penalt
 It is a useful calibration on how much a confounded measurement can hide: not a
 few percent, but the entire effect.
 
-So the statement that now survives, in two parts. *Some* annotation was
-mandatory when a bare `AutoEnzyme()` did not run at all; since `1a395ce` that
-failure is gone. And of the two candidates, `Const` is the semantically correct
-one — but the performance gap that used to separate it from `Duplicated`
-(1.7–27.4×, every target) has collapsed to run-to-run noise around unity.
-Pick `Const` for correctness, not speed.
+So the statement that now survives, in two parts:
+- *Some* annotation was mandatory while a bare `AutoEnzyme()` did not run at
+  all. Since `1a395ce` none is: the bare backend is what
+  `docs/src/reparametrization.md` recommends.
+- On this sweep, the three spellings cost the same to within run-to-run noise.
+
+The Enzyme numbers elsewhere in this document were measured with `Const`, and
+this table is the evidence that they describe the bare backend too, to within
+that noise.
 
 ### The two methods used to disagree. They now reconcile to within a microsecond
 
@@ -1063,11 +1088,11 @@ which would each have silently corrupted the fixed-parametrization arms:
   defect, and `capture_boxing.jl` is the guard that keeps it at five.
 - **How either backend scales in `d`.** The dimension/boxing confound is gone —
   and the answer is still that this document cannot resolve it. Enzyme's
-  advantage is 0.9–8.2× across all five targets with no visible trend in `d`,
+  advantage is 1.1–5.1× across all five targets with no visible trend in `d`,
   and the spread *within* one target across harnesses is as wide as the spread
   *between* targets, which is the reason: the noise floor is larger than any
   slope five points at three distinct dimensions could show. See § *Which AD
-  backend*. The direction replicates 34/35; the slope is unmeasured, in either
+  backend*. The direction replicates 35/35; the slope is unmeasured, in either
   direction.
 - **One sampler.** Single-chain `adaptive_warmup_mcmc` only.
   `clustered_warmup_mcmc` has no reparametrization hooks at all and
@@ -1109,8 +1134,8 @@ which would each have silently corrupted the fixed-parametrization arms:
      same coupling that broke `docs/src/reparametrization.md` in the same window,
      and the reason this table is now generated rather than hand-copied.
      `docs/benchmark/backend_bands.jl` is that generator; across the four live
-     harnesses it currently gives `funnel` 0.13–0.37× and `eight_schools`
-     0.34–0.59×.
+     harnesses it currently gives `funnel` 0.20–0.37× and `eight_schools`
+     0.34–0.68×.
 
      That is a band over per-harness medians. From the single harness the
      docstring named, over 14 rounds each (7 per centering), the per-round
@@ -1141,9 +1166,10 @@ which would each have silently corrupted the fixed-parametrization arms:
      within-target spread across harnesses is as wide as the between-target
      spread, so the noise floor exceeds any slope five points can show. Its
      standing conclusion — "reverse mode wins on every clean measurement to
-     date" — survives with one exception: 34 of the 35 comparisons favor Enzyme,
-     and the one reversal is a single `annotation_sweep` median
-     (`radon_variable_intercept`, `c = 0`, 1.077×; § *Which AD backend*).
+     date" — survives: all 35 comparisons favor Enzyme. The one earlier
+     reversal was a fixed-order `annotation_sweep` median
+     (`radon_variable_intercept`, `c = 0`, 1.077×). It did not survive the
+     rotated re-measurement (§ *Which AD backend*).
 
      **The reading these numbers most invite is the one they falsify.** Taking
      one figure per target, they no longer even suggest a trend with

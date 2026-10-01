@@ -297,8 +297,8 @@ advance_window!(chain::CooperativeChain) = begin
         chain.lpdf, chain.nonlinear_recorder, halo_position, halo_gradient,
         chain.position_and_gradient,
     ))
-    chain.active_transformation = argmin(
-        map(L->update_loss!(L, halo_position, halo_gradient; chain.kwargs...), scale_options)
+    chain.active_transformation = _select_transformation!(
+        scale_options, chain.active_transformation, halo_position, halo_gradient; chain.kwargs...
     )
     chain.kinetic_energy = energy_options[chain.active_transformation]
     reset!(recording_lpdf)

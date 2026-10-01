@@ -179,18 +179,30 @@ cv_mean(x1, x2) = begin
     m22 = mean(abs2, x2)
     (m1 - m12/m22*m2)/(1-m2^2/m22)
 end
-update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i 
+# A diagonal scale entry the kinetic energy can use: DynamicHMC divides by it on
+# every momentum draw (`rand_p` → `ldiv!`), so a zero is a `SingularException`, a
+# value below `floatmin` overflows the momentum, and a non-finite one poisons
+# every position the trajectory visits.
+_usable_scale(s) = isfinite(s) && s >= floatmin(s)
+
+# Per coordinate, the window's position spread `s1` and gradient spread `s2`
+# estimate the scale `sqrt(s1/s2)` and the loss `s1*s2`: for a Gaussian
+# coordinate with standard deviation σ, s1 ≈ σ and s2 ≈ 1/σ, so the estimate is σ
+# and the loss is 1 when the frame fits. Degenerate evidence — a coordinate whose
+# recorded positions never moved (s1 = 0), non-finite spreads, an estimate that
+# under- or overflows — yields no usable scale: the coordinate keeps its previous
+# one and the frame scores `Inf`, so it can never look BETTER fitted than a frame
+# with real evidence (s1 = 0 used to score 0, the best loss possible, and won).
+update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i
     pi, gi = view(p, i, :), view(g, i, :)
     s1, s2 = std(pi), std(gi)
-    if s2 == 0
-        # @warn "Assuming Laplace" i s1 s2 mean(gi)
-        t[i,i] = sqrt(2.) / abs(mean(gi))
-        return Inf
-    end
     # s1 = std(pi; mean=cv_mean(pi, gi))
     # @info (i, cor(pi, gi), mean(pi)=>cv_mean(pi, gi), std(pi)=>s1)
-    t[i,i] = sqrt(s1 / s2)
-    (s1 * s2)
+    # s2 == 0: constant gradient, assume Laplace.
+    scale, loss = s2 == 0 ? (sqrt(2.) / abs(mean(gi)), Inf) : (sqrt(s1 / s2), s1 * s2)
+    _usable_scale(scale) || return Inf
+    t[i,i] = scale
+    loss
 end
 update_loss!(t::MatrixFactorization, p, g; kwargs...) = update_loss!(t.m2, t.m1 \ p, t.m1' * g; kwargs...)
 update_loss!(t::ScaleThenReflect, p, g; kwargs...) = begin

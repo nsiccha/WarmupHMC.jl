@@ -97,7 +97,9 @@
 #   * `before/runs.json` and `after/runs.json`: the benchmark driver run once
 #     at each revision with the same settings. Each must record its
 #     `warmuphmc_sha` (matching the directory name, on a ref) and
-#     `src_dirty: false`.
+#     `src_dirty: false`, and neither may record a failed run: two revisions
+#     failing identically (a stale dependency, say) are equal text and prove
+#     nothing about output.
 #   * Every line of the two files must be identical, except the host-timing
 #     fields and the provenance header. Those are named explicitly in
 #     `EQUIV_VOLATILE`, so a new field differs by default rather than being
@@ -387,6 +389,11 @@ function verify_equivalence(name)
             return "`$side/runs.json` does not record `src_dirty: false`"
         kept = [l for l in readlines(joinpath(REPO, rel)) if !occursin(EQUIV_VOLATILE, l)]
         any(l -> occursin("\"arm\"", l), kept) || return "`$side/runs.json` holds no runs"
+        # Two sides failing the same way are textually equal and prove nothing
+        # about output: an environment fault (e.g. a stale dependency) can fail
+        # every run identically on both revisions.
+        nfail = count(l -> occursin(r"^\s*\"ok\"\s*:\s*false", l), kept)
+        nfail == 0 || return "`$side/runs.json` records $nfail failed run(s); failures are not evidence of equal output"
         push!(shas, sha); push!(texts, kept)
     end
     a, b = texts

@@ -107,48 +107,35 @@ LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVect
 end
 ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diagonal{T,V}}
 
+# Top left singular vector of `g` (d × n): the direction `tsvd(g)[1][:, 1]`
+# returns. Power iteration on `g * g'`, applied as two products, never forms a
+# d × d matrix: O(d n) per iteration (linear-in-d rule, decision `1o12joq`).
+function _top_left_singular_vector(g; maxiter=1000, tol=1e-12)
+    v = normalize!(ones(size(g, 1)))
+    w, u = similar(v), zeros(eltype(v), size(g, 2))
+    for _ in 1:maxiter
+        mul!(u, g', v)
+        mul!(w, g, u)
+        nw = norm(w)
+        nw > 0 || return v
+        w ./= nw
+        converged = 1 - abs(dot(w, v)) < tol
+        v, w = w, v
+        converged && break
+    end
+    v
+end
+
+# The fallback used to be `eigen(Symmetric(cov(g')))`: a dense d × d covariance
+# and eigendecomposition (O(d²) memory, O(d³) time), and the top eigenvector of
+# the CENTERED covariance, a different vector from the uncentered singular
+# vector `tsvd` returns (todo `0hsdtfg`). The power iteration computes the same
+# quantity as `tsvd`, linearly.
 grad_cov_ev(p, g) = try
     tsvd(g; initvec=ones(size(g, 1)))[1][:, 1]
 catch e
-    @error "tsvd(...) failed, falling back to eigen(cov(...))" size(g) exception=(e, catch_backtrace())
-    eigen(Symmetric(cov(g')), size(g,1):size(g,1)).vectors[:, 1]
-    # rethrow()
-end
-exhaustive_ev(p, g) = begin 
-    P = Symmetric(cov(p'))##+1e-8I
-    G = Symmetric(cov(g'))#+1e-8I
-    eP = eigen(P)
-    eG = eigen(G)
-    eGPG = eigen(Symmetric(cholesky(G).L * P * cholesky(G).L'))
-    ePGP = eigen(Symmetric(cholesky(P).L * G * cholesky(P).L'))
-    # ePG = eigen(P,G)
-    # eGP = eigen(G,P)
-    eAC2 = eigen(Symmetric(P*G+G*P))
-    eC = eigen(Symmetric(P/G+G\P))
-    eAC = eigen(Symmetric(P\G+G/P))
-    # vs = map(normalize!, (
-    #     eP.vectors[:, end],
-    #     eG.vectors[:, end],
-    #     eAC2.vectors[:, end],
-    #     eP.vectors[:, 1],
-    #     eG.vectors[:, 1],
-    #     eAC2.vectors[:, 1],
-    #     # ePG.vectors[:, 1],
-    #     # ePG.vectors[:, end],
-    #     # eGP.vectors[:, 1],
-    #     # eGP.vectors[:, end],
-    #     eC.vectors[:, end],
-    #     eC.vectors[:, 1],
-    #     eAC.vectors[:, end],
-    #     eAC.vectors[:, 1],
-    # ))
-    eigens = (eP, eG, eGPG, ePGP, eAC2, eC, eAC)
-    vs = map(normalize, eachcol(mapreduce(e->e.vectors, hcat, eigens)))
-    loss(v) = abs2(.5*log(v' * P * v * v' * G * v))
-    # losses = map(loss, vs)
-    # display(eAC2.values')
-    display(reshape(round.(map(loss, vs); sigdigits=2), (:, length(eigens))))
-    argmin(loss, vs)
+    @error "tsvd(...) failed, falling back to power iteration" size(g) exception=(e, catch_backtrace())
+    _top_left_singular_vector(g)
 end
 update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), kwargs...) = begin 
     (;idxs, reflections, s1, s2, transformation_losses) = t

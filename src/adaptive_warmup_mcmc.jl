@@ -177,6 +177,16 @@ initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = begin
             "got $(typeof(squared_scale))"
         ))
     end
+    # A zero or non-finite diagonal variance becomes a singular metric that only
+    # fails at the first momentum draw, as a bare `SingularException`. (A dense
+    # matrix that is not positive definite already fails in its Cholesky.)
+    if squared_scale isa Diagonal
+        bad = findfirst(v -> !(isfinite(v) && v > 0), squared_scale.diag)
+        isnothing(bad) || throw(ArgumentError(
+            "init.squared_scale must hold finite, positive variances; " *
+            "entry $bad is $(squared_scale.diag[bad])"
+        ))
+    end
 
     merge(init, (;position, squared_scale))
 end
@@ -401,6 +411,17 @@ function _linear_restart_condition(scales)
     all(x -> isfinite(x) && x > 0, scales) || return Inf
     lo, hi = extrema(scales)
     hi / lo
+end
+
+# Update every linear transformation candidate from the window's evidence and
+# return the one to activate: the smallest loss. Only a finite loss is evidence —
+# `update_loss!` scores `Inf` where the window could not measure a frame's fit —
+# so when no candidate has one the active transformation is kept. `argmin` alone
+# resolves that all-`Inf` tie to the first key, `:diagonal`: a frame switch on no
+# evidence at all.
+function _select_transformation!(scale_options, active, positions, gradients; kwargs...)
+    losses = map(L -> update_loss!(L, positions, gradients; kwargs...), scale_options)
+    any(isfinite, losses) ? argmin(losses) : active
 end
 
 function _apply_linear_metric_fallback!(scale_options, old_diagonal, correction;
@@ -676,8 +697,9 @@ run_outer_iteration!(state::AWMState) = begin
         recording_lpdf.halo_gradient, state.position_and_gradient,
     ))
     # Update the new linear transformation to be the one with the minimal estimated transformation loss.
-    state.active_transformation = argmin(
-        map(L->update_loss!(L, (recording_lpdf.halo_position), (recording_lpdf.halo_gradient); state.kwargs...), state.scale_options)
+    state.active_transformation = _select_transformation!(
+        state.scale_options, old_active,
+        recording_lpdf.halo_position, recording_lpdf.halo_gradient; state.kwargs...
     )
     if uses_running_restart
         nonlinear_changed = reparam_sources(lpdf) != old_sources

@@ -20,8 +20,9 @@
 # arrangement StanBlocks uses for its `:bridgestan` items.
 #
 # `Treebars` is unregistered and WarmupHMC needs it, so CI dev's it by path from
-# a `--branch dev` clone — `Treebars.round2`, which `src/progress.jl` adds a
-# method to at load time, does not exist on `origin/main`.
+# a `--branch main` clone, Treebars' integration branch, which carries `round2`
+# (extended at load time by `src/progress.jl`) and `interrupt_requested`;
+# `dev` diverged and `perf/step5-typed-slots` is frozen.
 #
 # Neither `DynamicHMC` nor `Pathfinder` is listed: the suite reaches DynamicHMC
 # only through `WarmupHMC.DynamicHMC` (a re-export, so it needs no direct entry),

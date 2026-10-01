@@ -297,8 +297,8 @@ advance_window!(chain::CooperativeChain) = begin
         chain.lpdf, chain.nonlinear_recorder, halo_position, halo_gradient,
         chain.position_and_gradient,
     ))
-    chain.active_transformation = argmin(
-        map(L->update_loss!(L, halo_position, halo_gradient; chain.kwargs...), scale_options)
+    chain.active_transformation = _select_transformation!(
+        scale_options, chain.active_transformation, halo_position, halo_gradient; chain.kwargs...
     )
     chain.kinetic_energy = energy_options[chain.active_transformation]
     reset!(recording_lpdf)
@@ -413,6 +413,7 @@ mutable struct CooperativeState{RS,L,CFG}
     n_started::Int                  # chains created (== length(chains) once installs settle)
     n_starting::Int                 # reserved-but-not-yet-installed starts
     stopped::Bool
+    const progress::Any             # the caller's progress node: checked for interrupt only
 end
 
 _alive(state::CooperativeState) =
@@ -461,6 +462,7 @@ end
 
 _should_stop(state::CooperativeState) = begin
     state.stopped && return true
+    _interrupted(state.progress) && return true
     _total_evals(state) >= state.eval_budget && return true
     _elapsed(state) >= state.time_budget && return true
     # Only pay for the accurate pooled ESS once the cheap upper-bound gate clears.
@@ -660,12 +662,14 @@ write_run_summary(dir::AbstractString, state::CooperativeState, result) = _write
 """
     run_stop_reason(state) -> Symbol
 
-Which bound actually ended the run: `:eval_budget`, `:time_budget`,
+Which bound actually ended the run: `:interrupted` (`Treebars.request_interrupt!`
+on the `progress` node passed in, or an ancestor), `:eval_budget`, `:time_budget`,
 `:target_ess`, or `:exhausted` (every chain reached `n_draws` or was abandoned).
 Checked in the same order as `_should_stop` so the reported reason matches the
 one that fired.
 """
 run_stop_reason(state::CooperativeState) =
+    _interrupted(state.progress) ? :interrupted :
     _total_evals(state) >= state.eval_budget ? :eval_budget :
     _elapsed(state) >= state.time_budget ? :time_budget :
     (isfinite(state.target_ess) && _pooled_ess(state) >= state.target_ess) ? :target_ess :
@@ -998,7 +1002,9 @@ shared), advanced one window at a time via [`advance_window!`](@ref).
 * `rngs` — a vector of RNGs; its length bounds the number of distinct chains.
 * `n_cores` — how many chains run at once.
 * Stops when the pooled ESS reaches `target_ess`, the total gradient-evaluation
-  budget `n_evaluations_budget` is spent, or `time_budget` seconds elapse. **At
+  budget `n_evaluations_budget` is spent, or `time_budget` seconds elapse — or
+  when `Treebars.request_interrupt!` is called on the `progress` node passed in
+  (or an ancestor; `run_stop_reason` then reports `:interrupted`). **At
   least one bound must be finite.** `target_ess` is measured as the accurate
   pooled `MCMCDiagnosticTools.ess` over stacked draws, but only over chains that
   are momentarily IDLE at the checkpoint (a chain being advanced has its draw
@@ -1083,7 +1089,7 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
         rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
         Float64(target_ess), n_evaluations_budget, Float64(time_budget),
         time_ns(), prior_elapsed, ReentrantLock(), checkpoint_dir,
-        chains, Base.IdSet{CooperativeChain}(), n_started, 0, false,
+        chains, Base.IdSet{CooperativeChain}(), n_started, 0, false, progress,
     )
     # The manifest is write-once: a resumed run keeps the original's identity
     # and criteria, it does not rewrite them with this call's.

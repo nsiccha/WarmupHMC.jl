@@ -177,6 +177,16 @@ initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = begin
             "got $(typeof(squared_scale))"
         ))
     end
+    # A zero or non-finite diagonal variance becomes a singular metric that only
+    # fails at the first momentum draw, as a bare `SingularException`. (A dense
+    # matrix that is not positive definite already fails in its Cholesky.)
+    if squared_scale isa Diagonal
+        bad = findfirst(v -> !(isfinite(v) && v > 0), squared_scale.diag)
+        isnothing(bad) || throw(ArgumentError(
+            "init.squared_scale must hold finite, positive variances; " *
+            "entry $bad is $(squared_scale.diag[bad])"
+        ))
+    end
 
     merge(init, (;position, squared_scale))
 end
@@ -401,6 +411,17 @@ function _linear_restart_condition(scales)
     all(x -> isfinite(x) && x > 0, scales) || return Inf
     lo, hi = extrema(scales)
     hi / lo
+end
+
+# Update every linear transformation candidate from the window's evidence and
+# return the one to activate: the smallest loss. Only a finite loss is evidence —
+# `update_loss!` scores `Inf` where the window could not measure a frame's fit —
+# so when no candidate has one the active transformation is kept. `argmin` alone
+# resolves that all-`Inf` tie to the first key, `:diagonal`: a frame switch on no
+# evidence at all.
+function _select_transformation!(scale_options, active, positions, gradients; kwargs...)
+    losses = map(L -> update_loss!(L, positions, gradients; kwargs...), scale_options)
+    any(isfinite, losses) ? argmin(losses) : active
 end
 
 function _apply_linear_metric_fallback!(scale_options, old_diagonal, correction;
@@ -676,8 +697,9 @@ run_outer_iteration!(state::AWMState) = begin
         recording_lpdf.halo_gradient, state.position_and_gradient,
     ))
     # Update the new linear transformation to be the one with the minimal estimated transformation loss.
-    state.active_transformation = argmin(
-        map(L->update_loss!(L, (recording_lpdf.halo_position), (recording_lpdf.halo_gradient); state.kwargs...), state.scale_options)
+    state.active_transformation = _select_transformation!(
+        state.scale_options, old_active,
+        recording_lpdf.halo_position, recording_lpdf.halo_gradient; state.kwargs...
     )
     if uses_running_restart
         nonlinear_changed = reparam_sources(lpdf) != old_sources
@@ -991,6 +1013,20 @@ end
 # default (`nothing`) is never called, so the default path is byte-identical.
 _fire_callback(::Nothing, state::AWMState, stage::Symbol) = false
 _fire_callback(callback, state::AWMState, stage::Symbol) = callback(state, stage) === true
+
+# Opt-in early stop through Treebars: `request_interrupt!` on a progress node
+# stops every sampler reporting into that node or below it, at its next stop
+# point, exactly as a `callback` returning `true` would — partial results kept,
+# no error, the node finalized normally. Scope is Treebars' subtree rule: a
+# request on one chain's node stops that chain, on the caller's node all of
+# them. `progress=nothing` is never interrupted.
+_interrupted(progress) = Treebars.interrupt_requested(progress)
+
+# The callback is fired FIRST at every boundary: it is observational, and a
+# checkpoint a caller relies on must not be skipped because a stop was also
+# requested through the progress tree.
+_stop_requested(callback, state::AWMState, stage::Symbol) =
+    _fire_callback(callback, state, stage) || _interrupted(state.progress)
 
 # The pair vector `sources` implies for `ir`'s structure: every
 # `Reparametrization` keeps the `target` and the accessor closures it was built
@@ -1460,7 +1496,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   running transformed marginal correction to that diagonal metric. Other
   families continue to use their ordinary halo fit.
 * `progress=nothing`, `description="MCMC"`, `monitor_ess` — progress and
-  diagnostic reporting via Treebars.
+  diagnostic reporting via Treebars. `Treebars.request_interrupt!` on the node
+  passed here (or on one chain's node, or an ancestor) stops the affected
+  chains at their next checkpoint boundary exactly as a `callback` returning
+  `true` would: partial draws kept, no error.
 * `parallel=true` (multi-chain only) — run chains on `Threads.@threads`.
 * `callback=nothing` — observational checkpoint callback (see below).
 * `checkpoint_dir=nothing` — opt-in on-disk checkpointing (see below).
@@ -1581,7 +1620,7 @@ adaptive_warmup_mcmc(
                 kwargs..., pathfinder_kw...
             )
             _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
-            s, _fire_callback(callback, s, :init)
+            s, _stop_requested(callback, s, :init)
         else
             restore_state(
                 resumed, lpdf, progress;
@@ -1597,7 +1636,7 @@ adaptive_warmup_mcmc(
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
             run_outer_iteration!(state)
             _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
-            stop = _fire_callback(callback, state, :window)
+            stop = _stop_requested(callback, state, :window)
         end
         finalize_warmup!(state)
     end
@@ -1644,7 +1683,7 @@ resume_warmup_mcmc(lpdf, checkpoint_path;
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
             run_outer_iteration!(state)
             _write_checkpoint(checkpoint_dir, state, :window)
-            stop = _fire_callback(callback, state, :window)
+            stop = _stop_requested(callback, state, :window)
         end
         finalize_warmup!(state)
     end

@@ -1,0 +1,3 @@
+b5c0b95..2ffc7a7 adds the native Treebars interrupt check (b1fb81d: interrupt_requested(progress) at each sampler stop point) and CI branch switches (ad18ebd); with progress=nothing, which every benchmark harness passes, the check is false and the control flow is unchanged, and the driver evidence here is identical outside timing over 46 runs on all 5 targets.
+
+Evidence: docs/benchmark/run_reparam_benchmark.jl with WHMC_BENCH_SEEDS=2 (all targets, all arms, Enzyme) at b5c0b95 (before/) and 2ffc7a7 (after/) on strato2, 2026-10-01, both resolving Treebars 115231e (perf/step5-typed-slots) so that only WarmupHMC differs. A first attempt with Treebars 8bde866 failed every after-side run (UndefVarError: interrupt_requested) and was discarded.

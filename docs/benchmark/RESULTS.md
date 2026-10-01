@@ -95,7 +95,8 @@ produce the same output. Artifacts measured at a base code-identical to
 carry its evidence, and the script re-checks that evidence on every run:
 - a `REASON` file;
 - the benchmark driver's `runs.json` from each revision, run with the same
-  settings, each recording its own SHA and a clean `src/`;
+  settings, each recording its own SHA and a clean `src/`, and neither
+  recording a failed run;
 - the two files identical line for line, except the host-timing fields and the
   provenance header.
 

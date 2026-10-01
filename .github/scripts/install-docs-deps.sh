@@ -15,7 +15,9 @@ git clone --branch dev https://github.com/nsiccha/HTMX.jl.git
 git clone --branch devibe https://github.com/nsiccha/HTMXObjects.jl.git
 git clone --branch dev https://github.com/nsiccha/AlgebraOfVega.jl.git
 git clone --branch dev https://github.com/nsiccha/TestModules.jl.git
-git clone --branch dev https://github.com/nsiccha/Treebars.jl.git
+# Treebars' integration branch `main` (decision 09eterf); `dev` diverged and
+# `perf/step5-typed-slots` is frozen.
+git clone --branch main https://github.com/nsiccha/Treebars.jl.git
 julia --project=web -e 'using Pkg; Pkg.develop([
   PackageSpec(path=pwd()),
   PackageSpec(path="DynamicObjects.jl"),

@@ -60,4 +60,4 @@ julia = "1.10"
 # dropped for the 1.0 test suite.
 [sources.Treebars]
 url = "https://github.com/nsiccha/Treebars.jl"
-rev = "perf/step5-typed-slots"
+rev = "main"

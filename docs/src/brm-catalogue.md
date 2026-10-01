@@ -30,8 +30,9 @@ rows = brmc_rows(d)
 expected = length(models) * 3 * 2 * d["config"]["n_seeds"]
 length(rows) == expected ||
     error("generated BRM artifact has $(length(rows)) rows; expected $expected")
-isempty(brmc_failures(d)) ||
-    error("generated BRM artifact contains $(length(brmc_failures(d))) failed rows")
+failures = brmc_failures(d)
+all(r -> startswith(r["error"], "statistical sampling failure"), failures) ||
+    error("generated BRM artifact has a failed row that is not a labelled statistical failure")
 brmc_controls_clean(d) ||
     error("generated BRM bare-arm controls are not seedwise identical")
 all(m -> m["translation_status"] == "ready" &&
@@ -43,9 +44,27 @@ get(d["config"], "timing_preflight_draws", 0) > 0 ||
 Markdown.parse(
     "**Checked artifact:** $(length(models)) generated real-data models, " *
     "$(d["config"]["n_seeds"]) seeds, $(d["config"]["n_draws"]) retained draws, " *
-    "$(length(rows))/$(expected) successful rows. The generated adaptive path " *
-    "has $(sum(r["n_divergent"] for r in rows if r["arm"] == "adaptive_centering")) " *
+    "$(length(rows) - length(failures))/$(expected) successful rows. The generated " *
+    "adaptive path has $(sum(r["n_divergent"] for r in rows if r["arm"] == "adaptive_centering")) " *
     "divergences.")
+```
+
+A failed row is a trajectory that sampled but produced no usable ESS, labelled
+with its diagnostic; the build refuses any other kind of failure. Failed rows
+stay in the row count and the divergence total, are listed here, and are left
+out of every median and pairing below rather than entering them as zeroes.
+
+```@eval
+Base.include(@__MODULE__, joinpath(@__DIR__, "..", "tables.jl"))
+load_harness("brm_catalogue.jl")
+import Markdown
+d = load_results("brm_inventory_generated/rows.json")
+bad = brmc_failures(d)
+isempty(bad) ? Markdown.parse("No failed trajectories were recorded.") : md_table(
+    ["model", "arm", "`nonlinear_adapt`", "seed", "divergences", "diagnostic"],
+    [[brmc_spec_cell(r["spec"]), brmc_arm_label(r["arm"]), string(r["nonlinear_adapt"]),
+      r["seed"], r["n_divergent"], r["error"]] for r in bad],
+)
 ```
 
 ## What BRM generates
@@ -58,8 +77,14 @@ For each selected inventory row the runner:
    `model_matrix.tsv`;
 4. evaluates that string through BRM's `_brm` generator and lowers it with
    `SBBRMI`; and
-5. asks BRM for the default non-centered model, static-centered model, and
+5. asks BRM for the conventional non-centered model, static-centered model, and
    `adaptive_centering_problem`.
+
+"Conventional" is explicit: the runner passes `total_groups=()`. BRM's default
+now samples exact total coefficients for eligible independent random effects,
+integrating the population intercept out — posterior-preserving, but one
+coordinate fewer and a different geometry, so it is a different arm, not the
+non-centered one this page compares.
 
 No model formula is copied into the runner. BRM does not yet provide a generic
 real-data catalogue loader, so the consumer still supplies a small, recorded
@@ -546,24 +571,26 @@ md_table(
 ```
 
 The one candidate with a fetchable historical dataset was carried onto that data
-and stopped at a specific, reported exception rather than at a status field: it
-downloaded, adapted, parsed through `BRM._brm`, and then failed to lower because
-the Student-t degrees-of-freedom symbol its translation leaves open has no value.
-That is the same limitation the inventory records for it, confirmed by execution
-instead of quoted.
+and now goes all the way: it downloads, adapts, parses through `BRM._brm`,
+lowers, and samples a K = 3 block on real data. (At the previous BRM pin it
+stopped at transpile, because its Student-t degrees of freedom were still
+symbolic; the inventory has since recovered the historical prior.) What keeps it
+out of the matrix above is its support class: it is expressible through a
+semantic rewrite, not verbatim, and the publishing runner admits verbatim rows
+only.
 
 The finding is a statement about the inventory rather than about cost: the
-historical gallery does contain wider blocks, and each one currently sits behind
-an unresolved translation, a synthetic dataset receipt, or a surface gap — not
-behind a runtime ceiling or an eligibility rule imposed here. When one becomes
-`ready` and verbatim-expressible it belongs in the matrix above, and nothing in
-the publishing runner would keep it out.
+historical gallery does contain wider blocks; one samples today but is not a
+verbatim row, and the others sit behind a synthetic dataset receipt or a surface
+gap — not behind a runtime ceiling or an eligibility rule on width. When one
+becomes `ready` and verbatim-expressible it belongs in the matrix above, and
+nothing in the publishing runner would keep it out.
 
 ## Scope and provenance
 
-The three-model nonlinear flag A/B is the first real-data consumer receipt for
-BRM's generated historical inventory bodies. The standard-warmup matrix expands
-that receipt across the coverage tranche listed above: multiple response
+The nonlinear flag A/B is the first real-data consumer receipt for BRM's
+generated historical inventory bodies. It and the standard-warmup matrix now
+cover the same sixteen rows — the coverage tranche listed above: multiple response
 families, crossed and nested grouping structures, correlated slopes, known
 observation standard errors, and a slope-only hierarchy. It remains a benchmark
 of `ready`, verbatim-expressible rows with a finite BridgeStan gradient — not a
@@ -609,7 +636,7 @@ Markdown.parse(
     "* upstream data files pinned by SHA-256: " *
       string(count(m -> !isempty(get(m, "data_sha256_pinned", "")),
                    brmc_models(d))) * "/" * string(length(brmc_models(d))) * "\n\n" *
-    "**Earlier focused nonlinear-flag receipt**\n\n" *
+    "**Nonlinear-flag A/B receipt**\n\n" *
     "```\n" * c0["reproduction"] * "\n```\n\n" *
     "* WarmupHMC `" * c0["warmuphmc_sha"][1:10] * "`\n" *
     "* BayesianRegressionModels `" * c0["brm_sha"][1:10] * "` (unregistered)\n" *
@@ -618,13 +645,13 @@ Markdown.parse(
       ", BLAS threads " * string(c0["blas_threads"]) * "\n")
 ```
 
-The focused receipt predates both the runner SHA-256 pin and the coverage
-tranche, so its reproduction line describes the spec list as it stood when it ran
-— three models — rather than the sixteen the runner now carries. Its inventory
-translation and model-matrix checksums are byte-identical to the expanded
-matrix's, which is the part the two artifacts have to agree on for the comparison
-above to be about the same generated bodies; the docs build asserts that equality
-rather than assuming it.
+The two receipts are separate runs of the same runner. Their inventory
+translation and model-matrix checksums, and every generated body's SHA-256, are
+byte-identical, which is the part the two artifacts have to agree on for the
+comparison above to be about the same generated bodies; the docs build asserts
+that equality rather than assuming it. Both were run from one environment pinned
+to fixed BRM and StanBlocks clones, so the package SHAs listed above agree as
+well.
 
 The documentation build imports neither BRM nor StanBlocks. It reads the
 checked-in JSON and computes every table from the raw rows; missing fields,

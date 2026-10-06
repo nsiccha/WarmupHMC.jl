@@ -1773,6 +1773,47 @@ _read_chain_payload(dir, i) = begin
     isnothing(newest) ? nothing : deserialize(last(newest))
 end
 
+# Stack chains for pooled `MCMCDiagnosticTools` diagnostics, which need equal-length
+# chains laid out as (draws, chains, params). `draws` are `dimension × n` matrices,
+# draws as columns, and may be RAGGED: chains with fewer than `min_chain_draws` draws
+# are left out, and the rest are truncated to their LAST `m` draws, `m` the shortest
+# kept chain (equal-length chains are untouched). `nothing` when no chain qualifies
+# or `m ≤ 3`. The result is a fresh `Array` that never aliases `draws`.
+#
+# The one pooling rule shared by the multi-chain adaptive sampler's final message,
+# `cooperative_warmup_mcmc`'s `_pooled_ess`, and `clustered_warmup_mcmc`'s
+# `cluster_diagnostics`.
+_stack_chain_tails(draws; min_chain_draws) = begin
+    usable = [d for d in draws if size(d, 2) >= min_chain_draws]
+    isempty(usable) && return nothing
+    m = minimum(d -> size(d, 2), usable)
+    m > 3 || return nothing
+    dim = size(first(usable), 1)
+    stacked = Array{Float64}(undef, m, length(usable), dim)
+    for (j, d) in enumerate(usable)
+        stacked[:, j, :] = @view(d[:, end-m+1:end])'
+    end
+    stacked
+end
+
+# The multi-chain parent node's final message. Chains stopped early — a `callback`
+# returning `true` or a Treebars interrupt — retain DIFFERENT draw counts, zero when
+# stopped at `:init`, so this must not assume equal-length chains: with no draws at
+# all it says so, and ESS pools the chains past the single-chain ESS gate (more than
+# 10 draws) over their common tail, naming that subset whenever it is not every draw
+# of every chain. Equal-length chains past that gate read exactly as before.
+_multichain_message(rv, monitor_ess) = begin
+    n_samples = sum(r -> size(r.posterior_position, 2), rv)
+    n_samples == 0 && return "no draws retained"
+    divergent = "divergent: $(short_string(100*sum(r -> r.n_divergent_samples, rv)/n_samples))%"
+    monitor_ess || return divergent
+    stacked = _stack_chain_tails(getproperty.(rv, :posterior_position); min_chain_draws=11)
+    isnothing(stacked) && return "min. ESS: $(short_string(0.0)), $divergent"
+    m, k = size(stacked, 1), size(stacked, 2)
+    subset = all(r -> size(r.posterior_position, 2) == m, rv) ? "" : " (last $m draws of $k/$(length(rv)) chains)"
+    "min. ESS: $(short_string(minimum(MCMCDiagnosticTools.ess(stacked))))$subset, $divergent"
+end
+
 # Scalar-lpdf multi-chain entry point: each chain gets its OWN `deepcopy(lpdf)`,
 # matching `cooperative_warmup_mcmc` and `clustered_warmup_mcmc`.
 #
@@ -1805,13 +1846,6 @@ monitor_ess=!isnothing(progress), description="MCMC", init=missing, checkpoint_d
             update_progress!(progress)
         end
     end
-    if !isnothing(progress)
-        n_divergent_samples = sum(rvi->rvi.n_divergent_samples, rv)
-        n_samples = sum(rvi->size(rvi.posterior_position, 2), rv)
-        update_progress!(
-            progress,
-            (monitor_ess ? "min. ESS: $(short_string(minimum((MCMCDiagnosticTools.ess(permutedims(stack(getproperty.(rv, :posterior_position)), (2, 3, 1))))))), " : "") * "divergent: $(short_string(100*n_divergent_samples/n_samples))%"
-        )
-    end
+    isnothing(progress) || update_progress!(progress, _multichain_message(rv, monitor_ess))
     identity.(rv)
 end

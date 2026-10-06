@@ -438,26 +438,15 @@ end
 # decision tlg8p5. Chains being advanced right now (`state.busy`) are EXCLUDED:
 # their draw matrix is being `append!`ed OUTSIDE the lock, so reading it here
 # would race a resize. Non-busy chains are quiescent, hence safe to read under the
-# lock. Draws are truncated to the shortest included chain and stacked as
-# (draws, chains, params). Slightly conservative during a run (a busy chain's
-# draws don't count until it next idles); exact in `_finalize` (nothing is busy).
+# lock. Chains with more than 10 draws are truncated to the shortest one's tail and
+# stacked as (draws, chains, params) by `_stack_chain_tails`, which copies them.
+# Slightly conservative during a run (a busy chain's draws don't count until it
+# next idles); exact in `_finalize` (nothing is busy).
 _pooled_ess(state::CooperativeState) = begin
-    used = Matrix{Float64}[]
-    for c in state.chains
-        (c in state.busy) && continue
-        (c.status === :sampling || c.status === :done) || continue
-        n_chain_draws(c) > 10 || continue
-        push!(used, chain_draws(c)[:, :])   # copy the current draws (safe: c is quiescent)
-    end
-    isempty(used) && return 0.0
-    m = minimum(d -> size(d, 2), used)
-    m > 3 || return 0.0
-    dim = size(first(used), 1)
-    stacked = Array{Float64}(undef, m, length(used), dim)
-    for (j, d) in enumerate(used)
-        stacked[:, j, :] = @view(d[:, end-m+1:end])'
-    end
-    minimum(MCMCDiagnosticTools.ess(stacked))
+    idle = [chain_draws(c) for c in state.chains
+            if !(c in state.busy) && (c.status === :sampling || c.status === :done)]
+    stacked = _stack_chain_tails(idle; min_chain_draws=11)
+    isnothing(stacked) ? 0.0 : minimum(MCMCDiagnosticTools.ess(stacked))
 end
 
 _should_stop(state::CooperativeState) = begin

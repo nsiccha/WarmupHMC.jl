@@ -288,20 +288,13 @@ log_checkpoint!(chain::ClusteredChain) = push!(chain.checkpoints, (;
 
 "Pooled ESS + split-Rhat over the stacked draws of a cluster's chains (`ess` = min, `rhat` = max over parameters); NaN if too few draws."
 cluster_diagnostics(chains::AbstractVector{<:ClusteredChain}) = begin
-    usable = [chain_draws(c) for c in chains if n_chain_draws(c) > 3]
-    isempty(usable) && return (; ess=NaN, rhat=NaN, n_draws=0, n_chains=0)
-    m = minimum(d -> size(d, 2), usable)
-    m > 3 || return (; ess=NaN, rhat=NaN, n_draws=0, n_chains=length(usable))
-    dim = size(first(usable), 1)
-    stacked = Array{Float64}(undef, m, length(usable), dim)      # (draws, chains, params)
-    for (j, d) in enumerate(usable)
-        stacked[:, j, :] = @view(d[:, end-m+1:end])'
-    end
+    stacked = _stack_chain_tails(chain_draws.(chains); min_chain_draws=4)   # (draws, chains, params)
+    isnothing(stacked) && return (; ess=NaN, rhat=NaN, n_draws=0, n_chains=0)
     (;
         ess=minimum(MCMCDiagnosticTools.ess(stacked)),
         rhat=maximum(MCMCDiagnosticTools.rhat(stacked)),
-        n_draws=m,
-        n_chains=length(usable),
+        n_draws=size(stacked, 1),
+        n_chains=size(stacked, 2),
     )
 end
 

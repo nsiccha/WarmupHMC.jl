@@ -19,17 +19,7 @@
     const all = Array.from(tbody.querySelectorAll(':scope > tr'));
     const isCompanion = r => r.id && r.id.startsWith('detail-');
     const primaries = all.filter(r => !isCompanion(r) && r.cells.length > col);
-    const companionFor = r => {
-        if (!r.id) return null;
-        const idx = r.id.indexOf('-');
-        if (idx < 0) return null;
-        // Pair via an attribute selector, NOT `#detail-<key>`: row keys can
-        // contain `:` (e.g. agent ids like `Claude:agents2`) or start with a
-        // digit (timestamp slugs), both of which are illegal in a `#id`
-        // selector and would throw. `[id="..."]` sidesteps CSS-identifier
-        // rules; our keys never contain `"`.
-        return tbody.querySelector(':scope > [id="detail-' + r.id.slice(idx + 1) + '"]');
-    };
+    const companions = htmxoTableCompanions(all);
     const asc = th.dataset.sortDir !== 'asc';
     th.dataset.sortDir = asc ? 'asc' : 'desc';
     // `aria-sort` mirrors `data-sort-dir` on the active <th>: it is the
@@ -43,19 +33,37 @@
     // Sort key: prefer `data-sort-value` if the cell sets one, else the
     // visible text. This lets callers force a semantic order (e.g. status:
     // proposed → approved → rejected) without re-encoding the displayed text.
-    const sortKey = cell => (cell.dataset.sortValue ?? cell.textContent).trim();
-    primaries.sort((a, b) => {
+    const sortKey = cell => (cell.dataset.sortValue ?? (cell.querySelector(':scope > [data-htmxo-row-label]') || cell).textContent).trim();
+    const compare = (a, b) => {
         const av = sortKey(a.cells[col]);
         const bv = sortKey(b.cells[col]);
         const an = parseFloat(av), bn = parseFloat(bv);
         if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
         return asc ? av.localeCompare(bv) : bv.localeCompare(av);
-    });
-    primaries.forEach(r => {
+    };
+    const append = r => {
         tbody.appendChild(r);
-        const c = companionFor(r);
+        const c = companions.get(r.id);
         if (c) tbody.appendChild(c);
-    });
+    };
+    if (th.closest('table').hasAttribute('data-htmxo-hierarchy')) {
+        // Sort each sibling set, then emit whole subtrees in preorder. Detail
+        // rows and their loaded DOM move with their master without rebuilding.
+        const siblings = new Map();
+        all.filter(r => !isCompanion(r)).forEach(r => {
+            const parent = r.dataset.htmxoParent || '';
+            if (!siblings.has(parent)) siblings.set(parent, []);
+            siblings.get(parent).push(r);
+        });
+        const visit = parent => {
+            const rows = siblings.get(parent) || [];
+            rows.sort((a, b) => a.cells.length > col && b.cells.length > col ? compare(a, b) : 0);
+            rows.forEach(r => { append(r); visit(r.id); });
+        };
+        visit('');
+    } else {
+        primaries.sort(compare).forEach(append);
+    }
     // Sort caret in a dedicated trailing <span> per <th>: the old approach
     // assigned th.textContent, which flattens EVERY child node to a text node,
     // so sorting any column destroyed interactive content living in a header
@@ -70,6 +78,70 @@
     caret.className = 'htmxo-sort-caret';
     caret.textContent = asc ? ' ▲' : ' ▼';
     th.appendChild(caret);
+}
+
+// Pair lookup uses literal ids, so punctuation in a hand-built key cannot
+// turn into a CSS selector. Shared by sorting and filtering.
+function htmxoTableCompanions(rows) {
+    const details = new Map(rows.filter(r => r.id.startsWith('detail-')).map(r => [r.id, r]));
+    const companions = new Map();
+    rows.forEach(r => {
+        const dash = r.id.indexOf('-');
+        if (dash >= 0 && !r.id.startsWith('detail-')) {
+            const detail = details.get('detail-' + r.id.slice(dash + 1));
+            if (detail) companions.set(r.id, detail);
+        }
+    });
+    return companions;
+}
+
+function htmxoFilterTable(input) {
+    const root = input.closest('.htmxo-searchable-table');
+    const table = root.querySelector('table');
+    const all = Array.from(table.tBodies[0].rows);
+    const rows = all.filter(r => !r.id.startsWith('detail-'));
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const companions = htmxoTableCompanions(all);
+    const query = input.value.toLocaleLowerCase().trim().replace(/\s+/g, ' ');
+    const visible = new Set();
+    const text = r => (r.dataset.htmxoSearch ?? Array.from(r.cells).map(c => (c.querySelector(':scope > [data-htmxo-row-label]') || c).textContent).join(' ')).toLocaleLowerCase();
+    rows.forEach(row => {
+        const path = [];
+        for (let r = row; r; r = byId.get(r.dataset.htmxoParent)) path.push(r);
+        // Ancestor text participates: a group match includes its descendants,
+        // and a leaf match retains the entire path needed to understand it.
+        const haystack = path.reverse().map(text).join(' ').replace(/\s+/g, ' ');
+        if (haystack.includes(query)) path.forEach(r => visible.add(r));
+    });
+    rows.forEach(row => {
+        let ancestorsOpen = true;
+        for (let p = byId.get(row.dataset.htmxoParent); p; p = byId.get(p.dataset.htmxoParent)) {
+            if (p.dataset.htmxoTreeOpen === 'false') ancestorsOpen = false;
+        }
+        row.hidden = !visible.has(row) || (query.length === 0 && !ancestorsOpen);
+        const branch = row.querySelector('[data-htmxo-tree-toggle]');
+        if (branch) {
+            const open = query.length > 0 || row.dataset.htmxoTreeOpen === 'true';
+            row.setAttribute('aria-expanded', open);
+            branch.setAttribute('aria-expanded', open);
+            branch.textContent = open ? '▾' : '▸';
+            branch.disabled = query.length > 0;
+        }
+        const detail = companions.get(row.id);
+        if (detail) {
+            detail.hidden = row.hidden || (row.dataset.htmxoDetailOpen ?? row.getAttribute('aria-expanded')) !== 'true';
+            if (!detail.hidden) htmxoLoadSlot(detail.querySelector('[data-loaded]'));
+        }
+    });
+    root.querySelector(':scope > [data-htmxo-table-empty]').hidden = visible.size !== 0;
+}
+
+function htmxoTreeToggle(button) {
+    const row = button.closest('tr');
+    row.dataset.htmxoTreeOpen = row.dataset.htmxoTreeOpen === 'true' ? 'false' : 'true';
+    // Hierarchical tables always have a scoped search input, even when the
+    // input is hidden. One visibility path owns both collapse and filtering.
+    htmxoFilterTable(row.closest('.htmxo-searchable-table').querySelector(':scope > label > input[type="search"]'));
 }
 
 // Read a table's CURRENT client-side sort state. `target` is a CSS selector
@@ -90,7 +162,7 @@ function htmxoSortState(target) {
     const root = typeof target === 'string' ? document.querySelector(target) : target;
     if (!root) return {};
     const table = root.tagName === 'TABLE' ? root
-        : (root.querySelector('table') || root.closest('table'));
+        : (root.closest('table') || root.querySelector('table'));
     if (!table) return {};
     const th = table.querySelector('thead th[data-sort-dir]');
     if (!th) return {};
@@ -102,21 +174,45 @@ function htmxoSortState(target) {
 function htmxoMdToggle(row, event, key, slot) {
     if (event.target.closest('a,button,input,textarea,select,form')) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
-    var show = d.hidden; d.hidden = !show;
-    row.setAttribute('aria-expanded', show);
+    var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
+    d.hidden = !show;
+    if (row.dataset.htmxoDetailOpen !== undefined) row.dataset.htmxoDetailOpen = String(show);
+    if (row.dataset.htmxoTreeOpen === undefined) row.setAttribute('aria-expanded', show);
+    var control = row.querySelector('[data-htmxo-detail-toggle]');
+    if (control) control.setAttribute('aria-expanded', show);
     if (show && slot) {
         var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
-        if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') {
-            s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
-        }
+        htmxoLoadSlot(s);
     }
     return show;
 }
-function htmxoMdBefore(s) {
+function htmxoLoadSlot(s) {
+    if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') {
+        s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+    }
+}
+function htmxoMdControl(button, event) {
+    event.stopPropagation();
+    var row = button.closest('tr'), key = row.id.slice(4);
+    htmxoMdToggle(row, {target: row}, key, document.getElementById('detail-slot-' + key) ? 1 : 0);
+}
+function htmxoMdBefore(s, event) {
+    if (event.detail.requestConfig.elt !== s) return;
     s.dataset.loading = '1'; delete s.dataset.failed;
     var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
 }
+function htmxoMdReady(s, event) {
+    if (event.target !== s || event.detail.target !== s) return;
+    // htmx normally initializes inserted nodes during its delayed settle
+    // phase. Bind the new children before afterSwap bubbles to consumers,
+    // so an immediately clicked form already owns its submit event.
+    // Leave the active requester and htmx's visual settle tasks untouched.
+    Array.from(s.children).forEach(function(child) {
+        htmx.process(child);
+    });
+}
 function htmxoMdAfter(s, event) {
+    if (event.detail.requestConfig.elt !== s) return;
     delete s.dataset.loading;
     if (event.detail.successful) { s.dataset.loaded = '1'; delete s.dataset.failed; }
     else {
@@ -129,12 +225,29 @@ function htmxoMdRetry(s) {
         s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
     }
 }
+if (!window.__htmxoMdReady) {
+    window.__htmxoMdReady = true;
+    // hx-on--after-swap listens to htmx's later kebab-case alias. Capture
+    // the original event before a consumer can click the inserted forms.
+    document.addEventListener('htmx:afterSwap', function(event) {
+        var s = event.target;
+        if (s.classList && s.classList.contains('htmxo-md-detail-slot')) htmxoMdReady(s, event);
+    }, true);
+}
 </script><style>@layer htmxo {
 .htmxo-sortable-table thead th { cursor: pointer; }
 .htmxo-sortable-table thead th[colspan] { cursor: default; text-align: center; border-bottom: none; }
 /* Body cells with a hyperscript handler are clickable too (htmx-attr cells
    already get cursor:pointer from the global rule in htmxo_utility_styles). */
 .htmxo-sortable-table tbody td[_] { cursor: pointer; }
+}
+/* Native sort controls keep header text and focus visible in host themes. */
+.htmxo-sortable-table thead th > .htmxo-sort-control {
+    width: auto; margin: 0; padding: 0; border: none; background: transparent;
+    color: inherit; font: inherit; text-align: inherit; box-shadow: none;
+}
+.htmxo-sortable-table thead th > .htmxo-sort-control:focus-visible {
+    outline: 2px solid var(--htmxo-accent); outline-offset: .15em;
 }
 /* Master/detail paired-row rules — INTENTIONALLY UNLAYERED so they beat
    Pico's unlayered tr/td defaults. The sortable_table_js convention pairs

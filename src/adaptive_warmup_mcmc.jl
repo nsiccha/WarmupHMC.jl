@@ -1437,6 +1437,13 @@ are transformed back to the original parametrization before returning.
   of diagonal variances or a full target-dimension × target-dimension matrix.
   A `Diagonal` matrix is accepted. Optional extra keys are preserved.
 
+A start that runs Pathfinder is where its optimizer begins, not where the chain
+is kept: the chain starts from a draw of the best Gaussian fit along the L-BFGS
+path, which can lie in a different basin from the start. The first L-BFGS step
+has no curvature information yet, and its line search can carry a poor start
+tens of unconstrained units. To begin warm-up exactly at a position, pass the
+`NamedTuple` form, e.g. `(; position = q, squared_scale = ones(length(q)))`.
+
 For the multi-chain method, pass either a scalar to broadcast or a
 `Vector` of length `length(rngs)` for per-chain initial values. There is
 no separate `initial_params` kwarg.

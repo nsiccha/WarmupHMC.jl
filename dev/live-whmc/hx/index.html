@@ -198,7 +198,7 @@ function htmxoMdControl(button, event) {
 }
 function htmxoMdBefore(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
-    s.dataset.loading = '1'; delete s.dataset.failed;
+    s.dataset.loading = '1'; delete s.dataset.failed; s.__htmxoMdAborted = false;
     var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
 }
 function htmxoMdReady(s, event) {
@@ -211,13 +211,28 @@ function htmxoMdReady(s, event) {
         htmx.process(child);
     });
 }
+var htmxoMdRetryDelays = [1000, 3000];
+function htmxoMdTransient(s, event) {
+    var status = event.detail.xhr ? event.detail.xhr.status : 0;
+    return !s.__htmxoMdAborted && (status === 0 || status === 502 || status === 503 || status === 504);
+}
 function htmxoMdAfter(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
-    delete s.dataset.loading;
-    if (event.detail.successful) { s.dataset.loaded = '1'; delete s.dataset.failed; }
-    else {
+    var p = s.querySelector('[data-status]'), n = +(s.dataset.retries || 0);
+    if (event.detail.successful) {
+        delete s.dataset.loading; delete s.dataset.retries;
+        s.dataset.loaded = '1'; delete s.dataset.failed;
+    } else if (htmxoMdTransient(s, event) && n < htmxoMdRetryDelays.length) {
+        // Still latched as loading: the retry owns the next request.
+        s.dataset.retries = String(n + 1);
+        if (p) p.textContent = 'Connection lost — retrying…';
+        setTimeout(function() {
+            if (document.contains(s) && s.dataset.loaded !== '1') htmx.trigger(s, 'htmxo-md-load');
+        }, htmxoMdRetryDelays[n]);
+    } else {
+        delete s.dataset.loading; delete s.dataset.retries;
         s.dataset.loaded = '0'; s.dataset.failed = '1';
-        var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Failed to load — click to retry';
+        if (p) p.textContent = 'Failed to load — click to retry';
     }
 }
 function htmxoMdRetry(s) {
@@ -227,6 +242,11 @@ function htmxoMdRetry(s) {
 }
 if (!window.__htmxoMdReady) {
     window.__htmxoMdReady = true;
+    // An explicit abort is a request to stop, never a transient failure.
+    document.addEventListener('htmx:abort', function(event) {
+        var s = event.target;
+        if (s.classList && s.classList.contains('htmxo-md-detail-slot')) s.__htmxoMdAborted = true;
+    }, true);
     // hx-on--after-swap listens to htmx's later kebab-case alias. Capture
     // the original event before a consumer can click the inserted forms.
     document.addEventListener('htmx:afterSwap', function(event) {

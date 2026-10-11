@@ -70,10 +70,19 @@
 </style><script>document.addEventListener('DOMContentLoaded', function() {
     function getTarget(evt) {
         var elt = evt.detail.elt;
+        var resolved = evt.detail.target;
+        if (resolved && resolved.isConnected) return resolved;
+        // afterRequest follows the swap: an outerHTML swap has replaced the
+        // resolved node, so mark its replacement when it kept the id.
+        if (resolved && resolved.id) {
+            var replaced = document.getElementById(resolved.id);
+            if (replaced) return replaced;
+        }
         var targetSel = elt.getAttribute('hx-target');
         if (targetSel) {
             if (targetSel === 'this') return elt;
-            var found = document.querySelector(targetSel);
+            var found = null;
+            try { found = document.querySelector(targetSel); } catch (_) {}
             if (found) return found;
         }
         return elt;
@@ -1103,7 +1112,7 @@ function htmxoMdControl(button, event) {
 }
 function htmxoMdBefore(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
-    s.dataset.loading = '1'; delete s.dataset.failed;
+    s.dataset.loading = '1'; delete s.dataset.failed; s.__htmxoMdAborted = false;
     var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
 }
 function htmxoMdReady(s, event) {
@@ -1116,13 +1125,28 @@ function htmxoMdReady(s, event) {
         htmx.process(child);
     });
 }
+var htmxoMdRetryDelays = [1000, 3000];
+function htmxoMdTransient(s, event) {
+    var status = event.detail.xhr ? event.detail.xhr.status : 0;
+    return !s.__htmxoMdAborted && (status === 0 || status === 502 || status === 503 || status === 504);
+}
 function htmxoMdAfter(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
-    delete s.dataset.loading;
-    if (event.detail.successful) { s.dataset.loaded = '1'; delete s.dataset.failed; }
-    else {
+    var p = s.querySelector('[data-status]'), n = +(s.dataset.retries || 0);
+    if (event.detail.successful) {
+        delete s.dataset.loading; delete s.dataset.retries;
+        s.dataset.loaded = '1'; delete s.dataset.failed;
+    } else if (htmxoMdTransient(s, event) && n < htmxoMdRetryDelays.length) {
+        // Still latched as loading: the retry owns the next request.
+        s.dataset.retries = String(n + 1);
+        if (p) p.textContent = 'Connection lost — retrying…';
+        setTimeout(function() {
+            if (document.contains(s) && s.dataset.loaded !== '1') htmx.trigger(s, 'htmxo-md-load');
+        }, htmxoMdRetryDelays[n]);
+    } else {
+        delete s.dataset.loading; delete s.dataset.retries;
         s.dataset.loaded = '0'; s.dataset.failed = '1';
-        var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Failed to load — click to retry';
+        if (p) p.textContent = 'Failed to load — click to retry';
     }
 }
 function htmxoMdRetry(s) {
@@ -1132,6 +1156,11 @@ function htmxoMdRetry(s) {
 }
 if (!window.__htmxoMdReady) {
     window.__htmxoMdReady = true;
+    // An explicit abort is a request to stop, never a transient failure.
+    document.addEventListener('htmx:abort', function(event) {
+        var s = event.target;
+        if (s.classList && s.classList.contains('htmxo-md-detail-slot')) s.__htmxoMdAborted = true;
+    }, true);
     // hx-on--after-swap listens to htmx's later kebab-case alias. Capture
     // the original event before a consumer can click the inserted forms.
     document.addEventListener('htmx:afterSwap', function(event) {
@@ -1229,6 +1258,93 @@ if (!window.htmxoComparisonInstalled) {
 }
 </script><script>(function () {
   'use strict';
+  if (window.htmxoStreamProbe) return;
+  // The gateway checks the page's session, so one answer covers every
+  // stream on the page, however many fail together.
+  var SPACING_MS = 5000;
+  var TIMEOUT_MS = 10000;
+  var inflight = null;
+  var last = -Infinity;
+
+  // The http(s) form of a stream URL, or null for another origin, whose
+  // auth is not the page's session.
+  function probeUrl(url) {
+    var u;
+    try { u = new URL(url, window.location.href); } catch (_) { return null; }
+    if (u.protocol === 'wss:') u.protocol = 'https:';
+    else if (u.protocol === 'ws:') u.protocol = 'http:';
+    return u.origin === window.location.origin ? u.href : null;
+  }
+
+  // One htmx-shaped GET; an auth gateway keys its htmx answer on
+  // `HX-Request`. Only the headers are read, and the request is aborted as
+  // soon as they arrive, so an endpoint that streams anyway never stays open.
+  // A redirect is not followed: only the stream URL's own answer counts.
+  function probe(url) {
+    var ctl = new AbortController();
+    var timer = setTimeout(function () { ctl.abort(); }, TIMEOUT_MS);
+    return fetch(url, {
+      headers: { 'HX-Request': 'true', 'HX-Current-URL': window.location.href,
+                 'X-HTMXO-Probe': 'stream' },
+      credentials: 'same-origin', cache: 'no-store', redirect: 'manual',
+      signal: ctl.signal
+    }).then(function (r) {
+      var redirect = r.headers.get('HX-Redirect');
+      var refresh = r.headers.get('HX-Refresh') === 'true';
+      ctl.abort();
+      // htmx's own order for these two headers.
+      if (redirect) {
+        window.location.href = redirect;
+        if (refresh) window.location.reload();
+        return 'redirect';
+      }
+      if (refresh) { window.location.reload(); return 'refresh'; }
+      return r.type === 'opaqueredirect' ? 'redirected' : r.status;
+    }, function () {
+      return 'unreachable';
+    }).then(function (outcome) {
+      clearTimeout(timer);
+      return outcome;
+    });
+  }
+
+  function failed(url) {
+    var target = probeUrl(url);
+    if (!target || inflight) return null;
+    var now = Date.now();
+    if (now - last < SPACING_MS) return null;
+    last = now;
+    inflight = probe(target).then(function (outcome) {
+      inflight = null;
+      return outcome;
+    });
+    return inflight;
+  }
+
+  // ws extension: a socket that closes without having opened is a refused
+  // handshake. One that opened and later dropped is left to the extension's
+  // reconnect, whose new socket reports here if its handshake is refused.
+  var opened = new WeakSet();
+  function socketOf(e) { return e.detail && e.detail.event && e.detail.event.target; }
+  document.addEventListener('htmx:wsOpen', function (e) {
+    var socket = socketOf(e);
+    if (socket) opened.add(socket);
+  });
+  document.addEventListener('htmx:wsClose', function (e) {
+    var socket = socketOf(e);
+    if (socket && socket.url && !opened.has(socket)) failed(socket.url);
+  });
+  // sse extension: the browser gave up on the source (a dropped stream
+  // reconnects in CONNECTING and reports here only if that is refused).
+  document.addEventListener('htmx:sseError', function (e) {
+    var source = e.detail && e.detail.source;
+    if (source && source.readyState === EventSource.CLOSED) failed(source.url);
+  });
+
+  window.htmxoStreamProbe = { failed: failed };
+})();
+</script><script>(function () {
+  'use strict';
   if (window.htmxoLiveRegion) return;
   var MARK = 'data-htmxo-live-discover';
   var BASE = 'data-htmxo-live-base';
@@ -1265,7 +1381,8 @@ if (!window.htmxoComparisonInstalled) {
     return Array.prototype.filter.call(
       region.querySelectorAll(FRAG_SELECTOR),
       function (el) {
-        return el.closest('[' + MARK + ']') === region && triggersOf(el).length > 0;
+        return el.getAttribute('data-key') &&
+          el.closest('[' + MARK + ']') === region && triggersOf(el).length > 0;
       });
   }
 
@@ -1285,47 +1402,88 @@ if (!window.htmxoComparisonInstalled) {
 
   function closeState(state) {
     if (state.source) { state.source.close(); state.source = null; }
+    state.names = new Set();
   }
 
-  // Reconcile the region's stream with the fragments present: a no-op when
-  // the sorted key set is unchanged, else close + reopen on the new union.
+  // A browser `EventSource` refused with any non-200 (a gateway's 502/503
+  // while the app restarts, a 401) ends `CLOSED` and never retries by itself.
+  // Reopen after the sse extension's backoff for a static region (500 ms × 2^n,
+  // at most 64 s), counted across consecutive failures and reset on `open`.
+  // The reopen is an ordinary `sync`, so it carries the key set present then.
+  function retryLater(state) {
+    closeState(state);
+    state.retries = Math.max(Math.min(state.retries * 2, 128), 1);
+    state.retry = setTimeout(function () { state.retry = null; sync(state); },
+                             state.retries * 500);
+  }
+
+  function open(state, keys) {
+    var source = state.source = openSource(feedUrl(state.base, keys));
+    source.addEventListener('open', function () {
+      if (state.source === source) state.retries = 0;
+    });
+    source.addEventListener('error', function () {
+      // CONNECTING: the browser is re-establishing a dropped stream itself.
+      if (source.readyState !== EventSource.CLOSED) return;
+      // A refused stream ends `CLOSED` with no status to read; the probe
+      // runtime asks whether the page's session still reaches it.
+      if (window.htmxoStreamProbe) window.htmxoStreamProbe.failed(source.url);
+      // Only the region's current stream retries: one closed by a key-set
+      // change or a teardown is no longer `state.source`.
+      if (state.source === source) retryLater(state);
+    });
+  }
+
+  // One listener per wire event name on the open stream. It reads the
+  // region's fragments for that name when the event arrives, never a list
+  // taken when the stream opened: a fragment's own outerHTML refresh and a
+  // fragment swapped in later on a key the stream already carries are new
+  // elements, and neither changes the key set that reopens the stream.
+  function listen(state, name) {
+    if (state.names.has(name)) return;
+    state.names.add(name);
+    var region = state.region;
+    state.source.addEventListener(name, function (evt) {
+      if (!document.contains(region)) return;
+      ownFragments(region).forEach(function (f) {
+        if (triggersOf(f).indexOf(name) < 0) return;
+        // The static region shape's exact dispatch: the sse extension
+        // turns a wire event into `htmx.trigger(f, 'sse:NAME')`, and htmx
+        // core answers through the fragment's `hx-trigger`.
+        if (window.htmx) {
+          htmx.trigger(f, 'sse:' + name, evt);
+          htmx.trigger(f, 'htmx:sseMessage', evt);
+        } else {
+          f.dispatchEvent(new CustomEvent('sse:' + name, { bubbles: true, detail: evt }));
+        }
+      });
+    });
+  }
+
+  // Reconcile the region's stream with the fragments present: close + reopen
+  // on the new union when the sorted key set changed, then listen for any
+  // wire name not yet heard on the open stream. While a refused stream's
+  // backoff is pending, the reopen waits for it, whatever the key set.
   function sync(state) {
     if (!document.contains(state.region)) { teardown(state.region); return; }
-    var byName = new Map();   // wire event name -> fragments to trigger
     var keys = [];
+    var names = [];
     ownFragments(state.region).forEach(function (el) {
       var key = el.getAttribute('data-key');
-      if (!key) return;
       if (keys.indexOf(key) < 0) keys.push(key);
       triggersOf(el).forEach(function (name) {
-        if (!byName.has(name)) byName.set(name, []);
-        byName.get(name).push(el);
+        if (names.indexOf(name) < 0) names.push(name);
       });
     });
     keys.sort();
     var sig = JSON.stringify(keys);
-    if (sig === state.sig) return;
-    state.sig = sig;
-    closeState(state);
-    if (!keys.length) return;   // no fragments: hold no stream until one arrives
-    var source = openSource(feedUrl(state.base, keys));
-    state.source = source;
-    byName.forEach(function (frags, name) {
-      source.addEventListener(name, function (evt) {
-        frags.forEach(function (f) {
-          if (!document.contains(f)) return;
-          // The static region shape's exact dispatch: the sse extension
-          // turns a wire event into `htmx.trigger(f, 'sse:NAME')`, and htmx
-          // core answers through the fragment's `hx-trigger`.
-          if (window.htmx) {
-            htmx.trigger(f, 'sse:' + name, evt);
-            htmx.trigger(f, 'htmx:sseMessage', evt);
-          } else {
-            f.dispatchEvent(new CustomEvent('sse:' + name, { bubbles: true, detail: evt }));
-          }
-        });
-      });
-    });
+    if (sig !== state.sig) {
+      state.sig = sig;
+      closeState(state);
+    }
+    // No fragments: hold no stream until one arrives.
+    if (!state.source && keys.length && !state.retry) open(state, keys);
+    if (state.source) names.forEach(function (name) { listen(state, name); });
   }
 
   function schedule(state) {
@@ -1338,7 +1496,8 @@ if (!window.htmxoComparisonInstalled) {
     if (region.__htmxoLive) return region.__htmxoLive;
     var base = region.getAttribute(BASE);
     if (!base) return null;
-    var state = { region: region, base: base, sig: null, source: null, timer: null, mo: null };
+    var state = { region: region, base: base, sig: null, source: null, names: new Set(),
+                  timer: null, mo: null, retry: null, retries: 0 };
     region.__htmxoLive = state;
     live.push(state);
     state.mo = new MutationObserver(function () { schedule(state); });
@@ -1357,6 +1516,7 @@ if (!window.htmxoComparisonInstalled) {
     var i = live.indexOf(state);
     if (i >= 0) live.splice(i, 1);
     if (state.timer) { clearTimeout(state.timer); state.timer = null; }
+    if (state.retry) { clearTimeout(state.retry); state.retry = null; }
     if (state.mo) { state.mo.disconnect(); state.mo = null; }
     closeState(state);
   }
@@ -1393,9 +1553,10 @@ if (!window.htmxoComparisonInstalled) {
       });
       sweep();
     }).observe(document.body, { childList: true, subtree: true });
-    // Swaps land through the region observer too, but only `afterSettle`
-    // runs after htmx has processed (and attached the triggers of) the new
-    // fragments — resync then so the first push cannot miss them.
+    // Backstop for the observers above: once htmx settles a swap, scan it
+    // for new regions and resync the region it landed in. Dispatch reads the
+    // fragments when an event arrives, so a resync only settles the stream's
+    // key set and wire names; it is a no-op when neither changed.
     document.body.addEventListener('htmx:afterSettle', function (e) {
       var t = e.target;
       if (!t || t.nodeType !== 1) return;
@@ -1406,6 +1567,59 @@ if (!window.htmxoComparisonInstalled) {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
+})();
+</script><script>(function() {
+  if (window.__htmxoSemanticRefresh) return;
+  window.__htmxoSemanticRefresh = true;
+  // A region swapped in moments ago gets its trigger listener when htmx
+  // settles it; processing it first (idempotent) keeps a change made during
+  // that settle from being dropped.
+  function send(el) {
+    if (!window.htmx || !el.isConnected) return;
+    window.htmx.process(el);
+    window.htmx.trigger(el, 'htmxo-refresh');
+  }
+  function quoted(value) {
+    return '"' + String(value).replace(/["\\]/g, '\\$&') + '"';
+  }
+  document.addEventListener('change', function(e) {
+    var t = e.target, name = t && t.name;
+    if (!name || !t.closest) return;
+    var group = t.closest('.htmxo-semantic-context[id]');
+    if (!group) return;
+    var reads = '[data-htmxo-depends~=' + quoted(name) + ']';
+    group.querySelectorAll('.htmxo-semantic-context-control' + reads).forEach(function(el) {
+      if (!el.contains(t)) send(el);
+    });
+    document.querySelectorAll('[data-htmxo-context=' + quoted(group.id) + ']' + reads)
+      .forEach(send);
+  });
+  // A mutation's answer lands in its result host, directly or through a
+  // progress poller whose polls are GETs naming the mutation verb. Only the
+  // final answer refreshes: once every afterSwap listener has run (the
+  // poller's terminalization and the :auto unwrap included), nothing in the
+  // host still polls (`__htmxo_poll`). Capture phase, so the host is found
+  // before the unwrap detaches the swapped node.
+  var pending = {};
+  function mutation(detail) {
+    var config = detail && detail.requestConfig;
+    if (!config || !config.verb) return false;
+    return config.verb !== 'get' || /[?&]__htmxo_verb=/.test(config.path || '');
+  }
+  document.addEventListener('htmx:afterSwap', function(e) {
+    if (!mutation(e.detail)) return;
+    var t = e.target, host = t && t.closest && t.closest('[data-htmxo-refreshes]');
+    if (!host) return;
+    var id = host.getAttribute('data-htmxo-refreshes');
+    if (pending[id]) return;
+    pending[id] = true;
+    setTimeout(function() {
+      delete pending[id];
+      if (!host.isConnected || host.querySelector('[hx-get*="__htmxo_poll"]')) return;
+      var group = document.getElementById(id);
+      if (group) group.querySelectorAll('.htmxo-semantic-context-control').forEach(send);
+    }, 0);
+  }, true);
 })();
 </script><style>.treebar-pills { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
 .treebar-pill {
@@ -1430,12 +1644,18 @@ if (!window.htmxoComparisonInstalled) {
 .treebar-pill-skipped {
     background: color-mix(in srgb, var(--pico-muted-color, #ccc) 15%, transparent);
 }
+.treebar-pill-reused {
+    background: color-mix(in srgb, var(--pico-ins-color, #d1fae5) 15%, transparent);
+}
 .treebar-pending { opacity: 0.55; }
 .treebar-pending .treebar-progress { opacity: 0.5; }
 /* Dimmer than pending and struck through: the phase is terminal, and the
    strike is what separates "never ran" from "not yet" at a glance. */
 .treebar-skipped { opacity: 0.45; }
 .treebar-skipped .treebar-description { text-decoration: line-through; }
+/* A success whose output already existed: dimmed like history, but never
+   struck through — unlike skipped, its result is available. */
+.treebar-reused { opacity: 0.7; }
 .treebar-pill:hover { opacity: 0.8; }
 .treebar-header { display: flex; gap: 0.5ch; align-items: baseline; flex-wrap: wrap; }
 .treebar-duration { font-size: 0.85em; color: var(--pico-muted-color, #888); }
@@ -1521,12 +1741,33 @@ if (!window.htmxoComparisonInstalled) {
 .treebar-badge-status { font-size: 0.8rem; flex: none; }
 .treebar-badge-bar { width: 6rem; margin: 0; flex: none; }
 .treebar-badge-elapsed { font-size: 0.8rem; color: var(--pico-muted-color, #888); flex: none; }
+/* Freshness (htmx_treebar_script): a live region whose shown state is old
+   says how old, in the `.treebar-freshness` text of its chrome. `stale`
+   stops the polling pulse; `lost` (updates have failed for seconds, not
+   one blip) also marks the strip and the text in the error color, dims the
+   live content, and opens a quiet badge's panel, so the notice is seen
+   without hovering. The text wraps like the badge label; nothing clips. */
+.treebar-freshness { font-size: 0.8rem; color: var(--pico-muted-color, #888); }
+.treebar-freshness[hidden] { display: none; }
+.treebar-poller[data-treebar-freshness] > .treebar-badge > .treebar-badge-strip { animation: none; }
+.treebar-poller[data-treebar-freshness="lost"] > .treebar-badge > .treebar-badge-strip {
+    background: var(--pico-del-color, #c62828); opacity: 0.9;
+}
+.treebar-poller[data-treebar-freshness="lost"] > .treebar-badge .treebar-freshness,
+.treebar-board[data-treebar-freshness="lost"] > .treebar-board-header > .treebar-freshness,
+[data-treebar-freshness="lost"] .treebar-ws-frame > .treebar-freshness { color: var(--pico-del-color, #c62828); }
+.treebar-poller[data-treebar-freshness="lost"] > .treebar-poller-inner,
+.treebar-board[data-treebar-freshness="lost"] > .treebar-board-list,
+[data-treebar-freshness="lost"] .treebar-ws-frame > :not(.treebar-freshness) { opacity: 0.55; }
+.treebar-poller[data-chrome="quiet"][data-treebar-freshness="lost"] > .treebar-badge > .treebar-badge-panel,
+.htmxo-live-reporter .treebar-poller[data-treebar-freshness="lost"] > .treebar-badge > .treebar-badge-panel { max-height: none; }
 .treebar-children { padding-left: 1rem; margin-left: 0.25rem; border-left: 2px solid color-mix(in srgb, var(--pico-muted-color, #888) 40%, transparent); }
 /* Message-bearing nodes now use the same treebar-node + treebar-header structure
    as container nodes, so treebar-label/treebar-value/treebar-description classes
    are no longer emitted. */
 
 /* Pill toggle state lives on the closest scope (.treebar-poller for live polls,
+   .treebar-board-item on a board, .treebar-ws-frame for WebSocket frames,
    .treebar-children for static one-shot renders). data-show-* values are "0" or
    "1" rather than "true"/"false" because Cobweb drops attrs whose value is the
    string "false".
@@ -1542,35 +1783,41 @@ if (!window.htmxoComparisonInstalled) {
    construction. Only scopes that actually carry the data-show-* attribute set
    the var, so a scopeless inner .treebar-children (scoped=false inside a
    poller) is transparent to inheritance: the poller's value passes through. */
-.treebar-poller[data-show-finished="0"], .treebar-board-item[data-show-finished="0"], .treebar-children[data-show-finished="0"] { --tb-finished-display: none; }
-.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-display: block; }
-.treebar-poller[data-show-failed="0"], .treebar-board-item[data-show-failed="0"], .treebar-children[data-show-failed="0"] { --tb-failed-display: none; }
-.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-display: block; }
-.treebar-poller[data-show-pending="0"], .treebar-board-item[data-show-pending="0"], .treebar-children[data-show-pending="0"] { --tb-pending-display: none; }
-.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-display: block; }
-.treebar-poller[data-show-skipped="0"], .treebar-board-item[data-show-skipped="0"], .treebar-children[data-show-skipped="0"] { --tb-skipped-display: none; }
-.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-display: block; }
+.treebar-poller[data-show-finished="0"], .treebar-board-item[data-show-finished="0"], .treebar-ws-frame[data-show-finished="0"], .treebar-children[data-show-finished="0"] { --tb-finished-display: none; }
+.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-ws-frame[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-display: block; }
+.treebar-poller[data-show-failed="0"], .treebar-board-item[data-show-failed="0"], .treebar-ws-frame[data-show-failed="0"], .treebar-children[data-show-failed="0"] { --tb-failed-display: none; }
+.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-ws-frame[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-display: block; }
+.treebar-poller[data-show-pending="0"], .treebar-board-item[data-show-pending="0"], .treebar-ws-frame[data-show-pending="0"], .treebar-children[data-show-pending="0"] { --tb-pending-display: none; }
+.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-ws-frame[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-display: block; }
+.treebar-poller[data-show-skipped="0"], .treebar-board-item[data-show-skipped="0"], .treebar-ws-frame[data-show-skipped="0"], .treebar-children[data-show-skipped="0"] { --tb-skipped-display: none; }
+.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-ws-frame[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-display: block; }
+.treebar-poller[data-show-reused="0"], .treebar-board-item[data-show-reused="0"], .treebar-ws-frame[data-show-reused="0"], .treebar-children[data-show-reused="0"] { --tb-reused-display: none; }
+.treebar-poller[data-show-reused="1"], .treebar-board-item[data-show-reused="1"], .treebar-ws-frame[data-show-reused="1"], .treebar-children[data-show-reused="1"] { --tb-reused-display: block; }
 .treebar-child-finished { display: var(--tb-finished-display, block); }
 .treebar-child-failed { display: var(--tb-failed-display, block); }
 .treebar-child-pending { display: var(--tb-pending-display, block); }
 .treebar-child-skipped { display: var(--tb-skipped-display, block); }
+.treebar-child-reused { display: var(--tb-reused-display, block); }
 
 /* Active-pill highlight, same nearest-scope-wins inheritance so a nested
    poller's pills reflect that poller's own toggle, not an ancestor's. */
-.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-pill-border: currentColor; }
-.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-pill-border: currentColor; }
-.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-pill-border: currentColor; }
-.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-pill-border: currentColor; }
+.treebar-poller[data-show-finished="1"], .treebar-board-item[data-show-finished="1"], .treebar-ws-frame[data-show-finished="1"], .treebar-children[data-show-finished="1"] { --tb-finished-pill-border: currentColor; }
+.treebar-poller[data-show-failed="1"], .treebar-board-item[data-show-failed="1"], .treebar-ws-frame[data-show-failed="1"], .treebar-children[data-show-failed="1"] { --tb-failed-pill-border: currentColor; }
+.treebar-poller[data-show-pending="1"], .treebar-board-item[data-show-pending="1"], .treebar-ws-frame[data-show-pending="1"], .treebar-children[data-show-pending="1"] { --tb-pending-pill-border: currentColor; }
+.treebar-poller[data-show-skipped="1"], .treebar-board-item[data-show-skipped="1"], .treebar-ws-frame[data-show-skipped="1"], .treebar-children[data-show-skipped="1"] { --tb-skipped-pill-border: currentColor; }
+.treebar-poller[data-show-reused="1"], .treebar-board-item[data-show-reused="1"], .treebar-ws-frame[data-show-reused="1"], .treebar-children[data-show-reused="1"] { --tb-reused-pill-border: currentColor; }
 .treebar-pill-finished { border-color: var(--tb-finished-pill-border, transparent); }
 .treebar-pill-failed { border-color: var(--tb-failed-pill-border, transparent); }
 .treebar-pill-pending { border-color: var(--tb-pending-pill-border, transparent); }
 .treebar-pill-skipped { border-color: var(--tb-skipped-pill-border, transparent); }
+.treebar-pill-reused { border-color: var(--tb-reused-pill-border, transparent); }
 
 /* Keyed board (htmx_render_board). The .treebar-board-item wrapper is never
    replaced by the client reconciler — only its .treebar-board-item-content —
    so UI state on it (data-show-* pill toggles above, data-open for the tree)
    survives updates exactly like the .treebar-poller wrapper does. */
 .treebar-board-header { display: flex; gap: 0.5rem; align-items: baseline; justify-content: space-between; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.treebar-board-header > .treebar-freshness { flex: 1; }
 .treebar-board-count { font-size: 0.85em; color: var(--pico-muted-color, #888); }
 .treebar-phase-overview { margin-block: 0.75rem; }
 .treebar-phase-plan { overflow-x: auto; margin-block: 0.5rem; }
@@ -1580,10 +1827,28 @@ if (!window.htmxoComparisonInstalled) {
 .treebar-phase-plan th { text-align: left; overflow-wrap: anywhere; }
 .treebar-phase-plan th[scope="row"] { overflow-wrap: anywhere; min-width: 8rem; }
 .treebar-phase-plan td { text-align: right; font-variant-numeric: tabular-nums; }
+/* A nested plan is a disclosure inside the plan it is nested in, so each level
+   indents once more; its summary carries the caption, which the table keeps
+   for assistive technology only. */
+.treebar-phase-disclosure {
+    margin: 0.25rem 0 0.25rem 1rem; padding-inline-start: 0.5rem;
+    border-inline-start: 2px solid var(--pico-muted-border-color, #ddd);
+}
+.treebar-phase-disclosure > summary { font-size: 0.85em; font-weight: 600; overflow-wrap: anywhere; cursor: pointer; }
+.treebar-phase-disclosure[open] > summary { margin-bottom: 0.25rem; }
+.treebar-phase-disclosure > .treebar-phase-plan caption {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+}
+.treebar-phase-overview-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: flex-end; }
+.treebar-phase-overview-controls button {
+    margin: 0; padding: 0.1rem 0.5rem; font-size: 0.7rem; line-height: 1.4;
+    width: auto; cursor: pointer;
+}
 @media (max-width: 600px) {
     .treebar-phase-plan table, .treebar-phase-plan caption, .treebar-phase-plan tbody { display: block; }
     .treebar-phase-plan thead { display: none; }
-    .treebar-phase-plan tr { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 0.5rem; }
+    .treebar-phase-plan tr { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 0.5rem; }
     .treebar-phase-plan th[scope="row"] { grid-column: 1 / -1; min-width: 0; }
     .treebar-phase-plan td { display: flex; flex-direction: column; align-items: flex-start; padding-inline: 0.25rem; }
     .treebar-phase-plan td::before { content: attr(data-phase-state); font-size: 0.7rem; text-transform: capitalize; overflow-wrap: anywhere; }
@@ -1677,6 +1942,10 @@ if (!window.htmxoComparisonInstalled) {
         // Same for a paused board (htmx_render_board): pause freezes it whole.
         var b = el.closest('.treebar-board');
         if (b && b.dataset.paused === '1') return;
+        // And for a region whose connection is lost (see freshness below):
+        // the server can no longer confirm the work is still running, so
+        // its clocks hold the last known state until an update arrives.
+        if (el.closest('[data-treebar-freshness="lost"]')) return;
         if (el._tbAnchor === undefined) anchor(el);
         var s = ' — ' + fmt(Date.now() - el._tbAnchor) + ' so far';
         // A determinate node also counts its ETA down (fmt clamps negatives to
@@ -1696,7 +1965,7 @@ if (!window.htmxoComparisonInstalled) {
         var p = el.parentElement;
         if (!p || !p.classList.contains('treebar-poller')) return;
         p.classList.replace('treebar-poller', 'treebar-terminal');
-        ['paused', 'showFinished', 'showPending', 'showFailed', 'showSkipped'].forEach(function(key){
+        ['paused', 'showFinished', 'showPending', 'showFailed', 'showSkipped', 'showReused', 'treebarFreshness'].forEach(function(key){
             delete p.dataset[key];
         });
         var badge = p.querySelector(':scope > .treebar-badge');
@@ -1743,6 +2012,7 @@ if (!window.htmxoComparisonInstalled) {
             var t = d ? d.textContent : '';
             if (el._tbLast !== t){ el.textContent = t; el._tbLast = t; }
         }
+        paintFreshness(p, Date.now());
     }
     // Incremental active-progress tracking: the ticker NEVER scans the
     // document. Two live sets — running duration spans and poller wrappers —
@@ -1754,25 +2024,190 @@ if (!window.htmxoComparisonInstalled) {
     // 30s on a 16k-node page. Snag browser-progress-573fb052.)
     var liveRunning = new Set();
     var livePollers = new Set();
+    // Boards and WebSocket sources whose freshness is shown (a poller's is
+    // shown by its badge sync, so pollers stay in livePollers).
+    var liveRegions = new Set();
     var RUNNING_SEL = '.treebar-duration[data-treebar-status="running"]';
     var POLLER_SEL = '.treebar-poller';
+    // A live board renders a freshness span in its header; a WebSocket
+    // source is the [ws-connect] element its frames arrive in.
+    var BOARD_FRESH_SEL = '.treebar-board-header > .treebar-freshness';
+    var FRAME_SEL = '.treebar-ws-frame';
+    var SOCKET_SEL = '[ws-connect], [data-ws-connect]';
+    var TRACK_SEL = [RUNNING_SEL, POLLER_SEL, BOARD_FRESH_SEL, FRAME_SEL].join(', ');
     function trackRunning(el){
         if (el._tbAnchor === undefined) anchor(el);
         liveRunning.add(el);
     }
-    function collectRunning(root){
-        if (root.nodeType === 1 && root.matches(RUNNING_SEL)) trackRunning(root);
-        if (root.nodeType !== 1 && root.nodeType !== 9) return;
-        var q = root.querySelectorAll(RUNNING_SEL);
-        for (var i = 0; i < q.length; i++) trackRunning(q[i]);
+    function track(el){
+        if (el.matches(RUNNING_SEL)) trackRunning(el);
+        else if (el.matches(POLLER_SEL)) livePollers.add(el);
+        else {
+            var r = el.closest(el.matches(FRAME_SEL) ? SOCKET_SEL : '.treebar-board');
+            if (r) liveRegions.add(r);
+        }
     }
-    function collectPollers(root){
-        if (root.nodeType === 1 && root.matches(POLLER_SEL)) livePollers.add(root);
+    // One selector pass per inserted fragment, whatever it holds.
+    function collect(root){
+        if (root.nodeType === 1 && root.matches(TRACK_SEL)) track(root);
         if (root.nodeType !== 1 && root.nodeType !== 9) return;
-        var q = root.querySelectorAll(POLLER_SEL);
-        for (var j = 0; j < q.length; j++) livePollers.add(q[j]);
+        var q = root.querySelectorAll(TRACK_SEL);
+        for (var i = 0; i < q.length; i++) track(q[i]);
     }
-    function collect(root){ collectRunning(root); collectPollers(root); }
+    // --- Freshness ----------------------------------------------------------
+    // A live region shows the server's state as of its last update, so it
+    // says how old that state is. Each region keeps, on the client clock,
+    // when the server last confirmed it (_tbOkAt; first sight counts, as the
+    // server just rendered it) and since when its updates have been failing
+    // (_tbFailSince). Every tick turns those into data-treebar-freshness on
+    // the region and the text of the hidden .treebar-freshness span the
+    // server renders in its chrome:
+    //   absent  live: confirmed recently; the span stays hidden.
+    //   stale   nothing confirmed for STALE_MS or five poll intervals,
+    //           whichever is longer: a backgrounded tab that stopped
+    //           polling, a slow or hung server. "Updated 1m 4s ago".
+    //   lost    every attempt has failed for LOST_MS straight: a dead
+    //           server, a gateway 5xx, a dropped socket. "Connection lost ·
+    //           updated 1m 4s ago · retrying". A failure the next update
+    //           recovers from is a blip and shows nothing; once lost, a
+    //           region stays lost until an update succeeds.
+    // Failure never stops a region: htmx keeps its `every` timer, and the ws
+    // extension reconnects after an abnormal close, so the region heals by
+    // itself when the server returns. Regions: a .treebar-poller (the
+    // requests of its own .treebar-poller-inner), a live .treebar-board (its
+    // .treebar-board-poll requests, or the boards a WebSocket pushes), and a
+    // WebSocket source carrying .treebar-ws-frame frames.
+    var STALE_MS = 5000, LOST_MS = 5000;
+    function markOk(r){
+        r._tbOkAt = Date.now();
+        r._tbFailSince = 0;
+        r._tbSettled = false;
+    }
+    // `why` is empty when the server is unreachable (no response, or a
+    // gateway that cannot reach it) and names the status otherwise.
+    function markFail(r, why, retrying){
+        if (!r._tbFailSince) r._tbFailSince = Date.now();
+        r._tbFailWhy = why;
+        r._tbRetrying = retrying;
+        r._tbSettled = false;
+    }
+    // Five missed polls before an old state counts as stale; never sooner
+    // than STALE_MS. Same interval grammar as htmx's `every`.
+    function staleAfter(r){
+        if (r._tbStaleMs === undefined){
+            var el = r.querySelector(':scope > .treebar-poller-inner, :scope > .treebar-board-poll');
+            var m = el && /every\s+(\d+(?:\.\d+)?)(ms|s|m)?/.exec(el.getAttribute('hx-trigger') || '');
+            var ms = m ? parseFloat(m[1]) * (m[2] === 's' ? 1000 : m[2] === 'm' ? 60000 : 1) : 0;
+            r._tbStaleMs = Math.max(STALE_MS, 5 * ms);
+        }
+        return r._tbStaleMs;
+    }
+    function freshness(r, now){
+        if (r._tbOkAt === undefined) r._tbOkAt = now;
+        if (r._tbFailSince && now - r._tbFailSince >= LOST_MS) return 'lost';
+        if (r._tbSettled) return '';
+        return now - r._tbOkAt >= staleAfter(r) ? 'stale' : '';
+    }
+    function freshnessText(r, state, now){
+        if (!state) return '';
+        var ms = now - r._tbOkAt;
+        var age = 'updated ' + (ms < 60_000 ? Math.floor(ms / 1000) + 's' : fmt(ms)) + ' ago';
+        if (state === 'stale') return 'U' + age.slice(1);
+        return (r._tbFailWhy ? 'Updates failing (' + r._tbFailWhy + ')' : 'Connection lost') + ' · ' + age +
+            (r._tbRetrying && r.dataset.paused !== '1' ? ' · retrying' : '');
+    }
+    function freshnessSpans(r){
+        if (r.classList.contains('treebar-poller')) return r.querySelectorAll(':scope > .treebar-badge .treebar-freshness');
+        if (r.classList.contains('treebar-board')) return r.querySelectorAll(':scope > .treebar-board-header > .treebar-freshness');
+        return r.querySelectorAll('.treebar-ws-frame > .treebar-freshness');
+    }
+    function paintFreshness(r, now){
+        var state = freshness(r, now);
+        if ((r.dataset.treebarFreshness || '') !== state){
+            if (state) r.dataset.treebarFreshness = state; else delete r.dataset.treebarFreshness;
+        }
+        // Repaint only when the text changes (at most once a second while
+        // stale or lost, never while live). A frame or snapshot arriving
+        // later brings its own hidden span and confirms the region live, so
+        // no span can miss a change.
+        var text = freshnessText(r, state, now);
+        if (r._tbFreshText === text) return;
+        r._tbFreshText = text;
+        var spans = freshnessSpans(r);
+        for (var i = 0; i < spans.length; i++){ spans[i].textContent = text; spans[i].hidden = !text; }
+    }
+    function paintRegions(){
+        var now = Date.now();
+        liveRegions.forEach(function(r){
+            if (!r.isConnected){ liveRegions.delete(r); return; }
+            paintFreshness(r, now);
+        });
+    }
+    // The region a poll request belongs to. A poller's inner replaces itself
+    // before htmx fires afterRequest, so htmx re-fires the event on the
+    // nearest element still in the document — the poller wrapper.
+    function pollRegion(el){
+        if (!el || !el.classList) return null;
+        if (el.classList.contains('treebar-board-poll')) return el.closest('.treebar-board');
+        if (!el.classList.contains('treebar-poller-inner')) return null;
+        var p = el.parentElement;
+        return p && p.classList.contains('treebar-poller') ? p : null;
+    }
+    function requestRegion(d){
+        var req = d.requestConfig && d.requestConfig.elt;
+        var r = pollRegion(req);
+        if (r) return r;
+        return req && req.classList && req.classList.contains('treebar-poller-inner') &&
+            d.elt && d.elt.classList && d.elt.classList.contains('treebar-poller') ? d.elt : null;
+    }
+    // Failures arrive as their own events; an aborted request is neither.
+    document.addEventListener('htmx:afterRequest', function(evt){
+        var d = evt.detail || {};
+        if (d.successful !== true) return;
+        var r = requestRegion(d);
+        if (r) markOk(r);
+    });
+    function pollFailed(evt){
+        var d = evt.detail || {};
+        var r = requestRegion(d);
+        if (!r) return;
+        var s = evt.type === 'htmx:responseError' && d.xhr ? d.xhr.status : 0;
+        markFail(r, s === 0 || s === 502 || s === 503 || s === 504 ? '' : 'HTTP ' + s, true);
+    }
+    ['htmx:sendError', 'htmx:timeout', 'htmx:responseError'].forEach(function(name){
+        document.addEventListener(name, pollFailed);
+    });
+    // WebSocket sources (htmx ws extension). A frame message confirms its
+    // source; board messages are confirmed by the reconciler (they never
+    // reach wsAfterMessage). A close or error fails the source and every
+    // live board on it, except the server ending a stream normally after
+    // its last update: when nothing shown is still running there is nothing
+    // left to go stale.
+    function socketRegions(s){
+        var out = [];
+        if (s.querySelector(FRAME_SEL)){ liveRegions.add(s); out.push(s); }
+        var boards = s.querySelectorAll('.treebar-board');
+        for (var i = 0; i < boards.length; i++) if (liveRegions.has(boards[i])) out.push(boards[i]);
+        return out;
+    }
+    document.addEventListener('htmx:wsAfterMessage', function(evt){
+        if (evt.target.querySelector && evt.target.querySelector(FRAME_SEL)){
+            liveRegions.add(evt.target);
+            markOk(evt.target);
+        }
+    });
+    document.addEventListener('htmx:wsClose', function(evt){
+        var e = evt.detail && evt.detail.event, code = e ? e.code : 0;
+        // The codes the ws extension reconnects after.
+        var retrying = [1006, 1011, 1012, 1013].indexOf(code) >= 0;
+        socketRegions(evt.target).forEach(function(r){
+            if ((code === 1000 || code === 1005) && !r.querySelector(RUNNING_SEL)){ markOk(r); r._tbSettled = true; }
+            else markFail(r, '', retrying);
+        });
+    });
+    document.addEventListener('htmx:wsError', function(evt){
+        socketRegions(evt.target).forEach(function(r){ markFail(r, '', true); });
+    });
     // Lazy prune: removals and terminalizations drop out on the next tick.
     function runningAlive(el){
         if (!el.isConnected || el.dataset.treebarStatus !== 'running'){ liveRunning.delete(el); return false; }
@@ -1800,6 +2235,7 @@ if (!window.htmxoComparisonInstalled) {
     function tickAll(){
         liveRunning.forEach(function(el){ if (runningAlive(el)) tick(el); });
         syncAllBadges();
+        paintRegions();
     }
     function reanchorAndTick(evt){
         terminalizePoller(evt);
@@ -1818,11 +2254,54 @@ if (!window.htmxoComparisonInstalled) {
     // only. Poller wrappers are born by insertion (childList) and die by
     // terminalization or removal (lazy prune in syncBadgeLive) — never by a
     // class flip a filter would need to watch, so `class` stays unobserved.
+    // Viewer choices carried across live updates. A poll swap, a WebSocket
+    // frame and a board update each replace rendered markup wholesale, and
+    // the old markup leaves in the same observer batch that brings its
+    // replacement, so a choice the viewer made on the old markup is moved
+    // onto the new one before it paints: a disclosure's open state, matched
+    // by data-treebar-disclosure in document order, and a WebSocket frame's
+    // pill toggles (data-show-*), matched by the frame's id. Server defaults
+    // apply only to markup that replaces nothing. Costs work proportional to
+    // the changed fragments, like the live sets above.
+    var CARRY_SEL = 'details[data-treebar-disclosure], .treebar-ws-frame[id]';
+    function eachCarried(root, fn){
+        if (root.nodeType !== 1) return;
+        if (root.matches(CARRY_SEL)) fn(root);
+        var q = root.querySelectorAll(CARRY_SEL);
+        for (var i = 0; i < q.length; i++) fn(q[i]);
+    }
+    function carryViewerState(removed, added){
+        if (!removed.length || !added.length) return;
+        var open = {}, frames = {}, any = false;
+        removed.forEach(function(root){ eachCarried(root, function(el){
+            any = true;
+            if (el.tagName !== 'DETAILS'){ frames[el.id] = el; return; }
+            var key = el.dataset.treebarDisclosure;
+            (open[key] = open[key] || []).push(el.open);
+        }); });
+        if (!any) return;
+        added.forEach(function(root){
+            if (!root.isConnected) return;
+            eachCarried(root, function(el){
+                if (el.tagName !== 'DETAILS'){
+                    var from = frames[el.id];
+                    if (from) Object.keys(from.dataset).forEach(function(k){
+                        if (k.indexOf('show') === 0) el.dataset[k] = from.dataset[k];
+                    });
+                    return;
+                }
+                var was = open[el.dataset.treebarDisclosure];
+                if (was && was.length){ var o = was.shift(); if (el.open !== o) el.open = o; }
+            });
+        });
+    }
     var tbObserver = new MutationObserver(function(records){
+        var removed = [], added = [];
         for (var i = 0; i < records.length; i++){
             var r = records[i];
             if (r.type === 'childList'){
-                for (var j = 0; j < r.addedNodes.length; j++) collect(r.addedNodes[j]);
+                for (var j = 0; j < r.addedNodes.length; j++){ collect(r.addedNodes[j]); added.push(r.addedNodes[j]); }
+                for (var k = 0; k < r.removedNodes.length; k++) removed.push(r.removedNodes[k]);
             } else if (r.type === 'attributes' && r.target.nodeType === 1){
                 var el = r.target;
                 if (!el.classList.contains('treebar-duration')) continue;
@@ -1838,6 +2317,7 @@ if (!window.htmxoComparisonInstalled) {
                 }
             }
         }
+        carryViewerState(removed, added);
     });
     document.addEventListener('htmx:afterSwap', reanchorAndTick);
     document.addEventListener('htmx:oobAfterSwap', reanchorAndTick);
@@ -1968,7 +2448,9 @@ if (!window.htmxoComparisonInstalled) {
             var board = incoming.id && document.getElementById(incoming.id);
             if (!board || !board.classList.contains('treebar-board')) return;
             n += 1;
-            if (board.dataset.paused !== '1') reconcileBoard(board, incoming);
+            if (board.dataset.paused === '1') return;
+            reconcileBoard(board, incoming);
+            markOk(board);
         });
         return n;
     }

@@ -105,6 +105,23 @@ try
         @test Matrix(om.draws) == full
     end
 
+    @testset "closed stream results permit deleting their directory" begin
+        mktempdir() do root
+            p = joinpath(root, "subject.stream")
+            first = stream_mcmc(Xoshiro(21), problem, q0; path=p, n_draws=1, kw...)
+            close_stream(first)
+            second = stream_mcmc(problem; path=p, n_draws=2, kw...)
+            @test second.n_drawn == 2
+            reader = open_stream(p)
+            @test Matrix(reader.draws) == Matrix(second.draws)
+            close_stream(reader)
+            close_stream(second)
+            close_stream(second) # repeated cleanup must not double-unmap
+            rm(root; recursive=true)
+            @test !ispath(root)
+        end
+    end
+
     @testset "overwrite vs. refusing to clobber an unreadable run" begin
         p = tempname()
         old = stream_mcmc(Xoshiro(1), problem, q0; path = p, n_draws = 40, kw...)

@@ -153,6 +153,19 @@ try
         rs2 = stream_mcmc(cp, problem; path = p, n_draws = 160)   # resume the seeded run
         @test rs2.n_drawn == 160
         @test Matrix(rs2.draws)[:, 1:80] == Matrix(rs.draws)[:, 1:80]
+
+        # A changed target uses the last position/RNG with a fresh gradient.
+        shifted = DiagGaussian(problem.mu .+ 2, problem.sigma .* 1.2)
+        changed_path = tempname()
+        first_step = stream_mcmc(cp, problem; path = changed_path, n_draws = 1)
+        next_step = stream_mcmc(cp, shifted; path = changed_path, n_draws = 2)
+        reference = stream_mcmc(cp, shifted, first_step.position;
+            path = tempname(), n_draws = 1, rng = copy(first_step.rng))
+        @test next_step.n_drawn == 2
+        @test next_step.draws[:, 1] == first_step.draws[:, 1]
+        @test next_step.position != first_step.position
+        @test next_step.position == reference.position
+        @test next_step.draws[:, 2] == reference.draws[:, 1]
     end
 
     @testset "checkpoint kernel + explicit start position (override)" begin

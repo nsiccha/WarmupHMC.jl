@@ -24,8 +24,10 @@ file instead of saying what you get is not much of a README.
 Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 `clustered_warmup_mcmc`, plus `resume_warmup_mcmc` to continue a checkpointed
 run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
-read its output back; the reparametrization types `ReparametrizedProblem`,
-`IndexedReparametrization`, `PartiallyCentered` and `Reparametrization`; and
+read its output back; `FixedKernelNUTSState` and `fixed_kernel_nuts_step` for
+in-memory transitions under changing targets; the reparametrization types
+`ReparametrizedProblem`, `IndexedReparametrization`, `PartiallyCentered` and
+`Reparametrization`; and
 `CandidateScoringPlan` for steering candidate adaptation, with
 `candidate_scoring_losses` to inspect or retrospectively recompute its loss
 curve, and `WindowSelectionPlan` to replace candidate adaptation with your own
@@ -49,6 +51,18 @@ The result is a NamedTuple, with its `posterior_position` field containing the p
 
 Results should come in faster than with "standard" methods, and should often be better.
 
+That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`
+runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and
+[WarmupHMC vs other samplers](https://nsiccha.github.io/WarmupHMC.jl/dev/sampler-comparison)
+renders the result — verdict included — from the checked-in JSON at build time.
+Read that page for what "faster" does and does not mean here. The lead is in
+**gradient evaluations** — the portable number, and the one that reproduces:
+re-running identical seeds returns bit-identical counts, so that verdict does
+not move. Wall-clock is a different story, and the page says so out of its own
+rows rather than in a caveat: its verdict changes between repeats of the *same*
+seeds, because the timing noise is wider than the band used to call a winner.
+Nothing here measures whether the draws are correct.
+
 Once the kernel is fixed — a mass-matrix scale, a step size and a tree depth,
 whether hand-supplied or read from a warm-up checkpoint — `stream_mcmc` runs pure
 sampling with no adaptation and streams the draws into a zeroed, memory-mappable
@@ -66,17 +80,23 @@ stream_mcmc(checkpoint, problem, position; path, n_draws)             # checkpoi
 stream_mcmc(checkpoint, problem, positions; path, n_draws)            # N chains under path/chain_<i>, one per start
 ```
 
-That sentence used to stand on its own. It is now measured: `bench/sampler_comparison.jl`
-runs WarmupHMC, DynamicHMC and AdvancedHMC over the same targets, and
-[WarmupHMC vs other samplers](https://nsiccha.github.io/WarmupHMC.jl/dev/sampler-comparison)
-renders the result — verdict included — from the checked-in JSON at build time.
-Read that page for what "faster" does and does not mean here. The lead is in
-**gradient evaluations** — the portable number, and the one that reproduces:
-re-running identical seeds returns bit-identical counts, so that verdict does
-not move. Wall-clock is a different story, and the page says so out of its own
-rows rather than in a caveat: its verdict changes between repeats of the *same*
-seeds, because the timing noise is wider than the band used to call a winner.
-Nothing here measures whether the draws are correct.
+For a target that changes between draws, keep the fixed kernel in memory with
+`FixedKernelNUTSState` and `fixed_kernel_nuts_step`:
+
+```julia
+state = FixedKernelNUTSState(checkpoint)  # or (rng, position; metric, stepsize)
+for problem in changing_targets
+    result = fixed_kernel_nuts_step(state, problem)
+    state = result.state
+    # state.position is this transition's source-frame position;
+    # result.divergent describes this transition only.
+end
+```
+
+Each step reevaluates the log density and gradient at the saved position under
+the supplied target. The metric, step size and tree depth stay fixed; no files
+are written. Keep the same dimension and coordinate frame across targets.
+Positions from different targets are not a stationary posterior sample.
 
 ## Completion quorum (opt-in)
 

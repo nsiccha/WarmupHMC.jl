@@ -103,6 +103,98 @@ _derive_chain_rngs(base, n) = begin
     [(r = copy(base); Random.seed!(r, rand(gen, UInt64)); r) for _ in 1:n]
 end
 
+# ------------------------------------------------ in-memory fixed-kernel NUTS
+
+"""
+    FixedKernelNUTSState(rng, position; metric, stepsize, max_tree_depth=10)
+    FixedKernelNUTSState(checkpoint; max_tree_depth=10, position=..., rng=...)
+
+In-memory state for [`fixed_kernel_nuts_step`](@ref). `position` is in the
+sampler's source frame. `metric` is the mass-matrix scale accepted by
+[`stream_mcmc`](@ref), not a covariance or precision matrix. A checkpoint
+payload (or its file path) supplies its final position, RNG, learned scale,
+step size and reparametrization controls; `position` and `rng` can override its
+start point and random stream.
+
+Construction does not evaluate a target. Each step evaluates the *current*
+target at the stored position, so the target may change between calls while
+the kernel remains fixed. State creation and stepping do not write files.
+The position, RNG and metric are copied when the state is created.
+"""
+struct FixedKernelNUTSState{R,P,K,A,S}
+    rng::R
+    position::P
+    kinetic_energy::K
+    stepsize::Float64
+    algorithm::A
+    reparam_sources::S
+end
+
+_fixed_nuts_state(rng, position, kinetic_energy, stepsize, max_tree_depth, sources) = begin
+    ϵ = Float64(stepsize)
+    isfinite(ϵ) && ϵ > 0 || throw(ArgumentError(
+        "`stepsize` must be finite and positive; got $(repr(stepsize))."))
+    max_tree_depth >= 1 || throw(ArgumentError(
+        "`max_tree_depth` must be positive; got $max_tree_depth."))
+    q = collect(float.(position))
+    all(isfinite, q) || throw(ArgumentError("`position` must contain only finite values."))
+    FixedKernelNUTSState(copy(rng), q, deepcopy(kinetic_energy), ϵ,
+        DynamicHMC.NUTS(; max_depth=max_tree_depth), deepcopy(sources))
+end
+
+FixedKernelNUTSState(rng, position::AbstractVector;
+        metric, stepsize::Real, max_tree_depth::Integer=10) =
+    _fixed_nuts_state(rng, position, _stream_energy(metric), stepsize,
+        max_tree_depth, Pair[])
+
+FixedKernelNUTSState(payload::NamedTuple;
+        max_tree_depth::Integer=10, position=payload.position_and_gradient.q,
+        rng=payload.rng) = begin
+    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative, :clustered))
+    length(position) == payload.dimension || throw(DimensionMismatch(
+        "start `position` has length $(length(position)) but the checkpoint holds " *
+        "a $(payload.dimension)-dimensional problem."))
+    _fixed_nuts_state(rng, position,
+        _stream_kinetic_energy(payload.scale_options[payload.active_transformation]),
+        payload.stepsize, max_tree_depth, get(payload, :reparam_sources, Pair[]))
+end
+
+FixedKernelNUTSState(checkpoint_path::AbstractString; kwargs...) =
+    FixedKernelNUTSState(deserialize(checkpoint_path)::NamedTuple; kwargs...)
+
+"""
+    fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf)
+
+Take exactly one fixed-kernel NUTS transition under the supplied
+`LogDensityProblems` target. Return `(; state, divergent, stats)`, where `state`
+is the next in-memory state, `divergent` is this transition's
+divergence flag, and `stats` is the DynamicHMC tree statistics. The input state
+is not advanced. Read the new source-frame position from `result.state.position`.
+
+The target may change on every call, but must keep the same dimension and
+source-coordinate frame. Its log density and gradient are freshly evaluated at
+the saved position before sampling. A checkpoint's adapted reparametrization
+controls are restored onto a private copy of each supplied target. The fixed
+metric, step size and tree depth are not adapted. Mixed-target positions are
+not a stationary posterior sample and must not be pooled for ESS.
+"""
+fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf) = begin
+    dimension = LogDensityProblems.dimension(lpdf)
+    length(state.position) == dimension || throw(DimensionMismatch(
+        "state holds a $(length(state.position))-dimensional position but the " *
+        "supplied lpdf has dimension $dimension."))
+    active_lpdf = isempty(state.reparam_sources) ? lpdf :
+        restore_reparam_sources!(deepcopy(lpdf), state.reparam_sources)
+    pg = DynamicHMC.evaluate_ℓ(active_lpdf, copy(state.position); strict=true)
+    rng = copy(state.rng)
+    hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, active_lpdf)
+    next_pg, stats = DynamicHMC.sample_tree(
+        rng, state.algorithm, hamiltonian, pg, state.stepsize)
+    next_state = FixedKernelNUTSState(rng, copy(next_pg.q), state.kinetic_energy,
+        state.stepsize, state.algorithm, state.reparam_sources)
+    (; state=next_state, divergent=DynamicHMC.is_divergent(stats.termination), stats)
+end
+
 _stream_lpdfs(lpdf, n_chains) =
     lpdf isa AbstractVector && length(lpdf) == n_chains ? collect(lpdf) :
     [deepcopy(lpdf) for _ in 1:n_chains]   # a stateful wrapper must not be shared across chains

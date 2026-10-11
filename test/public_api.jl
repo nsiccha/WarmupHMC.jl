@@ -50,6 +50,8 @@ const PUBLIC_EXPORTS = [
     # fixed-kernel interruptible streaming sampler
     :stream_mcmc,
     :open_stream,
+    :FixedKernelNUTSState,
+    :fixed_kernel_nuts_step,
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,

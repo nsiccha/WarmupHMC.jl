@@ -608,6 +608,8 @@ EVERY draw's divergence flag — their sum is the total), `rng_states` (a
 `5 × n_drawn` `UInt64` view of every draw's post-draw Xoshiro state), `ess`
 (per-coordinate bulk-ESS, sorted ascending; `NaN` for `<= 10` draws), `dimension`,
 `rng`, `position`. Reopen a finished or partial run with [`open_stream`](@ref).
+Call [`close_stream`](@ref) on each result once its mapped views are no longer
+needed, before removing the stream files on Windows.
 
 Reproducibility of resume-equals-uninterrupted is byte-for-byte for a fixed seed
 only under single-threaded BLAS (`LinearAlgebra.BLAS.set_num_threads(1)`).
@@ -763,7 +765,8 @@ end
 _read_sidecar(path, ::Type{T}, lead_dims, n_cols, n) where {T} = begin
     isfile(path) || return nothing
     dims = (lead_dims..., n_cols)
-    arr = Mmap.mmap(open(path, "r"), Array{T,length(dims)}, dims)
+    # The filename overload closes its temporary IOStream after mapping.
+    arr = Mmap.mmap(path, Array{T,length(dims)}, dims)
     @view arr[ntuple(_ -> Colon(), length(lead_dims))..., 1:n]
 end
 
@@ -785,6 +788,9 @@ get constrained model-frame draws instead (`draws` is then a fresh
 `Matrix{Float64}`, back-transformed exactly as `WarmupHMC.back_transform`); with
 `model=false` the `lpdf` is used only to check the dimension. Throws if `path`
 has no readable safe ring.
+
+Call [`close_stream`](@ref) on the returned value before deleting the stream
+files, especially on Windows. The returned views become invalid after closing.
 """
 open_stream(path, lpdf=nothing; model::Bool=false) = begin
     ring_path = _ring_path(path)
@@ -822,4 +828,29 @@ open_stream(path, lpdf=nothing; model::Bool=false) = begin
     divergences = _read_sidecar(_divergences_path(path), Int8, (), div_total, n_written)
     (; path, draws, samples, n_drawn=n_written, divergences, rng_states,
        dimension, rng, position=collect(@view samples[:, n_written]))
+end
+
+"""
+    close_stream(result) -> nothing
+
+Release the memory mappings held by a result from [`stream_mcmc`](@ref) or
+[`open_stream`](@ref). Call this after copying any needed draws, sidecar values,
+or position and before removing or replacing the stream files on Windows.
+The result's `samples`, `draws`, `rng_states`, and `divergences` views must not
+be accessed after closing. Calling `close_stream` again is harmless.
+
+`stream_mcmc` closes its safe-ring file handle before returning; the mapped
+arrays are the resources this function releases. The on-disk stream remains
+resumable and can be reopened with `open_stream`.
+"""
+function close_stream(result::NamedTuple)
+    haskey(result, :samples) && haskey(result, :rng_states) &&
+        haskey(result, :divergences) || throw(ArgumentError(
+            "close_stream expects a result from stream_mcmc or open_stream"))
+    for name in (:rng_states, :divergences)
+        view = getproperty(result, name)
+        isnothing(view) || finalize(parent(view))
+    end
+    finalize(result.samples)
+    nothing
 end

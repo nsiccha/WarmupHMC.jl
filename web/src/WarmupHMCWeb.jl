@@ -623,9 +623,8 @@ const APPDATA = WhmcAppData()
         )
     end
 
-    # Drop all in-memory caches on the singleton appdata. Useful after
-    # property/value-shape edits that Revise tracks at the method level but
-    # can't invalidate per cached instance.
+    # Drop all in-memory caches on the singleton appdata when an explicit
+    # refresh is needed.
     @delete cache() = (clear_mem_caches!(__appdata__); "ok")
 
     # Per-posterior view: routes mounted under /posteriors/<name>/…

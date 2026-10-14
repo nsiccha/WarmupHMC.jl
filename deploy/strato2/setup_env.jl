@@ -27,7 +27,7 @@ end
 append!(packages, [repo, joinpath(repo, "web")])
 Pkg.activate(env_dir)
 Pkg.develop(Pkg.PackageSpec[Pkg.PackageSpec(; path) for path in packages])
-Pkg.add("Revise")
+haskey(Pkg.project().dependencies, "Revise") && Pkg.rm("Revise")
 Pkg.instantiate()
 Pkg.precompile()
 

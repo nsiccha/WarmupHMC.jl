@@ -106,6 +106,9 @@ try
     end
 
     @testset "closed stream results permit deleting their directory" begin
+        # Linux lists live file mappings in /proc/self/maps, so the unmap is
+        # checked here too, not only where a mapped file blocks deletion.
+        mapped(file) = any(endswith(realpath(file)), eachline("/proc/self/maps"))
         mktempdir() do root
             p = joinpath(root, "subject.stream")
             first = stream_mcmc(Xoshiro(21), problem, q0; path=p, n_draws=1, kw...)
@@ -114,9 +117,12 @@ try
             @test second.n_drawn == 2
             reader = open_stream(p)
             @test Matrix(reader.draws) == Matrix(second.draws)
+            files = (p, p * ".rng_states", p * ".divergences")
+            Sys.islinux() && @test all(mapped, files)
             close_stream(reader)
             close_stream(second)
             close_stream(second) # repeated cleanup must not double-unmap
+            Sys.islinux() && @test !any(mapped, files)
             rm(root; recursive=true)
             @test !ispath(root)
         end

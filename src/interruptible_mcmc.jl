@@ -346,6 +346,16 @@ _open_mmap(path, ::Type{T}, dims::Dims) where {T} = begin
     arr
 end
 
+# Unmap an `Mmap.mmap` array now rather than at GC, by running the finalizer
+# `Mmap` registered for it. Julia 1.11+ registers that finalizer on the backing
+# `Memory` (`arr.ref.mem`), so finalizing the `Array` alone leaves the mapping
+# (and, on Windows, the lock on its file) alive.
+@static if isdefined(Base, :Memory)
+    _unmap!(arr::Array) = finalize(arr.ref.mem)
+else
+    _unmap!(arr::Array) = finalize(arr)
+end
+
 # On RESUME (`n_written >= 1`), a per-draw sidecar that does not yet exist predates
 # this record: `_open_mmap` will create it zeroed, so its already-drawn columns
 # read back as ZEROS, not their true values — and for `.divergences` a 0 is
@@ -849,8 +859,8 @@ function close_stream(result::NamedTuple)
             "close_stream expects a result from stream_mcmc or open_stream"))
     for name in (:rng_states, :divergences)
         view = getproperty(result, name)
-        isnothing(view) || finalize(parent(view))
+        isnothing(view) || _unmap!(parent(view))
     end
-    finalize(result.samples)
+    _unmap!(result.samples)
     nothing
 end

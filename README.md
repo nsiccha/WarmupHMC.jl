@@ -24,7 +24,8 @@ file instead of saying what you get is not much of a README.
 Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
 `clustered_warmup_mcmc`, plus `resume_warmup_mcmc` to continue a checkpointed
 run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
-read its output back; `FixedKernelNUTSState` and `fixed_kernel_nuts_step` for
+read its output back and `close_stream` to release its mapped views;
+`FixedKernelNUTSState` and `fixed_kernel_nuts_step` for
 in-memory transitions under changing targets; the reparametrization types
 `ReparametrizedProblem`, `IndexedReparametrization`, `PartiallyCentered` and
 `Reparametrization`; and
@@ -70,7 +71,9 @@ file. It persists only the RNG state and the last safe draw index into a
 crash-safe "safe ring" beside that file, so a process killed mid-sample or
 mid-write resumes byte-for-byte from the immediately preceding state on the next
 call to the same `path`. `open_stream` re-maps a finished or in-progress run for
-reading.
+reading. Call `close_stream(result)` after copying any needed draws and before
+deleting the stream files, especially on Windows; the mapped views are invalid
+after closing.
 
 ```julia
 stream_mcmc(rng, problem, position; path, n_draws, metric, stepsize)  # start

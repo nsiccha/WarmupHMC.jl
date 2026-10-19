@@ -260,7 +260,7 @@ function htmxoFilterTable(target) {
     const detail = {shown: rows.filter(r => !r.hidden).length, total: rows.length + pending, query, hiddenBy, notes: []};
     root.dispatchEvent(new CustomEvent('htmxo:table-filtered', {bubbles: true, detail}));
     const count = root.querySelector(':scope > label > [data-htmxo-table-count]');
-    if (count) count.textContent = detail.shown + ' of ' + detail.total + ' rows shown' +
+    if (count) count.textContent = htmxoText(root, 'count', {shown: detail.shown, total: detail.total}) +
         detail.notes.map(note => ' · ' + note).join('');
     root.querySelector(':scope > [data-htmxo-table-empty]').hidden = visible.size !== 0;
 }
@@ -292,12 +292,12 @@ function htmxoLoadRows(row, expand) {
     if (row.htmxoLoading) return row.htmxoLoading;
     row.setAttribute('aria-busy', 'true');
     row.htmxoLoading = fetch(row.dataset.htmxoLazyRows, {headers: {'HX-Request': 'true'}})
-        .then(r => r.ok ? r.text() : Promise.reject(new Error('Loading rows failed (' + r.status + ')')))
+        .then(r => r.ok ? r.text() : Promise.reject(new Error(htmxoText(row, 'rows_failed', {status: r.status}))))
         .then(html => {
             const template = document.createElement('template');
             template.innerHTML = html;
             const body = template.content.querySelector('tbody[data-htmxo-group-rows]');
-            if (!body) throw new Error('Loading rows failed: no rows in the response');
+            if (!body) throw new Error(htmxoText(row, 'rows_missing'));
             const rows = Array.from(body.rows);
             row.after(...rows);
             ['htmxoLazyRows', 'htmxoLazyCount', 'htmxoSearchMembers', 'htmxoSelectMembers'].forEach(k => delete row.dataset[k]);
@@ -836,9 +836,11 @@ function htmxoSelectionUpdate(root) {
     const filtered = selected.filter(r => why(r) === 2).length;
     const folded = selected.filter(r => why(r) === 1).length + unloaded.length;
     const hidden = filtered + folded;
-    const notes = [filtered && filtered + ' hidden by the filter', folded && folded + ' in collapsed groups'].filter(Boolean);
+    const notes = [filtered && htmxoText(root, 'selected_filtered', {count: filtered}),
+        folded && htmxoText(root, 'selected_collapsed', {count: folded})].filter(Boolean);
     const count = root.querySelector(':scope > div > .htmxo-selection-bar > [data-htmxo-selection-count]');
-    if (count) count.textContent = (selected.length + unloaded.length) + ' selected' + (notes.length ? ' (' + notes.join(', ') + ')' : '');
+    if (count) count.textContent = htmxoText(root, 'selected', {count: selected.length + unloaded.length}) +
+        (notes.length ? ' (' + notes.join(', ') + ')' : '');
     document.querySelectorAll('[data-htmxo-needs-selection]').forEach(control => {
         if (control.dataset.htmxoNeedsSelection === name)
             control.disabled = submitted.length === 0 && !unloaded.some(k => pending.get(k) !== null);
@@ -1167,6 +1169,20 @@ if (!window.htmxoMoveBeforeGuarded) {
         };
     });
 }
+// A table text (`TableTexts`) with its {placeholders} filled in: from the
+// nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More"};
+function htmxoText(el, name, values) {
+    var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
+    if (holder) {
+        if (holder.htmxoTextsSource !== holder.dataset.htmxoTexts) {
+            holder.htmxoTextsSource = holder.dataset.htmxoTexts;
+            holder.htmxoTexts = JSON.parse(holder.htmxoTextsSource);
+        }
+        texts = holder.htmxoTexts;
+    }
+    return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
+}
 function htmxoMdToggle(row, event, key, slot) {
     if (event.target.closest('a,button,input,textarea,select,form')) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
@@ -1227,7 +1243,7 @@ function htmxoMdStatus(s) {
 function htmxoMdBefore(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
     s.dataset.loading = '1'; delete s.dataset.failed; s.__htmxoMdAborted = false;
-    var p = htmxoMdStatus(s); if (p) p.textContent = 'Loading…';
+    var p = htmxoMdStatus(s); if (p) p.textContent = htmxoText(s, 'loading');
 }
 function htmxoMdReady(s, event) {
     if (event.target !== s || event.detail.target !== s) return;
@@ -1256,14 +1272,14 @@ function htmxoMdAfter(s, event) {
         // toast for this attempt (a failure the retries cannot cure does).
         event.detail.htmxoFailureShown = true;
         s.dataset.retries = String(n + 1);
-        if (p) p.textContent = 'Connection lost — retrying…';
+        if (p) p.textContent = htmxoText(s, 'retrying');
         setTimeout(function() {
             if (document.contains(s) && s.dataset.loaded !== '1') htmx.trigger(s, 'htmxo-md-load');
         }, htmxoMdRetryDelays[n]);
     } else {
         delete s.dataset.loading; delete s.dataset.retries;
         s.dataset.loaded = '0'; s.dataset.failed = '1';
-        if (p) p.textContent = 'Failed to load — click to retry';
+        if (p) p.textContent = htmxoText(s, 'load_failed');
     }
 }
 function htmxoMdRetry(s) {

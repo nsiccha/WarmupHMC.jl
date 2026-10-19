@@ -104,6 +104,21 @@
     function clearFeedback(el) {
         el.classList.remove('htmx-request-active', 'htmx-request-success', 'htmx-request-error');
     }
+    // How the request ended, as the toast runtime reads it: an aborted request
+    // or an answer that navigates is neither success nor failure, and a
+    // network error or timeout is decided by the event that follows
+    // afterRequest. A head without that runtime keeps the plain reading.
+    function outcome(e) {
+        if (window.htmxoRequestOutcome) return window.htmxoRequestOutcome(e).state;
+        if (e.type !== 'htmx:afterRequest') return 'pending';
+        return e.detail.successful ? 'success' : 'failure';
+    }
+    function mark(el, state) {
+        clearFeedback(el);
+        if (state === 'neutral') return;
+        el.classList.add(state === 'success' ? 'htmx-request-success' : 'htmx-request-error');
+        setTimeout(function() { clearFeedback(el); }, state === 'success' ? 1000 : 2000);
+    }
     document.body.addEventListener('htmx:beforeRequest', function(e) {
         var elt = e.detail.elt;
         if (isPolling(elt) || isPreload(e)) return;
@@ -122,44 +137,22 @@
         t.classList.add('htmx-request-success');
         setTimeout(function() { clearFeedback(t); }, 1000);
     });
-    document.body.addEventListener('htmx:afterRequest', function(e) {
+    function finished(e) {
         var elt = e.detail.elt;
         if (isPollingRelated(elt)) return;
+        var state = outcome(e);
+        if (state === 'pending') return;
         var t = getTarget(e);
-        t.classList.remove('htmx-request-active');
-        if (e.detail.successful) {
-            t.classList.add('htmx-request-success');
-            setTimeout(function() { clearFeedback(t); }, 1000);
-            if (t !== elt) {
-                elt.classList.remove('htmx-request-active');
-                elt.classList.add('htmx-request-success');
-                setTimeout(function() { clearFeedback(elt); }, 1000);
-            }
-        } else {
-            t.classList.add('htmx-request-error');
-            setTimeout(function() { clearFeedback(t); }, 2000);
-            if (t !== elt) {
-                elt.classList.add('htmx-request-error');
-                setTimeout(function() { clearFeedback(elt); }, 2000);
-            }
-        }
+        mark(t, state);
+        if (t !== elt) mark(elt, state);
+    }
+    ['htmx:afterRequest', 'htmx:sendError', 'htmx:timeout', 'htmx:sendAbort'].forEach(function(name) {
+        document.body.addEventListener(name, finished);
     });
 });
 </script><style>.htmxo-compose-textarea {
     resize: none; overflow: hidden; field-sizing: content; line-height: 1.4;
 }
-.htmxo-toast {
-    position: fixed; bottom: 1rem; right: 1rem; z-index: 9999;
-    padding: 0.5rem 0.85rem; border-radius: 0.3rem; font-size: 0.85em;
-    background: var(--pico-card-background-color, #fff);
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15); max-width: 28rem;
-    opacity: 0; transform: translateY(0.5rem);
-    transition: opacity 0.3s ease, transform 0.3s ease;
-}
-.htmxo-toast-show { opacity: 1; transform: translateY(0); }
-.htmxo-toast-error { border-color: var(--pico-color-red-500, #d32f2f); color: var(--pico-color-red-500, #d32f2f); }
-.htmxo-toast-info { color: var(--pico-color, inherit); }
 </style><script>(function() {
     var FIELD_SIZING = !!(window.CSS && CSS.supports && CSS.supports('field-sizing', 'content'));
     function autoGrow(el) {
@@ -206,19 +199,7 @@
             try { localStorage.removeItem(k); } catch (e) {}
         });
     }
-    function toast(text, status) {
-        var t = document.createElement('div');
-        t.className = 'htmxo-toast htmxo-toast-' + (status || 'info');
-        t.textContent = text;
-        document.body.appendChild(t);
-        void t.offsetWidth;
-        t.classList.add('htmxo-toast-show');
-        setTimeout(function() {
-            t.classList.remove('htmxo-toast-show');
-            setTimeout(function() { t.remove(); }, 350);
-        }, 4000);
-    }
-    window.htmxoToast = toast;
+    function toast(text, status) { window.htmxoToast(text, status); }
     window.htmxoComposeRebind = function(root) { restoreDrafts(root); bindTextareas(root); };
     function init() {
         restoreDrafts(document);
@@ -237,23 +218,26 @@
             restoreDrafts(evt.detail && evt.detail.elt);
             bindTextareas(evt.detail && evt.detail.elt);
         });
-        // 2xx → clear drafts + reset the form. Non-2xx → keep value, toast.
-        document.body.addEventListener('htmx:afterRequest', function(evt) {
+        // Success → clear drafts + reset the form. A failure → keep the text
+        // and say so, in place of the shell's generic failure toast (this
+        // listener runs first and claims the request's one failure message).
+        function finished(evt) {
             var form = evt.target && evt.target.closest && evt.target.closest('.htmxo-compose-form');
-            if (!form) return;
-            if (evt.detail && evt.detail.successful) {
+            if (!form || !evt.detail) return;
+            var result = window.htmxoRequestOutcome(evt);
+            if (result.state === 'success') {
                 clearFormDrafts(form);
                 form.reset();
                 form.querySelectorAll('.htmxo-compose-textarea').forEach(autoGrow);
-            } else {
-                toast('send failed — your text is preserved, retry when ready', 'error');
+            } else if (result.state === 'failure' && !evt.detail.htmxoFailureShown) {
+                evt.detail.htmxoFailureShown = true;
+                toast(evt.type === 'htmx:sendError'
+                    ? 'send failed — unreachable; your text is preserved'
+                    : 'send failed — your text is preserved, retry when ready', 'error');
             }
-        });
-        // No response at all (server down, network drop). Same UX as a non-2xx.
-        document.body.addEventListener('htmx:sendError', function(evt) {
-            var form = evt.target && evt.target.closest && evt.target.closest('.htmxo-compose-form');
-            if (!form) return;
-            toast('send failed — unreachable; your text is preserved', 'error');
+        }
+        ['htmx:afterRequest', 'htmx:sendError', 'htmx:timeout'].forEach(function(name) {
+            document.body.addEventListener(name, finished);
         });
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
@@ -1023,6 +1007,17 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     cursor: progress;
     opacity: 0.7;
 }
+
+/* sortable_table header labels are native <button>s: read as heading text on
+   every shell. Unlayered to beat Pico's `button`; no --pico-* colour tokens
+   (Pico rewrites them on buttons — htmxo-semantic-styling pattern 9). */
+.htmxo-sortable-table thead th > .htmxo-sort-control {
+    width: auto; margin: 0; padding: 0; border: none; background: transparent;
+    color: inherit; font: inherit; text-align: inherit; box-shadow: none;
+}
+.htmxo-sortable-table thead th > .htmxo-sort-control:focus-visible {
+    outline: 2px solid var(--htmxo-accent, currentColor); outline-offset: .15em;
+}
 </style><style>@layer htmxo {
 .tabset > nav {
     margin: 0;
@@ -1085,35 +1080,284 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     margin-top: 0.5rem;
 }
 }
-</style><script>function htmxoMdToggle(row, event, key, slot) {
+</style><style>.htmxo-toasts {
+    position: fixed; inset-block-end: 1rem; inset-inline-end: 1rem; z-index: 9999;
+    display: flex; flex-direction: column; align-items: flex-end; gap: .5rem;
+    max-width: min(28rem, calc(100vw - 2rem)); pointer-events: none;
+}
+.htmxo-toast {
+    pointer-events: auto; display: flex; align-items: flex-start; gap: .5rem;
+    padding: .5rem .4rem .5rem .85rem; border-radius: .3rem; font-size: .9em; line-height: 1.4;
+    background: var(--pico-card-background-color, Canvas); color: var(--pico-color, CanvasText);
+    border: 1px solid var(--pico-muted-border-color, color-mix(in srgb, currentColor 25%, transparent));
+    border-inline-start: .25rem solid var(--htmxo-accent, Highlight);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .2);
+    opacity: 0; transform: translateY(.5rem); transition: opacity .25s ease, transform .25s ease;
+}
+.htmxo-toast-show { opacity: 1; transform: none; }
+.htmxo-toast-success { border-inline-start-color: var(--htmxo-success, #2a9d8f); }
+.htmxo-toast-error { border-inline-start-color: var(--htmxo-error, #e76f51); }
+.htmxo-toast > span { flex: 1; overflow-wrap: anywhere; }
+.htmxo-toast > .htmxo-toast-close {
+    width: auto; margin: 0; padding: 0 .3rem; border: none; border-radius: .2rem;
+    background: transparent; color: inherit; font: inherit; line-height: 1.4;
+    box-shadow: none; cursor: pointer; opacity: .7;
+}
+.htmxo-toast > .htmxo-toast-close:hover, .htmxo-toast > .htmxo-toast-close:focus-visible { opacity: 1; }
+.htmxo-toast > .htmxo-toast-close:focus-visible { outline: 2px solid var(--htmxo-accent, Highlight); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .htmxo-toast { transition: none; transform: none; } }
+</style><script>(function() {
+    if (window.__htmxoToastBound) return;
+    window.__htmxoToastBound = true;
+    var DURATION = { success: 4000, info: 4000, error: 8000 };
+    // The live region exists before the first message, so screen readers
+    // announce it; a swap that replaced the body gets a fresh one.
+    function region() {
+        var r = document.getElementById('htmxo-toasts');
+        if (!r && document.body) {
+            r = document.createElement('div');
+            r.id = 'htmxo-toasts';
+            r.className = 'htmxo-toasts';
+            r.setAttribute('role', 'status');
+            r.setAttribute('aria-live', 'polite');
+            document.body.appendChild(r);
+        }
+        return r;
+    }
+    // An error toast whose text is already on screen counts the repeat instead
+    // of stacking a copy: a gateway outage fails every request on the page.
+    var shownErrors = {};
+    function toast(text, status) {
+        status = status || 'info';
+        var same = status === 'error' && shownErrors[text];
+        if (same) { same.repeat(); return same.node; }
+        var t = document.createElement('div');
+        t.className = 'htmxo-toast htmxo-toast-' + status;
+        if (status === 'error') t.setAttribute('role', 'alert');
+        var msg = document.createElement('span');
+        msg.textContent = text;
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'htmxo-toast-close';
+        close.setAttribute('aria-label', 'Dismiss');
+        close.textContent = '×';
+        t.appendChild(msg);
+        t.appendChild(close);
+        var timer = null, held = false, count = 1;
+        function dismiss() {
+            clearTimeout(timer);
+            if (shownErrors[text] && shownErrors[text].node === t) delete shownErrors[text];
+            t.classList.remove('htmxo-toast-show');
+            setTimeout(function() { t.remove(); }, 300);
+        }
+        function arm() { clearTimeout(timer); if (!held) timer = setTimeout(dismiss, DURATION[status] || 4000); }
+        function hold() { held = true; clearTimeout(timer); }
+        function release() { held = false; arm(); }
+        close.addEventListener('click', dismiss);
+        t.addEventListener('mouseenter', hold);
+        t.addEventListener('mouseleave', release);
+        t.addEventListener('focusin', hold);
+        t.addEventListener('focusout', release);
+        if (status === 'error') shownErrors[text] = { node: t, repeat: function() {
+            count += 1;
+            msg.textContent = text + ' (×' + count + ')';
+            arm();
+        } };
+        region().appendChild(t);
+        void t.offsetWidth;
+        t.classList.add('htmxo-toast-show');
+        arm();
+        return t;
+    }
+    window.htmxoToast = toast;
+
+    function header(xhr, name) {
+        try { return xhr.getResponseHeader(name); } catch (e) { return null; }
+    }
+    function routeText(xhr) {
+        var raw = header(xhr, 'X-HTMXO-Toast');
+        if (!raw) return null;
+        try { return decodeURIComponent(raw); } catch (e) { return raw; }
+    }
+    function bodyText(xhr) {
+        var body = xhr.responseText || '';
+        if ((header(xhr, 'Content-Type') || '').indexOf('text/plain') >= 0) return body.trim();
+        var doc = new DOMParser().parseFromString(body, 'text/html');
+        return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function squash(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
+    // Over HTTP/2 `statusText` is empty, so the reason comes from the answer's
+    // own `<title>` (a gateway's "413 Request Entity Too Large") or this table.
+    var REASONS = {
+        400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found',
+        405: 'Method Not Allowed', 408: 'Request Timeout', 409: 'Conflict', 410: 'Gone',
+        413: 'Content Too Large', 414: 'URI Too Long', 415: 'Unsupported Media Type',
+        422: 'Unprocessable Content', 429: 'Too Many Requests', 500: 'Internal Server Error',
+        501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'
+    };
+    function failureText(xhr) {
+        var type = header(xhr, 'Content-Type') || '', body = xhr.responseText || '';
+        var plain = '', title = '', heading = '';
+        if (type.indexOf('text/plain') >= 0) plain = body.trim();
+        else if (type.indexOf('html') >= 0 && body.length <= 100000) {
+            var doc = new DOMParser().parseFromString(body, 'text/html');
+            var h = doc.querySelector('h1, h2');
+            title = squash(doc.title);
+            heading = h ? squash(h.textContent) : '';
+        }
+        var reason = squash(xhr.statusText);
+        var named = title.match(/^(\d{3})\s+(.+)$/);
+        if (!reason && named && +named[1] === xhr.status) reason = named[2];
+        if (!reason) reason = REASONS[xhr.status] || '';
+        var line = 'HTTP ' + xhr.status + (reason ? ' ' + reason : '');
+        // A title or heading that names this status code, in any wording, is
+        // the status line again, not a detail.
+        function restates(text) {
+            var named = text.match(/^(?:HTTP\s+)?(\d{3})(\s|:|$)/i);
+            return (named && +named[1] === xhr.status) || text.toLowerCase() === reason.toLowerCase();
+        }
+        var detail = plain && plain.length <= 300 ? plain :
+            [title, heading].filter(function(text) { return text && text.length <= 200 && !restates(text); })[0];
+        return 'Request failed (' + line + ')' + (detail ? ': ' + detail : '');
+    }
+    // How a finished htmx request ended: `success`; `failure`, with the text
+    // that says why; `neutral`, for a request the page aborted or an answer
+    // that navigates (HX-Redirect, HX-Refresh, HX-Location); or `pending` for
+    // an `htmx:afterRequest` without a status, which htmx follows at once with
+    // the `htmx:sendError` / `htmx:timeout` / `htmx:sendAbort` that decides it.
+    // `shown` marks an error answer htmx swapped in anyway (an app's own
+    // `responseHandling`): it is on screen already.
+    function outcome(evt) {
+        var d = evt.detail || {}, xhr = d.xhr;
+        if (evt.type === 'htmx:sendError') return { state: 'failure', text: 'Request failed: no response (network error or server unreachable)' };
+        if (evt.type === 'htmx:timeout') return { state: 'failure', text: 'Request timed out' };
+        if (evt.type === 'htmx:sendAbort') return { state: 'neutral' };
+        if (!xhr || !xhr.status) return { state: 'pending' };
+        if (d.successful === true) return { state: 'success' };
+        if (d.failed === true) return { state: 'failure', text: failureText(xhr), shown: xhr.__htmxoErrorSwapped === true };
+        return { state: 'neutral' };
+    }
+    window.htmxoRequestOutcome = outcome;
+    document.addEventListener('htmx:beforeSwap', function(evt) {
+        var d = evt.detail || {};
+        if (d.isError && d.xhr) d.xhr.__htmxoErrorSwapped = !!d.shouldSwap;
+    });
+    // Pollers and preloads are background work: they fail silently, as they
+    // pulse silently.
+    function background(d, elt) {
+        var headers = d.requestConfig && d.requestConfig.headers;
+        var trigger = elt && elt.getAttribute ? elt.getAttribute('hx-trigger') || '' : '';
+        return trigger.indexOf('every') !== -1 || !!(headers && headers['HX-Preloaded'] === 'true');
+    }
+    function finished(evt) {
+        var d = evt.detail || {}, xhr = d.xhr;
+        if (!xhr) return;
+        var elt = (d.requestConfig && d.requestConfig.elt) || d.elt;
+        var result = outcome(evt);
+        if (result.state === 'success') {
+            var own = elt && elt.closest ? elt.closest('[data-htmxo-toast]') : null;
+            var text = routeText(xhr);
+            if (text === null && own) {
+                var given = own.getAttribute('data-htmxo-toast');
+                text = given && given !== 'body' ? given : bodyText(xhr);
+            }
+            if (text) toast(text, 'success');
+        } else if (result.state === 'failure' && !result.shown && !background(d, elt) && !d.__htmxoFailureQueued) {
+            // One failure message per request. A listener that shows its own
+            // sets `htmxoFailureShown`; waiting for the microtask lets every
+            // listener of this request's events run first, including an
+            // element's `hx-on::after-request`, which htmx dispatches (as the
+            // kebab-case alias) only after this document listener.
+            d.__htmxoFailureQueued = true;
+            queueMicrotask(function() {
+                if (d.htmxoFailureShown) return;
+                d.htmxoFailureShown = true;
+                toast(result.text, 'error');
+            });
+        }
+    }
+    ['htmx:afterRequest', 'htmx:sendError', 'htmx:timeout'].forEach(function(name) {
+        document.addEventListener(name, finished);
+    });
+    if (document.body) region();
+    else document.addEventListener('DOMContentLoaded', region);
+})();
+</script><script>if (!window.htmxoMoveBeforeGuarded) {
+    window.htmxoMoveBeforeGuarded = true;
+    [window.Element, window.Document, window.DocumentFragment].forEach(function (C) {
+        var native = C && C.prototype.moveBefore;
+        if (!native) return;
+        C.prototype.moveBefore = function (node, child) {
+            var lists = node && node.querySelector && node.querySelector('datalist')
+                ? Array.prototype.map.call(node.querySelectorAll('input[list]'), function (i) { return [i, i.getAttribute('list')]; })
+                : [];
+            lists.forEach(function (l) { l[0].removeAttribute('list'); });
+            try { return native.call(this, node, child); }
+            finally { lists.forEach(function (l) { l[0].setAttribute('list', l[1]); }); }
+        };
+    });
+}
+function htmxoMdToggle(row, event, key, slot) {
     if (event.target.closest('a,button,input,textarea,select,form')) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
     var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
-    d.hidden = !show;
-    if (row.dataset.htmxoDetailOpen !== undefined) row.dataset.htmxoDetailOpen = String(show);
-    if (row.dataset.htmxoTreeOpen === undefined) row.setAttribute('aria-expanded', show);
-    var control = row.querySelector('[data-htmxo-detail-toggle]');
-    if (control) control.setAttribute('aria-expanded', show);
+    htmxoMdShow(row, d, show);
     if (show && slot) {
         var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
         htmxoLoadSlot(s);
     }
     return show;
 }
-function htmxoLoadSlot(s) {
-    if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') {
-        s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+// Open or close a row's detail `d`, mirroring the state on the row and on its
+// detail control. A row update re-applies it to the rows it replaces.
+function htmxoMdShow(row, d, show) {
+    d.hidden = !show;
+    if (row.dataset.htmxoDetailOpen !== undefined) row.dataset.htmxoDetailOpen = String(show);
+    if (row.dataset.htmxoTreeOpen === undefined) row.setAttribute('aria-expanded', show);
+    var control = row.querySelector('[data-htmxo-detail-toggle]');
+    if (control) {
+        control.setAttribute('aria-expanded', show);
+        if (control.hasAttribute('data-htmxo-disclosure'))
+            control.textContent = show ? '▾' : '▸';
     }
 }
+function htmxoLoadSlot(s) {
+    if (s && s.dataset.loaded !== '1' && s.dataset.loading !== '1') htmxoMdFire(s);
+}
+// Fire a slot's load, latched single-flight while its request runs. htmx binds
+// the elements a swap inserts only in its settle step, a tick after the swap,
+// so a row clicked in between fired the event at no listener and stayed
+// latched for good (snag `lazy-master-deta-01052813`); binding the slot first
+// lets that click load. A bound slot whose attributes are unchanged is left as
+// it is. A trigger that sends no request (a declined `htmx:confirm`, say)
+// releases the latch, so the next expand tries again.
+function htmxoMdFire(s) {
+    htmx.process(s);
+    var sent = false, mark = function(event) { if (event.target === s) sent = true; };
+    s.addEventListener('htmx:beforeSend', mark);
+    s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
+    s.removeEventListener('htmx:beforeSend', mark);
+    if (!sent) delete s.dataset.loading;
+}
+// A row's detail control activates exactly what a click on the row does, so
+// toggle extensions a caller concatenated onto the row handler run for it too.
 function htmxoMdControl(button, event) {
     event.stopPropagation();
     var row = button.closest('tr'), key = row.id.slice(4);
-    htmxoMdToggle(row, {target: row}, key, document.getElementById('detail-slot-' + key) ? 1 : 0);
+    if (row.hasAttribute('data-htmxo-tree-row-toggle'))
+        htmxoMdToggle(row, {target: row}, key, document.getElementById('detail-slot-' + key) ? 1 : 0);
+    else if (row.onclick) row.onclick({target: row});
+    else htmxoMdToggle(row, {target: row}, key, document.getElementById('detail-slot-' + key) ? 1 : 0);
+}
+// The slot's status line: its placeholder's, never one in the preserved
+// elements a row update left waiting in the slot for this load.
+function htmxoMdStatus(s) {
+    return Array.from(s.querySelectorAll('[data-status]')).find(function(p) { return !p.closest('[data-htmxo-preserved]'); }) || null;
 }
 function htmxoMdBefore(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
     s.dataset.loading = '1'; delete s.dataset.failed; s.__htmxoMdAborted = false;
-    var p = s.querySelector('[data-status]'); if (p) p.textContent = 'Loading…';
+    var p = htmxoMdStatus(s); if (p) p.textContent = 'Loading…';
 }
 function htmxoMdReady(s, event) {
     if (event.target !== s || event.detail.target !== s) return;
@@ -1132,12 +1376,15 @@ function htmxoMdTransient(s, event) {
 }
 function htmxoMdAfter(s, event) {
     if (event.detail.requestConfig.elt !== s) return;
-    var p = s.querySelector('[data-status]'), n = +(s.dataset.retries || 0);
+    var p = htmxoMdStatus(s), n = +(s.dataset.retries || 0);
     if (event.detail.successful) {
         delete s.dataset.loading; delete s.dataset.retries;
         s.dataset.loaded = '1'; delete s.dataset.failed;
     } else if (htmxoMdTransient(s, event) && n < htmxoMdRetryDelays.length) {
-        // Still latched as loading: the retry owns the next request.
+        // Still latched as loading: the retry owns the next request, and the
+        // slot's own status line reports it, so the shell raises no failure
+        // toast for this attempt (a failure the retries cannot cure does).
+        event.detail.htmxoFailureShown = true;
         s.dataset.retries = String(n + 1);
         if (p) p.textContent = 'Connection lost — retrying…';
         setTimeout(function() {
@@ -1150,9 +1397,7 @@ function htmxoMdAfter(s, event) {
     }
 }
 function htmxoMdRetry(s) {
-    if (s.dataset.failed === '1' && !s.dataset.loading) {
-        s.dataset.loading = '1'; htmx.trigger(s, 'htmxo-md-load');
-    }
+    if (s.dataset.failed === '1' && !s.dataset.loading) htmxoMdFire(s);
 }
 if (!window.__htmxoMdReady) {
     window.__htmxoMdReady = true;
@@ -1342,6 +1587,29 @@ if (!window.htmxoComparisonInstalled) {
   });
 
   window.htmxoStreamProbe = { failed: failed };
+})();
+</script><script>(function () {
+  'use strict';
+  if (window.htmxoRedirectHistory) return;
+  window.htmxoRedirectHistory = true;
+  function parse(href) {
+    try { return new URL(href, document.baseURI); } catch (_) { return null; }
+  }
+  document.addEventListener('htmx:beforeHistoryUpdate', function (e) {
+    var d = e.detail || {};
+    var info = d.pathInfo, history = d.history, xhr = d.xhr;
+    if (!info || !history || !history.path || !xhr || !xhr.responseURL) return;
+    var requested = parse(info.finalRequestPath);
+    var landed = parse(xhr.responseURL);
+    var recorded = parse(history.path);
+    if (!requested || !landed || !recorded) return;
+    // Only a same-origin redirect, and only an entry naming the requested page.
+    if (landed.origin !== requested.origin || recorded.origin !== requested.origin) return;
+    if (landed.pathname + landed.search === requested.pathname + requested.search) return;
+    if (recorded.pathname !== requested.pathname) return;
+    var search = recorded.search === requested.search ? landed.search : recorded.search;
+    history.path = landed.pathname + search + recorded.hash;
+  });
 })();
 </script><script>(function () {
   'use strict';
@@ -2633,6 +2901,28 @@ if (!window.htmxoComparisonInstalled) {
       live.innerHTML = content;
     }
   }
+  // Offer a diverted terminal to the live target's `htmx:beforeSwap`
+  // listeners before it lands, as htmx offers a direct answer: `htmx.swap`
+  // fires no `htmx:beforeSwap`, so without this a consumer's swap gate
+  // (skip an unchanged answer, carry client-only state into it) never sees a
+  // diverted terminal. The detail is the terminal poll's own (its `xhr`,
+  // `requestConfig`, `pathInfo`) with `target` the live element,
+  // `serverResponse` the bare result, `swapOverride` the effective swap
+  // style, and `htmxoLiveTerminal: true`. Returns the detail with whatever a
+  // listener changed in `serverResponse` / `swapOverride`, or null when one
+  // vetoed it (`shouldSwap = false`, or `preventDefault()`).
+  function offerTerminal(live, content, swap, poll) {
+    var d = {};
+    for (var k in poll) { d[k] = poll[k]; }
+    d.target = live;
+    d.serverResponse = content;
+    d.swapOverride = swap;
+    d.shouldSwap = true;
+    d.htmxoLiveTerminal = true;
+    if (window.htmx && window.htmx.trigger &&
+        !window.htmx.trigger(live, 'htmx:beforeSwap', d)) return null;
+    return d.shouldSwap ? d : null;
+  }
   // Stamp any settled live element in a freshly swapped subtree, and give it a
   // reporter. A live element only ever appears carrying terminal content, so
   // "swapped in" == "settled".
@@ -2689,6 +2979,97 @@ if (!window.htmxoComparisonInstalled) {
     }
     return null;
   }
+  // Request order: every request aimed at a live element takes the next
+  // number when it is sent, so "newer" means "issued later", whichever answer
+  // comes back first. The reporter keeps the number of the refresh it is
+  // running (`__htmxoCycleSeq`) and of the newest answer that has landed in
+  // its element (`__htmxoLandedSeq`); an answer older than one already shown
+  // never lands.
+  var seq = 0;
+  document.addEventListener('htmx:beforeRequest', function(evt) {
+    var d = evt.detail;
+    if (d && d.xhr && d.target && isLive(d.target)) d.xhr.__htmxoLiveSeq = ++seq;
+  });
+  function seqOf(d) { return (d && d.xhr && d.xhr.__htmxoLiveSeq) || 0; }
+  // What htmx itself proposed for a live answer, seen before any listener
+  // can change it (capture phase): (D) tells a consumer's skip from an answer
+  // htmx would not swap anyway.
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var d = evt.detail;
+    if (seqOf(d)) d.xhr.__htmxoLiveOffer = { detail: d, target: d.target, swap: d.shouldSwap };
+  }, true);
+  // An answer to a newer request already landed in this live element.
+  function superseded(d, rep) {
+    var n = seqOf(d);
+    return !!(n && rep && n <= (rep.__htmxoLandedSeq || 0));
+  }
+  // What a request asks for. The same request re-fired (a periodic tick, a
+  // repeated event) has the same key; another view of the element does not.
+  function keyOf(d) {
+    var c = d.requestConfig || {}, p = d.pathInfo || {};
+    var body = (c.useUrlParams || !c.formData) ? '' : String(new URLSearchParams(c.formData));
+    return (c.verb || '') + ' ' + (p.finalRequestPath || p.requestPath || '') + ' ' + body;
+  }
+  // A live request's answer: one older than an answer already shown does not
+  // land, whichever path the newer one took. Otherwise record the swap style
+  // it goes in with for (C) and (D) — `afterSwap` does not carry it, and a
+  // `none` answer leaves the element as it was, so it stops nothing there.
+  // An answer the script holds back itself (here, or diverted in (A)) is
+  // marked `__htmxoLiveDropped`, so (D) never reads it as a consumer's skip.
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var d = evt.detail;
+    if (!seqOf(d)) return;
+    if (superseded(d, d.target && d.target.__htmxoReporter)) {
+      d.shouldSwap = false;
+      d.xhr.__htmxoLiveDropped = true;
+      return;
+    }
+    d.xhr.__htmxoLiveStyle =
+      d.swapOverride || closestSwap(d.requestConfig && d.requestConfig.elt) || '';
+  });
+  // An answer to request `n` is what live element `t` shows: an older refresh
+  // still running in its reporter `rep` is stale. Stop it, so its terminal
+  // cannot overwrite the newer content and its BUSY flag cannot hold back the
+  // next refresh.
+  function landed(t, rep, n) {
+    if (n > (rep.__htmxoLandedSeq || 0)) rep.__htmxoLandedSeq = n;
+    if (n <= (rep.__htmxoCycleSeq || 0)) return;
+    rep.__htmxoCycleSeq = n;
+    rep.__htmxoCycleKey = null;
+    rep.innerHTML = '';
+    rep.hidden = true;
+    t.removeAttribute(BUSY);
+    var now = t.isConnected ? t : (t.id ? document.getElementById(t.id) : null);
+    if (now && now.removeAttribute) now.removeAttribute(BUSY);
+  }
+  // (C) A newer request's answer landed in the live element itself (a real
+  //     htmx swap — a diverted interim never swaps, and the script's own
+  //     terminal swap carries no request).
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    var d = evt.detail, t = d && d.target, rep = t && t.__htmxoReporter;
+    var n = seqOf(d);
+    if (!rep || !n || bareSwapStyle(d.xhr.__htmxoLiveStyle || '') === 'none') return;
+    landed(t, rep, n);
+  });
+  // (D) The live element's own `htmx:beforeSwap` gate skipped a newer answer
+  //     htmx would have swapped in (`shouldSwap = false` or `preventDefault()`
+  //     — "unchanged, keep what is shown"): as far as its consumer is
+  //     concerned, the element shows that request's answer, so it counts as
+  //     landed exactly like (C). Read once the event is over, so the verdict
+  //     is final wherever the gate listens; htmx records `successful` only
+  //     once `htmx:beforeSwap` went through uncancelled. An answer htmx would
+  //     not swap anyway (a 204, an error status) stops nothing.
+  document.addEventListener('htmx:afterRequest', function(evt) {
+    var r = evt.detail, xhr = r && r.xhr, o = xhr && xhr.__htmxoLiveOffer;
+    if (!o) return;
+    xhr.__htmxoLiveOffer = null;
+    var t = o.target, rep = t && t.__htmxoReporter;
+    if (!rep || !o.swap || xhr.__htmxoLiveDropped) return;
+    if (r.successful !== undefined && o.detail.shouldSwap) return;
+    if (bareSwapStyle(xhr.__htmxoLiveStyle || '') === 'none') return;
+    landed(t, rep, seqOf(o.detail));
+  });
+
   document.addEventListener('htmx:configRequest', function(evt) {
     var d = evt.detail; if (!d || !d.target) return;
     if (!isLive(d.target)) return;
@@ -2707,6 +3088,8 @@ if (!window.htmxoComparisonInstalled) {
 
   document.addEventListener('htmx:beforeSwap', function(evt) {
     var d = evt.detail; if (!d) return;
+    // A terminal this script is offering to its live target (below).
+    if (d.htmxoLiveTerminal) return;
     var target = d.target;
     var resp = d.serverResponse;
 
@@ -2723,20 +3106,31 @@ if (!window.htmxoComparisonInstalled) {
                   target.getAttribute('hx-swap') || 'outerHTML';
       if (bareSwapStyle(style) === 'none') return;
       d.shouldSwap = false;
+      d.xhr.__htmxoLiveDropped = true;
+      var rep = reporterFor(target);
+      var n = seqOf(d), key = keyOf(d);
+      // An answer to a newer request is already shown: this older refresh
+      // has nothing left to deliver.
+      if (superseded(d, rep)) return;
       if (target.hasAttribute(BUSY)) {
-        // A prior refresh is still polling in the reporter — drop this re-fire.
-        // But if that reporter has stalled/errored (no live poller left), recover
-        // so a transient failure cannot pause refreshes for good.
-        var r = target.__htmxoReporter;
-        if (r && r.querySelector && r.querySelector('.treebar-poller-inner[hx-trigger]')) return;
+        // A prior refresh is still polling in the reporter. The same request
+        // re-fired, or an older one, waits for it: drop this interim. A newer
+        // request for something else takes the reporter over below — its
+        // poller replaces the running one, so the old loop stops and its
+        // terminal never lands. A stalled/errored reporter (no live poller
+        // left) is recovered either way, so a transient failure cannot pause
+        // refreshes for good.
+        var running = rep.querySelector && rep.querySelector('.treebar-poller-inner[hx-trigger]');
+        if (running && (n <= (rep.__htmxoCycleSeq || 0) || key === rep.__htmxoCycleKey)) return;
         target.removeAttribute(BUSY);
       }
       target.setAttribute(BUSY, '1');
-      var rep = reporterFor(target);
       rep.__htmxoLiveTarget = target;
       // Per-cycle state on the reporter: immune to a later request
       // re-stashing the target mid-cycle.
       rep.__htmxoSwapStyle = style;
+      rep.__htmxoCycleSeq = n;
+      rep.__htmxoCycleKey = key;
       rep.hidden = false;
       rep.innerHTML = resp;
       if (window.htmx && window.htmx.process) window.htmx.process(rep);
@@ -2749,17 +3143,24 @@ if (!window.htmxoComparisonInstalled) {
     if (rep2 && rep2.__htmxoLiveTarget && isTerminal(resp)) {
       d.shouldSwap = false;
       var live = rep2.__htmxoLiveTarget;
+      // The refresh this answers lands unless an answer to a newer request
+      // already has — (C) normally stops such a loop before it gets here.
+      var cyc = rep2.__htmxoCycleSeq || 0;
+      var stale = cyc > 0 && cyc < (rep2.__htmxoLandedSeq || 0);
+      if (!stale && cyc > 0) rep2.__htmxoLandedSeq = cyc;
       var tmp = document.createElement('template');
       tmp.innerHTML = resp;
-      var term = tmp.content.querySelector('.treebar-terminal-content');
+      var term = stale ? null : tmp.content.querySelector('.treebar-terminal-content');
       // The result content the route rendered, applied to the live target with
       // the diverted request's swap style — so `outerHTML`/`morph:outerHTML`
       // replaces the element (in place for morph) while
-      // `innerHTML`/`morph:innerHTML` reconciles its children.
+      // `innerHTML`/`morph:innerHTML` reconciles its children — unless the
+      // target's own `htmx:beforeSwap` gate skips it.
       var content = term ? term.innerHTML : null;
       if (content != null) {
-        swapTerminal(live, content, rep2.__htmxoSwapStyle ||
-                     live.getAttribute('hx-swap') || 'outerHTML');
+        var swap = rep2.__htmxoSwapStyle || live.getAttribute('hx-swap') || 'outerHTML';
+        var offer = offerTerminal(live, content, swap, d);
+        if (offer) swapTerminal(live, offer.serverResponse, offer.swapOverride || swap);
       }
       rep2.innerHTML = '';
       rep2.hidden = true;
@@ -2853,6 +3254,219 @@ if (!window.htmxoComparisonInstalled) {
       });
     }
   });
+
+  // A poll whose element no longer names its operation in `hx-get`: a morph
+  // kept the poller's element as other content, and htmx's `every` timer
+  // outlived the poller. Its next poll is cancelled, and the element is
+  // re-processed after this tick (once htmx has re-armed the timer), so htmx
+  // drops the stale trigger: the element's attributes changed. An answer
+  // already in flight is not swapped into the element either. Registered
+  // before the 286 handling below, which then sees `shouldSwap` false.
+  function operationToken(url) {
+    var m = /[?&]__htmxo_operation=([^&#]+)/.exec(url || '');
+    return m ? m[1] : null;
+  }
+  function stalePoll(elt, path) {
+    if (!elt || !elt.getAttribute || !/[?&]__htmxo_poll=1(&|#|$)/.test(path || '')) return false;
+    var token = operationToken(path);
+    return !!token && operationToken(elt.getAttribute('hx-get')) !== token;
+  }
+  document.addEventListener('htmx:beforeRequest', function(evt) {
+    var d = (evt && evt.detail) || {}, elt = d.elt;
+    if (!stalePoll(elt, d.requestConfig && d.requestConfig.path)) return;
+    evt.preventDefault();
+    setTimeout(function() {
+      if (window.htmx && elt.isConnected) htmx.process(elt);
+    }, 0);
+  });
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var d = (evt && evt.detail) || {}, config = d.requestConfig || {};
+    if (stalePoll(config.elt, config.path)) d.shouldSwap = false;
+  });
+
+  // One poll per operation at a time, and none once its 286 has arrived.
+  // htmx keeps a poll element's request lock, queued tick and stop-polling
+  // flag in per-element data, and wipes that data when it processes an
+  // ancestor while the element's attributes differ from the last processing;
+  // a polling element carries the `htmx-request` class for as long as its
+  // request runs, so a slow poll gained a second one beside it. A tick during
+  // a slow poll also queues a request that htmx sends when the poll ends, if
+  // its element is still in the page then, as the poller of a terminal
+  // applied elsewhere (below) is. A 286 marks its operation finished before
+  // htmx handles it: a later poll of that operation is cancelled and its
+  // element stops polling. A poll sent while another poll of its operation
+  // is still out is cancelled; the next tick polls again.
+  var finished = [], inflight = {};
+  function pollToken(path) {
+    return /[?&]__htmxo_poll=1(&|#|$)/.test(path || '') ? operationToken(path) : null;
+  }
+  function stopPolling(elt) {
+    ['hx-trigger', 'data-hx-trigger', 'hx-get', 'data-hx-get'].forEach(function(name) {
+      elt.removeAttribute(name);
+    });
+    setTimeout(function() {
+      if (window.htmx && elt.isConnected) htmx.process(elt);
+    }, 0);
+  }
+  document.addEventListener('htmx:beforeRequest', function(evt) {
+    var d = (evt && evt.detail) || {};
+    var token = pollToken(d.requestConfig && d.requestConfig.path);
+    if (!token || evt.defaultPrevented) return;
+    if (finished.indexOf(token) !== -1) {
+      evt.preventDefault();
+      if (d.elt && d.elt.removeAttribute) stopPolling(d.elt);
+    } else if (inflight[token]) {
+      evt.preventDefault();
+    }
+  });
+  // Registered when the request is actually sent: a listener after this one
+  // may still cancel it in `htmx:beforeRequest`.
+  document.addEventListener('htmx:beforeSend', function(evt) {
+    var d = (evt && evt.detail) || {}, xhr = d.xhr;
+    var token = xhr && pollToken(d.requestConfig && d.requestConfig.path);
+    if (!token) return;
+    inflight[token] = xhr;
+    xhr.addEventListener('loadend', function() {
+      if (inflight[token] === xhr) delete inflight[token];
+    });
+  });
+  document.addEventListener('htmx:beforeOnLoad', function(evt) {
+    var d = (evt && evt.detail) || {}, xhr = d.xhr;
+    var token = xhr && xhr.status === 286 && pollToken(d.requestConfig && d.requestConfig.path);
+    if (!token || finished.indexOf(token) !== -1) return;
+    finished.push(token);
+    if (finished.length > 256) finished.shift();
+  });
+
+  // A poll terminal whose headers send the answer away from the poller
+  // (HX-Retarget, HX-Reswap, HX-Reselect) or nowhere (HX-Location) arrives
+  // with htmx's stop-polling status 286. Apply it as the original request
+  // would have applied a direct answer: the content the poller displaced goes
+  // back before htmx resolves those headers, the bare answer lands where they
+  // say (else where the original request was going), and the spent poller is
+  // removed.
+  function firstElement(html) {
+    if (typeof html !== 'string') return null;
+    var t = document.createElement('template');
+    t.innerHTML = html;
+    return t.content.firstElementChild;
+  }
+  function closestSwap(elt) {
+    var source = elt && elt.closest && elt.closest('[hx-swap],[data-hx-swap]');
+    return source && (source.getAttribute('hx-swap') ||
+                      source.getAttribute('data-hx-swap'));
+  }
+  function pollRequest(elt) {
+    return !!(elt && elt.classList && elt.classList.contains('treebar-poller-inner') &&
+              (elt.getAttribute('hx-get') || '').indexOf('__htmxo_poll') !== -1);
+  }
+  // Where the original request was going, and what its poller displaced.
+  // Recorded on the answer that starts an operation poller and kept on the
+  // poller wrapper. The direct-page load placeholder is never put back: it
+  // would load the operation again.
+  function recordOrigin(d) {
+    var req = d.requestConfig && d.requestConfig.elt, target = d.target;
+    if (!d.shouldSwap || !d.xhr || !target || pollRequest(req)) return;
+    var first = firstElement(d.serverResponse);
+    var inner = first && first.classList.contains('treebar-poller') &&
+      first.querySelector(':scope > .treebar-poller-inner[hx-get*="__htmxo_poll"]');
+    if (!inner) return;
+    var swap = d.swapOverride || closestSwap(req) ||
+      (window.htmx && htmx.config.defaultSwapStyle) || 'innerHTML';
+    var style = String(swap).trim().split(/\s+/)[0];
+    var displaced = [];
+    // The dataset spelling keeps the placeholder's marker attribute out of the
+    // shell's own text, where pages are searched for a placeholder.
+    if (!(req && req.dataset && req.dataset.htmxoOperationLoad !== undefined)) {
+      if (style === 'innerHTML' || style === 'textContent') {
+        displaced = Array.prototype.slice.call(target.childNodes);
+      } else if (style === 'outerHTML') {
+        displaced = [target];
+      }
+    }
+    d.xhr.__htmxoOrigin = { elt: req, target: target, swap: swap, displaced: displaced,
+                            url: inner.getAttribute('hx-get') };
+  }
+  // htmx fires afterSwap on the swap target (innerHTML) or on the inserted
+  // nodes (outerHTML): find the new poller below either by its poll URL.
+  document.addEventListener('htmx:afterSwap', function(evt) {
+    var d = (evt && evt.detail) || {}, origin = d.xhr && d.xhr.__htmxoOrigin;
+    if (!origin || !d.elt || !d.elt.querySelectorAll) return;
+    var inners = d.elt.querySelectorAll('.treebar-poller-inner');
+    for (var i = 0; i < inners.length; i++) {
+      var wrapper = inners[i].closest('.treebar-poller');
+      if (wrapper && inners[i].getAttribute('hx-get') === origin.url) {
+        wrapper.__htmxoOrigin = origin;
+        d.xhr.__htmxoOrigin = null;
+        return;
+      }
+    }
+  });
+  document.addEventListener('htmx:beforeOnLoad', function(evt) {
+    var d = (evt && evt.detail) || {}, xhr = d.xhr, poll = d.elt;
+    if (!xhr || xhr.status !== 286 || !pollRequest(poll)) return;
+    if (!/^(hx-retarget|hx-reswap|hx-reselect|hx-location):/im
+          .test(xhr.getAllResponseHeaders() || '')) return;
+    var wrapper = (poll.closest && poll.closest('.treebar-poller')) || poll;
+    var origin = wrapper.__htmxoOrigin || null;
+    wrapper.__htmxoOrigin = null;
+    if (origin && wrapper.parentNode) {
+      origin.displaced.forEach(function(n) { wrapper.parentNode.insertBefore(n, wrapper); });
+      // htmx cleaned these nodes up when the poller displaced them.
+      origin.displaced.forEach(function(n) {
+        if (n.nodeType === 1 && window.htmx) htmx.process(n);
+      });
+    }
+    xhr.__htmxoRetire = { origin: origin, poll: poll, wrapper: wrapper,
+      retarget: !!xhr.getResponseHeader('HX-Retarget'),
+      reswap: !!xhr.getResponseHeader('HX-Reswap') };
+  });
+  document.addEventListener('htmx:beforeSwap', function(evt) {
+    var d = (evt && evt.detail) || {};
+    // `live_refresh_script()` re-offers a diverted terminal to its live
+    // target with the poll's own `xhr`; that offer is not a poll answer.
+    if (d.htmxoLiveTerminal) return;
+    var r = d.xhr && d.xhr.__htmxoRetire;
+    if (!r) { recordOrigin(d); return; }
+    var term = firstElement(d.serverResponse);
+    if (marked(term)) d.serverResponse = term.innerHTML;
+    // HX-Reselect, which htmx reads after this event, still applies.
+    d.selectOverride = 'unset';
+    var origin = r.origin;
+    var original = origin && origin.target && origin.target.isConnected;
+    if (r.retarget) {
+      // `HX-Retarget: this` names the requester, which was the original one.
+      if (d.target === r.poll && origin && origin.elt && origin.elt.isConnected) {
+        d.target = origin.elt;
+      }
+    } else {
+      d.target = original ? origin.target : r.wrapper;
+    }
+    if (!r.retarget && !original) {
+      // No original target to apply HX-Reswap to: the wrapper stands in.
+      d.swapOverride = 'outerHTML';
+    } else if (!r.reswap) {
+      d.swapOverride = origin ? origin.swap :
+        ((window.htmx && htmx.config.defaultSwapStyle) || 'innerHTML');
+    }
+  });
+  function retire(evt) {
+    var r = evt && evt.detail && evt.detail.xhr && evt.detail.xhr.__htmxoRetire;
+    if (!r || r.done) return;
+    r.done = true;
+    // Once htmx has finished this response: a requester removed during
+    // afterRequest makes htmx fire afterRequest again on an ancestor, which
+    // would run every listener (success toasts included) twice.
+    Promise.resolve().then(function() {
+      var w = r.wrapper, parent = w && w.parentNode;
+      if (!w || !w.isConnected || !parent) return;
+      parent.removeChild(w);
+      if (parent.classList && parent.classList.contains('htmxo-live-reporter') &&
+          !parent.firstElementChild) parent.hidden = true;
+    });
+  }
+  document.addEventListener('htmx:afterRequest', retire);
+  document.addEventListener('htmx:onLoadError', retire);
 })();
 </script><script>(function() {
   if (window.__htmxoMutationPolls) return;

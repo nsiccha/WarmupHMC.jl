@@ -131,4 +131,39 @@ end
     @test_throws Base.CanonicalIndexError mk_mf()[1, 1]
     @test_throws Base.CanonicalIndexError mk_sr()[1, 1]
 end
+
+# Snag `tsvd-fallback-er-38ce8e53`: when one coordinate is left in the
+# reflection loop, `grad_cov_ev` gets a 1 × n block. `tsvd` breaks down on many
+# of those, and every breakdown logged an error with a stack trace before the
+# power-iteration fallback returned `[1]`. A one-row block now gets `[1]` directly.
+@testset "a one-row block gets its singular vector without tsvd's error" begin
+    rng = Xoshiro(1)
+    blocks = [randn(rng, 1, 1000) .* exp(randn(rng)) .+ randn(rng) for _ in 1:100]
+    # Positive control: these blocks include ones `tsvd` itself throws on.
+    tsvd_throws(g) = try
+        WarmupHMC.tsvd(g; initvec=ones(1))
+        false
+    catch
+        true
+    end
+    @test count(tsvd_throws, blocks) > 0
+    for g in blocks
+        v = @test_logs WarmupHMC.grad_cov_ev(nothing, g)
+        @test v == [1.0]
+        @test v == WarmupHMC._top_left_singular_vector(g)
+    end
+
+    # The call site: one badly scaled coordinate among three. The reflection loop
+    # reaches the 1 × n block, adds no reflection, and logs nothing.
+    n_throwing = 0
+    for _ in 1:50
+        p = randn(rng, 3, 1000) .* [10.0, 1.0, 1.0]
+        g = randn(rng, 3, 1000)
+        n_throwing += tsvd_throws(g[1:1, :])
+        t = @test_logs WarmupHMC.update_loss!(SR(3), p, g)
+        @test isempty(t.reflections)
+        @test t.transformation_losses[1] > log(2) > maximum(t.transformation_losses[2:3])
+    end
+    @test n_throwing > 0
+end
 end

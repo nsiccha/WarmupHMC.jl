@@ -131,7 +131,16 @@ end
 # the CENTERED covariance, a different vector from the uncentered singular
 # vector `tsvd` returns (todo `0hsdtfg`). The power iteration computes the same
 # quantity as `tsvd`, linearly.
-grad_cov_ev(p, g) = try
+#
+# A 1 × n block (one coordinate left in `update_loss!`'s reflection loop) has a
+# one-dimensional column space, so its top left singular vector is `[1]` — the
+# vector the fallback returns for it, exactly. `tsvd` cannot compute it: the first
+# Lanczos step already spans that space, so the next residual is zero or rounding
+# noise, normalizing it puts NaN or garbage into the bidiagonal, and LAPACK's
+# `bdsdc!` throws `LAPACKException(2)` on a sizeable share of 1 × n blocks (and
+# not on blocks with two or more rows, rank-deficient ones included). Each such
+# call logged an error with a stack trace (snag `tsvd-fallback-er-38ce8e53`).
+grad_cov_ev(p, g) = size(g, 1) == 1 ? ones(1) : try
     tsvd(g; initvec=ones(size(g, 1)))[1][:, 1]
 catch e
     @error "tsvd(...) failed, falling back to power iteration" size(g) exception=(e, catch_backtrace())

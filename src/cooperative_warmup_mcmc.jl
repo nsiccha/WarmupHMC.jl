@@ -497,7 +497,7 @@ _chains_label(state::CooperativeState) = begin
                       (state.n_starting, "starting"), (n_status(:done), "done"))
         n > 0 && push!(parts, "$n $what")
     end
-    stuck = [c for c in state.chains if c.status === :stuck]
+    stuck = sort!([c for c in state.chains if c.status === :stuck]; by=c -> c.chain_index)
     isempty(stuck) || push!(parts, "$(length(stuck)) parked as stuck (" *
         join(("chain $(c.chain_index): $(c.stuck_reason)" for c in stuck), ", ") * ")")
     "$(state.n_started) started of $(length(state.rngs))" * (isempty(parts) ? "" : ": " * join(parts, ", "))
@@ -544,8 +544,25 @@ _chain_progress_summary(chain::CooperativeChain) = chain.n_samples == 0 ? "no dr
     (chain.monitor_ess && chain.n_samples > 10 ? "min. ESS: $(short_string(_min_ess(chain.ess))), " : "") *
     "divergent: $(short_string(100 * chain.n_divergent_samples / chain.n_samples))%"
 
-_finish_chain_progress!(chain::CooperativeChain, what) = begin
+# The chain's labels at a window boundary. The per-transition labels catch up
+# with a restart's reset, which no transition follows when the chain is parked
+# right after it, and an epoch with too few draws for an ESS says so. A chain
+# just restored (`rates=false`) shows plain counters: its clock restarted with
+# the restore, so a rate would be meaningless.
+_boundary_labels!(chain::CooperativeChain; final, rates=true) = begin
+    progress = chain.progress
+    isnothing(progress) && return nothing
+    rates ? _transition_progress!(progress, nothing, chain) :
+        _initial_chain_progress!(progress, nothing, chain)
+    chain.monitor_ess || return nothing
+    chain.n_samples > 10 ? _ess_progress!(progress, chain) :
+        update_progress!(progress, nothing;
+            ess=final ? "no estimate from $(chain.n_samples) draws" : "pending...")
+end
+
+_finish_chain_progress!(chain::CooperativeChain, what; rates=true) = begin
     isnothing(chain.progress) && return nothing
+    _boundary_labels!(chain; final=true, rates)
     update_progress!(chain.progress,
         "$what after window $(chain.outer_counter): $(_chain_progress_summary(chain))")
     finalize_progress!(chain.progress)
@@ -553,10 +570,11 @@ end
 
 # The chain's node after a window boundary: finished if the chain will produce
 # no more draws, otherwise marked as waiting for the scheduler.
-_window_progress!(chain::CooperativeChain) =
-    chain.status === :stuck ? _finish_chain_progress!(chain, "parked as stuck ($(chain.stuck_reason))") :
-    chain.status === :done ? _finish_chain_progress!(chain, "done") :
-    update_progress!(chain.progress, "$(chain.status) · window $(chain.outer_counter) done, waiting for a core")
+_window_progress!(chain::CooperativeChain; rates=true) =
+    chain.status === :stuck ? _finish_chain_progress!(chain, "parked as stuck ($(chain.stuck_reason))"; rates) :
+    chain.status === :done ? _finish_chain_progress!(chain, "done"; rates) :
+    (_boundary_labels!(chain; final=false, rates);
+     update_progress!(chain.progress, "$(chain.status) · window $(chain.outer_counter) done, waiting for a core"))
 
 # The run node's final message: which bound stopped the run, the pooled ESS it
 # returns, and the divergence rate over the draws of the chains it uses.
@@ -575,7 +593,7 @@ _finish_run_progress!(state::CooperativeState, result) = begin
 end
 
 # Decide the next action for a freed core. Runs under `state.lock`. Returns
-# `:stop`, `:idle`, `(:advance, chain)`, or `(:start, rng_index)`. This is where
+# `:stop`, `:idle`, `(:advance, chain)`, or `(:start, (rng_index, progress))`. This is where
 # the continue / resume-another / start-new / (park-stuck) choice is made: the
 # least-progressed sampling chain wins (balancing pooled ESS), warming chains
 # come next, and a new chain starts only when the alive pool is under target.
@@ -599,7 +617,12 @@ _plan!(state::CooperativeState) = begin
     if _alive(state) < state.pool_target && state.n_started < length(state.rngs)
         state.n_started += 1
         state.n_starting += 1
-        return (:start, state.n_started)
+        # The chain's node is made here, under the lock, so chain nodes appear in
+        # index order.
+        progress = initialize_progress!(state.progress;
+            description="$(state.description).$(state.n_started)")
+        _run_progress!(state)
+        return (:start, (state.n_started, progress))
     end
     (isempty(state.busy) && state.n_starting == 0) ? (state.stopped = true; :stop) : :idle
 end
@@ -649,11 +672,11 @@ _worker!(state::CooperativeState) = while true
     else
         tag, val = action
         if tag === :start
-            # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock. The
-            # chain's node exists first, so Pathfinder's progress shows under it.
-            progress = initialize_progress!(state.progress; description="$(state.description).$val")
-            chain = cooperative_chain(state.rngs[val], deepcopy(state.lpdf);
-                chain_index=val, progress, state.chain_cfg...)
+            # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock, under
+            # the chain's node that `_plan!` made.
+            index, progress = val
+            chain = cooperative_chain(state.rngs[index], deepcopy(state.lpdf);
+                chain_index=index, progress, state.chain_cfg...)
             @lock state.lock _install!(state, chain)
         else # :advance
             advance_window!(val)
@@ -983,9 +1006,7 @@ restore_cooperative_chain(p, lpdf;
         p.dropped_posterior_position, p.dropped_posterior_gradient,
         p.dropped_n_divergent_samples,
     )
-    _initial_chain_progress!(progress, nothing, chain)
-    monitor_ess && chain.n_samples > 10 && _ess_progress!(progress, chain)
-    _window_progress!(chain)
+    _window_progress!(chain; rates=false)
     chain
 end
 

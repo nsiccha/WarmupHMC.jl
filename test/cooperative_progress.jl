@@ -43,7 +43,8 @@ end
     @test occursin(r"pooled ess: — proxy \S+ of target 200 ", text)
     @test occursin(r"evaluations: — \S+ \(", text)
     @test occursin("elapsed: — ", text)
-    @test sort(chain_nodes(text)) == sort(["coop.$(r.chain_index)" for r in out.results])
+    # In index order: a chain's node is made when the scheduler reserves its index.
+    @test chain_nodes(text) == ["coop.$i" for i in 1:out.n_started]
     # Each chain's six adaptive labels, as finished child lines.
     for label in ("divergent samples", "ess", "active transformation",
                   "sampling performance", "total transition counter",
@@ -80,11 +81,17 @@ end
     WarmupHMC._window_progress!(chain)
     @test occursin("▶ MCMC.7 — $(chain.status) · window 1 done, waiting for a core",
                    TB.render_text(root))
+    # A parked chain's labels describe the draws it keeps, as its message does
+    # (after a restart they would otherwise still show the discarded epoch).
     chain.status = :stuck
     chain.stuck_reason = :geometry_stall
+    chain.n_samples = 0
+    chain.n_divergent_samples = 0
     WarmupHMC._window_progress!(chain)
-    @test occursin(r"✓ MCMC\.7 — parked as stuck \(geometry_stall\) after window 1: ",
-                   TB.render_text(root))
+    text = TB.render_text(root)
+    @test occursin(r"✓ MCMC\.7 — parked as stuck \(geometry_stall\) after window 1: no draws retained", text)
+    @test occursin("divergent samples: — 0 out of 0 ", text)
+    @test occursin("ess: — no estimate from 0 draws", text)
 end
 
 @testset "resumed chains get their nodes back" begin
@@ -98,7 +105,7 @@ end
         nonlinear_adapt=false, init=init(), checkpoint_dir=d, resume=true, progress=root)
     text = TB.render_text(root)
     @test out.n_started >= crashed.n_started
-    @test sort(chain_nodes(text)) == sort(["MCMC.$(r.chain_index)" for r in out.results])
+    @test chain_nodes(text) == ["MCMC.$i" for i in 1:out.n_started]
     @test occursin(r"✓ MCMC — eval_budget: joint ESS ", text)
 end
 

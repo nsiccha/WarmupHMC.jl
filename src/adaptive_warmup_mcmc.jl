@@ -310,6 +310,8 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     outer_counter::Int
     current_transition_counter::Int
     total_transition_counter::Int
+    # Per-coordinate bulk ESS of the WORKING-frame draws, in coordinate order
+    # (`_coordinate_ess`), as of the last window that retained more than 10 draws.
     ess::Vector{Float64}
     steps_per_draw::MN
     n_divergent::Int
@@ -561,12 +563,44 @@ init_state(
     )
 end
 
+# Bulk ESS of each coordinate of the `dimension × n` draw matrix `draws`, in
+# COORDINATE order: element `k` is the ESS of `draws[k, :]`, the parameter order
+# `MCMCDiagnosticTools.ess` itself uses. Every sampler monitors and returns this
+# one vector; a display that wants it ranked sorts a copy (`_ess_label`).
+# `MCMCDiagnosticTools.ess` wants (draws, chains, params) and the draws are stored
+# as columns, hence the transpose into a dense single-chain array.
+_coordinate_ess(draws) = MCMCDiagnosticTools.ess(
+    reshape(collect(transpose(draws)), (size(draws, 2), 1, size(draws, 1))))
+
+# The smallest per-coordinate ESS, skipping `NaN` (the ESS of a constant
+# coordinate); `NaN` only when every coordinate is `NaN`. Equal to element 1 of
+# the ascending sort, which places `NaN` last.
+_min_ess(ess) = begin
+    estimable = Iterators.filter(!isnan, ess)
+    isempty(estimable) ? NaN : minimum(estimable)
+end
+
+# Progress label for a per-coordinate ESS vector. Treebars' vector `short_string`
+# prints the first three and last three entries, so the label ranks a COPY: it
+# shows the three worst- and three best-mixing coordinates, while `ess` itself
+# stays in coordinate order.
+_ess_label(ess) = short_string(sort(ess))
+
+# The `ess` a finalizer returns, recomputed on the draws it returns AFTER the
+# back-transform, so `ess[k]` is the ESS of `posterior_position[k, :]` in the
+# model's own parametrization. The monitored vector is the working-frame
+# estimate, which differs for a reparametrized target, since a model coordinate
+# can depend on several source coordinates. Without monitoring, or with 10 draws
+# or fewer, the monitored vector is returned as it stands.
+_returned_ess(monitored, draws, monitor_ess) =
+    monitor_ess && size(draws, 2) > 10 ? _coordinate_ess(draws) : monitored
+
 # One warm-up/sampling window ("big iteration"): the inner transition loop plus
 # the end-of-window step-size freeze, variance-condition check, and (on restart)
 # reparametrization + transformation reselection. Mutates `state` in place;
 # returns after one window, leaving `state` as of CP-N.
 run_outer_iteration!(state::AWMState) = begin
-    (; progress, start_time, lpdf, recording_lpdf, algorithm, stepsize_adaptation, dimension) = state
+    (; progress, start_time, lpdf, recording_lpdf, algorithm, stepsize_adaptation) = state
     # Some setup that has to happen at the beginning of every warm-up window
     state.outer_counter += 1
     hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, recording_lpdf)
@@ -648,9 +682,9 @@ run_outer_iteration!(state::AWMState) = begin
         )
     end
     if state.monitor_ess && state.n_samples > 10
-        state.ess .= sort!(MCMCDiagnosticTools.ess(reshape(recording_lpdf.posterior_position', (:, 1, dimension))))
+        state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
         update_progress!(progress, nothing;
-            ess=short_string(state.ess) * " from $(state.n_samples) samples.",
+            ess=_ess_label(state.ess) * " from $(state.n_samples) samples.",
         )
     end
     state.n_samples < state.n_draws || return state
@@ -725,7 +759,7 @@ end
 # parametrization, and assemble the returned NamedTuple.
 finalize_warmup!(state::AWMState) = begin
     (; progress, recording_lpdf, lpdf) = state
-    update_progress!(progress, (state.monitor_ess ? "min. ESS: $(short_string(state.ess[1])), " : "") * "divergent: $(short_string(100*state.n_divergent_samples/state.n_samples))%")
+    update_progress!(progress, (state.monitor_ess ? "min. ESS: $(short_string(_min_ess(state.ess))), " : "") * "divergent: $(short_string(100*state.n_divergent_samples/state.n_samples))%")
     # NOT gated on `nonlinear_adapt`. That flag gates whether the centering is
     # FITTED; it must not gate whether the returned draws are reported in the
     # model's own parametrization. The sampler works in the reparametrizer's
@@ -746,7 +780,7 @@ finalize_warmup!(state::AWMState) = begin
         halo_gradient=recording_lpdf.halo_gradient,
         posterior_position=recording_lpdf.posterior_position,
         posterior_gradient=recording_lpdf.posterior_gradient,
-        ess=state.ess,
+        ess=_returned_ess(state.ess, recording_lpdf.posterior_position, state.monitor_ess),
         scale_options=state.scale_options,
         active_transformation=state.active_transformation,
         linear_restart_source=state.linear_restart_source,
@@ -814,6 +848,14 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # The three `dropped_*` keys are ADDITIVE — `checkpoint_schema_version` does NOT
 # move for them, so existing readers are unaffected and new readers use
 # `get(payload, key, default)`.
+#
+# ESS. `ess` is the per-coordinate bulk ESS, in coordinate order and in the same
+# WORKING frame as the draws, of the most recent window that retained more than
+# 10 draws. At a restart checkpoint those are the `dropped_posterior_position`
+# draws. Payloads written before the coordinate-order change carry `ess` sorted
+# ascending, and `checkpoint_schema_version` does not record the difference. A
+# resumed run replaces it at its next such window, and a monitored run
+# recomputes its returned `ess` from the returned draws (`_returned_ess`).
 #
 # EVALUATION COUNTERS. `total_evaluation_counter` is the RUN total: every
 # `DynamicHMC.stats.steps` from every MCMC transition — step-size-adaptation
@@ -1541,6 +1583,14 @@ For the single-chain method, a `NamedTuple` with fields including
 `sampling_evaluation_counter`,
 `n_divergent_samples`, `position_and_gradient`, `scale_changes`.
 For the multi-chain method, a `Vector` of such `NamedTuple`s.
+
+`ess` is the per-coordinate bulk ESS of the returned `posterior_position`, in
+coordinate order and in the model's own parametrization: `ess[k]` is the ESS of
+`posterior_position[k, :]`, and `sortperm(ess)` lists the coordinates from worst-
+to best-mixing. It is computed after the back-transform when `monitor_ess` is on and
+more than 10 draws are retained; otherwise it is not an estimate for these draws
+(all zeros when monitoring was off throughout). A constant coordinate's ESS is
+`NaN`.
 
 Two evaluation counters, different scopes. `total_evaluation_counter` is the
 RUN total over every MCMC transition — the retained epoch's

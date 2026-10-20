@@ -78,6 +78,8 @@ mutable struct CooperativeChain{R,L,RL,NR,A,SA,SO,EO,NT}
     n_divergent::Int
     n_divergent_samples::Int
     steps_per_draw
+    # Per-coordinate bulk ESS of the WORKING-frame draws, in coordinate order —
+    # the same vector as `AWMState.ess` (`_coordinate_ess`).
     ess::Vector{Float64}
     restart::Bool
     n_samples::Int
@@ -261,7 +263,7 @@ advance_window!(chain::CooperativeChain) = begin
         chain.n_samples = size(posterior_position, 2)
     end
     if monitor_ess && chain.n_samples > 10
-        chain.ess .= sort!(MCMCDiagnosticTools.ess(reshape(posterior_position', (:, 1, dimension))))
+        chain.ess .= _coordinate_ess(posterior_position)
     end
 
     # --- checkpoint bookkeeping ---
@@ -309,7 +311,7 @@ end
 log_checkpoint!(chain::CooperativeChain) = push!(chain.checkpoints, (;
     window=chain.outer_counter,
     n_samples=chain.n_samples,
-    min_ess=chain.monitor_ess && chain.n_samples > 10 ? chain.ess[1] : NaN,
+    min_ess=chain.monitor_ess && chain.n_samples > 10 ? _min_ess(chain.ess) : NaN,
     variance_cond=chain.variance_cond,
     n_divergent_samples=chain.n_divergent_samples,
     total_evaluation_counter=chain.total_evaluation_counter,
@@ -424,13 +426,15 @@ _total_evals(state::CooperativeState) = sum(c -> c.total_evaluation_counter, sta
 # and its resume is never counted — `start_time` is re-based per segment.
 _elapsed(state::CooperativeState) = state.prior_elapsed + (time_ns() - state.start_time) / 1e9
 
-# CHEAP proxy: sum of each chain's own min-ESS (`c.ess[1]`), over ALL sampling/done
-# chains. Ignores between-chain disagreement and short-chain noise, so it
-# OVER-counts — i.e. it is an upper bound on the true pooled ESS, which is exactly
-# what makes it a valid stop GATE (proxy < target ⟹ pooled < target). Reads only
-# scalars, so the benign race against a concurrently-advancing chain is harmless.
+# CHEAP proxy: sum of each chain's own min-ESS (`_min_ess(c.ess)`), over ALL
+# sampling/done chains. Ignores between-chain disagreement and short-chain noise,
+# so it OVER-counts — i.e. it is an upper bound on the true pooled ESS, which is
+# exactly what makes it a valid stop GATE (proxy < target ⟹ pooled < target). The
+# race against a concurrently-advancing chain is benign: `c.ess` is overwritten
+# element-wise in place, never resized, so a torn read is still a minimum over
+# per-coordinate estimates from that chain's last two windows.
 _joint_ess_proxy(state::CooperativeState) = sum(state.chains; init=0.0) do c
-    (c.status === :sampling || c.status === :done) && c.n_samples > 10 ? c.ess[1] : 0.0
+    (c.status === :sampling || c.status === :done) && c.n_samples > 10 ? _min_ess(c.ess) : 0.0
 end
 
 # ACCURATE joint ESS: pooled `MCMCDiagnosticTools.ess` over the stacked draws of
@@ -916,7 +920,9 @@ end
 
 Adaptive-style per-chain result. Maps draws back to the original
 parametrization, then reports the collected positions/gradients plus
-diagnostics and the per-window `checkpoints` log.
+diagnostics and the per-window `checkpoints` log. `ess` is per-coordinate and
+in coordinate order, computed on the returned `posterior_position` exactly as
+[`adaptive_warmup_mcmc`](@ref)'s `ess`.
 
 The back-transform is unconditional — `nonlinear_adapt=false` still samples in
 the reparametrizer's source frame, so it still needs the map back. It is a
@@ -940,7 +946,7 @@ chain_result(chain::CooperativeChain) = begin
         chain_index=chain.chain_index,
         posterior_position=draws,
         posterior_gradient=chain.recording_lpdf.posterior_gradient,
-        ess=chain.ess,
+        ess=_returned_ess(chain.ess, draws, chain.monitor_ess),
         stepsize=chain.stepsize,
         active_transformation=chain.active_transformation,
         status=chain.status,

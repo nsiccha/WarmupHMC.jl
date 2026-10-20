@@ -375,13 +375,11 @@ _warn_missing_sidecar(path, what, n_written) =
 
 # ------------------------------------------------------------- diagnostics
 
-# Bulk-ESS per coordinate over the first `k` SOURCE-frame draws, sorted ascending
-# (so element 1 is the worst-mixing coordinate). Same call the adaptive sampler
-# monitors with — `ess` wants (draws, chains, params), and our draws are stored
-# (params, draws), so transpose into a dense (k, 1, dimension) array. Computed on
-# the working frame, exactly like the adaptive sampler's window ESS.
-_stream_ess(samples, k, dimension) =
-    sort!(MCMCDiagnosticTools.ess(reshape(collect(transpose(@view samples[:, 1:k])), (k, 1, dimension))))
+# Bulk-ESS per coordinate over the first `k` SOURCE-frame draws, in coordinate
+# order: element `j` is the ESS of `draws[j, :]`. The same `_coordinate_ess` the
+# adaptive sampler monitors with, on the same working frame the returned `draws`
+# are in.
+_stream_ess(samples, k) = _coordinate_ess(@view samples[:, 1:k])
 
 # ------------------------------------------------------------- the driver
 
@@ -433,7 +431,7 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
             # ESS is the one O(k log k) update, so recompute it only on doubling
             # windows (and once at the end); the value persists between.
             if (k >= ess_next || k == n_draws) && k > 10
-                ess_label = short_string(_stream_ess(samples, k, dimension)) * " from $k draws"
+                ess_label = _ess_label(_stream_ess(samples, k)) * " from $k draws"
                 ess_next = 2k
             end
             # One merge per draw carrying ALL non-fixed labels, so none is ever
@@ -460,7 +458,7 @@ _stream_result(samples_path, samples, rng_states, divergences,
     n_divergent,                               # divergences of THIS call (not persisted)
     divergences = @view(divergences[1:n_written]),  # per-draw 0/1 flag, ALL draws on disk
     rng_states = @view(rng_states[:, 1:n_written]), # per-draw Xoshiro state (5 × n_written), post-draw
-    ess,                                       # per-coordinate bulk-ESS, sorted ascending (NaN if <=10 draws)
+    ess,                                       # per-coordinate bulk-ESS of `draws`, coordinate order (NaN if <=10 draws)
     dimension,
     rng,                                       # rng state after the last draw
     position,                                  # source-frame chain position (resume point)
@@ -513,7 +511,7 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
             n_draws=eff_n_draws, max_tree_depth, ring, samples, rng_states, divergences,
             dimension, n_written, durable, progress, description, start_time)
         Mmap.sync!(samples); Mmap.sync!(rng_states); Mmap.sync!(divergences)
-        ess = k > 10 ? _stream_ess(samples, k, dimension) : fill(NaN, dimension)
+        ess = k > 10 ? _stream_ess(samples, k) : fill(NaN, dimension)
         _stream_result(samples_path, samples, rng_states, divergences,
             dimension, k, n_divergent, ess, rng, pg.q)
     finally
@@ -616,7 +614,8 @@ mmapped source-frame draws), `samples` (the live mapping), `n_drawn`,
 `n_divergent` (of this call), `divergences` (a length-`n_drawn` `Int8` 0/1 view of
 EVERY draw's divergence flag — their sum is the total), `rng_states` (a
 `5 × n_drawn` `UInt64` view of every draw's post-draw Xoshiro state), `ess`
-(per-coordinate bulk-ESS, sorted ascending; `NaN` for `<= 10` draws), `dimension`,
+(per-coordinate bulk-ESS of `draws`, in coordinate order — `ess[j]` is the ESS of
+`draws[j, :]`; `NaN` for `<= 10` draws), `dimension`,
 `rng`, `position`. Reopen a finished or partial run with [`open_stream`](@ref).
 Call [`close_stream`](@ref) on each result once its mapped views are no longer
 needed, before removing the stream files on Windows.

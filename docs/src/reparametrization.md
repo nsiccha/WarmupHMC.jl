@@ -812,10 +812,12 @@ depends on what your inner problem is made of, and the two cases differ sharply:
   to build the `lpdfs` vector yourself and share the parts you know are safe to
   share.
 
-**`cooperative_warmup_mcmc` accepts `progress=` and drops it.** The keyword is on
-the signature and passes keyword validation, but the top-level function never
-forwards it to the chains it builds, so passing it has no effect. (The per-chain
-constructor `WarmupHMC.cooperative_chain` does honour it.)
+**`cooperative_warmup_mcmc` reports progress per run and per chain.** Under the
+`progress=` node it builds one run node, named by `description=` (default
+`"MCMC"`), whose labels show the scheduler's state: chains started and their
+status, the pooled-ESS proxy against `target_ess`, gradient evaluations, and
+live time. Each started chain gets a node `"<description>.<i>"` with the same
+labels as an [`adaptive_warmup_mcmc`](@ref) chain, and no bar.
 
 ## See also
 

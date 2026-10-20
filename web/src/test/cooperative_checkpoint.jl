@@ -30,7 +30,7 @@
             rng, chain_index, lpdf, recording_lpdf, nonlinear_recorder,
             nothing, nothing, dimension,        # algorithm, stepsize_adaptation, dimension
             10, 50, 2.0, false, false, 10, typemax(Int),
-            (;), (;), (;), UInt64(0),           # scale/energy options, kwargs, start_time
+            (;), (;), (;), UInt64(0), nothing,  # scale/energy options, kwargs, start_time, progress
             nothing, :pathfinder, nothing,      # position_and_gradient, active_transformation, kinetic_energy
             1.0, nothing, 1000,                 # stepsize, stepsize_state, n_evaluations
             zeros(dimension), nothing, nothing, Inf, Float64[],

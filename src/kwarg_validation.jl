@@ -94,7 +94,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     ),
     :cooperative_warmup_mcmc => (
         :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,
-        :max_window_evaluations, :n_draws, :nonlinear_adapt, :progress,
+        :max_window_evaluations, :n_draws, :nonlinear_adapt, :progress, :description,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw, _COOPERATIVE_CHAIN_KWARGS...,
     ),
     :clustered_warmup_mcmc => (

@@ -51,6 +51,12 @@ answers = (
     nan_gradient = x -> (-sum(abs2, x) / 2, fill(NaN, length(x))),
 )
 throwing(x) = throw(DomainError(x[1], "x[1] must be positive"))
+# A target whose support excludes every position (a resumed stream's new target).
+struct Excluded end
+LogDensityProblems.dimension(::Excluded) = 3
+LogDensityProblems.capabilities(::Type{Excluded}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity_and_gradient(::Excluded, x) = (-Inf, zero(float.(x)))
+LogDensityProblems.logdensity(::Excluded, x) = -Inf
 inside = [0.5, 0.0, 0.0]
 outside = [-0.5, 0.0, 0.0]
 init = (; position=inside, squared_scale=ones(3))
@@ -169,16 +175,39 @@ try
     end
 
     @testset "a start outside the support is an error, never a divergence" begin
+        start_error(f) = try
+            f()
+            nothing
+        catch err
+            err
+        end
         for answer in (answers.neginf_zero, answers.neginf_nan)
             @test_throws WarmupHMC.DynamicHMC.DynamicHMCError adaptive_warmup_mcmc(
                 Xoshiro(1), TruncatedNormal(answer);
                 init=(; position=outside, squared_scale=ones(3)), n_draws=10)
-            @test_throws ArgumentError fixed_kernel_nuts_step(
-                FixedKernelNUTSState(Xoshiro(7), outside; metric=ones(3), stepsize=0.5),
-                TruncatedNormal(answer))
-            @test_throws ArgumentError stream_mcmc(Xoshiro(7), TruncatedNormal(answer), outside;
-                path=joinpath(mktempdir(), "stream"), n_draws=10, metric=ones(3), stepsize=0.5)
+            err = start_error() do
+                fixed_kernel_nuts_step(
+                    FixedKernelNUTSState(Xoshiro(7), outside; metric=ones(3), stepsize=0.5),
+                    TruncatedNormal(answer))
+            end
+            @test err isa ArgumentError
+            @test occursin("at the state's position, so it lies outside the target's support", err.msg)
+            err = start_error() do
+                stream_mcmc(Xoshiro(7), TruncatedNormal(answer), outside;
+                    path=joinpath(mktempdir(), "stream"), n_draws=10, metric=ones(3), stepsize=0.5)
+            end
+            @test err isa ArgumentError
+            @test occursin("at the start position, so it lies outside the target's support", err.msg)
         end
+        # A resumed stream re-evaluates its last stored draw under the new target.
+        path = joinpath(mktempdir(), "stream")
+        close_stream(stream_mcmc(Xoshiro(7), TruncatedNormal(answers.neginf_zero), inside;
+            path, n_draws=5, metric=ones(3), stepsize=0.5))
+        err = start_error() do
+            stream_mcmc(Excluded(); path, n_draws=10, metric=ones(3), stepsize=0.5)
+        end
+        @test err isa ArgumentError
+        @test occursin("at the last stored draw (column 5 of", err.msg)
         # NaN, +Inf and a non-finite gradient fail DynamicHMC's strict start evaluation.
         for answer in (answers.nan, answers.posinf, answers.nan_gradient)
             @test_throws WarmupHMC.DynamicHMC.DynamicHMCError fixed_kernel_nuts_step(

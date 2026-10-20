@@ -142,6 +142,22 @@ _fixed_nuts_state(rng, position, kinetic_energy, stepsize, max_tree_depth, sourc
         DynamicHMC.NUTS(; max_depth=max_tree_depth), deepcopy(sources))
 end
 
+# Evaluate the position a fixed-kernel transition starts from. DynamicHMC's
+# strict evaluation still lets a -Inf log density through, because a -Inf
+# LEAPFROG position is an ordinary divergent leaf. A transition cannot START
+# there, though: its first leapfrog step fails as DynamicHMC's "Internal error:
+# leapfrog called from non-finite log density". Say what actually happened.
+_evaluate_transition_start(lpdf, q, what) = begin
+    pg = DynamicHMC.evaluate_ℓ(lpdf, q; strict=true)
+    isfinite(pg.ℓq) || throw(ArgumentError(
+        "the log density is $(pg.ℓq) at $what, so it lies outside the target's " *
+        "support and a NUTS transition cannot start there. A position the sampler " *
+        "returns is inside the support of the target it was drawn under; if the " *
+        "target has changed since, the change excluded it. Continue from a " *
+        "position inside the current target's support."))
+    pg
+end
+
 FixedKernelNUTSState(rng, position::AbstractVector;
         metric, stepsize::Real, max_tree_depth::Integer=10) =
     _fixed_nuts_state(rng, position, _stream_energy(metric), stepsize,
@@ -173,7 +189,12 @@ is not advanced. Read the new source-frame position from `result.state.position`
 
 The target may change on every call, but must keep the same dimension and
 source-coordinate frame. Its log density and gradient are freshly evaluated at
-the saved position before sampling. A checkpoint's adapted reparametrization
+the saved position before sampling. If the new target puts that position
+outside its support (log density `-Inf`), the step raises an `ArgumentError`
+saying so; a `NaN` or `+Inf` log density, or a non-finite gradient, there fails
+DynamicHMC's evaluation. At a leapfrog position, by contrast, leaving the
+support is an ordinary divergence, and the gradient at such a point is never
+read. A checkpoint's adapted reparametrization
 controls are restored onto a private copy of each supplied target. The fixed
 metric, step size and tree depth are not adapted. Mixed-target positions are
 not a stationary posterior sample and must not be pooled for ESS.
@@ -185,7 +206,7 @@ fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf) = begin
         "supplied lpdf has dimension $dimension."))
     active_lpdf = isempty(state.reparam_sources) ? lpdf :
         restore_reparam_sources!(deepcopy(lpdf), state.reparam_sources)
-    pg = DynamicHMC.evaluate_ℓ(active_lpdf, copy(state.position); strict=true)
+    pg = _evaluate_transition_start(active_lpdf, copy(state.position), "the state's position")
     rng = copy(state.rng)
     hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, active_lpdf)
     next_pg, stats = DynamicHMC.sample_tree(
@@ -486,12 +507,13 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
         # re-stored in the ring). Re-evaluate under this lpdf: a serialized
         # gradient is never trusted, and one evaluation is negligible.
         samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws))
-        pg = DynamicHMC.evaluate_ℓ(lpdf, collect(@view samples[:, n_written]); strict=true)
+        pg = _evaluate_transition_start(lpdf, collect(@view samples[:, n_written]),
+            "the last stored draw (column $n_written of $(repr(samples_path)))")
         ring = _StreamRing(open(ring_path, "r+"), filesize(ring_path) ÷ 2, 1 - last_slot, seq + one(UInt64))
     else
         rng = seed_rng
         q0 = seed_position isa DynamicHMC.EvaluatedLogDensity ? seed_position.q : seed_position
-        pg = DynamicHMC.evaluate_ℓ(lpdf, collect(float.(q0)); strict=true)
+        pg = _evaluate_transition_start(lpdf, collect(float.(q0)), "the start position")
         n_written = 0
         eff_n_draws = n_draws
         samples = _open_mmap(samples_path, Float64, (dimension, eff_n_draws))
@@ -555,6 +577,11 @@ value at or below what is already written returns the existing draws.
 `overwrite=true` discards an existing run and starts fresh. A crash inside the
 very first transition (before draw 1) leaves an unresumable file that simply
 restarts from the caller's seed — no draw is ever lost.
+
+The start position, or on resume the last stored draw, is evaluated under the
+supplied `lpdf` and must lie inside its support: a `-Inf` log density there
+raises an `ArgumentError` saying so. A leapfrog position outside the support is
+an ordinary divergence instead.
 
 Resuming a run that predates a per-draw sidecar (`.divergences` / `.rng_states`)
 creates that file zeroed and keeps sampling, but emits a `@warn`: the already-drawn

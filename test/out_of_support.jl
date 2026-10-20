@@ -20,18 +20,23 @@
 
 # A standard normal truncated to x[1] > 0. Its mode sits ON the support boundary,
 # so leapfrog steps leave the support constantly. `answer` is what it returns
-# outside the support; `calls` counts those evaluations, so a run that never left
-# the support cannot pass the identity checks vacuously.
+# outside the support; `calls(p)` counts those evaluations, so a run that never
+# left the support cannot pass the identity checks vacuously. The counter lives in
+# `call_counts`, not in the struct: cooperative and clustered `deepcopy` the target
+# per chain, and a copied counter would leave the caller's at zero.
+call_counts = Threads.Atomic{Int}[]
 struct TruncatedNormal{F}
     answer::F
-    calls::Base.RefValue{Int}
+    id::Int
 end
-TruncatedNormal(answer) = TruncatedNormal(answer, Ref(0))
+TruncatedNormal(answer) = (push!(call_counts, Threads.Atomic{Int}(0));
+    TruncatedNormal(answer, length(call_counts)))
+calls(p::TruncatedNormal) = call_counts[p.id][]
 LogDensityProblems.dimension(::TruncatedNormal) = 3
 LogDensityProblems.capabilities(::Type{<:TruncatedNormal}) = LogDensityProblems.LogDensityOrder{1}()
 function LogDensityProblems.logdensity_and_gradient(p::TruncatedNormal, x)
     x[1] > 0 && return (-sum(abs2, x) / 2, -collect(float.(x)))
-    p.calls[] += 1
+    Threads.atomic_add!(call_counts[p.id], 1)
     p.answer(x)
 end
 LogDensityProblems.logdensity(p::TruncatedNormal, x) =
@@ -55,7 +60,7 @@ function runs(f)
     map(answers) do answer
         p = TruncatedNormal(answer)
         out = f(p)
-        (; out..., calls=p.calls[])
+        (; out..., calls=calls(p))
     end
 end
 function check_same_run(results)
@@ -113,12 +118,32 @@ try
             end
             check_same_run(results)
         end
+        # Two chains each; `results` is in completion order, so compare by identity.
+        pooled(out) = sort(out.results; by=c -> c.chain_index)
+        @testset "cooperative_warmup_mcmc" begin
+            results = runs() do p
+                chains = pooled(cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
+                    init=init, n_draws=200, n_evaluations_budget=20000))
+                (; fingerprint=[Matrix(c.posterior_position) for c in chains],
+                   n_divergent=sum(c.n_divergent_samples for c in chains))
+            end
+            check_same_run(results)
+        end
+        @testset "clustered_warmup_mcmc" begin
+            results = runs() do p
+                chains = clustered_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
+                    init=init, n_draws=200).results
+                (; fingerprint=[Matrix(c.posterior_position) for c in chains],
+                   n_divergent=sum(c.n_divergent_samples for c in chains))
+            end
+            check_same_run(results)
+        end
     end
 
     @testset "a thrown error is never caught while sampling" begin
         p = TruncatedNormal(throwing)
         @test_throws DomainError adaptive_warmup_mcmc(Xoshiro(1), p; init=init, n_draws=200)
-        @test p.calls[] == 1
+        @test calls(p) == 1
         steps(p) = let state = FixedKernelNUTSState(Xoshiro(7), inside; metric=ones(3), stepsize=1.5)
             for _ in 1:100
                 state = fixed_kernel_nuts_step(state, p).state
@@ -127,6 +152,17 @@ try
         @test_throws DomainError steps(p)
         @test_throws DomainError stream_mcmc(Xoshiro(7), p, inside;
             path=joinpath(mktempdir(), "stream"), n_draws=100, metric=ones(3), stepsize=1.5)
+        # Chains run as tasks surface it wrapped (`CompositeException`/`TaskFailedException`).
+        rootcause(e::CompositeException) = rootcause(first(e.exceptions))
+        rootcause(e::TaskFailedException) = rootcause(e.task.exception)
+        rootcause(e) = e
+        err = try
+            cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
+                init=init, n_draws=200, n_evaluations_budget=20000)
+        catch e
+            e
+        end
+        @test rootcause(err) isa DomainError
         # Positive control: the same calls complete once the target answers -Inf.
         ok = TruncatedNormal(answers.neginf_zero)
         @test size(adaptive_warmup_mcmc(Xoshiro(1), ok; init=init, n_draws=200).posterior_position, 2) >= 200

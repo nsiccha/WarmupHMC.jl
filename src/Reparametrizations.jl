@@ -825,8 +825,33 @@ OnlineStatsBase.fit!((;pairs)::OnlineReparametrizer, args...; kwargs...) = for (
     OnlineStatsBase.fit!(accumulator, reparam(candidate, args...); kwargs...)
 end
 OnlineStatsBase.nobs((;pairs)::OnlineReparametrizer) = length(pairs) == 0 ? 0 : OnlineStatsBase.nobs(pairs[1][2])
-minimizer((;pairs)::OnlineReparametrizer; kwargs...) = argmin(p -> reparametrization_loss(last(p); kwargs...), pairs)
+# A nonfinite loss marks a candidate the scorer could not evaluate: an observation
+# variance that underflowed to zero, a nonfinite scorer output. Bare `argmin`
+# prefers `NaN`, so selection committed the first such candidate (snag
+# `nonlinear-center-dd5bbc3d`). Only finite losses compete; `nothing` means none
+# is finite. Among finite losses the winner is exactly `argmin`'s.
+function minimizer((;pairs)::OnlineReparametrizer; kwargs...)
+    losses = map(p -> reparametrization_loss(last(p); kwargs...), pairs)
+    any(isfinite, losses) || return nothing
+    pairs[argmin(i -> isfinite(losses[i]) ? losses[i] : Inf, eachindex(losses))]
+end
 scale_estimate(or::OnlineReparametrizer; kwargs...) = scale_estimate(last(minimizer(or; kwargs...)))
+
+# The centering coordinate `idx` moves to. With no finite candidate it keeps
+# `current`, as `_select_transformation!` keeps the active metric. The selection
+# resets the recorder, so nothing else records an excluded candidate: collect
+# `idx => kept` in `excluded` for `_warn_excluded_candidates`.
+function _minimizing_source!(excluded, or::OnlineReparametrizer, idx, current; kwargs...)
+    best = minimizer(or; kwargs...)
+    any(p -> !isfinite(reparametrization_loss(last(p); kwargs...)), or.pairs) &&
+        push!(excluded, idx => isnothing(best))
+    isnothing(best) ? current : first(best)
+end
+
+function _warn_excluded_candidates(excluded; limit=5)
+    isempty(excluded) && return
+    @warn "Centering selection excluded candidates with a nonfinite loss (the scorer could not evaluate them)" n_coordinates=length(excluded) coordinates=first.(first(excluded, limit)) n_kept_centering=count(last, excluded)
+end
 reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); nothing)
 _mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
 _mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
@@ -862,19 +887,22 @@ OnlineReparametrizer(source::PartiallyCentered, xg...;
 # --- Batch optimization ---
 
 optimize!((;pairs)::IndexedReparametrization, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
+    excluded = Pair{Any,Bool}[]
     pairs .= Base.broadcasted(pairs) do (idx, value)
         or = OnlineReparametrizer(value, xg...; kwargs...)
         for xgi in zip(eachcol.(xg)...)
             OnlineStatsBase.fit!(or, reparam_rargs(value, getindex.(xgi, idx)..., first(xgi))...)
         end
         OnlineStatsBase.nobs(or) > 2 || return idx => value
-        new_value = Reparametrization(value.target, first(minimizer(or; loss_kwargs...)), value.args...)
+        new_source = _minimizing_source!(excluded, or, idx, value.source; loss_kwargs...)
+        new_value = Reparametrization(value.target, new_source, value.args...)
         trans = Reparametrization(new_value.source, value.source, value.args...)
         for xgi in zip(eachcol.(xg)...)
             setindex!.(xgi, reparam(trans, getindex.(xgi, idx)..., first(xgi))[2:end], idx)
         end
         idx => new_value
     end
+    _warn_excluded_candidates(excluded)
     IndexedReparametrization(pairs)
 end
 
@@ -940,14 +968,16 @@ end
 
 function optimize!(ir::IndexedReparametrization, ors::OnlineReparametrizer;
                    loss_kwargs=(;))
+    excluded = Pair{Any,Bool}[]
     ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (stored_idx, or)
         idx == stored_idx || throw(ArgumentError(
             "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
         ))
         OnlineStatsBase.nobs(or) > 2 || return idx => value
-        new_source = first(minimizer(or; loss_kwargs...))
+        new_source = _minimizing_source!(excluded, or, idx, value.source; loss_kwargs...)
         idx => Reparametrization(value.target, new_source, value.args...)
     end
+    _warn_excluded_candidates(excluded)
     ir
 end
 
@@ -1079,7 +1109,10 @@ The log-Jacobian/log-variance term is present but has zero default weight; a
 this criterion. WarmupHMC does not reject nonfinite candidate observations or
 losses. The implementation evaluates both displayed terms before applying the
 weights, so degenerate or nonfinite input can produce a nonfinite loss even at
-`w₁ = 0`; this function returns that value unchanged.
+`w₁ = 0`; this function returns that value unchanged. The sampler's selection
+never picks such a candidate: it minimizes over the finite losses only, keeps a
+coordinate's current centering when none of its losses is finite, and warns
+which coordinates had a candidate excluded.
 
 The `payload` method reads the serialized `nonlinear_recorder` accumulator from
 an adaptive or cooperative checkpoint. It is the actual pending online curve
@@ -1230,18 +1263,21 @@ end
 
 reset!(recorder::NonlinearRecorder) = (reset!(recorder.online); recorder)
 OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
+    excluded = Pair{Any,Bool}[]
     ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (_, or)
         for xgi in zip(eachcol.(xg)...)
             OnlineStatsBase.fit!(or, reparam_rargs(value, getindex.(xgi, idx)..., first(xgi))...)
         end
         OnlineStatsBase.nobs(or) > 2 || return idx => value
-        new_value = Reparametrization(value.target, first(minimizer(or; loss_kwargs...)), value.args...)
+        new_source = _minimizing_source!(excluded, or, idx, value.source; loss_kwargs...)
+        new_value = Reparametrization(value.target, new_source, value.args...)
         trans = Reparametrization(new_value.source, value.source, value.args...)
         for xgi in zip(eachcol.(xg)...)
             setindex!.(xgi, reparam(trans, getindex.(xgi, idx)..., first(xgi))[2:end], idx)
         end
         idx => new_value
     end
+    _warn_excluded_candidates(excluded)
     ir
 end
 

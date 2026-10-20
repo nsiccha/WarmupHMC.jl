@@ -684,7 +684,11 @@ metric is re-selected:
 4. The winner replaces that coordinate's `source`, and the halo states for that
    coordinate are transported into the new parametrization before the next
    coordinate is scored.
-5. A coordinate with 2 or fewer halo states keeps the centering it had.
+5. A coordinate with 2 or fewer halo states keeps the centering it had. A
+   candidate whose loss is not finite — its observations could not be scored,
+   for example a position variance that underflowed to zero — never wins; a
+   coordinate with no finite candidate keeps the centering it had, and the
+   sampler warns which coordinates had a candidate excluded.
 6. Once every coordinate has settled, the **whole** halo is rebuilt in a single
    final pass: positions and gradients are recomputed from the *originals*
    through the composed old-to-new map, one AD pass per recorded state. The

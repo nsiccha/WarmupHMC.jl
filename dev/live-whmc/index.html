@@ -1299,7 +1299,7 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More"};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":","};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -3668,6 +3668,18 @@ function htmxoTableSearch(target, query) {
     htmxoFilterTable(root);
 }
 
+// The leaves of a group whose rows have not loaded yet, as `[key, search
+// text]` pairs (`data-htmxo-lazy-leaves`), parsed once per value.
+function htmxoLazyLeaves(row) {
+    const source = row.dataset.htmxoLazyLeaves;
+    if (!source) return [];
+    if (row.htmxoLazyLeavesSource !== source) {
+        row.htmxoLazyLeavesSource = source;
+        row.htmxoLazyLeavesParsed = JSON.parse(source);
+    }
+    return row.htmxoLazyLeavesParsed;
+}
+
 function htmxoFilterTable(target) {
     const root = htmxoSearchRoot(target);
     const input = root.querySelector(':scope > label > input[type="search"]');
@@ -3700,8 +3712,8 @@ function htmxoFilterTable(target) {
     const collapsed = query.length > 0 && 'htmxoSearchCollapsed' in root.dataset;
     const direct = new Set();
     // A branch whose rows have not loaded yet also matches its rows' text.
-    const text = r => ((r.dataset.htmxoSearch ?? Array.from(r.cells).map(c => (c.querySelector(':scope > [data-htmxo-row-label]') || c).textContent).join(' ')) +
-        (r.dataset.htmxoSearchMembers ? ' ' + r.dataset.htmxoSearchMembers : '')).toLocaleLowerCase();
+    const ownText = r => r.dataset.htmxoSearch ?? Array.from(r.cells).map(c => (c.querySelector(':scope > [data-htmxo-row-label]') || c).textContent).join(' ');
+    const text = r => (ownText(r) + htmxoLazyLeaves(r).map(([, t]) => ' ' + t).join('')).toLocaleLowerCase();
     rows.forEach(row => {
         const path = [];
         for (let r = row; r; r = byId.get(r.dataset.htmxoParent)) path.push(r);
@@ -3752,13 +3764,38 @@ function htmxoFilterTable(target) {
             if (!detail.hidden) htmxoLoadSlot(detail.querySelector('[data-loaded]'));
         }
     });
-    // hiddenBy counts the hidden rows per predicate that first rejected them;
-    // listeners may push short notes that the count line appends.
+    // The count is of the table's items, not its rows (`_table_item_counts`
+    // on the server): a group row is none, a leaf listed under several groups
+    // is one, and an item is shown when the search and the predicates keep
+    // it, whether or not its group or branch is open. The leaves of a group
+    // that has not loaded yet count once each, shown when the group's row is
+    // kept and the 'search' predicate keeps their own text.
+    const items = new Map();
+    const tally = (key, shown, by) => {
+        const was = items.get(key);
+        if (!was || (shown && !was.shown)) items.set(key, {shown, by});
+    };
+    const search = filters[0][1];
+    rows.forEach(row => {
+        if (!('htmxoGroup' in row.dataset)) {
+            tally('htmxoLeaf' in row.dataset ? 'leaf:' + row.dataset.htmxoLeaf : row, visible.has(row), rejectedBy.get(row));
+            return;
+        }
+        const leaves = htmxoLazyLeaves(row);
+        if (!leaves.length) return;
+        const kept = visible.has(row), path = [ownText(row).toLocaleLowerCase()];
+        for (let r = byId.get(row.dataset.htmxoParent); r; r = byId.get(r.dataset.htmxoParent)) path.unshift(text(r));
+        leaves.forEach(([key, t]) => {
+            const ctx = {query, input: raw, text: (path.join(' ') + ' ' + t.toLocaleLowerCase()).replace(/\s+/g, ' ')};
+            tally('leaf:' + key, kept && search(row, ctx), kept ? 'search' : rejectedBy.get(row));
+        });
+    });
+    // hiddenBy counts the hidden items per predicate that first rejected
+    // them; listeners may push short notes that the count line appends.
     const hiddenBy = {};
-    rejectedBy.forEach((name, row) => { if (row.hidden) hiddenBy[name] = (hiddenBy[name] || 0) + 1; });
-    // Rows of a branch that has not loaded yet count toward the total.
-    const pending = rows.reduce((n, r) => n + (Number(r.dataset.htmxoLazyCount) || 0), 0);
-    const detail = {shown: rows.filter(r => !r.hidden).length, total: rows.length + pending, query, hiddenBy, notes: []};
+    let shown = 0;
+    items.forEach(item => { if (item.shown) shown++; else hiddenBy[item.by] = (hiddenBy[item.by] || 0) + 1; });
+    const detail = {shown, total: items.size, query, hiddenBy, notes: []};
     root.dispatchEvent(new CustomEvent('htmxo:table-filtered', {bubbles: true, detail}));
     const count = root.querySelector(':scope > label > [data-htmxo-table-count]');
     if (count) count.textContent = htmxoText(root, 'count', {shown: detail.shown, total: detail.total}) +
@@ -3801,7 +3838,7 @@ function htmxoLoadRows(row, expand) {
             if (!body) throw new Error(htmxoText(row, 'rows_missing'));
             const rows = Array.from(body.rows);
             row.after(...rows);
-            ['htmxoLazyRows', 'htmxoLazyCount', 'htmxoSearchMembers', 'htmxoSelectMembers'].forEach(k => delete row.dataset[k]);
+            ['htmxoLazyRows', 'htmxoLazyLeaves', 'htmxoSelectMembers'].forEach(k => delete row.dataset[k]);
             delete row.htmxoMembers;
             row.removeAttribute('aria-busy');
             row.querySelector('[data-htmxo-tree-toggle]').setAttribute('aria-controls',
@@ -4122,7 +4159,7 @@ function htmxoCarryRow(old, row, oldDetail, detail) {
     // A lazy group stays lazy until the table loads it; once loaded, its rows
     // are on the page and the update's lazy marks no longer apply.
     if (!('htmxoLazyRows' in old.dataset))
-        ['htmxoLazyRows', 'htmxoLazyCount', 'htmxoSearchMembers', 'htmxoSelectMembers'].forEach(k => delete row.dataset[k]);
+        ['htmxoLazyRows', 'htmxoLazyLeaves', 'htmxoSelectMembers'].forEach(k => delete row.dataset[k]);
     row.hidden = old.hidden;
     if ('htmxoFiltered' in old.dataset) row.dataset.htmxoFiltered = ''; else delete row.dataset.htmxoFiltered;
     ['aria-selected', 'tabindex'].forEach(a => { if (old.hasAttribute(a)) row.setAttribute(a, old.getAttribute(a)); });
@@ -4478,8 +4515,19 @@ function htmxoGroupPending(pills) {
 }
 function htmxoGroupRequest(pills, names, focusId) {
     if (names.join('\u0000') === htmxoGroupLevels(pills).join('\u0000')) return;
+    const wrapper = pills.closest('[data-htmxo-grouped]');
     pills.htmxoPending = names;
+    // A server render that replaces the pills hands the focus back too.
     window.htmxoGroupFocus = focusId ? {id: focusId, pills} : null;
+    if ('htmxoRegroup' in wrapper.dataset) {
+        htmxoRegroup(wrapper, names);
+        // Moving a pill drops the focus; a ‹/› now at the bar's end hands it
+        // to its pill's toggle.
+        const el = focusId && document.getElementById(focusId), pill = el && el.closest('.htmxo-group-pill');
+        const target = el && !el.disabled ? el : pill && pill.querySelector('button');
+        if (target) target.focus();
+        return;
+    }
     htmx.trigger(pills, 'htmxo-regroup');
 }
 function htmxoGroupToggle(button) {
@@ -4552,6 +4600,240 @@ function htmxoGroupDrop(e) {
 function htmxoGroupDragEnd(e) {
     window.htmxoGroupDragged = null;
     htmxoGroupMark(e.currentTarget, null);
+}
+// --- Regrouping in the browser: master_detail_table(...; groupings) ---
+// A regroupable table whose leaves are all on the page regroups here, with no
+// request, and builds the rows `_grouped_master_detail_table` would render for
+// the new grouping: its leaf rows move under group rows made from the table's
+// template row (`template[data-htmxo-group-template]`); a leaf listed in
+// several groups gets a copy per group; leaves the grouping leaves out wait in
+// `template[data-htmxo-unplaced]`. The wrapper's `data-htmxo-regroup` says how
+// (grouping names, flat name, nested or not, the `group_summary` columns).
+// Keep `htmxoRegroup`, `htmxoFormatNumber` and `htmxoGroupPillsSync` in step
+// with that function, `_md_format_number` and `_md_group_pills`.
+function htmxoRegroupConfig(wrapper) {
+    if (wrapper.htmxoRegroupSource !== wrapper.dataset.htmxoRegroup) {
+        wrapper.htmxoRegroupSource = wrapper.dataset.htmxoRegroup;
+        wrapper.htmxoRegroupConfig = JSON.parse(wrapper.htmxoRegroupSource);
+    }
+    return wrapper.htmxoRegroupConfig;
+}
+// `_md_safe_key` and `_md_json_list`, as the server writes them.
+function htmxoSafeKey(key) { return String(key).replace(/[^A-Za-z0-9_\-]/gu, '--'); }
+function htmxoJsonString(s) {
+    let out = '"';
+    for (const c of String(s))
+        out += c === '"' ? '\\' + '"' : c === '\\' ? '\\\\' : c < ' ' ? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0') : c;
+    return out + '"';
+}
+function htmxoJsonList(xs) { return '[' + xs.map(htmxoJsonString).join(',') + ']'; }
+// A group summary over its leaves' inputs (`_md_summary_value`), folded left
+// to right, and written as the table writes numbers (`_md_format_number`).
+function htmxoSummaryValue(reduce, inputs) {
+    if (reduce === 'count') return inputs.length;
+    if (reduce === 'ratio') {
+        let num = 0, den = 0, any = false;
+        inputs.forEach(v => { if (v && v[0] !== null && v[1] !== null) { num += v[0]; den += v[1]; any = true; } });
+        return any && den !== 0 ? num / den : null;
+    }
+    const xs = inputs.filter(v => v !== null && v !== undefined);
+    if (!xs.length) return null;
+    if (reduce === 'min') return Math.min(...xs);
+    if (reduce === 'max') return Math.max(...xs);
+    const sum = xs.reduce((a, b) => a + b);
+    return reduce === 'mean' ? sum / xs.length : sum;
+}
+function htmxoFormatNumber(el, x, digits) {
+    if (x === null || x === undefined) return '';
+    const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
+    const s = BigInt(scaled).toString().padStart(digits + 1, '0');
+    const whole = s.slice(0, s.length - digits), thousands = htmxoText(el, 'thousands');
+    let out = x < 0 && scaled !== 0 ? '-' : '';
+    for (let i = 0; i < whole.length; i++) {
+        if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
+        out += whole[i];
+    }
+    return digits > 0 ? out + htmxoText(el, 'decimal') + s.slice(s.length - digits) : out;
+}
+// Give a leaf's rows the row key `safe`: the ids, the row's own toggle call
+// (`master_detail_toggle_js`) and the controls naming its detail.
+function htmxoRekeyLeaf(row, detail, safe) {
+    const old = row.id.slice(4), call = "var show=htmxoMdToggle(this,event,'";
+    if (old === safe) return;
+    row.id = 'row-' + safe;
+    const click = row.getAttribute('onclick');
+    if (click && click.startsWith(call + old + "'")) row.setAttribute('onclick', call + safe + click.slice(call.length + old.length));
+    row.querySelectorAll('[aria-controls="detail-' + old + '"]').forEach(b => b.setAttribute('aria-controls', 'detail-' + safe));
+    if (!detail) return;
+    detail.id = 'detail-' + safe;
+    const slot = detail.querySelector('[id="detail-slot-' + old + '"]');
+    if (slot) slot.id = 'detail-slot-' + safe;
+}
+// Regroup a table by `levels` (grouping names, outermost first; none for the
+// flat view). Branches the reader opened and the selection, search and sort
+// apply to the new rows as after a re-render, and a group holding a leaf
+// whose detail is open opens.
+function htmxoRegroup(wrapper, levels) {
+    const cfg = htmxoRegroupConfig(wrapper);
+    const table = wrapper.querySelector('table'), body = table.tBodies[0];
+    const store = wrapper.querySelector('template[data-htmxo-unplaced]');
+    const stored = store ? Array.from(store.content.children) : [];
+    const rows = [...Array.from(body.rows), ...stored], companions = htmxoTableCompanions(rows);
+    const fresh = new Set(stored);
+    // One entry per leaf, in the order of the table's items. A leaf's own
+    // rows are its copy with the detail open, else the first; they move
+    // with what the reader loaded into them, and further copies clone them.
+    const leaves = new Map();
+    rows.forEach(r => {
+        if (!('htmxoLeaf' in r.dataset)) return;
+        const open = r.dataset.htmxoDetailOpen === 'true', have = leaves.get(r.dataset.htmxoLeaf);
+        if (have && (have.open || !open)) return;
+        leaves.set(r.dataset.htmxoLeaf, {key: r.dataset.htmxoLeaf, row: r, detail: companions.get(r.id) || null, open,
+            order: Number(r.dataset.htmxoLeafOrder), keys: JSON.parse(r.dataset.htmxoLeafKeys),
+            values: r.dataset.htmxoLeafValues ? JSON.parse(r.dataset.htmxoLeafValues) : [], placed: false});
+    });
+    const members = Array.from(leaves.values()).sort((a, b) => a.order - b.order);
+    const template = wrapper.querySelector('template[data-htmxo-group-template]');
+    const out = [];
+    const keysAt = (m, depth) => depth < levels.length ? m.keys[levels[depth]] || [] : [];
+    // The groups of `list` at a level, in first-appearance order.
+    const groupsAt = (list, depth) => {
+        const order = [], byKey = new Map();
+        list.forEach(m => keysAt(m, depth).forEach(k => {
+            if (!byKey.has(k)) { byKey.set(k, []); order.push(k); }
+            byKey.get(k).push(m);
+        }));
+        return order.map(k => [k, byKey.get(k)]);
+    };
+    const leaf = (m, path, parent, level) => {
+        let row = m.row, detail = m.detail;
+        if (m.placed) {
+            row = row.cloneNode(true);
+            detail = detail && detail.cloneNode(true);
+            fresh.add(row);
+            if (detail) { fresh.add(detail); htmxoMdShow(row, detail, false); }
+        }
+        m.placed = true;
+        htmxoRekeyLeaf(row, detail, htmxoSafeKey(path.length ? 'group:' + path.join('/') + '/' + m.key : m.key));
+        row.dataset.htmxoParent = parent;
+        row.setAttribute('aria-level', String(level));
+        out.push(row);
+        if (detail) out.push(detail);
+        return row.id;
+    };
+    const group = (path, list, parent, level) => {
+        const row = template.content.querySelector('tr').cloneNode(true), name = path[path.length - 1];
+        const gid = 'group:' + path.join('/'), id = 'row-' + htmxoSafeKey(gid), children = [];
+        out.push(row);
+        if (path.length < levels.length) {
+            groupsAt(list, path.length).forEach(([k, ms]) => children.push(group([...path, k], ms, id, level + 1)));
+            list.filter(m => !keysAt(m, path.length).length).forEach(m => children.push(leaf(m, path, id, level + 1)));
+        } else list.forEach(m => children.push(leaf(m, path, id, level + 1)));
+        const open = String(cfg.open || list.some(m => m.open));
+        row.id = id;
+        row.dataset.htmxoParent = parent;
+        row.setAttribute('aria-level', String(level));
+        row.dataset.htmxoTreeOpen = open;
+        row.setAttribute('aria-expanded', open);
+        const toggle = row.querySelector('[data-htmxo-tree-toggle]');
+        toggle.setAttribute('aria-controls', children.join(' '));
+        toggle.setAttribute('aria-expanded', open);
+        if ('htmxoSelectKey' in row.dataset) {
+            row.dataset.htmxoSelectKey = gid;
+            row.dataset.htmxoSelectValue = cfg.ordered ? htmxoJsonList(path) : name;
+        }
+        if ('htmxoSearch' in row.dataset) row.dataset.htmxoSearch = name;
+        row.querySelector('[data-htmxo-group-label]').textContent = name;
+        row.querySelector('[data-htmxo-group-count]').textContent = '(' + list.length + ')';
+        cfg.summary.forEach((s, i) => {
+            row.querySelector('[data-htmxo-group-summary="' + i + '"]').textContent =
+                htmxoFormatNumber(table, htmxoSummaryValue(s.reduce, list.map(m => m.values[i])), s.digits);
+        });
+        fresh.add(row);
+        return id;
+    };
+    if (levels.length) groupsAt(members, 0).forEach(([k, ms]) => group([k], ms, '', 1));
+    else members.forEach(m => leaf(m, [], '', 1));
+    const rest = document.createDocumentFragment(), placedRows = document.createDocumentFragment();
+    members.filter(m => !m.placed).forEach(m => { rest.append(m.row); if (m.detail) rest.append(m.detail); });
+    out.forEach(r => placedRows.append(r));
+    body.replaceChildren(placedRows);
+    if (store) store.content.replaceChildren(rest);
+    if (window.htmx) out.forEach(r => { if (fresh.has(r)) htmx.process(r); });
+    wrapper.dataset.htmxoGrouped = cfg.ordered ? htmxoJsonList(levels) : (levels.length ? levels[0] : cfg.flat);
+    wrapper.dataset.htmxoGroupBy = htmxoJsonList(levels.length ? levels : [cfg.flat ?? '']);
+    const pills = wrapper.querySelector('.htmxo-group-pills');
+    if (pills) htmxoGroupPillsSync(pills, levels);
+    const select = wrapper.querySelector('select[name="group_by"]');
+    if (select) select.value = wrapper.dataset.htmxoGrouped;
+    htmxoResort(table);
+    const root = wrapper.querySelector('.htmxo-searchable-table');
+    if (root) { htmxoTreeRestore(root, htmxoSearchOf(root)); htmxoFilterTable(root); }
+    wrapper.dispatchEvent(new CustomEvent('htmxo:regrouped', {bubbles: true, detail: {groupBy: JSON.parse(wrapper.dataset.htmxoGroupBy)}}));
+    // Group rows from `group_master` come from the server's render of the new
+    // grouping; in a recorded page the element has no request left.
+    const refresh = cfg.refresh && wrapper.querySelector('[data-htmxo-group-refresh][hx-get]');
+    if (refresh && window.htmx) htmx.trigger(refresh, 'htmxo-regroup');
+}
+// Set the pills the way `_md_group_pills` renders them for `levels`.
+function htmxoGroupPillsSync(pills, levels) {
+    const cfg = htmxoRegroupConfig(pills.closest('[data-htmxo-grouped]'));
+    const n = levels.length, keepLast = !('htmxoGroupFlat' in pills.dataset) && n === 1;
+    const byName = new Map(Array.from(pills.querySelectorAll(':scope > .htmxo-group-pill'), p => [p.dataset.htmxoGroupName, p]));
+    const end = pills.querySelector(':scope > input[type="hidden"]');
+    [...levels, ...cfg.names.filter(x => !levels.includes(x))].forEach(name => {
+        const pill = byName.get(name), level = levels.indexOf(name) + 1;
+        const button = pill.querySelector(':scope > button:not(.htmxo-group-move)');
+        pill.querySelectorAll(':scope > .htmxo-group-move').forEach(b => b.remove());
+        button.querySelectorAll(':scope > .htmxo-group-level').forEach(s => s.remove());
+        button.removeAttribute('aria-disabled');
+        button.setAttribute('aria-pressed', String(level > 0));
+        if (!level) {
+            delete pill.dataset.htmxoGroupLevel;
+            button.title = htmxoText(pills, n === 0 ? 'group_add' : 'group_add_inner', {name});
+            button.removeAttribute('onkeydown');
+        } else {
+            pill.dataset.htmxoGroupLevel = String(level);
+            button.title = htmxoText(pills, n > 1 ? 'group_level' : keepLast ? 'group_kept' : 'group_stop', {level, name});
+            if (keepLast) button.setAttribute('aria-disabled', 'true');
+            button.setAttribute('onkeydown', 'htmxoGroupKey(this,event)');
+            if (n > 1) {
+                const mark = document.createElement('span');
+                mark.className = 'htmxo-group-level';
+                mark.setAttribute('aria-hidden', 'true');
+                mark.textContent = String(level);
+                button.prepend(mark);
+                [['‹', -1, level === 1, 'earlier'], ['›', 1, level === n, 'later']].forEach(([glyph, by, edge, where]) => {
+                    const move = document.createElement('button');
+                    move.type = 'button';
+                    move.id = button.id + '-' + where;
+                    move.className = 'htmxo-group-move';
+                    move.setAttribute('aria-label', htmxoText(pills, 'group_' + where, {name}));
+                    move.setAttribute('onclick', 'htmxoGroupMove(this,' + by + ')');
+                    if (edge) move.disabled = true;
+                    move.textContent = glyph;
+                    pill.append(move);
+                });
+            }
+        }
+        pills.insertBefore(pill, end);
+    });
+    // A bulk form receives the grouping with the selection.
+    const inputs = Array.from(pills.querySelectorAll(':scope > input[type="hidden"][name="group_by"]'));
+    if (!inputs.length) return;
+    const form = inputs[0].getAttribute('form');
+    inputs.forEach(i => i.remove());
+    (n ? levels : [pills.dataset.htmxoGroupFlat ?? '']).forEach(v => {
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'group_by'; input.value = v;
+        input.setAttribute('form', form);
+        pills.append(input);
+    });
+}
+// The single-name Group by select.
+function htmxoGroupSelect(select) {
+    const wrapper = select.closest('[data-htmxo-grouped]'), cfg = htmxoRegroupConfig(wrapper);
+    htmxoRegroup(wrapper, select.value === cfg.flat ? [] : [select.value]);
 }
 // htmx returns focus to the pill control the user pressed (same id) after
 // the table is re-rendered; one that is now disabled (a ‹/› at the end of
@@ -4672,7 +4954,7 @@ if (!window.htmxoMoveBeforeGuarded) {
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More"};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":","};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {

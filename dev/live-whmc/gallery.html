@@ -15,6 +15,7 @@
 })();
 </script><script src="https://unpkg.com/hyperscript.org@0.9.14"></script><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"><style>@layer htmxo {
     :where(:root) {
+        --htmxo-bg:      Canvas;
         --htmxo-accent:  #4a90d9;
         --htmxo-success: #2a9d8f;
         --htmxo-warning: #e9a23b;
@@ -24,11 +25,15 @@
     }
 }
 </style><style>:root {
+    --htmxo-bg:      var(--pico-background-color, Canvas);
     --htmxo-accent:  var(--pico-primary, #4a90d9);
     --htmxo-success: var(--pico-color-green-550, #2a9d8f);
     --htmxo-warning: var(--pico-color-amber-550, #e9a23b);
     --htmxo-error:   var(--pico-color-red-550, #e76f51);
-    --htmxo-border:  var(--pico-border-color, currentColor);
+    /* Pico has no root-level border color: `--pico-border-color` exists only
+       on form controls and buttons, and its divider color
+       (`--pico-muted-border-color`) is too faint for the 2px tab frames. */
+    --htmxo-border:  currentColor;
     --htmxo-muted:   var(--pico-muted-color, color-mix(in srgb, currentColor 60%, transparent));
 }
 </style><style>@layer htmxo {
@@ -1188,13 +1193,7 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     function squash(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
     // Over HTTP/2 `statusText` is empty, so the reason comes from the answer's
     // own `<title>` (a gateway's "413 Request Entity Too Large") or this table.
-    var REASONS = {
-        400: 'Bad Request', 401: 'Unauthorized', 403: 'Forbidden', 404: 'Not Found',
-        405: 'Method Not Allowed', 408: 'Request Timeout', 409: 'Conflict', 410: 'Gone',
-        413: 'Content Too Large', 414: 'URI Too Long', 415: 'Unsupported Media Type',
-        422: 'Unprocessable Content', 429: 'Too Many Requests', 500: 'Internal Server Error',
-        501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'
-    };
+    var REASONS = {400: 'Bad Request', 401: 'Unauthorized', 402: 'Payment Required', 403: 'Forbidden', 404: 'Not Found', 405: 'Method Not Allowed', 406: 'Not Acceptable', 407: 'Proxy Authentication Required', 408: 'Request Timeout', 409: 'Conflict', 410: 'Gone', 411: 'Length Required', 412: 'Precondition Failed', 413: 'Content Too Large', 414: 'URI Too Long', 415: 'Unsupported Media Type', 416: 'Range Not Satisfiable', 417: 'Expectation Failed', 421: 'Misdirected Request', 422: 'Unprocessable Content', 423: 'Locked', 424: 'Failed Dependency', 425: 'Too Early', 426: 'Upgrade Required', 428: 'Precondition Required', 429: 'Too Many Requests', 431: 'Request Header Fields Too Large', 451: 'Unavailable For Legal Reasons', 500: 'Internal Server Error', 501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'};
     function failureText(xhr) {
         var type = header(xhr, 'Content-Type') || '', body = xhr.responseText || '';
         var plain = '', title = '', heading = '';

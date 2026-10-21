@@ -57,6 +57,42 @@ Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.Succes
 Treebars.short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"
 Treebars.short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)"
 
+# The labelled children of one adaptive-style chain node (warmuphmc-use §5b).
+# `adaptive_warmup_mcmc` (`AWMState`) and `cooperative_warmup_mcmc`
+# (`CooperativeChain`) both call these: the two structs hold the same counters
+# under the same field names. `counter` is the node's bar value, or `nothing`
+# for a node without a bar. A `nothing` node skips building the labels.
+
+# Before the first transition.
+_initial_chain_progress!(::Nothing, counter, chain) = nothing
+_initial_chain_progress!(progress, counter, chain) = update_progress!(progress, counter;
+    divergent_samples=UncertainFrequency(chain.n_divergent_samples, chain.n_samples),
+    (chain.monitor_ess ? (;ess="pending...") : (;))...,
+    active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
+    sampling_performance=SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw)),
+    chain.total_transition_counter,
+    chain.total_evaluation_counter,
+)
+# After every transition.
+_transition_progress!(::Nothing, counter, chain) = nothing
+_transition_progress!(progress, counter, chain) = update_progress!(progress, counter;
+    divergent_samples=UncertainFrequency(chain.n_divergent_samples, chain.n_samples),
+    active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
+    sampling_performance=SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw)),
+    total_transition_counter=Speed(chain.total_transition_counter, time_ns()-chain.start_time),
+    total_evaluation_counter=Speed(chain.total_evaluation_counter, time_ns()-chain.start_time),
+)
+# At the end of a window that retained more than 10 draws.
+_ess_progress!(::Nothing, chain) = nothing
+_ess_progress!(progress, chain) = update_progress!(progress, nothing;
+    ess=_ess_label(chain.ess) * " from $(chain.n_samples) samples.",
+)
+# After a restart reselected the linear transformation.
+_transformation_progress!(::Nothing, chain) = nothing
+_transformation_progress!(progress, chain) = update_progress!(progress, nothing;
+    active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
+)
+
 struct Speeds
     n::Vector{Int}
     dt::Float64

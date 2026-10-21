@@ -27,7 +27,7 @@ and resumed to an identical state.
 `:done` (collected `n_draws`), or `:stuck` (marked for parking by the
 scheduler).
 """
-mutable struct CooperativeChain{R,L,RL,NR,A,SA,SO,EO,NT}
+mutable struct CooperativeChain{R,L,RL,NR,A,SA,SO,EO,NT,P}
     # --- configuration (set once) ---
     const rng::R
     # Stable 1-based identity of this chain, equal to its index into `rngs`.
@@ -53,6 +53,9 @@ mutable struct CooperativeChain{R,L,RL,NR,A,SA,SO,EO,NT}
     const energy_options::EO
     const kwargs::NT
     const start_time::UInt64
+    # This chain's Treebars node (`nothing` without progress). A runtime handle
+    # like `lpdf`: never part of the checkpoint payload.
+    const progress::P
     # --- mutable window-loop state ---
     position_and_gradient
     active_transformation::Symbol
@@ -173,12 +176,12 @@ cooperative_chain(
         )
     )
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
-    CooperativeChain(
+    chain = CooperativeChain(
         rng, chain_index, lpdf, recording_lpdf, nonlinear_recorder,
         algorithm, stepsize_adaptation, dimension,
         recording_target, stepsize_adaptation_limit, variance_cond_target,
         nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
-        scale_options, energy_options, NamedTuple(kwargs), start_time,
+        scale_options, energy_options, NamedTuple(kwargs), start_time, progress,
         position_and_gradient, active_transformation, kinetic_energy,
         stepsize, stepsize_state, n_evaluations, variance_memory,
         variance_position, variance_gradient, Inf, Float64[],
@@ -186,6 +189,9 @@ cooperative_chain(
         true, 0, :warming, nothing, NamedTuple[],
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
+    _initial_chain_progress!(progress, nothing, chain)
+    update_progress!(progress, "initialized, waiting for a core")
+    chain
 end
 
 """
@@ -211,6 +217,7 @@ advance_window!(chain::CooperativeChain) = begin
     (;halo_position, halo_gradient, posterior_position, posterior_gradient) = recording_lpdf
 
     chain.outer_counter += 1
+    update_progress!(chain.progress, "$(chain.status) · window $(chain.outer_counter)")
     hamiltonian = DynamicHMC.Hamiltonian(chain.kinetic_energy, recording_lpdf)
     current_evaluation_counter = 0
     while size(posterior_position, 2) < n_draws && current_evaluation_counter < chain.n_evaluations
@@ -261,9 +268,11 @@ advance_window!(chain::CooperativeChain) = begin
             chain.restart = chain.variance_cond >= variance_cond_target
         end
         chain.n_samples = size(posterior_position, 2)
+        _transition_progress!(chain.progress, nothing, chain)
     end
     if monitor_ess && chain.n_samples > 10
         chain.ess .= _coordinate_ess(posterior_position)
+        _ess_progress!(chain.progress, chain)
     end
 
     # --- checkpoint bookkeeping ---
@@ -303,6 +312,7 @@ advance_window!(chain::CooperativeChain) = begin
         scale_options, chain.active_transformation, halo_position, halo_gradient; chain.kwargs...
     )
     chain.kinetic_energy = energy_options[chain.active_transformation]
+    _transformation_progress!(chain.progress, chain)
     reset!(recording_lpdf)
     chain.status
 end
@@ -415,7 +425,12 @@ mutable struct CooperativeState{RS,L,CFG}
     n_started::Int                  # chains created (== length(chains) once installs settle)
     n_starting::Int                 # reserved-but-not-yet-installed starts
     stopped::Bool
-    const progress::Any             # the caller's progress node: checked for interrupt only
+    # The run's node under the caller's `progress` (`nothing` without one): carries
+    # the scheduler labels, parents one node per chain, and is checked for an
+    # interrupt (a request on the caller's node reaches it as an ancestor's).
+    const progress::Any
+    const description::String       # chain nodes are "<description>.<chain_index>"
+    last_pooled_ess::Float64        # the exact pooled ESS at the last stop check; NaN before one
 end
 
 _alive(state::CooperativeState) =
@@ -460,13 +475,125 @@ _should_stop(state::CooperativeState) = begin
     _elapsed(state) >= state.time_budget && return true
     # Only pay for the accurate pooled ESS once the cheap upper-bound gate clears.
     if isfinite(state.target_ess) && _joint_ess_proxy(state) >= state.target_ess
-        _pooled_ess(state) >= state.target_ess && return true
+        state.last_pooled_ess = _pooled_ess(state)
+        state.last_pooled_ess >= state.target_ess && return true
     end
     false
 end
 
+# --- Progress tree -------------------------------------------------------------
+#
+# Under the caller's node the run gets one node (`state.progress`) with four
+# scheduler labels, refreshed at every scheduling change, and one node per
+# started chain carrying the adaptive chain labels (`_transition_progress!` and
+# friends in `progress.jl`) and its status as the message. A chain node finishes
+# when the chain is done or parked as stuck, and otherwise when the run ends.
+# Every update is a no-op without a node.
+
+_chains_label(state::CooperativeState) = begin
+    n_status(s) = count(c -> c.status === s, state.chains)
+    parts = String[]
+    for (n, what) in ((n_status(:sampling), "sampling"), (n_status(:warming), "warming"),
+                      (state.n_starting, "starting"), (n_status(:done), "done"))
+        n > 0 && push!(parts, "$n $what")
+    end
+    stuck = sort!([c for c in state.chains if c.status === :stuck]; by=c -> c.chain_index)
+    isempty(stuck) || push!(parts, "$(length(stuck)) parked as stuck (" *
+        join(("chain $(c.chain_index): $(c.stuck_reason)" for c in stuck), ", ") * ")")
+    "$(state.n_started) started of $(length(state.rngs))" * (isempty(parts) ? "" : ": " * join(parts, ", "))
+end
+
+_pooled_ess_label(state::CooperativeState) = begin
+    proxy = short_string(_joint_ess_proxy(state))
+    isfinite(state.target_ess) || return "proxy $proxy, no target_ess"
+    exact = isnan(state.last_pooled_ess) ? "" :
+        "; exact $(short_string(state.last_pooled_ess)) at the last check"
+    "proxy $proxy of target $(short_string(state.target_ess)) (an upper bound: " *
+        "the exact pooled ESS is computed once it reaches the target$exact)"
+end
+
+_evaluations_label(state::CooperativeState) = begin
+    n = _total_evals(state)
+    rate = _rate_or_pace(n, _elapsed(state))
+    state.eval_budget == typemax(Int) ? "$(short_string(n)) ($rate), no budget" :
+        "$(short_string(n)) of $(short_string(state.eval_budget)) ($rate)"
+end
+
+_seconds_label(seconds) = short_duration(Dates.Millisecond(round(Int, 1000 * seconds)))
+# Live time, cumulative across resumes: the clock `time_budget` is measured on.
+_elapsed_label(state::CooperativeState) = isfinite(state.time_budget) ?
+    "$(_seconds_label(_elapsed(state))) of $(_seconds_label(state.time_budget))" :
+    "$(_seconds_label(_elapsed(state))), no time budget"
+
+_run_progress!(state::CooperativeState) = begin
+    isnothing(state.progress) && return nothing
+    update_progress!(state.progress, nothing;
+        chains=_chains_label(state),
+        pooled_ess=_pooled_ess_label(state),
+        evaluations=_evaluations_label(state),
+        elapsed=_elapsed_label(state),
+    )
+end
+
+# A chain's retained draws, minimum ESS and divergence rate, as the adaptive
+# chain's final message reports them. The ESS is the monitored working-frame
+# vector, and is shown only once the current epoch has more than 10 draws:
+# before that `chain.ess` still holds an earlier epoch's estimate.
+_chain_progress_summary(chain::CooperativeChain) = chain.n_samples == 0 ? "no draws retained" :
+    "$(chain.n_samples) draws, " *
+    (chain.monitor_ess && chain.n_samples > 10 ? "min. ESS: $(short_string(_min_ess(chain.ess))), " : "") *
+    "divergent: $(short_string(100 * chain.n_divergent_samples / chain.n_samples))%"
+
+# The chain's labels at a window boundary. The per-transition labels catch up
+# with a restart's reset, which no transition follows when the chain is parked
+# right after it, and an epoch with too few draws for an ESS says so. A chain
+# just restored (`rates=false`) shows plain counters: its clock restarted with
+# the restore, so a rate would be meaningless.
+_boundary_labels!(chain::CooperativeChain; final, rates=true) = begin
+    progress = chain.progress
+    isnothing(progress) && return nothing
+    rates ? _transition_progress!(progress, nothing, chain) :
+        _initial_chain_progress!(progress, nothing, chain)
+    chain.monitor_ess || return nothing
+    chain.n_samples > 10 ? _ess_progress!(progress, chain) :
+        update_progress!(progress, nothing;
+            ess=final ? "no estimate from $(chain.n_samples) draws" : "pending...")
+end
+
+_finish_chain_progress!(chain::CooperativeChain, what; rates=true) = begin
+    isnothing(chain.progress) && return nothing
+    _boundary_labels!(chain; final=true, rates)
+    update_progress!(chain.progress,
+        "$what after window $(chain.outer_counter): $(_chain_progress_summary(chain))")
+    finalize_progress!(chain.progress)
+end
+
+# The chain's node after a window boundary: finished if the chain will produce
+# no more draws, otherwise marked as waiting for the scheduler.
+_window_progress!(chain::CooperativeChain; rates=true) =
+    chain.status === :stuck ? _finish_chain_progress!(chain, "parked as stuck ($(chain.stuck_reason))"; rates) :
+    chain.status === :done ? _finish_chain_progress!(chain, "done"; rates) :
+    (_boundary_labels!(chain; final=false, rates);
+     update_progress!(chain.progress, "$(chain.status) · window $(chain.outer_counter) done, waiting for a core"))
+
+# The run node's final message: which bound stopped the run, the pooled ESS it
+# returns, and the divergence rate over the draws of the chains it uses.
+_finish_run_progress!(state::CooperativeState, result) = begin
+    isnothing(state.progress) && return nothing
+    _run_progress!(state)
+    used = [r for r in result.results
+            if (r.status === :sampling || r.status === :done) && size(r.posterior_position, 2) > 0]
+    n = sum(r -> size(r.posterior_position, 2), used; init=0)
+    divergent = n == 0 ? "no draws retained" :
+        "divergent: $(short_string(100 * sum(r -> r.n_divergent_samples, used) / n))%"
+    stuck = result.n_stuck > 0 ? ", $(result.n_stuck) parked as stuck" : ""
+    update_progress!(state.progress,
+        "$(run_stop_reason(state)): joint ESS $(short_string(result.joint_ess)), " *
+        "$(result.n_used) of $(result.n_started) chains used$stuck, $divergent")
+end
+
 # Decide the next action for a freed core. Runs under `state.lock`. Returns
-# `:stop`, `:idle`, `(:advance, chain)`, or `(:start, rng_index)`. This is where
+# `:stop`, `:idle`, `(:advance, chain)`, or `(:start, (rng_index, progress))`. This is where
 # the continue / resume-another / start-new / (park-stuck) choice is made: the
 # least-progressed sampling chain wins (balancing pooled ESS), warming chains
 # come next, and a new chain starts only when the alive pool is under target.
@@ -490,12 +617,21 @@ _plan!(state::CooperativeState) = begin
     if _alive(state) < state.pool_target && state.n_started < length(state.rngs)
         state.n_started += 1
         state.n_starting += 1
-        return (:start, state.n_started)
+        # The chain's node is made here, under the lock, so chain nodes appear in
+        # index order.
+        progress = initialize_progress!(state.progress;
+            description="$(state.description).$(state.n_started)")
+        _run_progress!(state)
+        return (:start, (state.n_started, progress))
     end
     (isempty(state.busy) && state.n_starting == 0) ? (state.stopped = true; :stop) : :idle
 end
 
-_install!(state::CooperativeState, chain) = (push!(state.chains, chain); state.n_starting -= 1)
+_install!(state::CooperativeState, chain) = begin
+    push!(state.chains, chain)
+    state.n_starting -= 1
+    _run_progress!(state)
+end
 # Returns the work needed to persist this chain's checkpoint, or `nothing`.
 # The PAYLOAD IS BUILT UNDER THE LOCK (a pure read of chain state, cheap) but the
 # disk write happens outside it — see `_flush_checkpoint!`. Building it later
@@ -510,6 +646,8 @@ _release!(state::CooperativeState, chain) = begin
             chain.stuck_reason = why
         end
     end
+    _window_progress!(chain)
+    _run_progress!(state)
     paths = _chain_checkpoint_paths(state.checkpoint_dir, chain)
     isnothing(paths) ? nothing :
         (paths, cooperative_checkpoint_payload(chain; run_elapsed=_elapsed(state)))
@@ -534,8 +672,11 @@ _worker!(state::CooperativeState) = while true
     else
         tag, val = action
         if tag === :start
-            # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock.
-            chain = cooperative_chain(state.rngs[val], deepcopy(state.lpdf); chain_index=val, state.chain_cfg...)
+            # Heavy per-chain init (Pathfinder) happens OUTSIDE the lock, under
+            # the chain's node that `_plan!` made.
+            index, progress = val
+            chain = cooperative_chain(state.rngs[index], deepcopy(state.lpdf);
+                chain_index=index, progress, state.chain_cfg...)
             @lock state.lock _install!(state, chain)
         else # :advance
             advance_window!(val)
@@ -774,10 +915,13 @@ configuration knob comes from THIS call.
   `recording_target` is refused (the ring buffer and its retained contents are
   persisted state), while an explicit different evidence triple rebuilds the
   accumulator from scratch.
-* `n_evaluations`, `init`, `progress` and `pathfinder_kw` are accepted and
-  ignored: the window budget continues from the payload's (already doubled)
-  value, and initialization already happened. They exist so the resuming call can
-  repeat the original call verbatim.
+* `n_evaluations`, `init` and `pathfinder_kw` are accepted and ignored: the
+  window budget continues from the payload's (already doubled) value, and
+  initialization already happened. They exist so the resuming call can repeat
+  the original call verbatim.
+* `progress` is the restored chain's own Treebars node (as `cooperative_chain`
+  takes it). It shows the restored state at once, and is finished immediately
+  for a chain that will produce no more draws.
 
 The restored chain stepped with its restored RNG reproduces the uninterrupted
 run's trajectory for that chain exactly — the per-chain half of the published
@@ -800,7 +944,7 @@ restore_cooperative_chain(p, lpdf;
     nonlinear_good_leaf_threshold=nothing,
     monitor_ess=false,
     max_window_evaluations=typemax(Int),
-    progress=nothing,               # ignored: the cooperative path emits no progress tree
+    progress=nothing,               # this chain's node, as for `cooperative_chain`
     pathfinder_kw=(;),              # ignored: init-only, accepted so the call repeats verbatim
     kwargs...
 ) = begin
@@ -844,13 +988,13 @@ restore_cooperative_chain(p, lpdf;
     # call's larger `n_draws` goes back to sampling. Anything else keeps the
     # status it checkpointed with — including `:stuck`, which is terminal.
     status = p.status === :done && size(p.posterior_position, 2) < n_draws ? :sampling : p.status
-    CooperativeChain(
+    chain = CooperativeChain(
         p.rng, something(found_index, 0), lpdf, recording_lpdf, nonlinear_recorder,
         DynamicHMC.NUTS(; max_depth=max_tree_depth),
         DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
         p.recorder.target, stepsize_adaptation_limit, variance_cond_target,
         nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
-        p.scale_options, energy_options, (; kwargs...), time_ns(),
+        p.scale_options, energy_options, (; kwargs...), time_ns(), progress,
         p.position_and_gradient, p.active_transformation,
         energy_options[p.active_transformation],
         p.stepsize, p.stepsize_state, p.n_evaluations, p.variance_memory,
@@ -862,6 +1006,8 @@ restore_cooperative_chain(p, lpdf;
         p.dropped_posterior_position, p.dropped_posterior_gradient,
         p.dropped_n_divergent_samples,
     )
+    _window_progress!(chain; rates=false)
+    chain
 end
 
 # Rebuild the scheduler's pool from a run directory: restore every chain slot
@@ -875,12 +1021,14 @@ end
 # (`nothing` when the directory holds no restorable chain, so fresh defaults
 # apply) and `prior_elapsed` the run's live seconds as of its newest checkpoint
 # (the time budget continues from there; the in-flight window's time is lost
-# with its work, exactly as its evals are).
-_restore_cooperative_pool(dir, lpdf, rngs, chain_cfg) = begin
+# with its work, exactly as its evals are). `chain_progress(i)` makes slot `i`'s
+# node; every slot's node is made first, so they appear in slot order.
+_restore_cooperative_pool(dir, lpdf, rngs, chain_cfg; chain_progress=_ -> nothing) = begin
     idxs = _chain_dir_indices(dir)
     isempty(idxs) && return (CooperativeChain[], 0, nothing, 0.0)
     n_started = maximum(idxs)
     payloads = map(i -> _read_chain_payload(dir, i), 1:n_started)
+    nodes = map(chain_progress, 1:n_started)
     prior_elapsed = maximum(payloads; init=0.0) do p
         isnothing(p) ? 0.0 : Float64(something(get(p, :run_elapsed, nothing), 0.0))
     end
@@ -889,7 +1037,8 @@ _restore_cooperative_pool(dir, lpdf, rngs, chain_cfg) = begin
     for idx in 1:n_started
         p = payloads[idx]
         isnothing(p) && continue
-        chain = restore_cooperative_chain(p, deepcopy(lpdf); expected_chain_index=idx, chain_cfg...)
+        chain = restore_cooperative_chain(p, deepcopy(lpdf);
+            expected_chain_index=idx, progress=nodes[idx], chain_cfg...)
         chains[idx] = chain
         if isnothing(inherited)
             inherited = (;
@@ -910,7 +1059,8 @@ _restore_cooperative_pool(dir, lpdf, rngs, chain_cfg) = begin
             "$(length(rngs)) rngs were supplied. Pass at least $idx rngs to resume."
         ))
         @warn "chain_$idx has no checkpoint (crash before its first write); starting it fresh" maxlog=10
-        chains[idx] = cooperative_chain(rngs[idx], deepcopy(lpdf); chain_index=idx, fresh_cfg...)
+        chains[idx] = cooperative_chain(rngs[idx], deepcopy(lpdf);
+            chain_index=idx, progress=nodes[idx], fresh_cfg...)
     end
     (chains, n_started, inherited, prior_elapsed)
 end
@@ -964,6 +1114,12 @@ _finalize(state::CooperativeState) = begin
     joint_ess_proxy = _joint_ess_proxy(state)
     total_evaluation_counter = _total_evals(state)
     elapsed = _elapsed(state)
+    # Done and parked chains finished their nodes when they stopped; the rest stop
+    # with the run. Before `chain_result`, which back-transforms the draws.
+    for c in state.chains
+        (c.status === :sampling || c.status === :warming) &&
+            _finish_chain_progress!(c, "$(c.status) when the run stopped,")
+    end
     results = map(chain_result, state.chains)
     (;
         results,
@@ -981,7 +1137,7 @@ end
     cooperative_warmup_mcmc(rngs, lpdf; n_cores=length(rngs), target_ess=Inf,
         n_evaluations_budget=typemax(Int), time_budget=Inf, min_chains=min(length(rngs),4),
         max_window_evaluations=4000, n_draws=typemax(Int), nonlinear_adapt=true,
-        progress=nothing, kwargs...)
+        progress=nothing, description="MCMC", kwargs...)
 
 Cooperative multi-chain adaptive-warmup NUTS. Keeps up to `n_cores` chains
 advancing concurrently; at each warm-up **window boundary (checkpoint)** a
@@ -1013,6 +1169,22 @@ shared), advanced one window at a time via [`advance_window!`](@ref).
   frequent enough to reschedule.
 * Extra `kwargs` are forwarded to every chain (`recording_target`,
   `target_acceptance_rate`, `max_tree_depth`, `variance_cond_target`, `init`, …).
+
+## Progress
+
+`progress=node` (a Treebars node) gets one child named `description` (default
+`"MCMC"`). Its labels show the scheduler's state, refreshed at every scheduling
+change: the chains started and how many are sampling, warming, starting, done
+or parked as stuck (and why); the pooled-ESS proxy against `target_ess`, with
+the exact pooled ESS once it has been checked; the gradient evaluations; and
+the elapsed live time against `time_budget`. When the run ends, its message
+names the bound that stopped it, the returned `joint_ess`, the chains used and
+the divergence rate. Under it, each started chain gets a node
+`"<description>.<i>"` (`i` its `chain_index`) whose message is the chain's
+status and window, with the same labelled children as an
+[`adaptive_warmup_mcmc`](@ref) chain, and no bar. A chain's node finishes when
+the chain is done or parked as stuck, and otherwise when the run ends. The
+progress tree does not change the draws.
 
 ## Checkpointing and crash-resume
 
@@ -1056,6 +1228,7 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     n_draws=typemax(Int),
     nonlinear_adapt=true,
     progress=nothing,
+    description="MCMC",
     checkpoint_dir=nothing,
     # Continue an unfinished run from `checkpoint_dir`'s per-chain checkpoints
     # instead of starting over. Config comes from THIS call (a larger `n_draws`
@@ -1073,26 +1246,34 @@ cooperative_warmup_mcmc(rngs::AbstractVector, lpdf;
     @assert isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) "cooperative_warmup_mcmc needs at least one finite stopping bound (target_ess, n_evaluations_budget, or time_budget)."
     chain_cfg = (; n_draws, max_window_evaluations, nonlinear_adapt, monitor_ess=true, kwargs..., pathfinder_kw...)
     pool_target = min(length(rngs), max(min_chains, n_cores))
-    chains, n_started, inherited, prior_elapsed = resume ?
-        _restore_cooperative_pool(checkpoint_dir, lpdf, rngs, chain_cfg) :
-        (CooperativeChain[], 0, nothing, 0.0)
-    # Chains the resumed run starts later build under the checkpoint's
-    # recorder/evidence config unless the call overrode it — `chain_cfg`
-    # (caller-passed) wins the merge.
-    isnothing(inherited) || (chain_cfg = merge(inherited, chain_cfg))
-    state = CooperativeState(
-        rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
-        Float64(target_ess), n_evaluations_budget, Float64(time_budget),
-        time_ns(), prior_elapsed, ReentrantLock(), checkpoint_dir,
-        chains, Base.IdSet{CooperativeChain}(), n_started, 0, false, progress,
-    )
-    # The manifest is write-once: a resumed run keeps the original's identity
-    # and criteria, it does not rewrite them with this call's.
-    resume || write_run_manifest(checkpoint_dir, state)
-    @sync for _ in 1:n_cores
-        Threads.@spawn _worker!(state)
+    # The run's node: finished with the run, and failed (with every chain node
+    # still running under it) if the run throws.
+    with_progress(progress; description) do progress
+        chains, n_started, inherited, prior_elapsed = resume ?
+            _restore_cooperative_pool(checkpoint_dir, lpdf, rngs, chain_cfg;
+                chain_progress=i -> initialize_progress!(progress; description="$description.$i")) :
+            (CooperativeChain[], 0, nothing, 0.0)
+        # Chains the resumed run starts later build under the checkpoint's
+        # recorder/evidence config unless the call overrode it — `chain_cfg`
+        # (caller-passed) wins the merge.
+        isnothing(inherited) || (chain_cfg = merge(inherited, chain_cfg))
+        state = CooperativeState(
+            rngs, lpdf, chain_cfg, n_cores, pool_target, n_draws,
+            Float64(target_ess), n_evaluations_budget, Float64(time_budget),
+            time_ns(), prior_elapsed, ReentrantLock(), checkpoint_dir,
+            chains, Base.IdSet{CooperativeChain}(), n_started, 0, false,
+            progress, string(description), NaN,
+        )
+        # The manifest is write-once: a resumed run keeps the original's identity
+        # and criteria, it does not rewrite them with this call's.
+        resume || write_run_manifest(checkpoint_dir, state)
+        _run_progress!(state)
+        @sync for _ in 1:n_cores
+            Threads.@spawn _worker!(state)
+        end
+        result = _finalize(state)
+        _finish_run_progress!(state, result)
+        write_run_summary(checkpoint_dir, state, result)
+        result
     end
-    result = _finalize(state)
-    write_run_summary(checkpoint_dir, state, result)
-    result
 end

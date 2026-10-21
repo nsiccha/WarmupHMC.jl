@@ -65,19 +65,39 @@
 # The WarmupHMC-native kinetic energy from a mass-matrix SCALE `L` — identical to
 # the construction the adaptive/cooperative/clustered samplers use, so a scale
 # `L` learned by warm-up (`scale_options[active_transformation]`) plugs straight
-# in. `L * L'` is the momentum covariance; a diagonal `L`'s entries are
+# in. `L * L'` is the inverse mass matrix (≈ the posterior covariance), so
+# momenta are drawn with covariance `inv(L * L')`; a diagonal `L`'s entries are
 # per-coordinate standard deviations (cf. `_initial_diagonal_scale`).
 _stream_kinetic_energy(L) =
     DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
 
 # Normalize a caller-supplied `metric` to a DynamicHMC kinetic energy. Accepted:
 #   * a `DynamicHMC.GaussianKineticEnergy` — used as-is (full control);
-#   * a `Diagonal`/`AbstractMatrix` (or a WarmupHMC matrix expression) — the
-#     scale `L`;
+#   * a `Diagonal`, a triangular matrix or a WarmupHMC matrix expression — the
+#     scale `L`, applied as given;
+#   * any other square matrix (a plain dense `Matrix`, `Symmetric`, …) — the
+#     scale `L`, through `_triangular_scale`;
 #   * an `AbstractVector` — per-coordinate scales (std devs), i.e. `Diagonal(v)`.
 _stream_energy(m::DynamicHMC.GaussianKineticEnergy) = m
-_stream_energy(m::AbstractMatrix) = _stream_kinetic_energy(m)
+_stream_energy(m::Union{Diagonal,LinearAlgebra.AbstractTriangular,AbstractMatrixExpression}) =
+    _stream_kinetic_energy(m)
+_stream_energy(m::AbstractMatrix) = _stream_kinetic_energy(_triangular_scale(m))
 _stream_energy(m::AbstractVector) = _stream_kinetic_energy(Diagonal(collect(float.(m))))
+
+# The kinetic energy solves with `L'` and multiplies by `L` in place
+# (`mul!(y, L, y)`). A diagonal or triangular `L` supports both; a plain dense
+# matrix supports neither: its solve is a `MethodError` at the first momentum
+# draw, and its in-place product aliases BLAS's input and output and returns
+# zeros. The kernel depends on `L` only through `L * L'`, so a dense scale is
+# replaced by a triangular one with the same `L * L'`: itself, wrapped, when it
+# is already triangular, and otherwise the Cholesky factor of `L * L'`.
+function _triangular_scale(m::AbstractMatrix)
+    L = collect(float.(m))
+    LinearAlgebra.checksquare(L)
+    istril(L) && return LowerTriangular(L)
+    istriu(L) && return UpperTriangular(L)
+    cholesky(Symmetric(L * L')).L
+end
 
 # Extract the fixed kernel from a WarmupHMC checkpoint payload AND restore its
 # learned reparametrization centerings onto `lpdf`, so `lpdf`'s frame matches the
@@ -594,6 +614,13 @@ are recorded truthfully.
   `Diagonal`/matrix/WarmupHMC matrix expression, a vector of per-coordinate
   scales (std devs), or a ready `DynamicHMC.GaussianKineticEnergy`. A warm-up
   scale (`checkpoint`'s `scale_options[active_transformation]`) plugs in directly.
+  Any square matrix is accepted. A `Diagonal`, triangular or WarmupHMC matrix
+  expression is applied as given; any other matrix (a plain dense `Matrix`,
+  `Symmetric`, …) is copied, wrapped as `LowerTriangular`/`UpperTriangular` when
+  its entries are triangular, and otherwise replaced by
+  `cholesky(Symmetric(L*L')).L`. The kernel depends on `L` only through `L*L'`,
+  so that replacement samples the same Markov chain law, though a seed's
+  momentum draws differ from those of `L` itself.
 - `stepsize` — the fixed leapfrog step size.
 - `max_tree_depth=10` — NUTS max tree depth.
 

@@ -534,16 +534,8 @@ init_state(
     restart = true
     # We run the warm-up procedure until we have collected enough samples
     n_samples = 0
-    update_progress!(progress, current_transition_counter;
-        divergent_samples=UncertainFrequency(n_divergent_samples, n_samples),
-        (monitor_ess ? (;ess="pending...") : (;))...,
-        active_transformation=ActiveTransformation(kinetic_energy, scale_changes),
-        sampling_performance=SamplingPerformance(stepsize, mean(steps_per_draw)),
-        total_transition_counter,
-        total_evaluation_counter,
-    )
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
-    AWMState(
+    state = AWMState(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
         linear_restart_source, linear_trajectory_weighting,
         linear_metric_fallback, nonlinear_adapt,
@@ -561,6 +553,8 @@ init_state(
         restart, n_samples,
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
+    _initial_chain_progress!(progress, current_transition_counter, state)
+    state
 end
 
 # Bulk ESS of each coordinate of the `dimension × n` draw matrix `draws`, in
@@ -600,7 +594,7 @@ _returned_ess(monitored, draws, monitor_ess) =
 # reparametrization + transformation reselection. Mutates `state` in place;
 # returns after one window, leaving `state` as of CP-N.
 run_outer_iteration!(state::AWMState) = begin
-    (; progress, start_time, lpdf, recording_lpdf, algorithm, stepsize_adaptation) = state
+    (; progress, lpdf, recording_lpdf, algorithm, stepsize_adaptation) = state
     # Some setup that has to happen at the beginning of every warm-up window
     state.outer_counter += 1
     hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, recording_lpdf)
@@ -673,19 +667,11 @@ run_outer_iteration!(state::AWMState) = begin
             state.restart = state.variance_cond >= state.variance_cond_target
         end
         state.n_samples = size(recording_lpdf.posterior_position, 2)
-        update_progress!(progress, state.current_transition_counter;
-            divergent_samples=UncertainFrequency(state.n_divergent_samples, state.n_samples),
-            active_transformation=ActiveTransformation(state.kinetic_energy, state.scale_changes),
-            sampling_performance=SamplingPerformance(state.stepsize, mean(state.steps_per_draw)),
-            total_transition_counter=Speed(state.total_transition_counter, time_ns()-start_time),
-            total_evaluation_counter=Speed(state.total_evaluation_counter, time_ns()-start_time),
-        )
+        _transition_progress!(progress, state.current_transition_counter, state)
     end
     if state.monitor_ess && state.n_samples > 10
         state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
-        update_progress!(progress, nothing;
-            ess=_ess_label(state.ess) * " from $(state.n_samples) samples.",
-        )
+        _ess_progress!(progress, state)
     end
     state.n_samples < state.n_draws || return state
     # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
@@ -747,9 +733,7 @@ run_outer_iteration!(state::AWMState) = begin
         fallback_applied && (state.linear_metric_fallbacks += 1)
     end
     state.kinetic_energy = state.energy_options[state.active_transformation]
-    update_progress!(progress, nothing;
-        active_transformation=ActiveTransformation(state.kinetic_energy, state.scale_changes),
-    )
+    _transformation_progress!(progress, state)
     uses_running_restart && reset!(state.transformed_adaptation)
     reset!(recording_lpdf)
     state

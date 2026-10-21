@@ -83,3 +83,62 @@
         BLAS.set_num_threads(blas_threads)
     end
 end
+
+@testitem "fixed-kernel metric: a dense matrix scale" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC, Random, LinearAlgebra
+
+    # A plain `Matrix` scale used to construct fine and then fail the first step
+    # with `MethodError: no method matching ldiv!(::Adjoint{Float64, Matrix{Float64}}, ...)`
+    # (snag fixedkernelnutss-dac38aa5); its in-place `L * L'` product also
+    # silently returned zeros. The documented contract accepts any matrix scale.
+    target = DiagGaussian([0.3, -1.0, 0.5], [0.5, 1.2, 0.8])
+    L = LowerTriangular([1.0 0 0; 0.5 1.0 0; 0.2 0.1 1.0])
+    step(metric) = fixed_kernel_nuts_step(
+        FixedKernelNUTSState(Xoshiro(1), zeros(3); metric, stepsize=0.5), target)
+    same_step(a, b) = a.state.position == b.state.position &&
+        WarmupHMC._xoshiro_words(a.state.rng) == WarmupHMC._xoshiro_words(b.state.rng)
+    blas_threads = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
+    try
+        # Triangular entries keep the caller's own factor: the step is the one
+        # the explicitly wrapped matrix takes, draw for draw.
+        @test same_step(step(Matrix(L)), step(L))
+        U = UpperTriangular(Matrix(L'))
+        @test same_step(step(Matrix(U)), step(U))
+
+        # Any other scale samples through the Cholesky factor of `M * M'`, the
+        # only quantity the kernel depends on.
+        Q = Matrix(qr(randn(Xoshiro(3), 3, 3)).Q)
+        M = Matrix(L) * Q
+        @test !istril(M) && !istriu(M)
+        @test same_step(step(M), step(cholesky(Symmetric(M * M')).L))
+        x = [1.0, -2.0, 0.5]
+        inverse_mass_times(metric) = mul!(zeros(3), FixedKernelNUTSState(Xoshiro(1),
+            zeros(3); metric, stepsize=0.5).kinetic_energy.M⁻¹, x)
+        @test inverse_mass_times(M) ≈ M * M' * x
+        S = Symmetric([2.0 0.3 0.1; 0.3 1.5 0.2; 0.1 0.2 1.0])
+        @test inverse_mass_times(S) ≈ S * S' * x
+        @test all(isfinite, step(S).state.position)
+
+        # The state does not alias the caller's matrix.
+        dense = Matrix(L)
+        state = FixedKernelNUTSState(Xoshiro(1), zeros(3); metric=dense, stepsize=0.5)
+        dense .= 99.0
+        @test same_step(fixed_kernel_nuts_step(state, target), step(L))
+
+        # `stream_mcmc` normalizes `metric` the same way.
+        dense_stream = stream_mcmc(Xoshiro(1), target, zeros(3);
+            path=tempname(), n_draws=2, metric=Matrix(L), stepsize=0.5)
+        wrapped_stream = stream_mcmc(Xoshiro(1), target, zeros(3);
+            path=tempname(), n_draws=2, metric=L, stepsize=0.5)
+        @test dense_stream.draws == wrapped_stream.draws
+        close_stream(dense_stream)
+        close_stream(wrapped_stream)
+
+        # refused: a scale `L` is square, as its solve `L' \ z` requires
+        @test_throws DimensionMismatch FixedKernelNUTSState(Xoshiro(1), zeros(3);
+            metric=ones(3, 2), stepsize=0.5)
+    finally
+        BLAS.set_num_threads(blas_threads)
+    end
+end

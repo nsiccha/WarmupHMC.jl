@@ -67,22 +67,14 @@ end
 
 @testset "cooperative: stop_reason = interrupted" begin
     d = mktempdir()
-    TB.with_progress(:state; description = "probe") do probe
+    out = TB.with_progress(:state; description = "probe") do probe
         TB.request_interrupt!(probe)
-        cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], p;
+        cooperative_warmup_mcmc(Xoshiro(1), p; n_chains = 2,
             n_cores = 1, n_evaluations_budget = 10_000, nonlinear_adapt = false,
             checkpoint_dir = d, progress = probe)
     end
-    @test summary_reason(d) == "interrupted"
-end
-
-@testset "clustered: stop_reason = interrupted, no window stepped" begin
-    d = mktempdir()
-    out = TB.with_progress(:state; description = "probe") do probe
-        TB.request_interrupt!(probe)
-        clustered_warmup_mcmc(Xoshiro.(1:3), p; n_draws = 100, max_windows = 5,
-            parallel = false, checkpoint_dir = d, progress = probe)
-    end
+    @test out.stop_reason === :interrupted
+    @test out.total_evaluation_counter == 0
     @test summary_reason(d) == "interrupted"
 end
 end

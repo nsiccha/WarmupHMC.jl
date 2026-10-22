@@ -22,7 +22,7 @@
 # so leapfrog steps leave the support constantly. `answer` is what it returns
 # outside the support; `calls(p)` counts those evaluations, so a run that never
 # left the support cannot pass the identity checks vacuously. The counter lives in
-# `call_counts`, not in the struct: cooperative and clustered `deepcopy` the target
+# `call_counts`, not in the struct: the cooperative sampler `deepcopy`s the target
 # per chain, and a copied counter would leave the caller's at zero.
 call_counts = Threads.Atomic{Int}[]
 struct TruncatedNormal{F}
@@ -124,21 +124,12 @@ try
             end
             check_same_run(results)
         end
-        # Two chains each; `results` is in completion order, so compare by identity.
+        # Two chains each, compared by identity.
         pooled(out) = sort(out.results; by=c -> c.chain_index)
         @testset "cooperative_warmup_mcmc" begin
             results = runs() do p
-                chains = pooled(cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-                    init=init, n_draws=200, n_evaluations_budget=20000))
-                (; fingerprint=[Matrix(c.posterior_position) for c in chains],
-                   n_divergent=sum(c.n_divergent_samples for c in chains))
-            end
-            check_same_run(results)
-        end
-        @testset "clustered_warmup_mcmc" begin
-            results = runs() do p
-                chains = clustered_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-                    init=init, n_draws=200).results
+                chains = pooled(cooperative_warmup_mcmc(Xoshiro(11), p;
+                    n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000))
                 (; fingerprint=[Matrix(c.posterior_position) for c in chains],
                    n_divergent=sum(c.n_divergent_samples for c in chains))
             end
@@ -163,8 +154,8 @@ try
         rootcause(e::TaskFailedException) = rootcause(e.task.exception)
         rootcause(e) = e
         err = try
-            cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-                init=init, n_draws=200, n_evaluations_budget=20000)
+            cooperative_warmup_mcmc(Xoshiro(11), p;
+                n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000)
         catch e
             e
         end

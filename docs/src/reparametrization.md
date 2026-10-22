@@ -708,12 +708,12 @@ keyword exposes it.
 
 All of that rewrites the reparametrization **in place**, so a multi-chain run
 must not let two chains share one problem. It does not: every sampler gives chain
-`i` its own `deepcopy` of the `lpdf` you pass. The two that adapt a
-reparametrization at all are [`adaptive_warmup_mcmc`](@ref) and
-[`cooperative_warmup_mcmc`](@ref) — [`clustered_warmup_mcmc`](@ref) has no
-reparametrization hooks and does not accept `nonlinear_adapt` — and for those two
-the chains adapt independently, chain `i` is the same run as that chain on its
-own, and the object you constructed is never mutated. Pass
+`i` its own `deepcopy` of the `lpdf` you pass, and the object you constructed is
+never mutated. [`adaptive_warmup_mcmc`](@ref) chains adapt independently, so
+chain `i` is the same run as that chain on its own.
+[`cooperative_warmup_mcmc`](@ref) chains share ONE reparametrization: it is refit
+from all chains' retained halos at a batch end where every chain restarts, and
+the new centering is restored onto every chain's copy. Pass
 `lpdfs::AbstractArray` instead to control the per-chain problems yourself; that
 method is used exactly as given, so
 
@@ -814,10 +814,10 @@ depends on what your inner problem is made of, and the two cases differ sharply:
 
 **`cooperative_warmup_mcmc` reports progress per run and per chain.** Under the
 `progress=` node it builds one run node, named by `description=` (default
-`"MCMC"`), whose labels show the scheduler's state: chains started and their
-status, the pooled-ESS proxy against `target_ess`, gradient evaluations, and
-live time. Each started chain gets a node `"<description>.<i>"` with the same
-labels as an [`adaptive_warmup_mcmc`](@ref) chain, and no bar.
+`"MCMC"`), whose labels show the run's state: the chains' status and the number
+of clusters, the current batch, the pooled ESS against `target_ess`, gradient
+evaluations, and live time. Each chain gets a node `"<description>.<i>"` with
+the same labels as an [`adaptive_warmup_mcmc`](@ref) chain, and no bar.
 
 ## See also
 

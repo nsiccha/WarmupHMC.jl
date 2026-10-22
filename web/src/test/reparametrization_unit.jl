@@ -189,28 +189,6 @@
             @test restored.nonlinear_recorder.mode === :nuts_weighted
             @test WarmupHMC.OnlineStatsBase.nobs(restored.nonlinear_recorder.online) ==
                   WarmupHMC.OnlineStatsBase.nobs(state.nonlinear_recorder.online)
-
-            cooperative_problem = funnel_problem(fill(1.0, 3))
-            chain = WarmupHMC.cooperative_chain(
-                Xoshiro(1992), cooperative_problem;
-                n_draws=100,
-                n_evaluations=40,
-                recording_target=1,
-                stepsize_adaptation_limit=5,
-                max_tree_depth=3,
-                init=(; position=zeros(4), squared_scale=Matrix{Float64}(I, 4, 4)),
-                nonlinear_adapt=true,
-                nonlinear_evidence=:nuts_weighted,
-                nonlinear_trajectory_weighting=:unit,
-                variance_cond_target=Inf,
-            )
-            WarmupHMC.advance_window!(chain)
-            @test !chain.restart
-            @test size(chain.recording_lpdf.halo_position, 2) <= 1
-            @test WarmupHMC.OnlineStatsBase.nobs(chain.nonlinear_recorder.online) >
-                  size(chain.recording_lpdf.halo_position, 2)
-            @test all(value.source.c == 1.0 for (_, value) in
-                      WarmupHMC.reparametrizer(cooperative_problem).pairs)
         end
 
         @test_throws ArgumentError WarmupHMC.NonlinearRecorder(Funnel(3); mode=:unknown)

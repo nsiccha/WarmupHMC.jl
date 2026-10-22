@@ -63,7 +63,7 @@
 # ------------------------------------------------------------------- kernel
 
 # The WarmupHMC-native kinetic energy from a mass-matrix SCALE `L` — identical to
-# the construction the adaptive/cooperative/clustered samplers use, so a scale
+# the construction the adaptive and cooperative samplers use, so a scale
 # `L` learned by warm-up (`scale_options[active_transformation]`) plugs straight
 # in. `L * L'` is the inverse mass matrix (≈ the posterior covariance), so
 # momenta are drawn with covariance `inv(L * L')`; a diagonal `L`'s entries are
@@ -105,7 +105,7 @@ end
 # checkpoint-seeded entry point; called once per chain (on that chain's own lpdf
 # copy) in the multi-chain forms, which is why it takes and mutates `lpdf`.
 _checkpoint_kernel!(payload::NamedTuple, lpdf) = begin
-    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative, :clustered))
+    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
     dimension = LogDensityProblems.dimension(lpdf)
     dimension == payload.dimension || throw(DimensionMismatch(
         "checkpoint holds a $(payload.dimension)-dimensional problem but the " *
@@ -186,7 +186,7 @@ FixedKernelNUTSState(rng, position::AbstractVector;
 FixedKernelNUTSState(payload::NamedTuple;
         max_tree_depth::Integer=10, position=payload.position_and_gradient.q,
         rng=payload.rng) = begin
-    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative, :clustered))
+    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
     length(position) == payload.dimension || throw(DimensionMismatch(
         "start `position` has length $(length(position)) but the checkpoint holds " *
         "a $(payload.dimension)-dimensional problem."))

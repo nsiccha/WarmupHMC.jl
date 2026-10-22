@@ -1,6 +1,5 @@
 @testitem "explicit NamedTuple initialization" setup=[Determinism] tags=[:init] begin
     using WarmupHMC, LogDensityProblems, LinearAlgebra, Random
-    using WarmupHMC: cooperative_chain, clustered_chain
 
     struct ExplicitInitLP
         dimension::Int
@@ -46,20 +45,16 @@
                 @test size(result.posterior_position) == (dimension, 0)
             end
 
-            cooperative = cooperative_chain(
+            # Stopped by `n_draws=1` before its first batch end, the run still
+            # samples under the init's diagonal.
+            cooperative = cooperative_warmup_mcmc(
                 Xoshiro(2), lpdf;
+                n_chains=1,
                 init=(; position=zeros(dimension), squared_scale=ones(dimension)),
                 n_draws=1,
                 nonlinear_adapt=false,
             )
-            @test diag(cooperative.scale_options.diagonal) == ones(dimension)
-
-            clustered = clustered_chain(
-                Xoshiro(3), lpdf;
-                init=(; position=zeros(dimension), squared_scale=ones(dimension)),
-                n_draws=1,
-            )
-            @test diag(clustered.scale) == ones(dimension)
+            @test diag(only(cooperative.results).scale) == ones(dimension)
         end
 
         @testset "actionable shape validation" begin

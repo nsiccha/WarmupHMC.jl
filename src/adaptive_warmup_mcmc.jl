@@ -1175,13 +1175,10 @@ raw = isempty(payload.posterior_position) ?
 draws = WarmupHMC.back_transform(payload, lpdf, raw)   # ready to constrain
 ```
 
-Works on any of the three samplers' payloads. It is *not* the right call for
-draws a sampler already returned: `adaptive_warmup_mcmc` and
-`cooperative_warmup_mcmc` back-transform theirs at finalization, and applying
-this on top double-transforms them. For the source-frame draws
-`clustered_warmup_mcmc` returns — and `nonlinear_adapt=false` on the other two —
-the live reparametrizer already holds the right centerings, so `reparametrize!`
-is the in-place call to make there.
+Works on both samplers' payloads. It is *not* the right call for draws a sampler
+already returned: `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc`
+back-transform theirs at finalization, for either `nonlinear_adapt`, and
+applying this on top double-transforms them.
 """
 function back_transform(payload, lpdf, positions::AbstractMatrix)
     ir = _back_transform_reparametrizer(payload, lpdf, size(positions, 1))
@@ -1217,11 +1214,11 @@ layout, so a directory alone cannot say which sampler produced it — a reader m
 check the tag rather than discover the mismatch as a missing field several frames
 deep.
 
-`accepted` encodes the one-way lattice: adaptive reads only its own state,
-cooperative may additionally adopt adaptive state, clustered may read anything.
-The asymmetry is not stylistic — a clustered chain's scale is pooled across its
-cluster-mates (`cluster_and_adapt!`), so clustered state is only meaningful as a
-whole ensemble and must never be resumed as a lone adaptive or cooperative chain.
+`accepted` encodes which writers a reader can use: adaptive and cooperative each
+resume only their own state, and the fixed-kernel readers read either. A
+cooperative chain's scale and step size are pooled across the run's chains, so
+its state is only meaningful as a whole run and must never be resumed as a lone
+adaptive chain.
 """
 check_checkpoint_compatible(p, reader::Symbol, accepted) = begin
     writer = checkpoint_sampler(p)
@@ -1479,8 +1476,7 @@ no separate `initial_params` kwarg.
 # The multi-chain method and `lpdf`
 
 `adaptive_warmup_mcmc(rngs, lpdf)` gives each chain its own `deepcopy(lpdf)`,
-exactly as [`cooperative_warmup_mcmc`](@ref) and [`clustered_warmup_mcmc`](@ref)
-do, so chain `i` is byte-identical to running that chain on its own and the
+exactly as [`cooperative_warmup_mcmc`](@ref) does, so chain `i` is byte-identical to running that chain on its own and the
 `lpdf` you pass is never mutated. This matters when the lpdf carries adaptation
 state — a [`ReparametrizedProblem`](@ref)'s
 [`IndexedReparametrization`](@ref) is optimised in place at every window
@@ -1832,9 +1828,8 @@ end
 # kept chain (equal-length chains are untouched). `nothing` when no chain qualifies
 # or `m ≤ 3`. The result is a fresh `Array` that never aliases `draws`.
 #
-# The one pooling rule shared by the multi-chain adaptive sampler's final message,
-# `cooperative_warmup_mcmc`'s `_pooled_ess`, and `clustered_warmup_mcmc`'s
-# `cluster_diagnostics`.
+# The one pooling rule shared by the multi-chain adaptive sampler's final message
+# and `cooperative_warmup_mcmc`'s `_best_pooled_ess`.
 _stack_chain_tails(draws; min_chain_draws) = begin
     usable = [d for d in draws if size(d, 2) >= min_chain_draws]
     isempty(usable) && return nothing
@@ -1867,7 +1862,7 @@ _multichain_message(rv, monitor_ess) = begin
 end
 
 # Scalar-lpdf multi-chain entry point: each chain gets its OWN `deepcopy(lpdf)`,
-# matching `cooperative_warmup_mcmc` and `clustered_warmup_mcmc`.
+# matching `cooperative_warmup_mcmc`.
 #
 # This used to be a `fill`, which stores the SAME object in every slot. A stateful
 # lpdf was then shared by every chain — notably a `ReparametrizedProblem`, whose

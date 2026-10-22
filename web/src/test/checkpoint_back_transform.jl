@@ -190,8 +190,8 @@
             # point is not adaptive-only. Cooperative is the cheap end-to-end
             # witness for that.
             dir = mktempdir()
-            cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], probe_rp();
-                n_cores=1, n_evaluations_budget=6000, nonlinear_adapt=false,
+            cooperative_warmup_mcmc(Xoshiro(1), probe_rp();
+                n_chains=2, n_cores=1, n_evaluations_budget=6000, nonlinear_adapt=false,
                 checkpoint_dir=dir, init=(; position=zeros(2), squared_scale=ones(2)))
             payload = deserialize(joinpath(dir, "chain_1", "cp_latest.jls"))
             @test payload.sampler === :cooperative

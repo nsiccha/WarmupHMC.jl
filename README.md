@@ -21,9 +21,8 @@ them here at all, and it is paid deliberately: a README that points at a source
 file instead of saying what you get is not much of a README.
 -->
 
-Exports the samplers `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc` and
-`clustered_warmup_mcmc`, plus `resume_warmup_mcmc` to continue a checkpointed
-run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
+Exports the samplers `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc`, plus
+`resume_warmup_mcmc` to continue a checkpointed run; `stream_mcmc` for interruptible fixed-kernel sampling with `open_stream` to
 read its output back and `close_stream` to release its mapped views;
 `FixedKernelNUTSState` and `fixed_kernel_nuts_step` for
 in-memory transitions under changing targets; the reparametrization types

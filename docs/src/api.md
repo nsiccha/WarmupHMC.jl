@@ -12,7 +12,7 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`completion_warmup_mcmc`](@ref), [`stream_mcmc`](@ref), [`open_stream`](@ref),
   [`close_stream`](@ref),
   [`FixedKernelNUTSState`](@ref), [`fixed_kernel_nuts_step`](@ref),
-  [`clustered_warmup_mcmc`](@ref), [`resume_warmup_mcmc`](@ref),
+  [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
   [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref),
@@ -54,7 +54,6 @@ WarmupHMC.open_stream
 WarmupHMC.close_stream
 WarmupHMC.FixedKernelNUTSState
 WarmupHMC.fixed_kernel_nuts_step
-WarmupHMC.clustered_warmup_mcmc
 WarmupHMC.resume_warmup_mcmc
 ```
 

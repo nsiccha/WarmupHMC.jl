@@ -9,7 +9,7 @@
     # notice, because the rest of the suite reaches internals through explicit
     # `WarmupHMC:` imports.
     for name in (:adaptive_warmup_mcmc, :resume_warmup_mcmc, :cooperative_warmup_mcmc,
-                 :clustered_warmup_mcmc, :ReparametrizedProblem,
+                 :ReparametrizedProblem,
                  :IndexedReparametrization, :PartiallyCentered, :Reparametrization)
         @test name in names(WarmupHMC)
     end

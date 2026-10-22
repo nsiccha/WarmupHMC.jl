@@ -47,15 +47,6 @@ for Pathfinder goes through `pathfinder_kw`.
 """
 const _INITIALIZER_KWARGS = (:ntries, :maxiters, :ndraws, :ndraws_elbo, :history_length, :optimizer)
 
-# Keywords declared by the per-chain constructors the top-level samplers forward
-# into. A top-level sampler accepts its own declared set PLUS the set of the
-# constructor it feeds.
-const _CLUSTERED_CHAIN_KWARGS = (
-    :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
-    :target_acceptance_rate, :max_tree_depth, :max_window_evaluations, :init,
-    :regularizing_n, :regularizing_var, :weighting, :progress,
-)
-
 """
 Per-entry-point accepted keyword sets. Keys are the entry point's name as the
 user spells it at the call site; values are every keyword that entry point can
@@ -94,16 +85,6 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :restart_threshold, :max_clusters, :bandwidth, :kappa_prior_weight, :kappa_decay,
         :recording_target, :init, :nonlinear_adapt, :monitor_ess, :progress, :description,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
-    ),
-    :clustered_warmup_mcmc => (
-        :n_draws, :max_windows, :cluster_fn, :weighting, :metric, :threshold,
-        :parallel, :n_evaluations_budget, :init, :progress, :checkpoint_dir,
-        :resume, :overwrite, :pathfinder_kw,
-        _CLUSTERED_CHAIN_KWARGS...,
-    ),
-    :clustered_chains => (
-        :n_draws, :weighting, :init, :parallel, :progress, :pathfinder_kw,
-        _CLUSTERED_CHAIN_KWARGS...,
     ),
 )
 

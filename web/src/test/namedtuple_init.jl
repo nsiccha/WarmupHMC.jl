@@ -1,6 +1,5 @@
 @testitem "explicit NamedTuple initialization" setup=[Determinism] tags=[:init] begin
     using WarmupHMC, LogDensityProblems, LinearAlgebra, Random
-    using WarmupHMC: clustered_chain
 
     struct ExplicitInitLP
         dimension::Int
@@ -56,13 +55,6 @@
                 nonlinear_adapt=false,
             )
             @test diag(only(cooperative.results).scale) == ones(dimension)
-
-            clustered = clustered_chain(
-                Xoshiro(3), lpdf;
-                init=(; position=zeros(dimension), squared_scale=ones(dimension)),
-                n_draws=1,
-            )
-            @test diag(clustered.scale) == ones(dimension)
         end
 
         @testset "actionable shape validation" begin

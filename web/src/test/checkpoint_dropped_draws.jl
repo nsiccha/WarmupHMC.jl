@@ -1,7 +1,6 @@
 @testitem "checkpoints keep the draws a restart discards" setup=[Determinism] tags=[:checkpoint] begin
     using WarmupHMC, Serialization, Random, LinearAlgebra, LogDensityProblems
-    using WarmupHMC: checkpoint_payload,
-                     clustered_checkpoint_payload, checkpoint_schema_version
+    using WarmupHMC: checkpoint_payload, checkpoint_schema_version
 
     # A restarting warm-up window empties the recorder, and the checkpoint is written
     # AFTER that reset — so before the `dropped_*` keys, such a checkpoint paired
@@ -90,13 +89,12 @@
         end
     end
 
-    @testset "the cooperative and clustered payloads carry the same keys" begin
+    @testset "the cooperative payload carries the same keys" begin
         # The shared checkpoint contract is what lets a consumer read any sampler's
         # payload without a per-sampler branch; these keys are part of it.
         for k in (:dropped_posterior_position, :dropped_posterior_gradient,
                   :dropped_n_divergent_samples)
             @test hasfield(WarmupHMC.CoopChain, k)
-            @test hasfield(WarmupHMC.ClusteredChain, k)
         end
     end
 end

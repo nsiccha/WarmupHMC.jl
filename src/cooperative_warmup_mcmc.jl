@@ -157,7 +157,7 @@ cooperative_chain(
     scale_options = (;
         diagonal=_initial_diagonal_scale(squared_scale),
         pathfinder=_initial_pathfinder_scale(squared_scale, dimension),
-        adaptive=_adaptive_scale(dimension)
+        adaptive=MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
     )
     energy_options = map(scale_options) do L
         DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))

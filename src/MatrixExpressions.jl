@@ -251,37 +251,3 @@ update_loss!(t::ScaleThenReflect, p, g; kwargs...) = begin
     update_loss!(t.m1, p, g; kwargs...)
     return update_loss!(t.m2, p, g; kwargs...)
 end
-
-# EXPERIMENTAL (investigation todo `2026-10-22T10-55-12-401-1ruyk25`): fit the
-# successive reflections in a diagonally scaled frame. The reflection directions
-# are the top singular vectors of the window's GRADIENTS, which in the raw frame
-# rank coordinates by their marginal scale (a coordinate with standard deviation
-# σ has gradients of size 1/σ), whereas the per-coordinate loss that picks the
-# bad coordinates is scale-free. Fitting a diagonal first makes the direction
-# search scale-free as well.
-#
-#   ScaledScaleThenReflect   L = D₀ R D: diagonal, then reflections + diagonal in
-#                            its frame (one gradient TSVD per reflection, all in
-#                            the scaled frame).
-#   TwoStageScaleThenReflect L = R₁ D₁ R₂ D₂: the current fit, then a second
-#                            reflections + diagonal fit in its frame (a second
-#                            TSVD pass after the diagonal scaling step).
-#
-# Both stay O(d) per stored factor entry and O(d n) per reflection, like
-# `ScaleThenReflect`. Stage 1 runs on copies: `update_loss!(::ScaleThenReflect)`
-# reflects its inputs in place.
-ScaledScaleThenReflect{T,V} = MatrixFactorization{T,Diagonal{T,V},<:ScaleThenReflect}
-TwoStageScaleThenReflect{T} = MatrixFactorization{T,<:ScaleThenReflect,<:ScaleThenReflect}
-update_loss!(t::Union{ScaledScaleThenReflect,TwoStageScaleThenReflect}, p, g; kwargs...) = begin
-    update_loss!(t.m1, copy(p), copy(g); kwargs...)
-    return update_loss!(t.m2, t.m1 \ p, t.m1' * g; kwargs...)
-end
-n_reflections(t::ScaleThenReflect) = length(t.m1.reflections)
-n_reflections(t::ScaledScaleThenReflect) = n_reflections(t.m2)
-n_reflections(t::TwoStageScaleThenReflect) = n_reflections(t.m1) + n_reflections(t.m2)
-
-_scale_then_reflect(dimension) = MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
-_scaled_scale_then_reflect(dimension) = MatrixFactorization(Diagonal(ones(dimension)), _scale_then_reflect(dimension))
-_two_stage_scale_then_reflect(dimension) = MatrixFactorization(_scale_then_reflect(dimension), _scale_then_reflect(dimension))
-# The `:adaptive` linear transformation candidate both samplers fit each window.
-_adaptive_scale(dimension) = _scale_then_reflect(dimension)

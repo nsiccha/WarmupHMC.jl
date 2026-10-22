@@ -1,5 +1,5 @@
 @testitem "cooperative_warmup_mcmc" setup=[WarmupHMCSharedFixtures] begin
-    using Test, WarmupHMC, Random, LinearAlgebra, Statistics, LogDensityProblems
+    using Test, WarmupHMC, Random, LinearAlgebra, Statistics, LogDensityProblems, Serialization
     using WarmupHMC: CoopMoments, _fit_moments!, _combine_moments!, _moment_scales
 
 # Focused invocation from the package root:
@@ -146,6 +146,49 @@ end
     @test out.stop_reason === :n_draws
     @test only(out.results).n_restarts == 0
     @test diag(only(out.results).scale) ≈ 2 .* target.sigma
+end
+
+@testset "checkpoints" begin
+    dir = mktempdir()
+    out = cooperative_warmup_mcmc(Xoshiro(8), target; n_chains=2, n_evaluations_budget=20_000, checkpoint_dir=dir)
+    @test out.stop_reason === :eval_budget
+    @test isfile(joinpath(dir, "run_manifest.json")) && isfile(joinpath(dir, "run_summary.json"))
+    @test occursin("\"stop_reason\":\"eval_budget\"", read(joinpath(dir, "run_summary.json"), String))
+    @test sort(filter(startswith("chain_"), readdir(dir))) == ["chain_1", "chain_2"]
+    @test isfile(joinpath(dir, "chain_1", "cp_window_1.jls"))
+    p = deserialize(joinpath(dir, "chain_1", "cp_latest.jls"))
+    @test p.sampler === :cooperative && p.chain_index == 1
+    # The keys the other samplers' readers use (warmuphmc-use §3).
+    for k in (:posterior_position, :dropped_posterior_position, :status, :is_final, :stepsize,
+              :scale_options, :active_transformation, :position_and_gradient, :reparam_sources,
+              :n_divergent_samples, :n_samples, :ess, :total_evaluation_counter, :run_elapsed)
+        @test haskey(p, k)
+    end
+    # A fixed-kernel continuation reads the payload as it reads the other samplers'.
+    step = fixed_kernel_nuts_step(FixedKernelNUTSState(p), target)
+    @test length(step.state.position) == 10
+    # A finished run is not resumed, and a directory holding a run is not reused silently.
+    @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(8), target; n_chains=2,
+        n_evaluations_budget=40_000, checkpoint_dir=dir, resume=true)
+    @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(8), target; n_chains=2,
+        n_evaluations_budget=20_000, checkpoint_dir=dir)
+end
+
+@testset "a resumed run continues as if it had not stopped" begin
+    uninterrupted = cooperative_warmup_mcmc(Xoshiro(9), target; n_chains=2, n_draws=300)
+    dir = mktempdir()
+    # The budget stops the run mid-round; its last checkpoint is the round before.
+    cooperative_warmup_mcmc(Xoshiro(9), target; n_chains=2, n_draws=300, n_evaluations_budget=10_000, checkpoint_dir=dir)
+    rm(joinpath(dir, "run_summary.json"))   # as if it had crashed before finishing
+    @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(9), target; n_chains=3, n_draws=300,
+        checkpoint_dir=dir, resume=true)
+    resumed = cooperative_warmup_mcmc(Xoshiro(123), target; n_chains=2, n_draws=300, checkpoint_dir=dir, resume=true)
+    @test resumed.stop_reason === uninterrupted.stop_reason === :n_draws
+    for (a, b) in zip(uninterrupted.results, resumed.results)
+        @test a.posterior_position == b.posterior_position
+        @test a.total_evaluation_counter == b.total_evaluation_counter
+    end
+    @test resumed.total_evaluation_counter == uninterrupted.total_evaluation_counter
 end
 
 @testset "progress tree" begin

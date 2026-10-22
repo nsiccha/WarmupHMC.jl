@@ -1,6 +1,5 @@
 @testitem "finalizers report draws in the model frame" setup=[ADBackend, Determinism] tags=[:reparametrization] begin
     using WarmupHMC, Random, LinearAlgebra, LogDensityProblems
-    using WarmupHMC: cooperative_chain, run_chain!, chain_result, chain_draws
 
     # Which FRAME do the returned draws live in?
     #
@@ -65,21 +64,17 @@
             end
         end
 
-        @testset "run_chain! and chain_result (cooperative)" begin
+        @testset "cooperative_warmup_mcmc" begin
+            # With `nonlinear_adapt=true` the shared centering is refit from the
+            # pooled halos; the result must be in the model frame either way.
             for nonlinear_adapt in (false, true)
-                chain = run_chain!(cooperative_chain(Xoshiro(7), frame_probe_rp();
-                                                     nonlinear_adapt, cfg...))
-                d = chain_draws(chain)
-                @test size(d, 2) > 0
-                @test all(>(500), d[2, :])
-
-                # `chain_result` is the scheduler's finalizer and reparametrizes on
-                # its own; drive a FRESH chain with `advance_window!` (which does
-                # not) so this is not the forbidden double transform.
-                c2 = cooperative_chain(Xoshiro(7), frame_probe_rp(); nonlinear_adapt, cfg...)
-                while WarmupHMC.advance_window!(c2) != :done
+                out = cooperative_warmup_mcmc(Xoshiro(7), frame_probe_rp();
+                                              n_chains=2, n_draws=200, nonlinear_adapt, monitor_ess=false)
+                for r in out.results
+                    @test size(r.posterior_position, 2) > 0
+                    @test all(>(500), r.posterior_position[2, :])
+                    @test all(<(500), r.posterior_position[1, :])
                 end
-                @test all(>(500), chain_result(c2).posterior_position[2, :])
             end
         end
 

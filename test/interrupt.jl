@@ -66,14 +66,16 @@ end
 end
 
 @testset "cooperative: stop_reason = interrupted" begin
+    d = mktempdir()
     out = TB.with_progress(:state; description = "probe") do probe
         TB.request_interrupt!(probe)
         cooperative_warmup_mcmc(Xoshiro(1), p; n_chains = 2,
             n_cores = 1, n_evaluations_budget = 10_000, nonlinear_adapt = false,
-            progress = probe)
+            checkpoint_dir = d, progress = probe)
     end
     @test out.stop_reason === :interrupted
     @test out.total_evaluation_counter == 0
+    @test summary_reason(d) == "interrupted"
 end
 
 @testset "clustered: stop_reason = interrupted, no window stepped" begin

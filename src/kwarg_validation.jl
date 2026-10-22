@@ -93,7 +93,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :n_evaluations, :stepsize_adaptation_limit, :target_acceptance_rate, :max_tree_depth,
         :restart_threshold, :max_clusters, :bandwidth, :kappa_prior_weight, :kappa_decay,
         :recording_target, :init, :nonlinear_adapt, :monitor_ess, :progress, :description,
-        :pathfinder_kw,
+        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
     ),
     :clustered_warmup_mcmc => (
         :n_draws, :max_windows, :cluster_fn, :weighting, :metric, :threshold,

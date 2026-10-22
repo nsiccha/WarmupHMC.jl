@@ -1,6 +1,6 @@
 @testitem "checkpoints keep the draws a restart discards" setup=[Determinism] tags=[:checkpoint] begin
     using WarmupHMC, Serialization, Random, LinearAlgebra, LogDensityProblems
-    using WarmupHMC: checkpoint_payload, cooperative_checkpoint_payload,
+    using WarmupHMC: checkpoint_payload,
                      clustered_checkpoint_payload, checkpoint_schema_version
 
     # A restarting warm-up window empties the recorder, and the checkpoint is written
@@ -95,7 +95,7 @@
         # payload without a per-sampler branch; these keys are part of it.
         for k in (:dropped_posterior_position, :dropped_posterior_gradient,
                   :dropped_n_divergent_samples)
-            @test hasfield(WarmupHMC.CooperativeChain, k)
+            @test hasfield(WarmupHMC.CoopChain, k)
             @test hasfield(WarmupHMC.ClusteredChain, k)
         end
     end

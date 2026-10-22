@@ -820,6 +820,147 @@ _finish_run_progress!(run::CoopRun, result) = begin
 end
 
 # =============================================================================
+# Checkpoints and resume
+# =============================================================================
+#
+# With `checkpoint_dir`, every round barrier writes
+#   run_latest.jls           the whole run (every chain, the seed RNG, the clusters),
+#                            which is all `resume=true` reads, so it never sees a
+#                            torn mix of chain files;
+#   chain_<i>/cp_latest.jls  this chain's payload, for readers of a live run;
+# and every batch end also writes the immutable chain_<i>/cp_window_<batch>.jls.
+# The chain payload keeps the keys the other samplers' readers use
+# (`posterior_position`, `dropped_*`, `status`, `is_final`, `scale_options` /
+# `active_transformation`, `reparam_sources`, ...), so `FixedKernelNUTSState`,
+# `back_transform` and the consumer readers of warmuphmc-use §3 read it as before.
+# run_manifest.json (at the start) and run_summary.json (at the finish) are
+# write-once; the summary's existence marks a finished run.
+
+_coop_payload(chain::CoopChain, run::CoopRun) = (;
+    schema_version=checkpoint_schema_version(),
+    sampler=:cooperative,
+    chain_index=chain.chain_index,
+    status=chain.status,
+    stuck_reason=nothing,
+    is_final=chain.status === :done,
+    stop_reason=chain.status === :done ? :n_draws : :running,
+    window=run.batch - 1,
+    round=run.round,
+    dimension=chain.dimension,
+    chain.rng, chain.position_and_gradient, chain.stepsize,
+    scale_options=(; diagonal=chain.scale), active_transformation=:diagonal,
+    chain.log_kappa, chain.kappa_prior, chain.backoff, chain.stepsizes, chain.acceptances,
+    chain.sampling_start, chain.moments, chain.current_transition_counter,
+    chain.total_transition_counter, chain.total_evaluation_counter, chain.n_divergent,
+    chain.n_divergent_samples, chain.n_samples, chain.steps_per_draw, chain.ess,
+    chain.scale_changes, chain.n_restarts, chain.batches,
+    posterior_position=chain.recording_lpdf.posterior_position,
+    posterior_gradient=chain.recording_lpdf.posterior_gradient,
+    halo_position=chain.recording_lpdf.halo_position,
+    halo_gradient=chain.recording_lpdf.halo_gradient,
+    recorder=chain.recording_lpdf.recorder,
+    chain.dropped_posterior_position, chain.dropped_posterior_gradient,
+    chain.dropped_n_divergent_samples,
+    reparam_sources=reparam_sources(chain.lpdf),
+    custom_candidate_scoring=_has_custom_candidate_scoring(chain.lpdf),
+    run_elapsed=_elapsed(run),
+)
+
+_write_checkpoints!(::CoopRun, ::Nothing; batch_end) = nothing
+_write_checkpoints!(run::CoopRun, dir::AbstractString; batch_end) = begin
+    payloads = [_coop_payload(c, run) for c in run.chains]
+    for p in payloads
+        chain_dir = joinpath(dir, "chain_$(p.chain_index)")
+        mkpath(chain_dir)
+        batch_end && _atomic_serialize(joinpath(chain_dir, "cp_window_$(p.window).jls"), p)
+        _atomic_serialize(joinpath(chain_dir, "cp_latest.jls"), p)
+    end
+    _atomic_serialize(joinpath(dir, "run_latest.jls"), (;
+        schema_version=checkpoint_schema_version(), sampler=:cooperative,
+        run.round, run.batch, total_evaluations=run.total_evaluations[], run.rng,
+        run.clusters, chains=payloads, run.last_pooled_ess, run_elapsed=_elapsed(run),
+        master_sources=isnothing(run.reparam_lpdf) ? nothing : reparam_sources(run.reparam_lpdf),
+    ))
+end
+
+_write_coop_manifest(::Nothing, run) = nothing
+_write_coop_manifest(dir::AbstractString, run::CoopRun) = _write_json(
+    joinpath(dir, "run_manifest.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "cooperative",
+        "n_chains" => run.cfg.n_chains,
+        "n_cores" => run.cfg.n_cores,
+        # The stopping criteria in force; JSON has no Inf, so an unset bound is null.
+        "n_draws" => run.cfg.n_draws == typemax(Int) ? nothing : run.cfg.n_draws,
+        "target_ess" => run.cfg.target_ess,
+        "n_evaluations_budget" => run.cfg.n_evaluations_budget == typemax(Int) ? nothing : run.cfg.n_evaluations_budget,
+        "time_budget" => run.cfg.time_budget,
+        "n_evaluations" => run.cfg.n_evaluations,
+        # Xoshiro prints its full state: the reproducible seed, not a label.
+        "seed_rng" => string(run.rng),
+        "start_time_unix" => time(),
+    ])
+
+_write_coop_summary(::Nothing, run, result) = nothing
+_write_coop_summary(dir::AbstractString, run::CoopRun, result) = _write_json(
+    joinpath(dir, "run_summary.json"), Pair{String,Any}[
+        "schema_version" => checkpoint_schema_version(),
+        "sampler" => "cooperative",
+        "is_final" => true,
+        "stop_reason" => string(result.stop_reason),
+        "n_chains" => length(result.results),
+        "n_used" => result.n_used,
+        "joint_ess" => result.joint_ess,
+        "n_pooled" => result.n_pooled,
+        "n_batches" => result.n_batches,
+        "total_evaluation_counter" => result.total_evaluation_counter,
+        "elapsed" => result.elapsed,
+        "end_time_unix" => time(),
+    ])
+
+# A chain from its payload and a fresh `lpdf`; the configuration comes from the
+# resuming call. A finished chain resumes sampling when the call raises `n_draws`.
+_restore_coop_chain(p, lpdf, cfg; progress) = begin
+    check_checkpoint_compatible(p, :cooperative, (:cooperative,))
+    _check_schema_version(p)
+    d = LogDensityProblems.dimension(lpdf)
+    p.dimension == d || throw(DimensionMismatch(
+        "the checkpoint holds a $(p.dimension)-dimensional problem but the supplied lpdf has dimension $d."))
+    _check_candidate_scoring_compatible(p, lpdf)
+    restore_reparam_sources!(lpdf, p.reparam_sources)
+    recording_lpdf = RecordingPosterior2(lpdf, p.halo_position, p.halo_gradient,
+        p.posterior_position, p.posterior_gradient, NUTSLeaves(d), p.recorder, p.rng)
+    status = p.status === :warming ? :warming : p.n_samples >= cfg.n_draws ? :done : :sampling
+    scale = p.scale_options.diagonal
+    chain = CoopChain(
+        p.chain_index, p.rng, lpdf, recording_lpdf, d, cfg.monitor_ess, time_ns(), progress,
+        p.position_and_gradient, scale, _coop_energy(scale), p.stepsize, p.log_kappa, p.kappa_prior,
+        p.backoff, p.stepsizes, p.acceptances, p.sampling_start, p.moments, status,
+        p.current_transition_counter, p.total_transition_counter, p.total_evaluation_counter, 0,
+        p.n_divergent, p.n_divergent_samples, p.n_samples, p.steps_per_draw, p.ess,
+        p.scale_changes, p.n_restarts, p.batches, p.dropped_posterior_position,
+        p.dropped_posterior_gradient, p.dropped_n_divergent_samples,
+    )
+    _initial_chain_progress!(progress, nothing, chain)
+    update_progress!(progress, "$(chain.status) · restored at batch $(p.window + 1)")
+    chain
+end
+
+_restore_coop_run(dir, lpdf, cfg, init, progress, description, adapt_centering) = begin
+    state = deserialize(joinpath(dir, "run_latest.jls"))
+    check_checkpoint_compatible(state, :cooperative, (:cooperative,))
+    _check_schema_version(state)
+    length(state.chains) == cfg.n_chains || throw(ArgumentError(
+        "resume needs the run's n_chains = $(length(state.chains)); got n_chains = $(cfg.n_chains)."))
+    nodes = [initialize_progress!(progress; description="$description.$(p.chain_index)") for p in state.chains]
+    chains = [_restore_coop_chain(p, deepcopy(lpdf), cfg; progress=node) for (p, node) in zip(state.chains, nodes)]
+    master = adapt_centering ? restore_reparam_sources!(deepcopy(lpdf), state.master_sources) : nothing
+    CoopRun(state.rng, lpdf, cfg, init, progress, string(description), time_ns(), state.run_elapsed, master,
+        CoopChain[chains...], state.clusters, Threads.Atomic{Int}(state.total_evaluations),
+        state.round, state.batch, nothing, state.last_pooled_ess)
+end
+
+# =============================================================================
 # Entry point
 # =============================================================================
 
@@ -854,6 +995,20 @@ abandoned.
 * `init` (as for [`adaptive_warmup_mcmc`](@ref)) is shared by every chain, or a
   vector of per-chain inits; a position vector of reals is one shared start.
 
+## Checkpointing and resume
+
+`checkpoint_dir=path` writes, at every round barrier, `path/run_latest.jls` (the
+whole run) and `path/chain_<i>/cp_latest.jls`, plus `path/chain_<i>/cp_window_<k>.jls`
+at the end of batch k, all atomically; `run_manifest.json` at the start and
+`run_summary.json` at the finish are write-once. A later call with `resume=true`
+continues an unfinished run from its last round barrier: every chain's state,
+draws and stream, the seed RNG, the clusters and the counters are restored, so
+the run continues as if it had not stopped. The configuration comes from the
+resuming call (a larger `n_draws` extends finished chains; `n_chains` must
+match), the evaluation budget continues from the restored total, and
+`time_budget` from the run's live time. A finished run (`run_summary.json`
+exists) is refused; `overwrite=true` discards the directory's run.
+
 Returns `(; results, stop_reason, n_used, joint_ess, n_pooled, n_batches,
 total_evaluation_counter, elapsed)`. `results[i]` is chain `i`'s
 [`chain_result`](@ref), its draws in the model frame. `joint_ess` is the pooled
@@ -881,10 +1036,14 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     monitor_ess=true,
     progress=nothing,
     description="MCMC",
+    checkpoint_dir=nothing,
+    resume=false,
+    overwrite=false,
     pathfinder_kw=(;),
     kwargs...
 ) = begin
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
+    guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))
     isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) || n_draws != typemax(Int) ||
         throw(ArgumentError("cooperative_warmup_mcmc needs at least one finite stopping bound " *
@@ -906,27 +1065,36 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
         restart_threshold, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,
         recording_target, monitor_ess, initializer_kw=(; kwargs..., pathfinder_kw...))
     with_progress(progress; description) do progress
-        run = CoopRun(rng, lpdf, cfg, init, progress, string(description), time_ns(), 0.0,
-            adapt_centering ? deepcopy(lpdf) : nothing,
-            CoopChain[], CoopClusters(), Threads.Atomic{Int}(0), 0, 1, nothing, NaN)
-        _create_chains!(run, 1:n_chains)
-        _update_clusters!(run.clusters, run.chains, cfg)
-        _update_kappa_priors!(run.clusters, run.chains)
+        run = if resume
+            _restore_coop_run(checkpoint_dir, lpdf, cfg, init, progress, description, adapt_centering)
+        else
+            fresh = CoopRun(rng, lpdf, cfg, init, progress, string(description), time_ns(), 0.0,
+                adapt_centering ? deepcopy(lpdf) : nothing,
+                CoopChain[], CoopClusters(), Threads.Atomic{Int}(0), 0, 1, nothing, NaN)
+            _write_coop_manifest(checkpoint_dir, fresh)
+            _create_chains!(fresh, 1:n_chains)
+            _update_clusters!(fresh.clusters, fresh.chains, cfg)
+            _update_kappa_priors!(fresh.clusters, fresh.chains)
+            fresh
+        end
         _run_progress!(run)
         while true
             run.round += 1
             _run_round!(run)
             _update_clusters!(run.clusters, run.chains, cfg)
             _check_stop!(run) && break
-            if _batch_ends_after(run.round)
+            batch_end = _batch_ends_after(run.round)
+            if batch_end
                 _batch_end!(run)
                 _update_clusters!(run.clusters, run.chains, cfg)
             end
             _update_kappa_priors!(run.clusters, run.chains)
+            _write_checkpoints!(run, checkpoint_dir; batch_end)
             _round_progress!(run)
         end
         result = _finalize(run)
         _finish_run_progress!(run, result)
+        _write_coop_summary(checkpoint_dir, run, result)
         result
     end
 end

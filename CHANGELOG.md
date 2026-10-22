@@ -58,7 +58,7 @@ Worth stating before the delta, because it decides how to read it: 0.2.1's
 files sat in `src/` without being loaded — the reparametrization machinery, the
 recorder, the cooperative sampler, the NUTS implementation. Four were live:
 `MatrixExpressions.jl`, `WrappedLogDensityProblems.jl`, `adaptive_warmup_mcmc.jl`
-and `progress.jl`. 1.0.0 loads eleven files and comments out none.
+and `progress.jl`. 1.0.0 loads every file in `src/` and comments out none.
 
 So the honest reading of everything below is that most of it is not a
 modification of code a 0.2.1 user was running — it is code that was dark.
@@ -69,12 +69,12 @@ modification of code a 0.2.1 user was running — it is code that was dark.
 public surface since then; `README.md` lists what the total now is, and
 `test/public_api.jl` is what enforces it.
 
-- `cooperative_warmup_mcmc` — multi-chain scheduler with per-chain
-  continue/resume/start/abandon, a stable `chain_index` surfaced in results, and
-  write-once `run_manifest.json` / `run_summary.json`.
-- `clustered_warmup_mcmc` — pooled-scale cooperative sampler with greedy
-  compatibility clustering and a look-behind strategy over a swappable
-  criterion.
+- `cooperative_warmup_mcmc` — multi-chain sampler that pools every chain's
+  warm-up evidence through soft clusters, from one seed RNG, with a returned
+  `stop_reason`, a stable `chain_index` in results, and write-once
+  `run_manifest.json` / `run_summary.json`. It replaced, before any release, a
+  scheduler that parked chains and the separate `clustered_warmup_mcmc`, which
+  is gone.
 - `resume_warmup_mcmc` — byte-identical resume from an on-disk checkpoint.
   **Added and deprecated within this same window**: `resume=true` on the
   samplers themselves supersedes it. It ships exported and documented, carrying

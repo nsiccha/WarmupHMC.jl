@@ -484,7 +484,7 @@ init_state(
         pathfinder=_initial_pathfinder_scale(squared_scale, dimension),
         # Something new. Corresponds to a sequence of Householder reflections, followed by a diagonal scaling term.
         # Both the reflections and the diagonal scaling term will be updated.
-        adaptive=MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
+        adaptive=_adaptive_scale(dimension)
     )
     # This is needed to make DynamicHMC "accept" our linear transformations
     energy_options = map(scale_options) do L

@@ -383,6 +383,10 @@ _restart!(chain::CoopChain, new_scales, cc, cfg) = begin
     chain.n_restarts += 1
     pushfirst!(chain.scale_changes, cc)
     _transformation_progress!(chain.progress, chain)
+    # The monitored ESS described the dropped draws: neither the result nor the
+    # node may report it for the new ones.
+    fill!(chain.ess, 0.0)
+    chain.monitor_ess && update_progress!(chain.progress, nothing; ess="pending...")
     chain
 end
 

@@ -111,6 +111,20 @@ end
     end
 end
 
+@testset "a restart drops the monitored ESS with the draws" begin
+    # The fields of the run's config that building and restarting a chain read.
+    cfg = (; recording_target=1000, n_evaluations=1000, initializer_kw=(;), target_acceptance_rate=0.8, monitor_ess=true)
+    node = _Treebars.initialize_progress!(:state; description="chain")
+    chain = WarmupHMC._coop_chain(1, Xoshiro(10), target, (; position=copy(target.mu), squared_scale=ones(10)), cfg;
+        progress=node)
+    chain.ess .= 100.0
+    WarmupHMC._ess_progress!(node, chain)
+    WarmupHMC._restart!(chain, target.sigma, 2.0, cfg)
+    @test chain.n_samples == 0 && all(iszero, chain.ess)
+    @test occursin("ess: — pending...", _Treebars.render_text(node))
+    @test all(iszero, WarmupHMC.chain_result(chain).ess)
+end
+
 @testset "stops when every chain holds n_draws" begin
     out = cooperative_warmup_mcmc(Xoshiro(5), target; n_chains=3, n_draws=200)
     @test out.stop_reason === :n_draws

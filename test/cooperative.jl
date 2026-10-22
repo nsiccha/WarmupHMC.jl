@@ -151,6 +151,8 @@ end
     @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(1), Xoshiro(2)], target; target_ess=10)
     # Without a finite bound the run would never stop.
     @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), target; n_chains=2)
+    # Unmonitored, the per-chain ESS that gates the target_ess check stays zero.
+    @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), target; n_chains=2, target_ess=10, monitor_ess=false)
     @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), target; n_chains=2, target_ess=10,
         init=[(; position=zeros(10), squared_scale=ones(10))])
     # A NamedTuple init's diagonal is the metric until the first batch end; a

@@ -1010,6 +1010,7 @@ abandoned.
   `Treebars.request_interrupt!` is called on `progress`, all checked at round
   barriers (a budget or an interrupt also stops a round early). At least one
   bound must be finite. The returned `stop_reason` names the one that fired.
+  The `target_ess` stop needs `monitor_ess` (the default).
 * `init` (as for [`adaptive_warmup_mcmc`](@ref)) is shared by every chain, or a
   vector of per-chain inits; a position vector of reals is one shared start.
 
@@ -1066,6 +1067,10 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) || n_draws != typemax(Int) ||
         throw(ArgumentError("cooperative_warmup_mcmc needs at least one finite stopping bound " *
             "(target_ess, n_evaluations_budget, time_budget or n_draws)."))
+    # The target_ess stop is checked only once the chains' monitored ESS adds up to
+    # it; unmonitored, that sum stays zero and the stop never fires.
+    isfinite(target_ess) && !monitor_ess && throw(ArgumentError(
+        "cooperative_warmup_mcmc's target_ess stop needs the per-chain ESS: drop `monitor_ess=false`."))
     init isa AbstractVector && !(init isa AbstractVector{<:Real}) && length(init) != n_chains &&
         throw(ArgumentError("a per-chain `init` vector needs one entry per chain: got $(length(init)) for n_chains = $n_chains."))
     _check_nonlinear_adaptable(lpdf, nonlinear_adapt)

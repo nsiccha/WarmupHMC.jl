@@ -87,24 +87,34 @@ SuccessiveReflections(n::Int64) = SuccessiveReflections(
 Base.show(io::IO, A::SuccessiveReflections) = print(io, "SuccessiveReflections with $(length(A.idxs)) reflections.")
 Base.size(A::SuccessiveReflections) = (length(A.s1), length(A.s1))
 Base.adjoint(A::SuccessiveReflections) = MatrixInverse(A)
-LinearAlgebra.mul!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVector) = begin
+# Apply reflections `order` (indices into `A.idxs`) to `x`, writing `y`. Each
+# reflection is y[idx] -= 2 r (r ⋅ y[idx]). The gathered y[idx] goes into ONE
+# buffer, sized by the first (largest: the bad set only shrinks) index set, so
+# the product allocates O(d) once instead of two copies per reflection, and the
+# dot is still a contiguous BLAS `dot` on the same values: bit-identical to the
+# former `dot(r, y[idx])` / `y[idx] .-= 2 .* r .* vy`.
+_apply_reflections!(y, A::SuccessiveReflections, x, order) = begin
     (;idxs, reflections) = A
     y .= x
-    for i in reverse(eachindex(idxs))
-        vy = dot(reflections[i], y[idxs[i]])
-        y[idxs[i]] .-= 2 .* reflections[i] .* vy
+    isempty(idxs) && return y
+    buffer = similar(y, length(first(idxs)))
+    for i in order
+        idx, r = idxs[i], reflections[i]
+        gathered = view(buffer, 1:length(idx))
+        @inbounds for (k, j) in enumerate(idx)
+            gathered[k] = y[j]
+        end
+        vy = dot(r, gathered)
+        @inbounds for (k, j) in enumerate(idx)
+            y[j] -= 2 * r[k] * vy
+        end
     end
     y
 end
-LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVector) = begin
-    (;idxs, reflections) = A
-    y .= x
-    for i in (eachindex(idxs))
-        vy = dot(reflections[i], y[idxs[i]])
-        y[idxs[i]] .-= 2 .* reflections[i] .* vy
-    end
-    y
-end
+LinearAlgebra.mul!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVector) =
+    _apply_reflections!(y, A, x, reverse(eachindex(A.idxs)))
+LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVector) =
+    _apply_reflections!(y, A, x, eachindex(A.idxs))
 ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diagonal{T,V}}
 
 # Top left singular vector of `g` (d × n): the direction `tsvd(g)[1][:, 1]`
@@ -146,7 +156,16 @@ catch e
     @error "tsvd(...) failed, falling back to power iteration" size(g) exception=(e, catch_backtrace())
     _top_left_singular_vector(g)
 end
-update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), kwargs...) = begin 
+# How many reflections one fit may add, unless the sampler is told otherwise
+# (`max_reflections`). Every reflection is stored over the coordinates that were
+# still badly fitted when it was found, and every metric product applies all of
+# them, so storage, a product and the fit itself are O(d · max_reflections): linear
+# in the dimension for a fixed bound (decision `1o12joq`). Unbounded, a strongly
+# correlated target keeps adding reflections until ~0.47·d² entries are stored at
+# d = 400 (go/no-go `04q64y5`). The user asked for a bound that is smallish by
+# default and tunable.
+const _DEFAULT_MAX_REFLECTIONS = 16
+update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...) = begin
     (;idxs, reflections, s1, s2, transformation_losses) = t
     dimension = LinearAlgebra.checksquare(t)
     s1 .= std.(eachrow(p))
@@ -159,6 +178,7 @@ update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, 
     @views while length(bad_idxs) > 0
         filter!(i->transformation_losses[i]>=threshold, bad_idxs)
         length(bad_idxs) == 0 && break
+        length(idxs) >= max_reflections && break
 
         bad_p = p[bad_idxs, :]
         bad_g = g[bad_idxs, :]

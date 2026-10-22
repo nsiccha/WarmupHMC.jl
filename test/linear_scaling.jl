@@ -40,6 +40,39 @@ end
     @test y ≈ Matrix(Σ) * x rtol = 1e-8
 end
 
+@testset "the :adaptive reflection metric is O(d · max_reflections)" begin
+    # Forty strongly correlated pairs among otherwise independent coordinates:
+    # the reflection fit wants one reflection per pair, each stored over the
+    # coordinates still badly fitted. Built pair by pair, no d × d matrix.
+    # (Unbounded, a target correlated everywhere reached ~0.47·d² stored entries
+    # at d = 400, go/no-go `04q64y5`.)
+    rng = Xoshiro(5)
+    n, m = 1000, 40
+    s = exp.(range(-2, 2, d))
+    ρ = range(0.95, 0.99, m)
+    p = s .* randn(rng, d, n)
+    g = -(p ./ s .^ 2)
+    z1, z2 = randn(rng, m, n), randn(rng, m, n)
+    v = ρ .* z1 .+ sqrt.(1 .- ρ .^ 2) .* z2
+    i, j = 1:2:2m, 2:2:2m
+    p[i, :] .= s[i] .* z1; p[j, :] .= s[j] .* v
+    g[i, :] .= -(z1 .- ρ .* v) ./ ((1 .- ρ .^ 2) .* s[i])
+    g[j, :] .= -(v .- ρ .* z1) ./ ((1 .- ρ .^ 2) .* s[j])
+    # The `:adaptive` candidate both samplers fit each window.
+    L = WarmupHMC.MatrixFactorization(WarmupHMC.SuccessiveReflections(d), Diagonal(ones(d)))
+    WarmupHMC.update_loss!(L, p, g)
+    R = L.m1
+    k = WarmupHMC._DEFAULT_MAX_REFLECTIONS
+    @test 0 < length(R.reflections) <= k
+    @test sum(length, R.reflections) <= k * d
+    # The kinetic energy's M⁻¹ = L L' applies the reflections twice, each time
+    # through one O(d) gather buffer, never one copy per reflection.
+    M = WarmupHMC.MatrixFactorization(L, L')
+    x, y = randn(rng, d), zeros(d)
+    mul!(y, M, x)
+    @test @allocated(mul!(y, M, x)) <= 2 * (8d + 64)
+end
+
 @testset "a caller-supplied dense matrix still factorizes (f210206's case)" begin
     small = 30
     A = randn(Xoshiro(3), small, small)

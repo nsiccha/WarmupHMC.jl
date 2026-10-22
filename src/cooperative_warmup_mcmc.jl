@@ -324,12 +324,17 @@ end
 # The step-size gain of the restart test: how much more efficient the step size
 # the κ fit prescribes would be than the one in use (≥ 1). The fit takes every
 # pair since the last restart: the sampling phase holds ε fixed, so only the
-# warm-up pairs separate κ from the failure floor. A chain still in warm-up at a
-# batch end has no fixed step size yet: infinite gain, so it restarts under the
-# pooled estimate, as in the original.
+# warm-up pairs separate κ from the failure floor.
+#
+# A chain still in step-size warm-up has no fixed step size to judge, so it
+# restarts on metric disagreement alone (gain 1). The original instead gave it an
+# infinite gain, restarting every chain whose step-size adaptation had not
+# finished. That throws away a long warm-up at every early batch end: on ODLPlaus
+# AP2, 50 warm-up transitions of ~300 leapfrog steps need ~15k evaluations, more
+# than any of the first four batches holds.
 _stepsize_gain(chain::CoopChain, cfg) = begin
-    chain.status === :warming && return Inf
-    chain.sampling_start < length(chain.acceptances) || return Inf
+    chain.status === :warming && return 1.0
+    chain.sampling_start < length(chain.acceptances) || return 1.0
     log_kappa = _fit_log_kappa(chain.stepsizes, chain.acceptances, Ones(length(chain.acceptances)),
         chain.log_kappa, chain.kappa_prior, cfg.kappa_prior_weight)
     ε = chain.stepsize

@@ -444,7 +444,7 @@ init_state(
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
-    linear_metric_fallback=true, kwargs...
+    linear_metric_fallback=true, max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...
 ) = begin
     _validate_linear_trajectory_weighting(linear_trajectory_weighting)
     _validate_linear_restart_source(linear_restart_source, linear_trajectory_weighting)
@@ -539,7 +539,9 @@ init_state(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
         linear_restart_source, linear_trajectory_weighting,
         linear_metric_fallback, nonlinear_adapt,
-        monitor_ess, recording_target, (; kwargs...), algorithm, stepsize_adaptation, dimension,
+        # `max_reflections` reaches `update_loss!` through these, and never the
+        # initializer: Pathfinder forwards unknown keywords into the optimizer.
+        monitor_ess, recording_target, (; kwargs..., max_reflections), algorithm, stepsize_adaptation, dimension,
         progress, start_time,
         rng, recording_lpdf, nonlinear_recorder,
         position, scale_options, energy_options, active_transformation,
@@ -1498,6 +1500,12 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
 * `stepsize_adaptation_limit=50` — per-window cap on step-size
   adaptation transitions.
 * `target_acceptance_rate=0.8`, `max_tree_depth=10` — standard NUTS knobs.
+* `max_reflections=$(_DEFAULT_MAX_REFLECTIONS)` — the most Householder reflections each window's
+  `:adaptive` metric fit may add. Each reflection rotates the coordinates that
+  are still badly fitted, so storing and applying the metric costs
+  O(d · max_reflections). Raise it for a target with many strongly correlated
+  blocks of parameters (one reflection decorrelates roughly one direction);
+  `typemax(Int)` removes the bound.
 * `nonlinear_adapt=true` — whether to activate the reparametrization
   hooks (no-op when `lpdf` carries no reparametrization).
 * `nonlinear_evidence=:linear_pool` — evidence used to fit the nonlinear
@@ -1615,6 +1623,9 @@ adaptive_warmup_mcmc(
     linear_restart_source=nothing,
     linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
+    # Upper bound on the reflections each window's `:adaptive` fit may add; see
+    # `_DEFAULT_MAX_REFLECTIONS`. Config, not state: a resume takes it from the call.
+    max_reflections=_DEFAULT_MAX_REFLECTIONS,
     # Observational checkpoint callback `(state, stage) -> should_stop`; see
     # `_fire_callback`. Default `nothing` keeps the run byte-identical.
     callback=nothing,
@@ -1657,7 +1668,7 @@ adaptive_warmup_mcmc(
                 variance_cond_target,
                 linear_restart_source=something(linear_restart_source, :halo),
                 linear_trajectory_weighting=something(linear_trajectory_weighting, :unit),
-                linear_metric_fallback,
+                linear_metric_fallback, max_reflections,
                 kwargs..., pathfinder_kw...
             )
             _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
@@ -1671,7 +1682,7 @@ adaptive_warmup_mcmc(
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,
                 max_tree_depth, recording_target, nonlinear_evidence,
                 nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
-                kwargs...
+                max_reflections, kwargs...
             ), false
         end
         while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws

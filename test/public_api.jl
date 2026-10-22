@@ -158,6 +158,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     :variance_cond_target,
     # linear adaptation
     :linear_restart_source, :linear_trajectory_weighting, :linear_metric_fallback,
+    :max_reflections,
     # nonlinear adaptation
     :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
     :nonlinear_good_leaf_threshold,

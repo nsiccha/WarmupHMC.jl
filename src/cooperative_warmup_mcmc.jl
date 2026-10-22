@@ -135,6 +135,7 @@ cooperative_chain(
     monitor_ess=false,
     max_window_evaluations=typemax(Int),
     progress=nothing,
+    max_reflections=_DEFAULT_MAX_REFLECTIONS,
     kwargs...
 ) = begin
     start_time = time_ns()
@@ -181,7 +182,8 @@ cooperative_chain(
         algorithm, stepsize_adaptation, dimension,
         recording_target, stepsize_adaptation_limit, variance_cond_target,
         nonlinear_adapt, monitor_ess, n_draws, max_window_evaluations,
-        scale_options, energy_options, NamedTuple(kwargs), start_time, progress,
+        # `max_reflections` reaches `update_loss!` through these, never the initializer.
+        scale_options, energy_options, (; kwargs..., max_reflections), start_time, progress,
         position_and_gradient, active_transformation, kinetic_energy,
         stepsize, stepsize_state, n_evaluations, variance_memory,
         variance_position, variance_gradient, Inf, Float64[],
@@ -1168,7 +1170,9 @@ shared), advanced one window at a time via [`advance_window!`](@ref).
 * `max_window_evaluations` caps each window's eval budget so checkpoints stay
   frequent enough to reschedule.
 * Extra `kwargs` are forwarded to every chain (`recording_target`,
-  `target_acceptance_rate`, `max_tree_depth`, `variance_cond_target`, `init`, …).
+  `target_acceptance_rate`, `max_tree_depth`, `variance_cond_target`, `init`,
+  `max_reflections` (the `:adaptive` metric's per-window reflection bound, as in
+  [`adaptive_warmup_mcmc`](@ref)), …).
 
 ## Progress
 

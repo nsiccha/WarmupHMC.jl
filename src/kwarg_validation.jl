@@ -55,6 +55,7 @@ const _COOPERATIVE_CHAIN_KWARGS = (
     :target_acceptance_rate, :max_tree_depth, :init, :variance_cond_target,
     :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
     :nonlinear_good_leaf_threshold, :monitor_ess, :max_window_evaluations, :progress,
+    :max_reflections,
 )
 const _CLUSTERED_CHAIN_KWARGS = (
     :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
@@ -77,7 +78,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :nonlinear_trajectory_weighting, :nonlinear_good_leaf_threshold,
         :variance_cond_target, :callback,
         :linear_restart_source, :linear_trajectory_weighting,
-        :linear_metric_fallback,
+        :linear_metric_fallback, :max_reflections,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
@@ -90,7 +91,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :nonlinear_evidence, :nonlinear_trajectory_weighting,
         :nonlinear_good_leaf_threshold,
         :linear_restart_source, :linear_trajectory_weighting,
-        :linear_metric_fallback,
+        :linear_metric_fallback, :max_reflections,
     ),
     :cooperative_warmup_mcmc => (
         :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,

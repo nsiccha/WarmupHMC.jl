@@ -166,4 +166,70 @@ end
     end
     @test n_throwing > 0
 end
+
+# Strongly correlated pairs with scales over two decades, as a window `update_loss!`
+# sees: positions `p` and their gradients `g = -Σ⁻¹ p`. Every pair is badly
+# fitted on the diagonal, so the reflection fit wants one reflection per pair.
+_correlated_pairs_window(rng, d; n=1000, ρ=0.95) = begin
+    s = exp.(2 .* rand(rng, d) .- 1)
+    z1, z2 = randn(rng, d ÷ 2, n), randn(rng, d ÷ 2, n)
+    p = zeros(d, n); g = zeros(d, n)
+    for (k, i) in enumerate(1:2:d-1)
+        u, v = z1[k, :], ρ .* z1[k, :] .+ sqrt(1 - ρ^2) .* z2[k, :]
+        p[i, :], p[i+1, :] = s[i] .* u, s[i+1] .* v
+        # precision of the pair's standardized coordinates: [1 -ρ; -ρ 1] / (1 - ρ²)
+        g[i, :] = -(u .- ρ .* v) ./ ((1 - ρ^2) * s[i])
+        g[i+1, :] = -(v .- ρ .* u) ./ ((1 - ρ^2) * s[i+1])
+    end
+    p, g
+end
+
+@testset "the product applies reflections without copying per reflection" begin
+    # The former product, verbatim: it gathered `y[idx]` as a copy for every
+    # reflection and the in-place update unaliased a second one (1.29 MB per
+    # product at d = 400 with 300 reflections). The shipped product must agree
+    # with it bit for bit: the dot is the same contiguous BLAS `dot`.
+    reference!(y, A, x, order) = begin
+        (; idxs, reflections) = A
+        y .= x
+        for i in order
+            vy = dot(reflections[i], y[idxs[i]])
+            y[idxs[i]] .-= 2 .* reflections[i] .* vy
+        end
+        y
+    end
+    rng = Xoshiro(3)
+    d = 60
+    p, g = _correlated_pairs_window(rng, d)
+    t = WarmupHMC.update_loss!(SR(d), p, g; max_reflections=typemax(Int))
+    @test length(t.reflections) > 10
+    for _ in 1:20
+        x = randn(rng, d)
+        @test mul!(similar(x), t, x) == reference!(similar(x), t, x, reverse(eachindex(t.idxs)))
+        @test ldiv!(similar(x), t, x) == reference!(similar(x), t, x, eachindex(t.idxs))
+    end
+    x = randn(rng, d); y = similar(x)
+    z = copy(x)
+    @test mul!(z, t, z) == mul!(y, t, x)        # aliased, as `MatrixFactorization` calls it
+    mul!(y, t, x)
+    @test @allocated(mul!(y, t, x)) <= 8d + 128  # one O(d) buffer, not O(Σ|idx|)
+end
+
+@testset "max_reflections bounds the reflection fit" begin
+    rng = Xoshiro(4)
+    d = 60
+    p, g = _correlated_pairs_window(rng, d)
+    fit(; kwargs...) = WarmupHMC.update_loss!(SR(d), copy(p), copy(g); kwargs...)
+    unbounded = fit(max_reflections=typemax(Int))
+    # Positive control: unbounded, this window takes more than the default bound.
+    @test length(unbounded.reflections) > WarmupHMC._DEFAULT_MAX_REFLECTIONS
+    @test length(fit().reflections) == WarmupHMC._DEFAULT_MAX_REFLECTIONS
+    bounded = fit(max_reflections=3)
+    @test length(bounded.reflections) == 3
+    # The bound stops the greedy loop early: its reflections are the unbounded
+    # fit's first ones.
+    @test bounded.reflections == unbounded.reflections[1:3]
+    @test bounded.idxs == unbounded.idxs[1:3]
+    @test isempty(fit(max_reflections=0).reflections)
+end
 end

@@ -168,7 +168,8 @@ function htmxoTableSearch(target, query) {
 }
 
 // The leaves of a group whose rows have not loaded yet, as `[key, search
-// text]` pairs (`data-htmxo-lazy-leaves`), parsed once per value.
+// text]` pairs (`data-htmxo-lazy-leaves`), parsed once per value. A linked
+// table's leaves whose `link_key` is not their key carry it third.
 function htmxoLazyLeaves(row) {
     const source = row.dataset.htmxoLazyLeaves;
     if (!source) return [];
@@ -1408,6 +1409,127 @@ if (!window.htmxoSelectionBound) {
 // htmx load event: restore what is already in the document.
 if (document.body) htmxoSelectionRestore(document.body);
 
+// --- Hover linking: `link` on sortable_table / render_table / master_detail_table ---
+// Tables, plots and maps showing the same items name one link group. A hover
+// (or keyboard focus) on an item announces its key to the page as an
+// `htmxo:link` event on `document`, detail {group, key, source} (key null
+// when the hover ends), and every participant of the group highlights its
+// items with that key. Anything joins by listening for the event and
+// dispatching it; `htmxoLink(group, key)` dispatches it from page script. The
+// latest key per group is kept, so a table rendered, regrouped or filtered
+// later shows it too.
+window.htmxoLinkState = window.htmxoLinkState || new Map();
+function htmxoLink(group, key, source) {
+    document.dispatchEvent(new CustomEvent('htmxo:link', {detail:
+        {group: String(group), key: key == null ? null : String(key), source: source || null}}));
+}
+// A row's item key: `data-htmxo-link-key`, else its selection key.
+function htmxoLinkKey(row) { return row.dataset.htmxoLinkKey ?? row.dataset.htmxoSelectKey; }
+// The keyed body row of a linked table that holds `el`, as {group, key, row},
+// else null. A detail row stands for its master, and the rows of a table
+// nested in a detail for the row around them.
+function htmxoLinkRow(el) {
+    for (let tr = el && el.closest ? el.closest('tr') : null; tr; tr = tr.parentElement.closest('tr')) {
+        const table = tr.parentElement.parentElement;
+        if (!table || !table.matches('table[data-htmxo-link]') || tr.parentElement !== table.tBodies[0]) continue;
+        const row = tr.id.startsWith('detail-') ? document.getElementById('row-' + tr.id.slice(7)) : tr;
+        const key = row ? htmxoLinkKey(row) : null;
+        return key == null ? null : {group: table.dataset.htmxoLink, key, row};
+    }
+    return null;
+}
+// The pointer or the focus moved from `from` to `to`: the row it left ends
+// its hover, unless another row of its group takes over, and the row it
+// entered announces its key.
+function htmxoLinkMove(to, from) {
+    const left = htmxoLinkRow(from), entered = htmxoLinkRow(to);
+    if (left && entered && left.row === entered.row) return;
+    if (left && !(entered && entered.group === left.group)) htmxoLink(left.group, null, left.row);
+    if (entered) htmxoLink(entered.group, entered.key, entered.row);
+}
+// How many levels a group row whose rows have not loaded sits above its
+// leaves: the grouping levels below its own (`data-htmxo-grouped` holds a
+// JSON list of the levels, else names the one grouping).
+function htmxoLinkLazyDepth(row) {
+    const wrapper = row.closest('[data-htmxo-grouped]');
+    const grouped = wrapper ? wrapper.dataset.htmxoGrouped : '';
+    const levels = grouped.startsWith('[') ? JSON.parse(grouped).length : 1;
+    return Math.max(1, levels + 1 - Number(row.getAttribute('aria-level') || 1));
+}
+// Scroll `row` into view inside the nearest scroll box around it, never the
+// page: a hover on a plot must not move the plot away from the pointer.
+function htmxoLinkReveal(row) {
+    for (let box = row.parentElement; box && box !== document.body && box !== document.documentElement; box = box.parentElement) {
+        if (box.scrollHeight <= box.clientHeight || !/auto|scroll/.test(getComputedStyle(box).overflowY)) continue;
+        const r = row.getBoundingClientRect(), b = box.getBoundingClientRect();
+        if (r.top < b.top || r.bottom > b.bottom) box.scrollTop += (r.top + r.bottom - b.top - b.bottom) / 2;
+        return;
+    }
+}
+// Mark the rows of `table` that hold its group's current key. A highlight
+// never changes the table: a row inside a collapsed group or branch lights up
+// the innermost shown row above it instead (`data-htmxo-linked="inside"`, its
+// first cell noting how many levels down the item is), and a row the search
+// or a filter hides lights up nothing. With `reveal`, the first lit row
+// scrolls into view inside the table's own scroll box.
+function htmxoLinkApply(table, reveal) {
+    const body = table.tBodies[0];
+    if (!body) return;
+    body.querySelectorAll(':scope > tr[data-htmxo-linked]').forEach(r => {
+        delete r.dataset.htmxoLinked;
+        if (r.cells[0]) delete r.cells[0].dataset.htmxoLinkedNote;
+    });
+    const state = window.htmxoLinkState.get(table.dataset.htmxoLink);
+    if (!state || state.key == null) return;
+    const rows = Array.from(body.rows);
+    const byId = new Map(rows.filter(r => r.id).map(r => [r.id, r]));
+    const depths = new Map();
+    const light = (row, depth) => {
+        for (; row && row.hidden; depth++) row = byId.get(row.dataset.htmxoParent);
+        if (row && !(depths.get(row) <= depth)) depths.set(row, depth);
+    };
+    rows.forEach(r => {
+        if (r.id.startsWith('detail-') || 'htmxoFiltered' in r.dataset) return;
+        if (htmxoLinkKey(r) === state.key) light(r, 0);
+        else if (htmxoLazyLeaves(r).some(([k, , link]) => (link ?? k) === state.key)) light(r, htmxoLinkLazyDepth(r));
+    });
+    depths.forEach((depth, row) => {
+        row.dataset.htmxoLinked = depth ? 'inside' : '';
+        if (depth && row.cells[0]) row.cells[0].dataset.htmxoLinkedNote =
+            htmxoText(table, depth > 1 ? 'linked_deep' : 'linked_inside', {levels: depth});
+    });
+    const first = reveal && rows.find(r => depths.has(r));
+    if (first) htmxoLinkReveal(first);
+}
+// Show the current keys again in the linked tables in or around `elt`.
+function htmxoLinkRestore(elt) {
+    if (!elt || !elt.querySelectorAll) return;
+    const tables = new Set(elt.querySelectorAll('table[data-htmxo-link]'));
+    const around = elt.closest && elt.closest('table[data-htmxo-link]');
+    if (around) tables.add(around);
+    tables.forEach(t => htmxoLinkApply(t, false));
+}
+if (!window.htmxoLinkBound) {
+    window.htmxoLinkBound = true;
+    document.addEventListener('pointerover', e => htmxoLinkMove(e.target, e.relatedTarget));
+    document.addEventListener('pointerout', e => { if (!e.relatedTarget) htmxoLinkMove(null, e.target); });
+    document.addEventListener('focusin', e => htmxoLinkMove(e.target, e.relatedTarget));
+    document.addEventListener('focusout', e => { if (!e.relatedTarget) htmxoLinkMove(null, e.target); });
+    document.addEventListener('htmxo:link', e => {
+        const d = e.detail || {};
+        if (d.group == null) return;
+        const group = String(d.group);
+        window.htmxoLinkState.set(group, {key: d.key == null ? null : String(d.key), source: d.source || null});
+        // The tables the hover did not start in bring their match into view.
+        document.querySelectorAll('table[data-htmxo-link]').forEach(t => {
+            if (t.dataset.htmxoLink === group) htmxoLinkApply(t, !(d.source && t.contains(d.source)));
+        });
+    });
+    document.addEventListener('htmxo:table-filtered', e => htmxoLinkRestore(e.target));
+    document.addEventListener('htmxo:regrouped', e => htmxoLinkRestore(e.target));
+    document.addEventListener('htmx:load', e => htmxoLinkRestore(e.target));
+}
+
 // Read a table's CURRENT client-side sort state. `target` is a CSS selector
 // or an element (the <table>, or any node inside or around it). Returns
 // {sort_col, sort_dir} — 1-based column index, 'asc'|'desc' — or {} when the
@@ -1453,7 +1575,7 @@ if (!window.htmxoMoveBeforeGuarded) {
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":","};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down"};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -1596,4 +1718,13 @@ if (!window.__htmxoMdReady) {
 }
 .htmxo-sortable-table tbody tr[id^="row-"][onclick] > td { cursor: pointer; }
 .htmxo-sortable-table tbody tr[id^="detail-"] > td { padding: 0; border: none; }
+/* Hover linking (`link=`): the rows holding the hovered item are tinted and
+   outlined; a shown row that holds it in a collapsed group gets a dashed
+   outline, labelled on its top edge by the first cell's note. Neither moves
+   the layout or covers the row's own text. */
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked] { outline: 2px solid var(--htmxo-accent, Highlight); outline-offset: -2px; }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] > td { background-color: var(--htmxo-linked-row, color-mix(in srgb, var(--htmxo-accent, Highlight) 18%, transparent)); }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked="inside"] { outline-style: dashed; }
+table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note] { position: relative; }
+table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note]::after { content: attr(data-htmxo-linked-note); position: absolute; z-index: 1; inset-inline-start: .5rem; top: 0; transform: translateY(-50%); padding: 0 .5em; border: 1px dashed var(--htmxo-accent, Highlight); border-radius: 1em; background: var(--pico-background-color, Canvas); color: var(--pico-color, CanvasText); font-size: .7em; line-height: 1.5; white-space: nowrap; pointer-events: none; }
 </style></div>

@@ -35,6 +35,43 @@
        (`--pico-muted-border-color`) is too faint for the 2px tab frames. */
     --htmxo-border:  currentColor;
     --htmxo-muted:   var(--pico-muted-color, color-mix(in srgb, currentColor 60%, transparent));
+    /* Pico raises this in steps from 576 px up to 131.25% from 1536 px. Its
+       media-query rules have the same specificity as this one and come
+       earlier in the page, so this value holds at every width. */
+    --pico-font-size: 100%;
+}
+/* Pico caps `.container` at 1200 px from 1280 px and 1450 px from 1536 px. */
+@media (min-width: 1280px) {
+    .container {
+        max-width: min(var(--htmxo-container-max-width, 1600px),
+                       calc(100% - 2 * var(--htmxo-container-gutter, 2rem)));
+    }
+}
+/* Pico paints a button without a colour class in its primary azure. It takes
+   Pico's slate outline (`.secondary.outline`) instead, through the same three
+   variables Pico sets on every button; `.secondary` and `.contrast` keep
+   theirs. Each selector outranks the Pico rule it replaces. */
+:is(button, [type=submit], [type=button], [role=button]):not(.secondary, .contrast) {
+    --pico-background-color: transparent;
+    --pico-color: var(--pico-secondary);
+    --pico-border-color: var(--pico-secondary);
+}
+:is(button, [type=submit], [type=button], [role=button]):not(.secondary, .contrast):is([aria-current]:not([aria-current=false]), :hover, :active, :focus) {
+    --pico-background-color: transparent;
+    --pico-color: var(--pico-secondary-hover);
+    --pico-border-color: var(--pico-secondary-hover);
+}
+:is(button, [type=submit], [type=button], [role=button]):not(.secondary, .contrast):is(:focus, [aria-current]:not([aria-current=false]):focus) {
+    --pico-box-shadow: var(--pico-button-hover-box-shadow, 0 0 0 rgba(0, 0, 0, 0)), 0 0 0 var(--pico-outline-width) var(--pico-secondary-focus);
+}
+:is([role=search], [role=group]):has(:is(button, [type=submit], [type=button], [role=button]):not(.secondary, .contrast):focus) {
+    --pico-group-box-shadow-focus-with-button: 0 0 0 var(--pico-outline-width) var(--pico-secondary-focus);
+}
+/* Pico whitens a dropdown's chevron and a busy button's spinner to suit its
+   filled buttons; on the outline they keep their own colour. */
+details summary[role=button]:not(.secondary, .contrast)::after,
+[aria-busy=true]:not(input, select, textarea):is(button, [type=submit], [type=button], [role=button]):not(.secondary, .contrast)::before {
+    filter: none;
 }
 </style><style>@layer htmxo {
 @keyframes htmx-pulse {
@@ -1060,7 +1097,83 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     border-radius: 0 0 0.35rem 0.35rem;
 }
 }
-</style><style>.htmxo-comparison > nav, .htmxo-comparison [role=tablist] { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+</style><script>(() => {
+    if (window.htmxoTabset) return;
+    const links = ts => Array.from(ts.querySelectorAll(':scope > nav a[data-tab-name]'));
+    const panelOf = (ts, a) => ts.querySelector(':scope > .tab-panel[data-panel="' + a.dataset.panel + '"]');
+    const recording = ts => Boolean(ts.dataset.tabParam) && !ts.closest('.htmxo-embed');
+
+    // Shows tab `a` before htmx has processed the tabset. A lazy panel that is
+    // shown loads itself once visible, a hidden one from its tab's first click
+    // (`_tabset_panel` / `_tabset_lazy_link_attrs`), so those attributes move
+    // with the tab and htmx arms the right ones: the default tab's lazy panel
+    // is never fetched for a tab the URL hides.
+    const open = (ts, a) => {
+        const from = links(ts).find(l => l.classList.contains('contrast'));
+        const shown = from && panelOf(ts, from), target = panelOf(ts, a);
+        if (shown && shown.hasAttribute('hx-get')) {
+            from.setAttribute('hx-get', shown.getAttribute('hx-get'));
+            from.setAttribute('hx-target', '#' + shown.id);
+            from.setAttribute('hx-swap', 'innerHTML');
+            from.setAttribute('hx-trigger', 'click once');
+            if (ts.dataset.tabPreload) from.setAttribute('preload', ts.dataset.tabPreload);
+            ['hx-get', 'hx-trigger', 'hx-swap'].forEach(n => shown.removeAttribute(n));
+        }
+        if (a.hasAttribute('hx-get')) {
+            target.setAttribute('hx-get', a.getAttribute('hx-get'));
+            target.setAttribute('hx-trigger', 'intersect once');
+            target.setAttribute('hx-swap', 'innerHTML');
+            ['hx-get', 'hx-target', 'hx-swap', 'hx-trigger', 'preload'].forEach(n => a.removeAttribute(n));
+        }
+        links(ts).forEach(l => { l.classList.remove('contrast'); l.classList.add('secondary'); });
+        a.classList.remove('secondary');
+        a.classList.add('contrast');
+        ts.querySelectorAll(':scope > .tab-panel').forEach(p => p.classList.add('u-hidden'));
+        target.classList.remove('u-hidden');
+    };
+
+    // Called by the script each tabset renders as its last child, so it runs
+    // while the tabset is inserted: during parsing, or on an htmx swap before
+    // htmx's settle-time processing. The URL's tab shows from the start.
+    const warned = new Set();
+    window.htmxoTabset = ts => {
+        if (!recording(ts)) return;
+        const key = ts.dataset.tabParam;
+        const name = new URLSearchParams(location.search).get(key);
+        if (name === null) return;
+        const a = links(ts).find(l => l.dataset.tabName === name);
+        if (a) { if (!a.classList.contains('contrast')) open(ts, a); return; }
+        // Tabsets that share a parameter share its value: warn only when no
+        // tabset on the page has a tab of that name.
+        setTimeout(() => {
+            const known = Array.from(document.querySelectorAll('.tabset > nav a[data-tab-name]')).some(l =>
+                l.dataset.tabName === name && l.closest('.tabset').dataset.tabParam === key);
+            if (known || warned.has(key + '=' + name)) return;
+            warned.add(key + '=' + name);
+            console.warn('tabset: no tab is named "' + name + '" (?' + key + '=); showing the default tab');
+        }, 0);
+    };
+
+    // A tab click records its name. Capture phase, because the tab's hyperscript
+    // halts the click. The history entry is replaced, not pushed, and keeps its
+    // state: htmx 2 restores an entry on Back/Forward only when that state says
+    // `htmx`. htmx files its Back snapshot of this page under the path it keeps
+    // in sessionStorage (`saveCurrentPageToHistory`), so that path follows the
+    // address too; where storage is blocked htmx keeps the path in memory and
+    // refetches the page on Back instead, which shows the same tab.
+    document.addEventListener('click', e => {
+        const a = e.target instanceof Element ? e.target.closest('.tabset > nav a[data-tab-name]') : null;
+        if (!a) return;
+        const ts = a.closest('.tabset');
+        if (!recording(ts)) return;
+        const url = new URL(location.href);
+        url.searchParams.set(ts.dataset.tabParam, a.dataset.tabName);
+        if (url.href === location.href) return;
+        history.replaceState(history.state, '', url);
+        if (window.htmx) try { sessionStorage.setItem('htmx-current-path-for-history', url.pathname + url.search); } catch (_) {}
+    }, true);
+})();
+</script><style>.htmxo-comparison > nav, .htmxo-comparison [role=tablist] { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .htmxo-comparison > nav button { width: auto; margin: 0; }
 .htmxo-comparison [role=tab][aria-selected=true] { text-decoration: underline; }
 .htmxo-comparison > [data-htmxo-compare-home] > section[hidden], .htmxo-comparison > [data-htmxo-compare-grid] > section[hidden] { display: none !important; }
@@ -1115,6 +1228,15 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     if (window.__htmxoToastBound) return;
     window.__htmxoToastBound = true;
     var DURATION = { success: 4000, info: 4000, error: 8000 };
+    // The page's error texts (`htmx(...; error_texts)` puts them on <html>),
+    // or English.
+    var ENGLISH = {"request_failed":"Request failed","no_response":"Request failed: no response (network error or server unreachable)","timed_out":"Request timed out","dismiss":"Dismiss","reasons":{"400":"Bad Request","401":"Unauthorized","402":"Payment Required","403":"Forbidden","404":"Not Found","405":"Method Not Allowed","406":"Not Acceptable","407":"Proxy Authentication Required","408":"Request Timeout","409":"Conflict","410":"Gone","411":"Length Required","412":"Precondition Failed","413":"Content Too Large","414":"URI Too Long","415":"Unsupported Media Type","416":"Range Not Satisfiable","417":"Expectation Failed","421":"Misdirected Request","422":"Unprocessable Content","423":"Locked","424":"Failed Dependency","425":"Too Early","426":"Upgrade Required","428":"Precondition Required","429":"Too Many Requests","431":"Request Header Fields Too Large","451":"Unavailable For Legal Reasons","500":"Internal Server Error","501":"Not Implemented","502":"Bad Gateway","503":"Service Unavailable","504":"Gateway Timeout"}};
+    var textsRaw = null, textsRead = ENGLISH;
+    function texts() {
+        var raw = document.documentElement.getAttribute('data-htmxo-error-texts');
+        if (raw !== textsRaw) { textsRaw = raw; textsRead = raw ? JSON.parse(raw) : ENGLISH; }
+        return textsRead;
+    }
     // The live region exists before the first message, so screen readers
     // announce it; a swap that replaced the body gets a fresh one.
     function region() {
@@ -1144,7 +1266,7 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
         var close = document.createElement('button');
         close.type = 'button';
         close.className = 'htmxo-toast-close';
-        close.setAttribute('aria-label', 'Dismiss');
+        close.setAttribute('aria-label', texts().dismiss);
         close.textContent = '×';
         t.appendChild(msg);
         t.appendChild(close);
@@ -1192,8 +1314,9 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     }
     function squash(text) { return (text || '').replace(/\s+/g, ' ').trim(); }
     // Over HTTP/2 `statusText` is empty, so the reason comes from the answer's
-    // own `<title>` (a gateway's "413 Request Entity Too Large") or this table.
-    var REASONS = {400: 'Bad Request', 401: 'Unauthorized', 402: 'Payment Required', 403: 'Forbidden', 404: 'Not Found', 405: 'Method Not Allowed', 406: 'Not Acceptable', 407: 'Proxy Authentication Required', 408: 'Request Timeout', 409: 'Conflict', 410: 'Gone', 411: 'Length Required', 412: 'Precondition Failed', 413: 'Content Too Large', 414: 'URI Too Long', 415: 'Unsupported Media Type', 416: 'Range Not Satisfiable', 417: 'Expectation Failed', 421: 'Misdirected Request', 422: 'Unprocessable Content', 423: 'Locked', 424: 'Failed Dependency', 425: 'Too Early', 426: 'Upgrade Required', 428: 'Precondition Required', 429: 'Too Many Requests', 431: 'Request Header Fields Too Large', 451: 'Unavailable For Legal Reasons', 500: 'Internal Server Error', 501: 'Not Implemented', 502: 'Bad Gateway', 503: 'Service Unavailable', 504: 'Gateway Timeout'};
+    // own `<title>` (a gateway's "413 Request Entity Too Large") or the texts'
+    // table; a page in another language names the status from its table first,
+    // since `statusText` and gateway titles are English.
     function failureText(xhr) {
         var type = header(xhr, 'Content-Type') || '', body = xhr.responseText || '';
         var plain = '', title = '', heading = '';
@@ -1204,10 +1327,11 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
             title = squash(doc.title);
             heading = h ? squash(h.textContent) : '';
         }
-        var reason = squash(xhr.statusText);
+        var t = texts();
+        var reason = (t !== ENGLISH && t.reasons[xhr.status]) || squash(xhr.statusText);
         var named = title.match(/^(\d{3})\s+(.+)$/);
         if (!reason && named && +named[1] === xhr.status) reason = named[2];
-        if (!reason) reason = REASONS[xhr.status] || '';
+        if (!reason) reason = t.reasons[xhr.status] || '';
         var line = 'HTTP ' + xhr.status + (reason ? ' ' + reason : '');
         // A title or heading that names this status code, in any wording, is
         // the status line again, not a detail.
@@ -1217,7 +1341,7 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
         }
         var detail = plain && plain.length <= 300 ? plain :
             [title, heading].filter(function(text) { return text && text.length <= 200 && !restates(text); })[0];
-        return 'Request failed (' + line + ')' + (detail ? ': ' + detail : '');
+        return t.request_failed + ' (' + line + ')' + (detail ? ': ' + detail : '');
     }
     // How a finished htmx request ended: `success`; `failure`, with the text
     // that says why; `neutral`, for a request the page aborted or an answer
@@ -1228,8 +1352,8 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     // `responseHandling`): it is on screen already.
     function outcome(evt) {
         var d = evt.detail || {}, xhr = d.xhr;
-        if (evt.type === 'htmx:sendError') return { state: 'failure', text: 'Request failed: no response (network error or server unreachable)' };
-        if (evt.type === 'htmx:timeout') return { state: 'failure', text: 'Request timed out' };
+        if (evt.type === 'htmx:sendError') return { state: 'failure', text: texts().no_response };
+        if (evt.type === 'htmx:timeout') return { state: 'failure', text: texts().timed_out };
         if (evt.type === 'htmx:sendAbort') return { state: 'neutral' };
         if (!xhr || !xhr.status) return { state: 'pending' };
         if (d.successful === true) return { state: 'success' };
@@ -1298,7 +1422,7 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":","};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down"};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {

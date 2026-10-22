@@ -100,14 +100,26 @@ end
 # One fit of a fresh `make(d)` to (copies of) a window; returns (L, loss).
 # Always on copies: the shipped `update_loss!(::ScaleThenReflect)` reflects its
 # inputs in place.
-function fit(make, x, g)
+# The two-TSVD investigation measured the fit without a reflection bound (it
+# predates `max_reflections`); its drivers pass this to reproduce those numbers.
+const UNBOUNDED = (; max_reflections=typemax(Int))
+
+# `kwargs` go to `update_loss!` (e.g. `max_reflections`).
+function fit(make, x, g; kwargs...)
     L = make(size(x, 1))
-    loss = W.update_loss!(L, copy(x), copy(g))
+    loss = W.update_loss!(L, copy(x), copy(g); kwargs...)
     L, loss
 end
 
 # Median wall time (ms) of one fit, after a warm-up fit.
-function timed_fit(make, x, g; reps=5)
-    fit(make, x, g)
-    1e3median(map(_ -> (@elapsed fit(make, x, g)), 1:reps))
+function timed_fit(make, x, g; reps=5, kwargs...)
+    fit(make, x, g; kwargs...)
+    1e3median(map(_ -> (@elapsed fit(make, x, g; kwargs...)), 1:reps))
+end
+
+# Median wall time (µs) of one metric mat-vec `mul!(y, L, z)`.
+matvec_us(L) = begin
+    z = randn(Xoshiro(0), size(L, 1)); y = similar(z)
+    mul!(y, L, z)
+    1e6minimum(@elapsed(for _ in 1:100; mul!(y, L, z); end) for _ in 1:3) / 100
 end

@@ -30,7 +30,7 @@ for d in DIMS, case in CASES, seed in 1:N_SEEDS
     L = nothing
     z, gz = x, g
     for s in 1:MAX_STAGES
-        t = @elapsed ((S, loss) = fit(W._scale_then_reflect, z, gz))
+        t = @elapsed ((S, loss) = fit(W._scale_then_reflect, z, gz; UNBOUNDED...))
         added = W.n_reflections(S)
         L = isnothing(L) ? S : W.MatrixFactorization(L, S)
         z, gz = S \ z, S' * gz

@@ -93,7 +93,7 @@ function run_one(name, problem, P, seed)
     wall = @elapsed r = adaptive_warmup_mcmc(
         Xoshiro(seed), problem;
         n_draws=N_DRAWS, nonlinear_adapt=false, monitor_ess=false,
-        progress=nothing, callback,
+        progress=nothing, callback, UNBOUNDED...,
     )
     draws = Matrix{Float64}(r.posterior_position)
     ess = ess_per_coordinate(draws)
@@ -101,7 +101,7 @@ function run_one(name, problem, P, seed)
     hx, hg = Matrix{Float64}(r.halo_position), Matrix{Float64}(r.halo_gradient)
     pg = Matrix{Float64}(r.posterior_gradient)
     offline = map(VARIANTS) do v
-        t = @elapsed ((L, loss) = fit(v.make, hx, hg))
+        t = @elapsed ((L, loss) = fit(v.make, hx, hg; UNBOUNDED...))
         (; variant=v.name, loss, loss_out=frame_loss(L, draws, pg),
            refl=W.n_reflections(L), bad=bad_left(L, hx, hg), fit_ms=1e3t,
            kappa=isnothing(P) ? NaN : kappa(L, P))

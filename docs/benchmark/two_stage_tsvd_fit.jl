@@ -58,11 +58,11 @@ for d in DIMS, st in STRUCTURES, sc in SCALINGS, seed in 1:N_SEEDS
     kappa_target = (λ = eigvals(Σ); λ[end] / λ[1])
     kappa_diag = kappa(Diagonal(sqrt.(diag(Σ))), P)
     for v in VARIANTS
-        t = @elapsed ((L, loss) = fit(v.make, x, g))
-        Lf, _ = fit(v.make, xf, gf)
+        t = @elapsed ((L, loss) = fit(v.make, x, g; UNBOUNDED...))
+        Lf, _ = fit(v.make, xf, gf; UNBOUNDED...)
         # One timed call at large d (a fit there takes seconds); median of
         # REPS after a warm-up otherwise.
-        fit_ms = d >= 400 ? 1e3t : timed_fit(v.make, x, g; reps=REPS)
+        fit_ms = d >= 400 ? 1e3t : timed_fit(v.make, x, g; reps=REPS, UNBOUNDED...)
         row = NamedTuple{ROW_KEYS}((
             d, st.name, sc.name, seed, v.name, loss, kappa(L, P), kappa(Lf, P),
             kappa_target, kappa_diag, W.n_reflections(L), bad_left(L, x, g), fit_ms,

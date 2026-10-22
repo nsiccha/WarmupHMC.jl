@@ -1179,7 +1179,6 @@ which would each have silently corrupted the fixed-parametrization arms:
   backend*. The direction replicates 35/35; the slope is unmeasured, in either
   direction.
 - **One sampler.** Single-chain `adaptive_warmup_mcmc` only.
-  `clustered_warmup_mcmc` has no reparametrization hooks at all and
   `cooperative_warmup_mcmc` was not measured.
 - **Two AD backends, and only one annotation choice explored in depth.** Both
   arrive through DifferentiationInterface, per the standing instruction to use DI

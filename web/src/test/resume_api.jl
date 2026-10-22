@@ -131,25 +131,25 @@
 
     mktempdir() do d
         @testset "cooperative run-dir guard" begin
-            cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, init=_init(lpdf))
+            cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, init=_init(lpdf))
             @test !isempty(filter(f -> startswith(f, "chain_"), readdir(d)))
             # a second run into the same dir would interleave — refuse
-            @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, init=_init(lpdf))
+            @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, init=_init(lpdf))
             # a FINALIZED run is not resumable: its run_summary.json is
             # write-once, and its existence is the run-completed signal
-            @test_throws ArgumentError cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
+            @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
             # an unfinished (crashed) one continues instead of throwing (deep
-            # coverage lives in cooperative_resume.jl; here the guard routes it)
+            # coverage lives in test/cooperative.jl; here the guard routes it)
             rm(joinpath(d, "run_summary.json"))
-            resumed = cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
-            @test resumed.n_started >= 1
+            resumed = cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, resume=true, init=_init(lpdf))
+            @test length(resumed.results) == 2
             # overwrite clears it
-            cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, overwrite=true, init=_init(lpdf))
+            cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=2, n_evaluations_budget=6000, nonlinear_adapt=false, checkpoint_dir=d, overwrite=true, init=_init(lpdf))
         end
     end
 end

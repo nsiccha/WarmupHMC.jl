@@ -13,7 +13,7 @@
 @testitem "entry-point keyword validation" setup=[Determinism] tags=[:sampler] begin
     using WarmupHMC, LogDensityProblems, LinearAlgebra, Random
     using WarmupHMC: _SAMPLER_KWARGS, _INITIALIZER_KWARGS, _MULTICHAIN_ONLY_KWARGS,
-        _check_kwargs, _edit_distance, _nearest_kwarg, clustered_chains
+        _check_kwargs, _edit_distance, _nearest_kwarg
 
     # --- drift guard --------------------------------------------------------------
     # The accepted sets are literal tuples (so include order does not matter and
@@ -42,8 +42,6 @@
             :adaptive_warmup_mcmc    => adaptive_warmup_mcmc,
             :resume_warmup_mcmc      => resume_warmup_mcmc,
             :cooperative_warmup_mcmc => cooperative_warmup_mcmc,
-            :clustered_warmup_mcmc   => clustered_warmup_mcmc,
-            :clustered_chains        => clustered_chains,
         )
             declared = _declared_kwargs(f)
             accepted = Set(_SAMPLER_KWARGS[fname])
@@ -58,8 +56,7 @@
         end
 
         # Every sampler that forwards to the initializer must offer the escape hatch.
-        for fname in (:adaptive_warmup_mcmc, :cooperative_warmup_mcmc,
-                      :clustered_warmup_mcmc, :clustered_chains)
+        for fname in (:adaptive_warmup_mcmc, :cooperative_warmup_mcmc)
             @test :pathfinder_kw in _SAMPLER_KWARGS[fname]
         end
     end
@@ -76,7 +73,7 @@
 
         # the message must name the offender, and suggest the near miss
         msg = try
-            _check_kwargs(:clustered_warmup_mcmc, pairs((; n_draw=10)))
+            _check_kwargs(:cooperative_warmup_mcmc, pairs((; n_draw=10)))
             ""
         catch e
             sprint(showerror, e)
@@ -134,7 +131,7 @@
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; n_draw=50, init=mkinit())
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; initial_params=zeros(d), init=mkinit())
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; parallel=false, init=mkinit())
-        @test_throws ArgumentError cooperative_warmup_mcmc(rngs(), lpdf; n_evaluations_budget=5_000,
+        @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), lpdf; n_chains=2, n_evaluations_budget=5_000,
                                                            callback=(s, stage) -> false, init=mkinit())
 
         # legitimate calls are unaffected
@@ -149,12 +146,5 @@
         r = adaptive_warmup_mcmc(Xoshiro(1), lpdf; n_draws=50, init=mkinit(),
                                  pathfinder_kw=(; some_pathfinder_option=1))
         @test size(r.posterior_position, 2) >= 50
-
-        # clustered forwards per-chain kwargs it does not itself declare
-        out = clustered_warmup_mcmc(rngs(), lpdf; n_draws=50, max_windows=2,
-                                    regularizing_n=4.0, init=mkinit())
-        @test length(out.results) == 2
-        @test_throws ArgumentError clustered_warmup_mcmc(rngs(), lpdf; n_draws=50, max_windows=2,
-                                                         regularizing_nn=4.0, init=mkinit())
     end
 end

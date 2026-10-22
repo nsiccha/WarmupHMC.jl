@@ -12,8 +12,8 @@
     # `Vector{Pair{Int,Reparametrization}}`; single-threaded it is still wrong, since
     # chain i>1 samples under whatever centering chain i-1 last wrote. Both silent.
     #
-    # The contract asserted here is the one `cooperative_warmup_mcmc` and
-    # `clustered_warmup_mcmc` already keep: every chain gets its own `deepcopy`, and
+    # The contract asserted here is the one `cooperative_warmup_mcmc` already
+    # keeps: every chain gets its own `deepcopy`, and
     # the caller's object is never touched. Stated as object identity rather than as
     # reparametrization values, so the guard needs no AD backend and cannot be
     # satisfied by a target that happens to adapt to the same answer on every chain.

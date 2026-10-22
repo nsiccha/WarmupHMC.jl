@@ -613,9 +613,8 @@ replaced by one carrying the newly fitted `source` centering. Two consequences:
 * **One reparametrized problem per chain.** Every multi-chain sampler gives chain
   `i` its own `deepcopy` of the `lpdf` you pass, so no two chains ever write the
   same `IndexedReparametrization` and the object you built is not mutated. (Of the
-  three, `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc` are the ones that
-  adapt a reparametrization at all; `clustered_warmup_mcmc` has no hooks for it
-  and does not accept `nonlinear_adapt`.) `adaptive_warmup_mcmc`'s
+  two, `cooperative_warmup_mcmc` shares one reparametrization across its chains
+  and refits it from their pooled evidence.) `adaptive_warmup_mcmc`'s
   `lpdfs::AbstractArray` method is used exactly as given, so
   `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])` is the explicit
   spelling of the default and `fill(lpdf, length(rngs))` is how you deliberately
@@ -1118,8 +1117,9 @@ The `payload` method reads the serialized `nonlinear_recorder` accumulator from
 an adaptive or cooperative checkpoint. It is the actual pending online curve
 since the most recent nonlinear reset, not a history: after a restarting window
 selects a candidate, the recorder is reset before that boundary's checkpoint is
-written. Payloads without that recorder, including clustered checkpoints, raise
-an `ArgumentError`.
+written. Payloads without that recorder, including cooperative checkpoints (the
+merged sampler refits from pooled halos and keeps no recorder), raise an
+`ArgumentError`.
 
 The matrix method deliberately recomputes a retrospective curve. `positions`
 and `gradients` must have identical `dimension × observations` shapes and be in
@@ -1212,10 +1212,6 @@ _uses_online_candidate_scoring(::WindowSelectionPlan) = false
 # checkpoint carries a value computed by the previous one, indistinguishable
 # from a current one. The inputs are the data; this is a function of them.
 #
-# `clustered_warmup_mcmc` does no nonlinear recording at all (zero occurrences),
-# so its payload carries no recorder and has no mode to describe; its
-# `custom_candidate_scoring` key serves the restore-time plan-mismatch check
-# alone.
 function _effective_nonlinear_evidence(recorder::NonlinearRecorder, lpdf)
     plan = candidate_scoring_plan(lpdf)
     recorder.mode === :linear_pool && _uses_online_candidate_scoring(plan) ?

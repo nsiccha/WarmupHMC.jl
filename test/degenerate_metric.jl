@@ -87,9 +87,9 @@ end
     # x2's marginal standard deviation is sqrt(2); a frozen coordinate reads 0.
     @test 0.8 < std(r.posterior_position[2, :]) < 2.0
 
-    out = cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], ChainGaussian();
-        init=FROZEN_INIT, n_cores=1, n_evaluations_budget=20_000, nonlinear_adapt=false)
-    @test out.n_started >= 1
+    out = cooperative_warmup_mcmc(Xoshiro(1), ChainGaussian();
+        n_chains=2, init=FROZEN_INIT, n_cores=1, n_evaluations_budget=20_000, nonlinear_adapt=false)
+    @test length(out.results) == 2
     @test all(r -> all(isfinite, r.posterior_position), out.results)
 end
 

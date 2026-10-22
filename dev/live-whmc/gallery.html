@@ -2026,6 +2026,218 @@ if (!window.htmxoComparisonInstalled) {
     }, 0);
   }, true);
 })();
+</script><script>(function () {
+  'use strict';
+  if (window.htmxoUrlParams) return;
+  var SEL = '[data-htmxo-url-params]';
+  var warned = {};
+  function warn(text) {
+    if (warned[text]) return;
+    warned[text] = true;
+    console.warn('url_params: ' + text);
+  }
+  // The parameters an element declares; null when it declares none, or sits
+  // in a docs embed, whose address belongs to the host page.
+  function declared(el) {
+    if (!(el instanceof Element) || !el.hasAttribute('data-htmxo-url-params') ||
+        el.closest('.htmxo-embed')) return null;
+    try {
+      return JSON.parse(el.getAttribute('data-htmxo-url-params')).map(function (p) {
+        return { name: p[0], as: p[1], value: p[2], values: p[3] };
+      });
+    } catch (_) {
+      warn('cannot read the parameters of ' + (el.id ? '#' + el.id : el.tagName.toLowerCase()));
+      return null;
+    }
+  }
+  // A static export's file for each declared value; null on a live page.
+  function files(el) {
+    var json = el.getAttribute('data-htmxo-url-files');
+    if (json === null) return null;
+    try { return JSON.parse(json); } catch (_) { return {}; }
+  }
+  function fileFor(table, ps, vals) {
+    var node = table;
+    for (var i = 0; i < ps.length; i++) {
+      if (!ps[i].values) continue;
+      if (!node || typeof node !== 'object' || vals[i] === null ||
+          !Object.prototype.hasOwnProperty.call(node, vals[i])) return null;
+      node = node[vals[i]];
+    }
+    return typeof node === 'string' ? node : null;
+  }
+  // The values an element shows: those it was rendered with, until a request
+  // loaded it with others.
+  function shown(el, ps) {
+    var loaded = el._htmxoUrlShown || {};
+    return ps.map(function (p) { return p.name in loaded ? loaded[p.name] : p.value; });
+  }
+  // The address's value of a parameter, or null when it names none or one
+  // outside the declared values.
+  function addressValue(p) {
+    var v = new URLSearchParams(location.search).get(p.name);
+    if (v === null) return null;
+    if (p.values && p.values.indexOf(v) < 0) {
+      warn('?' + p.name + '=' + v + ' is not one of its values (' + p.values.join(', ') + '); kept as shown');
+      return null;
+    }
+    return v;
+  }
+  // What an element should show: the address's values, where it names them
+  // and the element can load them.
+  function wanted(ps, table, base) {
+    return ps.map(function (p, i) {
+      if (table && !p.values) return base[i];
+      var v = addressValue(p);
+      return v === null ? base[i] : v;
+    });
+  }
+  function byName(ps, vals) {
+    var out = {};
+    ps.forEach(function (p, i) { out[p.name] = vals[i]; });
+    return out;
+  }
+  function differs(a, b) {
+    return a.some(function (v, i) { return v !== b[i]; });
+  }
+  function carried(params, name) {
+    var v = params ? params[name] : undefined;
+    return v === undefined || v === null ? null : Array.isArray(v) ? String(v[0]) : String(v);
+  }
+
+  // A declared element's own request carries the address's values, unless the
+  // request carries the parameter itself (an `hx-vals` value from a click). In
+  // a static export it goes to that value's file.
+  document.addEventListener('htmx:configRequest', function (e) {
+    var d = e.detail, el = d.elt, ps = declared(el);
+    if (!ps) return;
+    var table = files(el), base = shown(el, ps), address = wanted(ps, table, base);
+    var vals = ps.map(function (p, i) {
+      var own = carried(d.parameters, p.as);
+      return own === null || (table && !p.values) ? address[i] : own;
+    });
+    if (table) {
+      var file = fileFor(table, ps, vals);
+      if (file === null) {
+        if (differs(vals, base)) warn('this export holds no file for ' +
+          ps.map(function (p, i) { return p.name + '=' + vals[i]; }).join('&') + '; kept as shown');
+        vals = base;
+        file = fileFor(table, ps, vals);
+      }
+      if (file !== null) d.path = file;
+      ps.forEach(function (p) { delete d.parameters[p.as]; });
+    } else {
+      var url = new URL(d.path, document.baseURI);
+      ps.forEach(function (p, i) {
+        delete d.parameters[p.as];
+        if (vals[i] === null) url.searchParams.delete(p.as);
+        else url.searchParams.set(p.as, vals[i]);
+      });
+      d.path = url.origin === location.origin ? url.pathname + url.search + url.hash : url.href;
+    }
+    d.htmxoUrlValues = byName(ps, vals);
+    d.htmxoUrlShown = byName(ps, base);
+    el._htmxoUrlSent = JSON.stringify(vals);
+  });
+
+  // An element entering the page (load, swap, Back/Forward) that shows other
+  // values than the address names loads them, unless its own `load` request
+  // already asked for them.
+  function apply(el) {
+    var ps = declared(el);
+    if (!ps) return;
+    var table = files(el), base = shown(el, ps), want = wanted(ps, table, base);
+    if (!differs(want, base) || el._htmxoUrlSent === JSON.stringify(want)) return;
+    var path = table ? fileFor(table, ps, want) : el.getAttribute('hx-get');
+    if (!path) {
+      warn((table ? 'this export holds no file for ' : 'no hx-get to load ') +
+        ps.map(function (p, i) { return p.name + '=' + want[i]; }).join('&'));
+      return;
+    }
+    htmx.ajax('GET', path, { source: el });
+  }
+  // A new version a request swapped in writes its values instead (below).
+  function loaded(el) {
+    var pending = el._htmxoUrlPending;
+    if (!pending) return apply(el);
+    delete el._htmxoUrlPending;
+    var ps = declared(el);
+    if (ps) write(byName(ps, ps.map(function (p) { return p.value; })), pending.before);
+  }
+  document.addEventListener('htmx:load', function (e) {
+    var root = e.target;
+    if (!(root instanceof Element)) return;
+    if (root.matches(SEL)) loaded(root);
+    root.querySelectorAll(SEL).forEach(loaded);
+  });
+
+  // A request that loads a declared element writes its values into the
+  // address: the request's own values, those a new version of the element was
+  // rendered with, or those a request into it asked for. Only a value that
+  // changed what the element showed, or one the address names already, is
+  // written, so a first load leaves the address as it was. The entry is
+  // replaced, keeping htmx's history state and snapshot key in step, after
+  // any `hx-push-url` of the same request. A history restore (no request)
+  // leaves the address alone.
+  function write(values, before) {
+    var url = new URL(location.href);
+    Object.keys(values).forEach(function (n) {
+      if (!url.searchParams.has(n) && before && before[n] === values[n]) return;
+      if (values[n] === null) url.searchParams.delete(n);
+      else url.searchParams.set(n, values[n]);
+    });
+    if (url.href === location.href) return;
+    history.replaceState(history.state, '', url);
+    try { sessionStorage.setItem('htmx-current-path-for-history', url.pathname + url.search); } catch (_) {}
+  }
+  function requested(el, ps, d) {
+    var table = files(el), info = d.pathInfo || {};
+    if (table) {
+      var file = new URL(info.requestPath || '', document.baseURI).href, found = null, fixed = shown(el, ps);
+      (function walk(node, vals, i) {
+        if (found) return;
+        while (i < ps.length && !ps[i].values) { vals = vals.concat([fixed[i]]); i++; }
+        if (i === ps.length) {
+          if (typeof node === 'string' && new URL(node, document.baseURI).href === file) found = vals;
+          return;
+        }
+        if (!node || typeof node !== 'object') return;
+        Object.keys(node).forEach(function (v) { walk(node[v], vals.concat([v]), i + 1); });
+      })(table, [], 0);
+      return found;
+    }
+    var query = new URL(info.finalRequestPath || info.requestPath || '', document.baseURI).searchParams;
+    if (!ps.some(function (p) { return query.has(p.as); })) return null;
+    var base = shown(el, ps);
+    return ps.map(function (p, i) { return query.has(p.as) ? query.get(p.as) : base[i]; });
+  }
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    var d = e.detail || {}, ps = declared(d.target);
+    if (ps && d.requestConfig) d.requestConfig.htmxoUrlBefore = byName(ps, shown(d.target, ps));
+  });
+  document.addEventListener('htmx:afterSwap', function (e) {
+    var d = e.detail || {}, cfg = d.requestConfig;
+    if (!cfg) return;
+    if (cfg.htmxoUrlValues && declared(cfg.elt)) {
+      if (cfg.elt.isConnected) cfg.elt._htmxoUrlShown = cfg.htmxoUrlValues;
+      write(cfg.htmxoUrlValues, cfg.htmxoUrlShown);
+    }
+    var el = e.target, ps = el === cfg.elt ? null : declared(el);
+    if (!ps) return;
+    // A new version of the element, swapped in for the target: until htmx
+    // settles it, it carries the old version's attributes when the two share
+    // an id, so its values are written once it loads (`loaded`).
+    if (el !== d.target) { el._htmxoUrlPending = { before: cfg.htmxoUrlBefore }; return; }
+    // Another element's request into this one.
+    var vals = requested(el, ps, d);
+    if (!vals) return;
+    var before = byName(ps, shown(el, ps));
+    el._htmxoUrlShown = byName(ps, vals);
+    write(el._htmxoUrlShown, before);
+  });
+
+  window.htmxoUrlParams = { apply: apply };
+})();
 </script><style>.treebar-pills { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
 .treebar-pill {
     display: inline-block;

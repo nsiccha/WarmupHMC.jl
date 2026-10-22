@@ -124,12 +124,12 @@ try
             end
             check_same_run(results)
         end
-        # Two chains each; `results` is in completion order, so compare by identity.
+        # Two chains each, compared by identity.
         pooled(out) = sort(out.results; by=c -> c.chain_index)
         @testset "cooperative_warmup_mcmc" begin
             results = runs() do p
-                chains = pooled(cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-                    init=init, n_draws=200, n_evaluations_budget=20000))
+                chains = pooled(cooperative_warmup_mcmc(Xoshiro(11), p;
+                    n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000))
                 (; fingerprint=[Matrix(c.posterior_position) for c in chains],
                    n_divergent=sum(c.n_divergent_samples for c in chains))
             end
@@ -163,8 +163,8 @@ try
         rootcause(e::TaskFailedException) = rootcause(e.task.exception)
         rootcause(e) = e
         err = try
-            cooperative_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-                init=init, n_draws=200, n_evaluations_budget=20000)
+            cooperative_warmup_mcmc(Xoshiro(11), p;
+                n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000)
         catch e
             e
         end

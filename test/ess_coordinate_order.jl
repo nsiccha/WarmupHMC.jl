@@ -89,8 +89,8 @@ try
 
     @testset "cooperative_warmup_mcmc: per-chain results" begin
         for (lpdf, kw) in ((target, (;)), (funnel_rp(), (; nonlinear_adapt=false)))
-            out = cooperative_warmup_mcmc([Xoshiro(s) for s in 1:2], lpdf;
-                n_cores=1, n_draws=300, n_evaluations_budget=400_000, kw...)
+            out = cooperative_warmup_mcmc(Xoshiro(1), lpdf;
+                n_chains=2, n_cores=1, n_draws=300, n_evaluations_budget=400_000, kw...)
             estimated = [r for r in out.results if size(r.posterior_position, 2) > 10]
             @test !isempty(estimated)
             for r in estimated

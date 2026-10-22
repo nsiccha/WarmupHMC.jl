@@ -50,12 +50,6 @@ const _INITIALIZER_KWARGS = (:ntries, :maxiters, :ndraws, :ndraws_elbo, :history
 # Keywords declared by the per-chain constructors the top-level samplers forward
 # into. A top-level sampler accepts its own declared set PLUS the set of the
 # constructor it feeds.
-const _COOPERATIVE_CHAIN_KWARGS = (
-    :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
-    :target_acceptance_rate, :max_tree_depth, :init, :variance_cond_target,
-    :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
-    :nonlinear_good_leaf_threshold, :monitor_ess, :max_window_evaluations, :progress,
-)
 const _CLUSTERED_CHAIN_KWARGS = (
     :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
     :target_acceptance_rate, :max_tree_depth, :max_window_evaluations, :init,
@@ -92,10 +86,14 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :linear_restart_source, :linear_trajectory_weighting,
         :linear_metric_fallback,
     ),
+    # Every keyword it honours is declared by its own signature: nothing is
+    # forwarded to a per-chain constructor.
     :cooperative_warmup_mcmc => (
-        :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :min_chains,
-        :max_window_evaluations, :n_draws, :nonlinear_adapt, :progress, :description,
-        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw, _COOPERATIVE_CHAIN_KWARGS...,
+        :n_chains, :n_cores, :target_ess, :n_evaluations_budget, :time_budget, :n_draws,
+        :n_evaluations, :stepsize_adaptation_limit, :target_acceptance_rate, :max_tree_depth,
+        :restart_threshold, :max_clusters, :bandwidth, :kappa_prior_weight, :kappa_decay,
+        :recording_target, :init, :nonlinear_adapt, :monitor_ess, :progress, :description,
+        :pathfinder_kw,
     ),
     :clustered_warmup_mcmc => (
         :n_draws, :max_windows, :cluster_fn, :weighting, :metric, :threshold,

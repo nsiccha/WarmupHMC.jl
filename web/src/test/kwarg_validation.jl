@@ -134,7 +134,7 @@
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; n_draw=50, init=mkinit())
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; initial_params=zeros(d), init=mkinit())
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), lpdf; parallel=false, init=mkinit())
-        @test_throws ArgumentError cooperative_warmup_mcmc(rngs(), lpdf; n_evaluations_budget=5_000,
+        @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), lpdf; n_chains=2, n_evaluations_budget=5_000,
                                                            callback=(s, stage) -> false, init=mkinit())
 
         # legitimate calls are unaffected

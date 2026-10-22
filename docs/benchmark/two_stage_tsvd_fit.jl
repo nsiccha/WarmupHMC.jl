@@ -27,111 +27,30 @@
 #              number is not flattered by in-sample overfit of a single window.
 #   refl       reflections stored (stage 1 + stage 2 for two_stage).
 #   bad_left   coordinates still at or above the reflection threshold afterwards.
-#   fit_ms     median wall time of one `update_loss!` call (BLAS single-threaded).
+#   fit_ms     wall time of one `update_loss!` call (BLAS single-threaded):
+#              median of WHMC_TSVD_REPS calls, a single call at d ≥ 400.
 
 using LinearAlgebra
 BLAS.set_num_threads(1)
-using WarmupHMC, Random, Statistics, Printf
+using Printf
+include("two_stage_tsvd_common.jl")
 
-const W = WarmupHMC
 const N_WINDOW = parse(Int, get(ENV, "WHMC_TSVD_N", "1000"))
 const N_SEEDS = parse(Int, get(ENV, "WHMC_TSVD_SEEDS", "5"))
 const DIMS = parse.(Int, split(get(ENV, "WHMC_TSVD_DIMS", "20,100,400"), ","))
 const OUT = get(ENV, "WHMC_TSVD_OUT", "")
-
-const VARIANTS = [
-    (name="current", make=W._scale_then_reflect),
-    (name="scaled", make=W._scaled_scale_then_reflect),
-    (name="two_stage", make=W._two_stage_scale_then_reflect),
-]
-
-# ── correlation structures (unit marginal variance) ──────────────────────────
-to_correlation(S) = (s = sqrt.(diag(S)); Symmetric(S ./ (s * s')))
-
-# Independent strongly correlated pairs (ρ ∈ [0.9, 0.995]): exactly separable.
-corr_pairs(rng, d) = begin
-    C = Matrix(1.0I, d, d)
-    for i in 1:2:d-1
-        C[i, i+1] = C[i+1, i] = 0.9 + 0.095rand(rng)
-    end
-    Symmetric(C)
-end
-# One shared latent factor for the first half (a hierarchical "global" effect),
-# independent coordinates for the second half.
-corr_factor(rng, d) = begin
-    w = zeros(d); w[1:d÷2] .= 1 .+ 3rand(rng, d ÷ 2)
-    to_correlation(w * w' + I)
-end
-# Dense: k = d/4 random factors.
-corr_dense(rng, d) = (Wf = randn(rng, d, max(1, d ÷ 4)); to_correlation(Wf * Wf' + 0.05I))
-# AR(1) chain, ρ = 0.95 (a random walk / time-series prior).
-corr_ar1(rng, d) = Symmetric([0.95^abs(i - j) for i in 1:d, j in 1:d])
-# Pairs plus a hub: coordinate 1 is weakly tied to many otherwise independent
-# coordinates (each tie too weak to make them bad, the sum enough to make the
-# hub bad). Built on the precision so the ties are direct.
-corr_hub(rng, d) = begin
-    m = d ÷ 2
-    Pm = Matrix(1.0I, d, d)
-    for j in 2:m
-        Pm[1, j] = Pm[j, 1] = -0.9 / sqrt(m - 1)
-    end
-    C = to_correlation(inv(Symmetric(Pm)))
-    Cm = Matrix(C)
-    for i in m+1:2:d-1
-        Cm[i, i+1] = Cm[i+1, i] = 0.97
-    end
-    Symmetric(Cm)
-end
-
-const STRUCTURES = [
-    (name="pairs", f=corr_pairs),
-    (name="factor", f=corr_factor),
-    (name="dense", f=corr_dense),
-    (name="ar1", f=corr_ar1),
-    (name="hub", f=corr_hub),
-]
-const SCALINGS = [
-    (name="equal", f=(rng, d) -> ones(d)),
-    # Log-uniform over six orders of magnitude, randomly assigned.
-    (name="spread", f=(rng, d) -> exp10.(-3 .+ 6rand(rng, d))),
-]
+const REPS = parse(Int, get(ENV, "WHMC_TSVD_REPS", "3"))
 
 window(rng, Lchol, P, n) = (x = Lchol * randn(rng, size(P, 1), n); (x, -(P * x)))
 
-dense(L) = L * Matrix{Float64}(I, size(L)...)
-kappa(L, P) = begin
-    Lm = dense(L)
-    λ = eigvals(Symmetric(Lm' * P * Lm))
-    λ[end] / λ[1]
-end
-bad_left(L, x, g; threshold=log(2)) = begin
-    z, gz = L \ x, L' * g
-    count(i -> abs2(log(std(view(z, i, :)) * std(view(gz, i, :)))) >= threshold, axes(z, 1))
-end
-
-function fit(make, x, g)
-    L = make(size(x, 1))
-    loss = W.update_loss!(L, x, g)
-    L, loss
-end
-
-# Always on copies: the shipped `update_loss!(::ScaleThenReflect)` reflects its
-# inputs in place.
-function timed_fit(make, x, g; reps=5)
-    fit(make, copy(x), copy(g))
-    ts = map(1:reps) do _
-        xc, gc = copy(x), copy(g)
-        @elapsed fit(make, xc, gc)
-    end
-    1e3median(ts)
-end
+const ROW_KEYS = (:d, :structure, :scaling, :seed, :variant, :loss, :kappa, :kappa_new,
+                  :kappa_target, :kappa_diag, :refl, :bad_left, :fit_ms)
+isempty(OUT) || open(io -> println(io, join(ROW_KEYS, '\t')), OUT, "w")
 
 rows = NamedTuple[]
 for d in DIMS, st in STRUCTURES, sc in SCALINGS, seed in 1:N_SEEDS
-    rng = Xoshiro(hash((d, st.name, sc.name, seed)))
-    C = st.f(rng, d)
-    s = sc.f(rng, d)
-    Σ = Symmetric(Diagonal(s) * C * Diagonal(s))
+    rng = Xoshiro(hash((d, st.name, sc.name, seed, :window)))
+    Σ = gaussian_covariance(st.name, sc.name, d, seed)
     P = Symmetric(inv(Σ))
     Lchol = cholesky(Σ).L
     x, g = window(rng, Lchol, P, N_WINDOW)
@@ -139,26 +58,25 @@ for d in DIMS, st in STRUCTURES, sc in SCALINGS, seed in 1:N_SEEDS
     kappa_target = (λ = eigvals(Σ); λ[end] / λ[1])
     kappa_diag = kappa(Diagonal(sqrt.(diag(Σ))), P)
     for v in VARIANTS
-        L, loss = fit(v.make, copy(x), copy(g))
-        Lf, _ = fit(v.make, copy(xf), copy(gf))
-        row = (;
-            d, structure=st.name, scaling=sc.name, seed, variant=v.name,
-            loss, kappa=kappa(L, P), kappa_new=kappa(Lf, P),
-            kappa_target, kappa_diag,
-            refl=W.n_reflections(L), bad_left=bad_left(L, x, g),
-            fit_ms=timed_fit(v.make, x, g),
-        )
+        t = @elapsed ((L, loss) = fit(v.make, x, g))
+        Lf, _ = fit(v.make, xf, gf)
+        # One timed call at large d (a fit there takes seconds); median of
+        # REPS after a warm-up otherwise.
+        fit_ms = d >= 400 ? 1e3t : timed_fit(v.make, x, g; reps=REPS)
+        row = NamedTuple{ROW_KEYS}((
+            d, st.name, sc.name, seed, v.name, loss, kappa(L, P), kappa(Lf, P),
+            kappa_target, kappa_diag, W.n_reflections(L), bad_left(L, x, g), fit_ms,
+        ))
         push!(rows, row)
+        isempty(OUT) || open(io -> println(io, join(values(row), '\t')), OUT, "a")
+        @printf("# %-4d %-7s %-7s seed=%d %-10s loss=%.3f kappa=%.3g kappa_new=%.3g refl=%d bad=%d fit_ms=%.1f\n",
+                d, st.name, sc.name, seed, v.name, row.loss, row.kappa, row.kappa_new,
+                row.refl, row.bad_left, row.fit_ms)
+        flush(stdout)
     end
 end
 
-isempty(OUT) || open(OUT, "w") do io
-    println(io, join(keys(first(rows)), '\t'))
-    foreach(r -> println(io, join(values(r), '\t')), rows)
-end
-
 # ── summary: medians over seeds ──────────────────────────────────────────────
-using Statistics: median
 println(rpad("d", 5), rpad("structure", 9), rpad("scaling", 8), rpad("variant", 10),
         lpad("loss", 8), lpad("kappa", 11), lpad("kappa_new", 11), lpad("refl", 6),
         lpad("bad", 5), lpad("fit_ms", 9), lpad("k_diag", 11))

@@ -709,8 +709,10 @@ _coop_chains_label(run::CoopRun) = begin
     "$(length(run.chains)) chains: " * join(parts, ", ") * "; $k cluster" * (k == 1 ? "" : "s")
 end
 
-_coop_batch_label(run::CoopRun) =
-    "$(run.batch): $(2^(run.batch-1)) rounds of $(short_string(run.cfg.n_evaluations)) evaluations per chain"
+_coop_batch_label(run::CoopRun) = begin
+    rounds = 2^(run.batch - 1)
+    "$(run.batch): $rounds round$(rounds == 1 ? "" : "s") of $(short_string(run.cfg.n_evaluations)) evaluations per chain"
+end
 
 _coop_pooled_ess_label(run::CoopRun) = isfinite(run.cfg.target_ess) ?
     (isnan(run.last_pooled_ess) ? "not computed yet; target $(short_string(run.cfg.target_ess))" :
@@ -728,6 +730,13 @@ _coop_seconds(seconds) = short_duration(Dates.Millisecond(round(Int, 1000 * seco
 _coop_elapsed_label(run::CoopRun) = isfinite(run.cfg.time_budget) ?
     "$(_coop_seconds(_elapsed(run))) of $(_coop_seconds(run.cfg.time_budget))" :
     "$(_coop_seconds(_elapsed(run))), no time budget"
+
+# The run's labels, made before any chain node so they render first; every later
+# `_run_progress!` updates them in place.
+_initial_run_labels!(::Nothing, cfg) = nothing
+_initial_run_labels!(progress, cfg) = update_progress!(progress, nothing;
+    chains="initializing $(cfg.n_chains) chains", batch="not started", pooled_ess="not computed yet",
+    evaluations="0", elapsed="0s")
 
 _run_progress!(run::CoopRun) = begin
     isnothing(run.progress) && return nothing
@@ -1065,6 +1074,7 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
         restart_threshold, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,
         recording_target, monitor_ess, initializer_kw=(; kwargs..., pathfinder_kw...))
     with_progress(progress; description) do progress
+        _initial_run_labels!(progress, cfg)
         run = if resume
             _restore_coop_run(checkpoint_dir, lpdf, cfg, init, progress, description, adapt_centering)
         else

@@ -99,6 +99,13 @@ public surface since then; `README.md` lists what the total now is, and
   reparametrized fit's partial results, which previously had no entry point.
 - **Keyword validation.** Unknown keywords raise `ArgumentError` instead of
   being silently forwarded and ignored.
+- **A divergence gate on the window that ends the run** (`max_divergent_fraction`,
+  default `0.5`). A run ends as soon as its retained draws reach `n_draws`,
+  without the restart test on that window. A chain that had moved on from the
+  region its kernel was adapted in could therefore return mostly divergent draws.
+  When more than that fraction of the retained draws diverged, warm-up now
+  restarts where the chain is instead. It does so at most twice per run, then
+  returns the draws with a warning, because rerunning is the caller's job.
 - Online estimators for the linear restart source and for nonlinear leaf
   evidence; NUTS leaves weighted by proposal probability.
 

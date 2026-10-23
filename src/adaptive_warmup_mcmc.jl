@@ -263,6 +263,7 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     n_draws::Int
     stepsize_adaptation_limit::Int
     variance_cond_target::Float64
+    max_divergent_fraction::Float64
     linear_restart_source::Symbol
     linear_trajectory_weighting::Symbol
     linear_metric_fallback::Bool
@@ -318,6 +319,10 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     n_divergent_samples::Int
     restart::Bool
     n_samples::Int
+    # Restarts the divergence gate has requested in this run (`_divergence_gate!`),
+    # bounded by `_MAX_DIVERGENCE_GATE_RESTARTS`. Checkpointed, so a resume keeps
+    # the bound.
+    divergence_gate_restarts::Int
     # ── draws DROPPED at the most recent restart (consumer-facing, inert on resume) ──
     # A restarting window empties the recorder (`reset!(recording_lpdf)`) and the
     # checkpoint is serialized AFTER that, so CP-N would otherwise pair complete
@@ -415,6 +420,45 @@ function _linear_restart_condition(scales)
     hi / lo
 end
 
+const _DEFAULT_MAX_DIVERGENT_FRACTION = 0.5
+const _MAX_DIVERGENCE_GATE_RESTARTS = 2
+
+_validate_max_divergent_fraction(f) = begin
+    f isa Real && 0 <= f <= 1 || throw(ArgumentError(
+        "max_divergent_fraction must be a number in [0, 1] (1 switches the " *
+        "divergence gate off); got $(repr(f))",
+    ))
+    Float64(f)
+end
+
+# The divergence gate. The window that reaches `n_draws` returns its draws without
+# the restart test, which runs only once a window has spent its evaluation budget.
+# That is deliberate: re-running that noisy test there restarts healthy runs. But a
+# chain that moved on from the region its kernel was adapted in can reach the draw
+# floor cheaply on mostly divergent transitions, under a kernel that no longer fits
+# (snag final-window-mos-3252ed56: 937 of 1000 returned draws divergent). So when
+# more than `max_divergent_fraction` of the retained draws diverged, restart warm-up
+# where the chain is instead of returning: the usual restart, which re-adapts the
+# step size and metric without moving the chain. Re-adapting cannot help a chain
+# whose position is the problem, so the gate fires at most
+# `_MAX_DIVERGENCE_GATE_RESTARTS` times per run; after that the draws are returned
+# with a warning, and rerunning is the caller's job. Returns whether it fired.
+_divergence_gate!(state::AWMState) = begin
+    state.n_divergent_samples > state.max_divergent_fraction * state.n_samples || return false
+    if state.divergence_gate_restarts >= _MAX_DIVERGENCE_GATE_RESTARTS
+        @warn "adaptive_warmup_mcmc: $(state.n_divergent_samples) of the " *
+              "$(state.n_samples) returned draws are divergent (more than " *
+              "max_divergent_fraction = $(state.max_divergent_fraction)) after " *
+              "$(state.divergence_gate_restarts) divergence-gate restarts. Re-adapting " *
+              "in place has not helped, so the chain's position is the likely " *
+              "problem: rerun, for example from different initial points."
+        return false
+    end
+    state.divergence_gate_restarts += 1
+    state.restart = true
+    true
+end
+
 # Update every linear transformation candidate from the window's evidence and
 # return the one to activate: the smallest loss. Only a finite loss is evidence —
 # `update_loss!` scores `Inf` where the window could not measure a frame's fit —
@@ -443,9 +487,11 @@ init_state(
     target_acceptance_rate, max_tree_depth, init, monitor_ess,
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
+    max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
     linear_metric_fallback=true, max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...
 ) = begin
+    max_divergent_fraction = _validate_max_divergent_fraction(max_divergent_fraction)
     _validate_linear_trajectory_weighting(linear_trajectory_weighting)
     _validate_linear_restart_source(linear_restart_source, linear_trajectory_weighting)
     start_time = time_ns()
@@ -537,6 +583,7 @@ init_state(
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     state = AWMState(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        max_divergent_fraction,
         linear_restart_source, linear_trajectory_weighting,
         linear_metric_fallback, nonlinear_adapt,
         # `max_reflections` reaches `update_loss!` through these, and never the
@@ -552,7 +599,7 @@ init_state(
         total_evaluation_counter, sampling_evaluation_counter, outer_counter,
         current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
-        restart, n_samples,
+        restart, n_samples, 0,
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
     _initial_chain_progress!(progress, current_transition_counter, state)
@@ -675,7 +722,7 @@ run_outer_iteration!(state::AWMState) = begin
         state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
         _ess_progress!(progress, state)
     end
-    state.n_samples < state.n_draws || return state
+    state.n_samples < state.n_draws || _divergence_gate!(state) || return state
     # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
     state.n_evaluations *= 2
     # Recompute the thinning factor for the intermediate positions and gradients,
@@ -799,7 +846,7 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 #   * `energy_options`/`kinetic_energy` — pure functions of `scale_options`
 #     (which they alias), rebuilt on resume;
 #   * **CONFIG** — `n_draws`, `stepsize_adaptation_limit`, `variance_cond_target`,
-#     `linear_restart_source`, `linear_trajectory_weighting`,
+#     `max_divergent_fraction`, `linear_restart_source`, `linear_trajectory_weighting`,
 #     `linear_metric_fallback`, `nonlinear_adapt`,
 #     `monitor_ess`, `recording_target`, `kwargs`, `algorithm` and
 #     `stepsize_adaptation` all used to live here. They are caller-owned
@@ -859,6 +906,10 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # from resume onward, with the pre-resume sampling cost of the live epoch
 # unrecoverable and never estimated.
 #
+# `divergence_gate_restarts` counts the restarts `_divergence_gate!` requested,
+# so a resumed run keeps its bound. ADDITIVE as well: a checkpoint written before
+# the key existed resumes with the count at zero.
+#
 # `nonlinear_recorder.mode` and `custom_candidate_scoring` are both DECLARED
 # state. The EFFECTIVE evidence mode is a function of the two rather than a
 # stored key, because a plan silently reads `:linear_pool` as online
@@ -887,7 +938,7 @@ checkpoint_payload(state::AWMState) = (;
     state.sampling_evaluation_counter,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
-    state.restart, state.n_samples,
+    state.restart, state.n_samples, state.divergence_gate_restarts,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(state.lpdf),
@@ -1314,6 +1365,7 @@ end
 # accepts the persisted `stepsize_state`.
 restore_state(p, lpdf, progress;
     n_draws=1000, stepsize_adaptation_limit=50, variance_cond_target=2.,
+    max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     linear_restart_source=nothing, linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
@@ -1372,6 +1424,7 @@ restore_state(p, lpdf, progress;
         saved_linear_recorder.adaptation : WeightedScaleAdaptation(p.dimension)
     AWMState(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        _validate_max_divergent_fraction(max_divergent_fraction),
         restored_linear_source, restored_linear_weighting,
         linear_metric_fallback, nonlinear_adapt,
         monitor_ess, p.recorder.target, (; kwargs...),
@@ -1388,7 +1441,7 @@ restore_state(p, lpdf, progress;
         p.total_evaluation_counter, get(p, :sampling_evaluation_counter, 0),
         p.outer_counter, p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
-        p.restart, p.n_samples,
+        p.restart, p.n_samples, get(p, :divergence_gate_restarts, 0),
         # Carried forward, never read back into the sampler. `get` (not `p.x`) so
         # a checkpoint written before these keys existed still resumes — they are
         # ADDITIVE, which is why `checkpoint_schema_version` does NOT move.
@@ -1440,6 +1493,14 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   eligible leaf unit exposure; `:stepsize` multiplies those weights by the
   trajectory step size. There is no adaptation-phase or validity-fraction
   branch: unit versus step-size weighting is an empirical choice throughout.
+* Ends as soon as the retained draws reach `n_draws`, without running that
+  test on the window that got there, unless more than `max_divergent_fraction`
+  (default `0.5`) of the retained draws diverged. Then the kernel no longer fits
+  where the chain is, typically because the chain moved on from the region the
+  kernel was adapted in, and warm-up restarts there instead, at most twice per
+  run. Past that bound the draws are returned with a warning: re-adapting in
+  place cannot rescue a chain whose position is the problem, and rerunning is
+  the caller's job.
 
 If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
 [`ReparametrizedProblem`](@ref), the active [`IndexedReparametrization`](@ref)
@@ -1522,6 +1583,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   centering is refit, since that happens only at a restarting window. The scales
   are computed per coordinate in the active linear transformation's frame, so
   two square roots of the same metric can restart differently.
+* `max_divergent_fraction=0.5` — the divergence gate on the window that reaches
+  `n_draws`: when more than this fraction of the retained draws diverged, warm-up
+  restarts instead of returning them (at most twice per run, see above). `1.0`
+  switches it off; `0` restarts on any divergent draw.
 * `linear_restart_source=:halo` — source for that condition number. The
   running alternatives above replace (rather than supplement) the halo-only
   criterion and retain `sum(w)` plus `sum(w^2)` for general weighted moments.
@@ -1616,6 +1681,9 @@ adaptive_warmup_mcmc(
     nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
     variance_cond_target=2.,
+    # Divergence gate on the window that reaches `n_draws`; see `_divergence_gate!`.
+    # Config, not state: a resume takes it from the call.
+    max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     linear_restart_source=nothing,
     linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
@@ -1661,7 +1729,7 @@ adaptive_warmup_mcmc(
                 nonlinear_good_leaf_threshold=something(
                     nonlinear_good_leaf_threshold, log(1e-2),
                 ),
-                variance_cond_target,
+                variance_cond_target, max_divergent_fraction,
                 linear_restart_source=something(linear_restart_source, :halo),
                 linear_trajectory_weighting=something(linear_trajectory_weighting, :unit),
                 linear_metric_fallback, max_reflections,
@@ -1673,6 +1741,7 @@ adaptive_warmup_mcmc(
             restore_state(
                 resumed, lpdf, progress;
                 n_draws, stepsize_adaptation_limit, variance_cond_target,
+                max_divergent_fraction,
                 linear_restart_source, linear_trajectory_weighting,
                 linear_metric_fallback,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,

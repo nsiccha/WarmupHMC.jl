@@ -154,7 +154,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     :n_draws, :n_evaluations, :recording_target,
     # NUTS / step-size adaptation
     :stepsize_adaptation_limit, :target_acceptance_rate, :max_tree_depth,
-    :variance_cond_target,
+    :variance_cond_target, :max_divergent_fraction,
     # linear adaptation
     :linear_restart_source, :linear_trajectory_weighting, :linear_metric_fallback,
     :max_reflections,

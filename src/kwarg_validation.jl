@@ -60,7 +60,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :target_acceptance_rate, :max_tree_depth, :init, :progress, :description,
         :monitor_ess, :nonlinear_adapt, :nonlinear_evidence,
         :nonlinear_trajectory_weighting, :nonlinear_good_leaf_threshold,
-        :variance_cond_target, :callback,
+        :variance_cond_target, :max_divergent_fraction, :callback,
         :linear_restart_source, :linear_trajectory_weighting,
         :linear_metric_fallback, :max_reflections,
         :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
@@ -75,7 +75,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :nonlinear_evidence, :nonlinear_trajectory_weighting,
         :nonlinear_good_leaf_threshold,
         :linear_restart_source, :linear_trajectory_weighting,
-        :linear_metric_fallback, :max_reflections,
+        :linear_metric_fallback, :max_reflections, :max_divergent_fraction,
     ),
     # Every keyword it honours is declared by its own signature: nothing is
     # forwarded to a per-chain constructor.

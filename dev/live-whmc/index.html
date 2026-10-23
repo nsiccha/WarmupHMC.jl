@@ -32,7 +32,7 @@
     --htmxo-error:   var(--pico-color-red-550, #e76f51);
     /* Pico has no root-level border color: `--pico-border-color` exists only
        on form controls and buttons, and its divider color
-       (`--pico-muted-border-color`) is too faint for the 2px tab frames. */
+       (`--pico-muted-border-color`) is too faint for a status banner's edge. */
     --htmxo-border:  currentColor;
     --htmxo-muted:   var(--pico-muted-color, color-mix(in srgb, currentColor 60%, transparent));
     /* Pico raises this in steps from 576 px up to 131.25% from 1536 px. Its
@@ -1092,42 +1092,50 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 .htmxo-sortable-table thead th > .htmxo-sort-control:focus-visible {
     outline: 2px solid var(--htmxo-accent, currentColor); outline-offset: .15em;
 }
-</style><style>@layer htmxo {
-.tabset > nav {
+</style><style>.tabset > nav {
+    display: block;
     margin: 0;
-    padding: 0 0 0 1rem;
-    border-bottom: 2px solid var(--htmxo-border);
+    padding: 0;
+    box-shadow: inset 0 -1px 0 var(--htmxo-tab-rule, color-mix(in srgb, currentColor 20%, transparent));
 }
-.tabset > nav ul {
-    align-self: flex-end;
-    gap: 0.25rem;
+.tabset > nav > ul {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0;
     margin: 0;
     padding: 0;
     list-style: none;
 }
-.tabset > nav ul li {
-    padding: 0;
-    margin: 0;
-}
-.tabset > nav ul li a {
+.tabset > nav > ul > li {
     display: block;
-    padding: 0.5rem 1rem;
-    border: 2px solid transparent;
-    border-bottom: none;
-    border-radius: 0.35rem 0.35rem 0 0;
-    background: transparent;
-    text-decoration: none;
+    margin: 0;
+    padding: 0;
 }
-.tabset > nav ul li a.contrast {
-    border-color: var(--htmxo-border);
+.tabset > nav > ul > li > a {
+    display: block;
+    margin: 0;
+    padding: 0.6rem 1rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0.25rem 0.25rem 0 0;
+    background: transparent;
+    color: var(--htmxo-muted);
+    text-decoration: none;
+    transition: color 0.15s ease-in-out, border-color 0.15s ease-in-out, background-color 0.15s ease-in-out;
+}
+.tabset > nav > ul > li > a:hover {
+    color: inherit;
+    border-bottom-color: color-mix(in srgb, currentColor 35%, transparent);
+    background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.tabset > nav > ul > li > a.contrast {
+    color: inherit;
+    border-bottom-color: var(--htmxo-accent);
     background: transparent;
 }
 .tabset > .tab-panel {
-    padding: 1rem;
-    border: 2px solid var(--htmxo-border);
-    border-top: none;
-    border-radius: 0 0 0.35rem 0.35rem;
-}
+    padding: 1rem 0 0;
 }
 </style><script>(() => {
     if (window.htmxoTabset) return;
@@ -4337,29 +4345,57 @@ figcaption.caption { margin-bottom: 0.5rem; }
     // below 1min, per-second up to 1h, per-minute up to 1d, per-hour beyond) so
     // the rendered string changes at most once per step and length stays stable
     // within a band.
-    function fmt(ms){
+    // The words this script writes, in English. A live region (poller
+    // wrapper, WebSocket frame, board) or a standalone tree rendered in
+    // another language carries its own in `data-treebar-texts` (the server's
+    // `treebar_texts`), and the nearest one wins.
+    var EN = {running: '{elapsed} so far', eta: 'ETA ~{eta}', polling: 'Polling', paused: 'Paused',
+        pause: 'Pause live updates', resume: 'Resume live updates', stale: 'Updated {age} ago',
+        updated: 'updated {age} ago', connection_lost: 'Connection lost',
+        updates_failing: 'Updates failing ({why})', retrying: 'retrying', ended: 'ended ({elapsed})',
+        board_pause: 'Pause', board_resume: 'Resume', unit_ms: 'ms', unit_s: 's', unit_min: 'm',
+        unit_h: 'h', unit_d: 'd', unit_space: '', decimal: '.'};
+    var parsedTexts = {};
+    function textsOf(el){
+        var src = el.closest('[data-treebar-texts]') || (el.querySelector && el.querySelector('[data-treebar-texts]'));
+        if (!src) return EN;
+        var json = src.getAttribute('data-treebar-texts');
+        if (!(json in parsedTexts)){
+            var t = {};
+            try { t = JSON.parse(json); } catch (e) {}
+            parsedTexts[json] = Object.assign({}, EN, t);
+        }
+        return parsedTexts[json];
+    }
+    function fill(template, values){
+        return template.replace(/\{([A-Za-z_]+)\}/g, function(m, k){ return k in values ? values[k] : m; });
+    }
+    function unit(n, u, T){ return n + T.unit_space + u; }
+    function fmt(ms, T){
+        T = T || EN;
         if (ms < 0) ms = 0;
-        if (ms < 100)         return ms + 'ms';
-        if (ms < 60_000)      return (Math.floor(ms / 100) / 10) + 's';
+        if (ms < 100)         return unit(ms, T.unit_ms, T);
+        if (ms < 60_000)      return unit(String(Math.floor(ms / 100) / 10).replace('.', T.decimal), T.unit_s, T);
         if (ms < 3_600_000){
             var m = Math.floor(ms / 60_000);
             var s = Math.floor(ms / 1000) % 60;
-            return m + 'm ' + s + 's';
+            return unit(m, T.unit_min, T) + ' ' + unit(s, T.unit_s, T);
         }
         if (ms < 86_400_000){
             var h = Math.floor(ms / 3_600_000);
             var m = Math.floor(ms / 60_000) % 60;
-            return h + 'h ' + m + 'm';
+            return unit(h, T.unit_h, T) + ' ' + unit(m, T.unit_min, T);
         }
         var d = Math.floor(ms / 86_400_000);
         var h = Math.floor(ms / 3_600_000) % 24;
-        return d + 'd ' + h + 'h';
+        return unit(d, T.unit_d, T) + ' ' + unit(h, T.unit_h, T);
     }
     function anchor(el){
         var ms = parseInt(el.dataset.elapsedMs, 10);
         if (isNaN(ms)) ms = 0;
         el._tbAnchor = Date.now() - ms;
         el._tbAnchoredFrom = el.dataset.elapsedMs;
+        el._tbTexts = textsOf(el);
         el._tbLast = undefined;
         // ETA (running determinate nodes only): anchor an ABSOLUTE finish target
         // so the estimate counts down smoothly between polls; each server poll
@@ -4387,11 +4423,12 @@ figcaption.caption { margin-bottom: 0.5rem; }
         // its clocks hold the last known state until an update arrives.
         if (el.closest('[data-treebar-freshness="lost"]')) return;
         if (el._tbAnchor === undefined) anchor(el);
-        var s = ' — ' + fmt(Date.now() - el._tbAnchor) + ' so far';
+        var T = el._tbTexts || EN;
+        var s = ' — ' + fill(T.running, {elapsed: fmt(Date.now() - el._tbAnchor, T)});
         // A determinate node also counts its ETA down (fmt clamps negatives to
         // 0; the next server poll re-anchors to the new estimate).
         if (el._tbEtaTarget !== undefined){
-            s += ' · ETA ~' + fmt(el._tbEtaTarget - Date.now());
+            s += ' · ' + fill(T.eta, {eta: fmt(el._tbEtaTarget - Date.now(), T)});
         }
         // Only touch the DOM when the rendered string actually changes —
         // below 1min the value steps every 100ms (matching the tick cadence,
@@ -4424,14 +4461,15 @@ figcaption.caption { margin-bottom: 0.5rem; }
         var badge = p.querySelector(':scope > .treebar-badge');
         if (!badge) return;
         var paused = p.dataset.paused === '1';
+        var T = textsOf(p);
         var btn = badge.querySelector('.treebar-pause');
         if (btn){
             btn.textContent = paused ? '▶' : '❚❚';
-            btn.setAttribute('aria-label', paused ? 'Resume live updates' : 'Pause live updates');
+            btn.setAttribute('aria-label', paused ? T.resume : T.pause);
         }
         var st = badge.querySelector('.treebar-badge-status');
         if (st){
-            var s = paused ? 'Paused' : 'Polling';
+            var s = paused ? T.paused : T.polling;
             if (st._tbLast !== s){ st.textContent = s; st._tbLast = s; }
         }
         var inner = p.querySelector(':scope > .treebar-poller-inner');
@@ -4514,12 +4552,14 @@ figcaption.caption { margin-bottom: 0.5rem; }
     // Failure never stops a region: htmx keeps its `every` timer, and the ws
     // extension reconnects after an abnormal close, so the region heals by
     // itself when the server returns. Regions: a .treebar-poller (the
-    // requests of its own .treebar-poller-inner), a live .treebar-board (its
+    // requests of its own .treebar-poller-inner, or the answers a push
+    // source hands to treebarUpdatePoller), a live .treebar-board (its
     // .treebar-board-poll requests, or the boards a WebSocket pushes), and a
     // WebSocket source carrying .treebar-ws-frame frames.
     var STALE_MS = 5000, LOST_MS = 5000;
-    function markOk(r){
-        r._tbOkAt = Date.now();
+    // `at` is when the server confirmed the region, if not just now.
+    function markOk(r, at){
+        r._tbOkAt = at === undefined ? Date.now() : at;
         r._tbFailSince = 0;
         r._tbSettled = false;
     }
@@ -4550,11 +4590,13 @@ figcaption.caption { margin-bottom: 0.5rem; }
     }
     function freshnessText(r, state, now){
         if (!state) return '';
+        var T = textsOf(r);
         var ms = now - r._tbOkAt;
-        var age = 'updated ' + (ms < 60_000 ? Math.floor(ms / 1000) + 's' : fmt(ms)) + ' ago';
-        if (state === 'stale') return 'U' + age.slice(1);
-        return (r._tbFailWhy ? 'Updates failing (' + r._tbFailWhy + ')' : 'Connection lost') + ' · ' + age +
-            (r._tbRetrying && r.dataset.paused !== '1' ? ' · retrying' : '');
+        var age = ms < 60_000 ? unit(Math.floor(ms / 1000), T.unit_s, T) : fmt(ms, T);
+        if (state === 'stale') return fill(T.stale, {age: age});
+        return (r._tbFailWhy ? fill(T.updates_failing, {why: r._tbFailWhy}) : T.connection_lost) +
+            ' · ' + fill(T.updated, {age: age}) +
+            (r._tbRetrying && r.dataset.paused !== '1' ? ' · ' + T.retrying : '');
     }
     function freshnessSpans(r){
         if (r.classList.contains('treebar-poller')) return r.querySelectorAll(':scope > .treebar-badge .treebar-freshness');
@@ -4648,6 +4690,78 @@ figcaption.caption { margin-bottom: 0.5rem; }
     document.addEventListener('htmx:wsError', function(evt){
         socketRegions(evt.target).forEach(function(r){ markFail(r, '', true); });
     });
+    // --- Pushed pollers -----------------------------------------------------
+    // A push source (a server-sent-events stream, a custom socket) can feed
+    // a poller in place of its own polls. window.treebarUpdatePoller(el,
+    // html) applies one pushed answer, the response a poll would have
+    // received, exactly as htmx applies a poll answer (so terminalization
+    // and every htmx:afterSwap listener run unchanged), and confirms the
+    // poller live. Called without html it only confirms that the shown
+    // answer is still current: a heartbeat. The first call puts the poller
+    // in push mode: its own polls are suspended (see the pause hook below)
+    // and a poll already in flight is aborted, so a late poll answer cannot
+    // replace a newer pushed one. While the viewer has paused the poller,
+    // the newest pushed answer is held and shown on resume; meanwhile the
+    // shown state ages as a paused polled one does.
+    // window.treebarPollerLost(el, why) ends push mode: the poller falls
+    // back to its own polls, which retry by themselves, and reads
+    // "Connection lost" (empty `why`) or "Updates failing (why)" once those
+    // have failed for 5s too. `el` is the poller wrapper or any element in
+    // it. Both return false once it is no longer a live poller (finished,
+    // failed or removed), which tells the source to stop pushing to it.
+    var heldPollers = new Set();
+    // The polling inner of the live poller `el` is in, or null. A finished
+    // poller nested in a live one must not resolve to the outer one.
+    function pushTarget(el){
+        var p = el.closest('.treebar-poller, .treebar-terminal');
+        if (!p || !p.isConnected || !p.classList.contains('treebar-poller')) return null;
+        return p.querySelector(':scope > .treebar-poller-inner[hx-trigger]');
+    }
+    function applyPushed(inner, html, at){
+        var p = inner.parentElement;
+        // The settle delay htmx gives the inner's own hx-swap="outerHTML".
+        if (html != null) htmx.swap(inner, html,
+            {swapStyle: 'outerHTML', settleDelay: htmx.config.defaultSettleDelay},
+            {select: inner.getAttribute('hx-select'), contextElement: inner});
+        markOk(p, at);
+    }
+    window.treebarUpdatePoller = function(el, html){
+        var inner = pushTarget(el);
+        if (!inner) return false;
+        var p = inner.parentElement, at = Date.now();
+        if (!p._tbPushed){
+            p._tbPushed = true;
+            htmx.trigger(inner, 'htmx:abort');
+        }
+        if (p.dataset.paused === '1'){
+            p._tbHeld = {html: html != null ? html : p._tbHeld && p._tbHeld.html, at: at};
+            heldPollers.add(p);
+        } else applyPushed(inner, html, at);
+        return true;
+    };
+    window.treebarPollerLost = function(el, why){
+        var inner = pushTarget(el);
+        if (!inner) return false;
+        var p = inner.parentElement;
+        if (p._tbPushed){
+            p._tbPushed = false;
+            // The resumed polls bring the next answer.
+            p._tbHeld = undefined;
+            heldPollers.delete(p);
+            markFail(p, why || '', true);
+        }
+        return true;
+    };
+    // Run by the ticker: show what was held for a poller the viewer resumed.
+    function flushHeld(){
+        heldPollers.forEach(function(p){
+            if (p.isConnected && p.dataset.paused === '1') return;
+            heldPollers.delete(p);
+            var held = p._tbHeld, inner = pushTarget(p);
+            p._tbHeld = undefined;
+            if (inner) applyPushed(inner, held.html, held.at);
+        });
+    }
     // Lazy prune: removals and terminalizations drop out on the next tick.
     function runningAlive(el){
         if (!el.isConnected || el.dataset.treebarStatus !== 'running'){ liveRunning.delete(el); return false; }
@@ -4673,6 +4787,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
         });
     }
     function tickAll(){
+        flushHeld();
         liveRunning.forEach(function(el){ if (runningAlive(el)) tick(el); });
         syncAllBadges();
         paintRegions();
@@ -4812,7 +4927,8 @@ figcaption.caption { margin-bottom: 0.5rem; }
             if (hd){
                 var ms = hd._tbAnchor !== undefined ? Date.now() - hd._tbAnchor : parseInt(hd.dataset.elapsedMs, 10) || 0;
                 hd.dataset.treebarStatus = 'ended';
-                hd.textContent = ' — ended (' + fmt(ms) + ')';
+                var T = textsOf(board);
+                hd.textContent = ' — ' + fill(T.ended, {elapsed: fmt(ms, T)});
             }
             var tree = item.querySelector('.treebar-board-tree');
             if (tree) tree.classList.add('treebar-frozen');
@@ -4924,7 +5040,8 @@ figcaption.caption { margin-bottom: 0.5rem; }
         if (item) item.dataset.open = d.open ? '1' : '0';
     }, true);
     // Pause: cancel a poller's own `every Xs` poll request while its wrapper
-    // is data-paused. Scoped to the .treebar-poller-inner element, so the
+    // is data-paused, or while a push source feeds it (see "Pushed pollers").
+    // Scoped to the .treebar-poller-inner element, so the
     // Stop/cancel request (a different element) still fires when paused. The
     // `every` timer keeps rescheduling, so resume needs no re-arming. Keyed
     // on closest('.treebar-poller') → self-contained per poller (nested
@@ -4933,7 +5050,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
         var el = evt.detail && evt.detail.elt;
         if (el && el.classList.contains('treebar-poller-inner')){
             var p = el.closest('.treebar-poller');
-            if (p && p.dataset.paused === '1') evt.preventDefault();
+            if (p && (p.dataset.paused === '1' || p._tbPushed)) evt.preventDefault();
         }
         // A board's poll element pauses the same way, keyed on its board.
         if (el && el.classList.contains('treebar-board-poll')){

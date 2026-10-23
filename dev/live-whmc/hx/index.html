@@ -1109,8 +1109,8 @@ function htmxoGroupDragEnd(e) {
 // several groups gets a copy per group; leaves the grouping leaves out wait in
 // `template[data-htmxo-unplaced]`. The wrapper's `data-htmxo-regroup` says how
 // (grouping names, flat name, nested or not, the `group_summary` columns).
-// Keep `htmxoRegroup`, `htmxoFormatNumber` and `htmxoGroupPillsSync` in step
-// with that function, `_md_format_number` and `_md_group_pills`.
+// Keep `htmxoRegroup`, `htmxoFixed` and `htmxoGroupPillsSync` in step
+// with that function, `_format_fixed` and `_md_group_pills`.
 function htmxoRegroupConfig(wrapper) {
     if (wrapper.htmxoRegroupSource !== wrapper.dataset.htmxoRegroup) {
         wrapper.htmxoRegroupSource = wrapper.dataset.htmxoRegroup;
@@ -1128,7 +1128,7 @@ function htmxoJsonString(s) {
 }
 function htmxoJsonList(xs) { return '[' + xs.map(htmxoJsonString).join(',') + ']'; }
 // A group summary over its leaves' inputs (`_md_summary_value`), folded left
-// to right, and written as the table writes numbers (`_md_format_number`).
+// to right, and written as the table writes numbers (`_format_fixed`).
 function htmxoSummaryValue(reduce, inputs) {
     if (reduce === 'count') return inputs.length;
     if (reduce === 'ratio') {
@@ -1143,17 +1143,16 @@ function htmxoSummaryValue(reduce, inputs) {
     const sum = xs.reduce((a, b) => a + b);
     return reduce === 'mean' ? sum / xs.length : sum;
 }
-function htmxoFormatNumber(el, x, digits) {
-    if (x === null || x === undefined) return '';
+function htmxoFixed(x, digits, decimal, thousands) {
     const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
     const s = BigInt(scaled).toString().padStart(digits + 1, '0');
-    const whole = s.slice(0, s.length - digits), thousands = htmxoText(el, 'thousands');
+    const whole = s.slice(0, s.length - digits);
     let out = x < 0 && scaled !== 0 ? '-' : '';
     for (let i = 0; i < whole.length; i++) {
         if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
         out += whole[i];
     }
-    return digits > 0 ? out + htmxoText(el, 'decimal') + s.slice(s.length - digits) : out;
+    return digits > 0 ? out + decimal + s.slice(s.length - digits) : out;
 }
 // Give a leaf's rows the row key `safe`: the ids, the row's own toggle call
 // (`master_detail_toggle_js`) and the controls naming its detail.
@@ -1245,9 +1244,17 @@ function htmxoRegroup(wrapper, levels) {
         if ('htmxoSearch' in row.dataset) row.dataset.htmxoSearch = name;
         row.querySelector('[data-htmxo-group-label]').textContent = name;
         row.querySelector('[data-htmxo-group-count]').textContent = '(' + list.length + ')';
+        // `_md_summary_cell`: the shown summary, and the CSV's number.
         cfg.summary.forEach((s, i) => {
-            row.querySelector('[data-htmxo-group-summary="' + i + '"]').textContent =
-                htmxoFormatNumber(table, htmxoSummaryValue(s.reduce, list.map(m => m.values[i])), s.digits);
+            const cell = row.querySelector('[data-htmxo-group-summary="' + i + '"]');
+            const x = htmxoSummaryValue(s.reduce, list.map(m => m.values[i]));
+            if (x === null) {
+                cell.textContent = '';
+                cell.removeAttribute('data-htmxo-number');
+            } else {
+                cell.textContent = htmxoFixed(x, s.digits, htmxoText(table, 'decimal'), htmxoText(table, 'thousands'));
+                cell.dataset.htmxoNumber = htmxoFixed(x, s.digits, '.', '');
+            }
         });
         fresh.add(row);
         return id;

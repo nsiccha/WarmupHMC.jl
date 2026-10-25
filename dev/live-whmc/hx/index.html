@@ -161,7 +161,7 @@ function htmxoTableFilter(target, name, predicate) {
 // Set a table's query as if typed ('' clears it) and filter.
 function htmxoTableSearch(target, query) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     root.htmxoSearchSeen = true;
     if (input) input.value = query;
     htmxoFilterTable(root);
@@ -182,7 +182,7 @@ function htmxoLazyLeaves(row) {
 
 function htmxoFilterTable(target) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const table = root.querySelector('table');
     const all = Array.from(table.tBodies[0].rows);
     const rows = all.filter(r => !r.id.startsWith('detail-'));
@@ -297,7 +297,7 @@ function htmxoFilterTable(target) {
     items.forEach(item => { if (item.shown) shown++; else hiddenBy[item.by] = (hiddenBy[item.by] || 0) + 1; });
     const detail = {shown, total: items.size, query, hiddenBy, notes: []};
     root.dispatchEvent(new CustomEvent('htmxo:table-filtered', {bubbles: true, detail}));
-    const count = root.querySelector(':scope > label > [data-htmxo-table-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > label > [data-htmxo-table-count]');
     if (count) count.textContent = htmxoText(root, 'count', {shown: detail.shown, total: detail.total}) +
         detail.notes.map(note => ' · ' + note).join('');
     root.querySelector(':scope > [data-htmxo-table-empty]').hidden = visible.size !== 0;
@@ -307,7 +307,7 @@ function htmxoFilterTable(target) {
 // search is active, the matching paths (see `htmxoFilterTable`).
 function htmxoTreeAll(button, open) {
     const root = htmxoSearchRoot(button);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const searching = Boolean(input && input.value.trim());
     if (searching) {
         if (open) delete root.dataset.htmxoSearchCollapsed;
@@ -379,7 +379,7 @@ function htmxoTreeToggle(button) {
     htmxoFilterTable(row);
 }
 function htmxoTreeRow(row, event) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     const button = row.querySelector('[data-htmxo-tree-toggle]');
     if (button && !button.disabled) htmxoTreeToggle(button);
 }
@@ -775,6 +775,80 @@ if (!window.htmxoSearchBound) {
 // htmx load event: restore what is already in the document.
 if (document.body) htmxoSearchRestore(document.body);
 
+// --- Sticky toolbar and header: `sortable_table(...; sticky=true)` ---
+// The header sticks just below its table's toolbar, so the toolbar's height
+// goes into `--htmxo-table-toolbar-h` on its parent and the header's into
+// `--htmxo-table-head-h` on the table (rows scroll into view below both). A
+// `.table-wrap` is `data-htmxo-width="fits"` while its table fits it, which
+// drops the sideways scroll box so the header can stick to the window, else
+// `"wide"`: a window-tall box scrolling both ways with the header at its top.
+// Measurements run in a task of their own, never inside the observer's
+// callback, whose layout changes would re-notify in the same frame; a newly
+// found element is measured that way too, without waiting for the
+// observer's first notice. A table inside another table's cell does not
+// stick to the window, but its wrapper is measured all the same, so a wide
+// one becomes that box too, sized to fit below the outer table's line and
+// header. Its own line and header are not measured: its rows keep scrolling
+// into view below the outer ones, whose heights they inherit.
+window.htmxoStickyTracked = window.htmxoStickyTracked || new Set();
+function htmxoStickyMeasure(el) {
+    if (!el.isConnected) return;
+    if (el.classList.contains('htmxo-table-toolbar')) {
+        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', el.offsetHeight + 'px');
+        return;
+    }
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    if (!table.parentElement.closest('td, th'))
+        table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
+    const wrap = table.parentElement;
+    if (!wrap.classList.contains('table-wrap')) return;
+    const width = wrap.scrollWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+    if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
+}
+function htmxoStickyQueue(el) {
+    (window.htmxoStickyPending || (window.htmxoStickyPending = new Set())).add(el);
+    if (window.htmxoStickyFrame) return;
+    window.htmxoStickyFrame = setTimeout(() => {
+        window.htmxoStickyFrame = 0;
+        const pending = Array.from(window.htmxoStickyPending);
+        window.htmxoStickyPending.clear();
+        pending.forEach(htmxoStickyMeasure);
+    }, 0);
+}
+// Observe the sticky toolbars and tables in `elt` (and the table wrappers,
+// whose width changes alone when a wide table's window widens); forget
+// elements that have left the document.
+function htmxoStickyTrack(elt) {
+    if (!elt || !elt.querySelectorAll || typeof ResizeObserver !== 'function') return;
+    const tracked = window.htmxoStickyTracked;
+    const ro = window.htmxoStickyObserver || (window.htmxoStickyObserver =
+        new ResizeObserver(entries => entries.forEach(e => htmxoStickyQueue(e.target))));
+    tracked.forEach(el => { if (!el.isConnected) { ro.unobserve(el); tracked.delete(el); } });
+    // No top-level `const`: this file may run more than once per page.
+    const sticky = '.htmxo-table-toolbar[data-htmxo-sticky], table[data-htmxo-sticky]';
+    const found = Array.from(elt.querySelectorAll(sticky));
+    if (elt.matches && elt.matches(sticky)) found.push(elt);
+    found.forEach(el => {
+        if (!el.isConnected || (el.tagName !== 'TABLE' && el.parentElement.closest('td, th'))) return;
+        const wrap = el.tagName === 'TABLE' && el.parentElement.classList.contains('table-wrap') ? el.parentElement : null;
+        [el, wrap].forEach(t => {
+            if (!t) return;
+            if (!tracked.has(t)) { tracked.add(t); ro.observe(t); }
+            htmxoStickyQueue(t);
+        });
+    });
+}
+if (!window.htmxoStickyBound) {
+    window.htmxoStickyBound = true;
+    document.addEventListener('htmx:load', e => htmxoStickyTrack(e.target));
+    // A morph keeps the elements but drops the measured values the server
+    // did not render: measure every tracked element again.
+    document.addEventListener('htmx:afterSettle', () => window.htmxoStickyTracked.forEach(htmxoStickyQueue));
+    document.addEventListener('DOMContentLoaded', () => htmxoStickyTrack(document.body));
+}
+if (document.body) htmxoStickyTrack(document.body);
+
 // --- Row selection: `selectable` on sortable_table / master_detail_table ---
 // State is keyed per selection (input name, form, page path) and per row key,
 // never held by row elements, so it survives sorting, filtering, a row's
@@ -876,7 +950,8 @@ function htmxoSelectionUpdate(root) {
     const hidden = filtered + folded;
     const notes = [filtered && htmxoText(root, 'selected_filtered', {count: filtered}),
         folded && htmxoText(root, 'selected_collapsed', {count: folded})].filter(Boolean);
-    const count = root.querySelector(':scope > div > .htmxo-selection-bar > [data-htmxo-selection-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count], ' +
+        ':scope > .htmxo-searchable-table > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count]');
     if (count) count.textContent = htmxoText(root, 'selected', {count: selected.length + unloaded.length}) +
         (notes.length ? ' (' + notes.join(', ') + ')' : '');
     document.querySelectorAll('[data-htmxo-needs-selection]').forEach(control => {
@@ -974,18 +1049,17 @@ function htmxoSelectionKeydown(root, row, e) {
 }
 
 // The selectable row an event targets, unless it lands on a control of its
-// own (a link, button, input, label, per-row form, …), which keeps its own
-// behaviour. Returns [root, row] or null.
+// own (`htmxoRowControl`), which keeps its own behaviour. Returns [root, row]
+// or null.
 function htmxoSelectionTarget(e) {
     const row = e.target.closest && e.target.closest('tr[aria-selected]');
     const root = row && row.closest('[data-htmxo-select]');
     if (!root || !htmxoSelectionRows(root).includes(row)) return null;
-    const control = e.target.closest('a,button,input,textarea,select,label,form,summary,[contenteditable]');
-    return control && row.contains(control) ? null : [root, row];
+    return htmxoRowControl(row, e.target) ? null : [root, row];
 }
 // The search query a regroup carries to the re-rendered table.
 function htmxoGroupedQuery(el) {
-    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > label > input[type="search"]');
+    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > .htmxo-table-toolbar > label > input[type="search"]');
     return input ? input.value : '';
 }
 // The `group_by` values that render a regroupable table's current grouping
@@ -1366,7 +1440,7 @@ function htmxoSelectionRestore(elt) {
     const aroundSearch = !window.htmxoRowsUpdating && elt.closest && elt.closest('.htmxo-searchable-table');
     if (aroundSearch) searches.push(aroundSearch);
     searches.forEach(r => {
-        const input = r.querySelector(':scope > label > input[type="search"]');
+        const input = r.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
         if (input && input.value.trim()) htmxoFilterTable(r);
     });
     const roots = new Set(elt.querySelectorAll('[data-htmxo-select]'));
@@ -1594,8 +1668,18 @@ function htmxoText(el, name, values) {
     }
     return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
 }
+// The control of its own that a click inside `row` landed on (a link, button,
+// form field, label, per-row form, <details> drop-out or editable text), which
+// keeps its own behaviour instead of toggling or selecting the row; null for a
+// click on the row itself. Only a control inside the row counts, so a table
+// inside a <form> or a <details> still toggles. The row toggle, the tree row
+// and row selection all ask this.
+function htmxoRowControl(row, target) {
+    var control = target.closest && target.closest('a,button,input,textarea,select,label,form,details,[contenteditable]');
+    return control && row.contains(control) ? control : null;
+}
 function htmxoMdToggle(row, event, key, slot) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
     var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
     htmxoMdShow(row, d, show);

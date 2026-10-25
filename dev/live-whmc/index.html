@@ -201,12 +201,44 @@ details summary[role=button]:not(.secondary, .contrast)::after,
             t.classList.add('htmx-request-active');
         });
     });
+    // Whether the answer htmx is swapping belongs to a request the reader
+    // started. An answer's out-of-band swaps run inside its swap, between its
+    // beforeSwap and its afterSwap; the swap of an SSE or WebSocket message,
+    // or of a diverted terminal (its beforeSwap is the terminal poll's),
+    // is no reader's request.
+    var readerSwap = false;
+    document.body.addEventListener('htmx:beforeSwap', function(e) {
+        var elt = requester(e);
+        readerSwap = !!(elt && e.detail.requestConfig) && !isAutomatic(e, elt);
+    });
+    ['htmx:afterSwap', 'htmx:afterRequest'].forEach(function(name) {
+        document.body.addEventListener(name, function() { readerSwap = false; });
+    });
+    // htmx 2.0.8 announces an answer's k-th out-of-band swap on every element
+    // the answer has swapped in so far (its main target and the elements its
+    // outerHTML swaps inserted), so N `hx-swap-oob="true"` elements fire
+    // N(N+1)/2 + N oobAfterSwap events. Every announcement of one swap
+    // carries that swap's own detail object: mark once per detail.
+    var oobMarked = new WeakSet();
+    var oobPending = [];
     document.body.addEventListener('htmx:oobAfterSwap', function(e) {
-        var t = e.detail.target || e.detail.elt;
-        if (!t) return;
-        clearFeedback(t);
-        t.classList.add('htmx-request-success');
-        setTimeout(function() { clearFeedback(t); }, 1000);
+        if (!readerSwap || oobMarked.has(e.detail)) return;
+        oobMarked.add(e.detail);
+        // The detail's target is the element before the swap: an outerHTML
+        // swap (`hx-swap-oob="true"`) has replaced it, so mark the element
+        // that took its id.
+        var t = e.detail.target;
+        if (t && !t.isConnected) t = t.id ? document.getElementById(t.id) : null;
+        if (t) oobPending.push(t);
+    });
+    // Until a swap settles, an element that took an old one's id wears the
+    // old one's settled attributes (`htmx.config.attributesToSettle`, class
+    // among them); settling gives it back its own, which would drop a mark
+    // set before. So the marks wait for the settle.
+    document.body.addEventListener('htmx:afterSettle', function() {
+        var settled = oobPending;
+        oobPending = [];
+        settled.forEach(function(t) { if (t.isConnected) mark(t, 'success'); });
     });
     function finished(e) {
         var elt = requester(e);
@@ -1092,6 +1124,42 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
 .htmxo-sortable-table thead th > .htmxo-sort-control:focus-visible {
     outline: 2px solid var(--htmxo-accent, currentColor); outline-offset: .15em;
 }
+
+/* A table's own controls (the search field with its count, Group by,
+   Expand/Collapse all, the selection bar) share one line, wrapping only when
+   the window is too narrow. With `sticky=true` (the default) the line stays
+   at the top of the window while its table is in view, with the column
+   headers just below it; `--htmxo-sticky-top` moves both below an app's own
+   sticky header. The table runtime measures the line
+   (`--htmxo-table-toolbar-h`) and the header (`--htmxo-table-head-h`), and
+   marks a `.table-wrap` whose table fits it `data-htmxo-width="fits"` (no
+   sideways scroll box, so the header sticks to the window) or `"wide"` (a
+   window-tall box scrolling both ways, its header stuck at the box top);
+   without the runtime the wrapper keeps its sideways scroll. A table inside
+   another table's cell does not stick to the window; a wide one is that box
+   too, as tall as the window below the outer table's line and header, with
+   its header at the box top beneath the outer one, on the line's background
+   (Pico's translucent row stripes reach a nested header through the outer
+   row). UNLAYERED: Pico styles `label`, `input` and `small` unlayered. */
+.htmxo-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem 1rem; margin: 0 0 calc(var(--pico-spacing, 1rem) / 2); }
+.htmxo-table-toolbar[hidden], .htmxo-table-toolbar > label[hidden] { display: none; }
+.htmxo-table-toolbar > * { margin: 0; }
+.htmxo-table-toolbar > label { display: flex; flex: 1 1 22rem; align-items: center; gap: .5rem; font-size: .875em; }
+.htmxo-table-toolbar > label > input[type="search"] { flex: 1 1 8rem; width: auto; min-width: 8rem; height: auto; margin: 0; padding-block: .3em; font-size: inherit; }
+.htmxo-table-toolbar > label > small { display: inline; width: auto; margin: 0; font-size: inherit; white-space: nowrap; }
+.htmxo-table-toolbar > .htmxo-tree-controls, .htmxo-table-toolbar > .htmxo-selection-bar { margin: 0; }
+.htmxo-table-toolbar[data-htmxo-sticky] { position: sticky; top: var(--htmxo-sticky-top, 0px); z-index: 3; padding-block: .35rem; background: var(--htmxo-sticky-bg, var(--pico-background-color, Canvas)); }
+table[data-htmxo-sticky] > thead { position: sticky; top: calc(var(--htmxo-sticky-top, 0px) + var(--htmxo-table-toolbar-h, 0px)); z-index: 2; }
+table[data-htmxo-sticky] > tbody > tr { scroll-margin-top: calc(var(--htmxo-sticky-top, 0px) + var(--htmxo-table-toolbar-h, 0px) + var(--htmxo-table-head-h, 0px)); }
+.table-wrap[data-htmxo-width="fits"] { overflow: visible; }
+.table-wrap[data-htmxo-width="wide"] { overflow: auto; max-height: calc(100vh - var(--htmxo-sticky-top, 0px) - var(--htmxo-table-toolbar-h, 0px)); max-height: calc(100dvh - var(--htmxo-sticky-top, 0px) - var(--htmxo-table-toolbar-h, 0px)); }
+.table-wrap[data-htmxo-width="wide"] > table[data-htmxo-sticky] > thead { top: 0; }
+.table-wrap[data-htmxo-width="wide"] > table[data-htmxo-sticky] > tbody > tr { scroll-margin-top: var(--htmxo-table-head-h, 0px); }
+:is(td, th) .htmxo-table-toolbar[data-htmxo-sticky], :is(td, th) table[data-htmxo-sticky] > thead { position: static; }
+:is(td, th) .table-wrap[data-htmxo-width="wide"] { max-height: calc(100vh - var(--htmxo-sticky-top, 0px) - var(--htmxo-table-toolbar-h, 0px) - var(--htmxo-table-head-h, 0px)); max-height: calc(100dvh - var(--htmxo-sticky-top, 0px) - var(--htmxo-table-toolbar-h, 0px) - var(--htmxo-table-head-h, 0px)); }
+:is(td, th) .table-wrap[data-htmxo-width="wide"] > table[data-htmxo-sticky] > thead { position: sticky; z-index: 1; }
+:is(td, th) .table-wrap[data-htmxo-width="wide"] > table[data-htmxo-sticky] > thead th { background-color: var(--htmxo-sticky-bg, var(--pico-background-color, Canvas)); }
+:is(td, th) .table-wrap[data-htmxo-width="wide"] > table[data-htmxo-sticky] > tbody > tr { scroll-margin-top: calc(var(--htmxo-sticky-top, 0px) + var(--htmxo-table-toolbar-h, 0px) + var(--htmxo-table-head-h, 0px)); }
 </style><style>.tabset > nav {
     display: block;
     margin: 0;
@@ -1474,8 +1542,18 @@ function htmxoText(el, name, values) {
     }
     return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
 }
+// The control of its own that a click inside `row` landed on (a link, button,
+// form field, label, per-row form, <details> drop-out or editable text), which
+// keeps its own behaviour instead of toggling or selecting the row; null for a
+// click on the row itself. Only a control inside the row counts, so a table
+// inside a <form> or a <details> still toggles. The row toggle, the tree row
+// and row selection all ask this.
+function htmxoRowControl(row, target) {
+    var control = target.closest && target.closest('a,button,input,textarea,select,label,form,details,[contenteditable]');
+    return control && row.contains(control) ? control : null;
+}
 function htmxoMdToggle(row, event, key, slot) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
     var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
     htmxoMdShow(row, d, show);
@@ -2170,11 +2248,105 @@ if (!window.htmxoComparisonInstalled) {
     return v === undefined || v === null ? null : Array.isArray(v) ? String(v[0]) : String(v);
   }
 
+  // The controls outside an element that show its values: a `select`, a group
+  // of radio buttons or another `input` that holds a value, named as a
+  // parameter is sent, at or inside a `from:` source of the element's
+  // `hx-trigger` or an `hx-include` target, as htmx resolves them. Controls
+  // inside the element are rendered with it. Without them a static export's
+  // selector kept its rendered value beside the address's view (snag
+  // static-url-param-c083f416).
+  var api = null, NO_VALUE = /^(checkbox|file|button|submit|reset|image)$/;
+  function controls(el, ps) {
+    if (!api && window.htmx) htmx.defineExtension('htmxo-url-params', { init: function (a) { api = a; } });
+    var found = ps.map(function () { return []; });
+    if (!api) return found;
+    var sources = included(el);
+    api.getTriggerSpecs(el).forEach(function (spec) {
+      if (spec.from) sources = sources.concat(targets(el, spec.from));
+    });
+    sources.forEach(function (s) {
+      var root = s === window ? document : s;
+      if (!root || !root.querySelectorAll) return;
+      var all = Array.prototype.slice.call(root.querySelectorAll('select, input'));
+      if (root instanceof Element && root.matches('select, input')) all.push(root);
+      all.forEach(function (c) {
+        if (el.contains(c) || (c.tagName === 'SELECT' ? c.multiple : NO_VALUE.test(c.type))) return;
+        ps.forEach(function (p, i) { if (c.name === p.as && found[i].indexOf(c) < 0) found[i].push(c); });
+      });
+    });
+    return found;
+  }
+  // The nodes an htmx selector names: of each comma-separated part (`<…/>`
+  // keeps its commas), the node htmx's API resolves it to (`closest form`,
+  // `next`, `document`, or a CSS selector's first match) and, for a CSS
+  // selector, every match. A form of htmx's own is no CSS selector, or one
+  // that matches nothing (`closest <form/>`, `next`).
+  function targets(el, selector) {
+    var out = [], parts = [], depth = 0, start = 0, root = el.getRootNode();
+    for (var i = 0; i <= selector.length; i++) {
+      var c = selector[i];
+      if (i === selector.length || (c === ',' && depth === 0)) { parts.push(selector.slice(start, i).trim()); start = i + 1; }
+      else if (c === '<') depth++;
+      else if (c === '/' && selector[i + 1] === '>') depth--;
+    }
+    parts.forEach(function (part) {
+      if (!part) return;
+      var first = api.querySelectorExt(el, part), all = [];
+      if (first) out.push(first);
+      try { all = root.querySelectorAll(part.replace(/^<(.*)\/>$/, '$1')); }
+      catch (err) { if (err.name !== 'SyntaxError') throw err; }
+      Array.prototype.push.apply(out, all);
+    });
+    return out;
+  }
+  // An element's `hx-include` targets: inherited, `this`, and `inherit`
+  // adding those of the ancestor it names, as htmx's own lookup does.
+  function included(el) {
+    var value = api.getClosestAttributeValue(el, 'hx-include');
+    if (!value) return [];
+    if (value === 'this') return [api.findThisElement(el, 'hx-include')];
+    var out = targets(el, value), up = el.parentElement;
+    up = /(^|,)\s*inherit\s*($|,)/.test(value) && up && up.closest('[hx-include], [data-hx-include]');
+    return up ? out.concat(included(up)) : out;
+  }
+  // Shows an element's values in its controls, without a `change` event,
+  // which would request the element again. A parameter whose control a reader
+  // changed after the request that brought the values began (`since`) keeps
+  // the reader's value: their change brings its own version. A value a
+  // control cannot show leaves it as it is, with a console warning.
+  var edits = 0;
+  ['input', 'change'].forEach(function (type) {
+    document.addEventListener(type, function (e) { if (e.target) e.target._htmxoUrlEdit = ++edits; }, true);
+  });
+  function follow(el, ps, vals, since) {
+    var found = controls(el, ps);
+    ps.forEach(function (p, i) {
+      var v = vals[i], cs = found[i];
+      if (v === null || cs.some(function (c) { return since !== undefined && (c._htmxoUrlEdit || 0) > since; })) return;
+      var radios = cs.filter(function (c) { return c.type === 'radio'; });
+      cs.forEach(function (c) {
+        if (c.type === 'radio' || c.value === v) return;
+        var old = c.value;
+        c.value = v;
+        if (c.value !== v) { c.value = old; cannot(c, p, v); }
+      });
+      var hits = radios.filter(function (c) { return c.value === v; });
+      if (hits.length) hits.forEach(function (c) { c.checked = true; });
+      else if (radios.length) cannot(radios[0], p, v);
+    });
+  }
+  function cannot(c, p, v) {
+    warn((c.id ? '#' + c.id : c.tagName.toLowerCase() + '[name="' + c.name + '"]') +
+      ' has no ' + p.name + '=' + v + ' to show; kept as it is');
+  }
+
   // A declared element's own request carries the address's values, unless the
   // request carries the parameter itself (an `hx-vals` value from a click). In
-  // a static export it goes to that value's file.
+  // a static export it goes to that value's file. Asking for other values than
+  // the element shows, it shows them in its controls at once.
   document.addEventListener('htmx:configRequest', function (e) {
     var d = e.detail, el = d.elt, ps = declared(el);
+    d.htmxoUrlEdits = edits;
     if (!ps) return;
     var table = files(el), base = shown(el, ps), address = wanted(ps, table, base);
     var vals = ps.map(function (p, i) {
@@ -2203,6 +2375,13 @@ if (!window.htmxoComparisonInstalled) {
     d.htmxoUrlValues = byName(ps, vals);
     d.htmxoUrlShown = byName(ps, base);
     el._htmxoUrlSent = JSON.stringify(vals);
+    if (differs(vals, base)) { d.htmxoUrlFollowed = true; follow(el, ps, vals); }
+  });
+  // Such a request that failed shows the element's values in them again.
+  document.addEventListener('htmx:afterRequest', function (e) {
+    var d = e.detail || {}, cfg = d.requestConfig, el = d.elt;
+    var ps = cfg && cfg.htmxoUrlFollowed && !d.successful && el.isConnected && declared(el);
+    if (ps) follow(el, ps, shown(el, ps), cfg.htmxoUrlEdits);
   });
 
   // An element entering the page (load, swap, Back/Forward) that shows other
@@ -2219,8 +2398,35 @@ if (!window.htmxoComparisonInstalled) {
         ps.map(function (p, i) { return p.name + '=' + want[i]; }).join('&'));
       return;
     }
-    htmx.ajax('GET', path, { source: el });
+    // Its controls show them first, so that an `hx-include` sends them.
+    follow(el, ps, want);
+    var req = { xhr: null, yielded: false }, sent;
+    el._htmxoUrlApply = req;
+    try { sent = htmx.ajax('GET', path, { source: el }); }
+    finally { delete el._htmxoUrlApply; }
+    // A request of the element's own that took its place (below) is no failure.
+    if (sent) sent.catch(function (err) { if (!req.yielded) throw err; });
   }
+  document.addEventListener('htmx:beforeRequest', function (e) {
+    var d = e.detail || {}, req = d.elt && d.elt._htmxoUrlApply;
+    if (req) { req.xhr = d.xhr; d.elt._htmxoUrlApplying = req; }
+  });
+  document.addEventListener('htmx:afterRequest', function (e) {
+    var d = e.detail || {}, req = d.elt && d.elt._htmxoUrlApplying;
+    if (req && req.xhr === d.xhr) delete d.elt._htmxoUrlApplying;
+  });
+  // A request the element makes while the address's values load (a
+  // selector's `change`, a poll) takes that request's place, as htmx's
+  // `hx-sync="this:abort"` lets it. Queued behind it, as htmx queues by
+  // default, it would be dropped once the swap replaces the element, and the
+  // selector's change would do nothing (snag static-url-param-d5a8157c).
+  document.addEventListener('htmx:confirm', function (e) {
+    var el = (e.detail || {}).elt, req = el && el._htmxoUrlApplying;
+    if (!req || el._htmxoUrlApply) return;
+    delete el._htmxoUrlApplying;
+    req.yielded = true;
+    req.xhr.abort();
+  });
   // A new version a request swapped in writes its values instead (below).
   function loaded(el) {
     var pending = el._htmxoUrlPending;
@@ -2234,6 +2440,15 @@ if (!window.htmxoComparisonInstalled) {
     if (!(root instanceof Element)) return;
     if (root.matches(SEL)) loaded(root);
     root.querySelectorAll(SEL).forEach(loaded);
+  });
+  // Each version entering the page (load, swap, Back/Forward) shows its values
+  // in its controls before htmx sets it up, so that a `changed` trigger
+  // compares with them.
+  document.addEventListener('htmx:beforeProcessNode', function (e) {
+    var el = e.target, ps = declared(el), pending = el._htmxoUrlPending;
+    if (!ps || el._htmxoUrlInit) return;
+    el._htmxoUrlInit = true;
+    follow(el, ps, shown(el, ps), pending && pending.edits);
   });
 
   // A request that loads a declared element writes its values into the
@@ -2295,8 +2510,12 @@ if (!window.htmxoComparisonInstalled) {
   document.addEventListener('htmx:afterSwap', function (e) {
     var d = e.detail || {}, cfg = d.requestConfig;
     if (!cfg) return;
-    if (cfg.htmxoUrlValues && declared(cfg.elt)) {
-      if (cfg.elt.isConnected) cfg.elt._htmxoUrlShown = cfg.htmxoUrlValues;
+    var own = cfg.htmxoUrlValues && declared(cfg.elt);
+    if (own) {
+      if (cfg.elt.isConnected) {
+        cfg.elt._htmxoUrlShown = cfg.htmxoUrlValues;
+        follow(cfg.elt, own, shown(cfg.elt, own), cfg.htmxoUrlEdits);
+      }
       write(cfg.htmxoUrlValues, cfg.htmxoUrlShown);
     }
     var el = e.target, ps = el === cfg.elt ? null : declared(el);
@@ -2304,12 +2523,13 @@ if (!window.htmxoComparisonInstalled) {
     // A new version of the element, swapped in for the target: until htmx
     // settles it, it carries the old version's attributes when the two share
     // an id, so its values are written once it loads (`loaded`).
-    if (el !== d.target) { el._htmxoUrlPending = { before: cfg.htmxoUrlBefore }; return; }
+    if (el !== d.target) { el._htmxoUrlPending = { before: cfg.htmxoUrlBefore, edits: cfg.htmxoUrlEdits }; return; }
     // Another element's request into this one.
     var vals = requested(el, ps, d);
     if (!vals) return;
     var before = byName(ps, shown(el, ps));
     el._htmxoUrlShown = byName(ps, vals);
+    follow(el, ps, vals, cfg.htmxoUrlEdits);
     write(el._htmxoUrlShown, before);
   });
 
@@ -2328,7 +2548,7 @@ if (!window.htmxoComparisonInstalled) {
   var nav = window.performance && performance.getEntriesByType ?
     performance.getEntriesByType('navigation')[0] : null;
   if (nav && nav.type !== 'navigate') return;
-  var pending = true, reached = null;
+  var pending = true, reached = false, queued = false;
   var stop = function () { pending = false; };
   // The reader has taken over, or the address names something else now.
   ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (type) {
@@ -2336,26 +2556,32 @@ if (!window.htmxoComparisonInstalled) {
   });
   window.addEventListener('hashchange', stop);
   window.addEventListener('popstate', stop);
-  // Parsed with the page: the browser has scrolled to it.
+  // Parsed with the page: the browser scrolls to it, but keeps it there only
+  // until the page's `load` event, not through the swaps that follow.
   document.addEventListener('DOMContentLoaded', function () {
-    if (document.getElementById(id)) stop();
+    if (document.getElementById(id)) reached = true;
   });
+  // Once per frame, however many elements a swap settles: each
+  // `scrollIntoView` lays the page out again.
+  var land = function () {
+    queued = false;
+    var target = document.getElementById(id);
+    if (pending && location.hash === hash && target) target.scrollIntoView();
+  };
   // htmx announces each element a swap inserts once the swap has settled.
   document.addEventListener('htmx:load', function (e) {
     if (!pending || location.hash !== hash || !(e.target instanceof Node)) return;
-    if (reached) {
-      // The page may have been too short to bring the element to the top.
-      // Like the browser for an element the page carries, keep it in view
-      // while content loads into it (a tab's lazy panel).
-      if (document.contains(reached) && reached.contains(e.target)) reached.scrollIntoView();
-      return;
+    if (!reached) {
+      var target = document.getElementById(id);
+      if (!target || !e.target.contains(target)) return;
+      // A page scrolled by any other means stays where it is.
+      if (window.scrollX !== 0 || window.scrollY !== 0) { stop(); return; }
+      reached = true;
     }
-    var target = document.getElementById(id);
-    if (!target || !e.target.contains(target)) return;
-    // A page scrolled by any other means stays where it is.
-    if (window.scrollX !== 0 || window.scrollY !== 0) { stop(); return; }
-    reached = target;
-    target.scrollIntoView();
+    // Every swap may move the element: content loading above it pushes it
+    // down, and content loading into or below it lets a page that was too
+    // short bring it to the top.
+    if (!queued) { queued = true; requestAnimationFrame(land); }
   });
 })();
 </script><style>@layer htmxo {
@@ -2599,7 +2825,7 @@ function htmxoTableFilter(target, name, predicate) {
 // Set a table's query as if typed ('' clears it) and filter.
 function htmxoTableSearch(target, query) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     root.htmxoSearchSeen = true;
     if (input) input.value = query;
     htmxoFilterTable(root);
@@ -2620,7 +2846,7 @@ function htmxoLazyLeaves(row) {
 
 function htmxoFilterTable(target) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const table = root.querySelector('table');
     const all = Array.from(table.tBodies[0].rows);
     const rows = all.filter(r => !r.id.startsWith('detail-'));
@@ -2735,7 +2961,7 @@ function htmxoFilterTable(target) {
     items.forEach(item => { if (item.shown) shown++; else hiddenBy[item.by] = (hiddenBy[item.by] || 0) + 1; });
     const detail = {shown, total: items.size, query, hiddenBy, notes: []};
     root.dispatchEvent(new CustomEvent('htmxo:table-filtered', {bubbles: true, detail}));
-    const count = root.querySelector(':scope > label > [data-htmxo-table-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > label > [data-htmxo-table-count]');
     if (count) count.textContent = htmxoText(root, 'count', {shown: detail.shown, total: detail.total}) +
         detail.notes.map(note => ' · ' + note).join('');
     root.querySelector(':scope > [data-htmxo-table-empty]').hidden = visible.size !== 0;
@@ -2745,7 +2971,7 @@ function htmxoFilterTable(target) {
 // search is active, the matching paths (see `htmxoFilterTable`).
 function htmxoTreeAll(button, open) {
     const root = htmxoSearchRoot(button);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const searching = Boolean(input && input.value.trim());
     if (searching) {
         if (open) delete root.dataset.htmxoSearchCollapsed;
@@ -2817,7 +3043,7 @@ function htmxoTreeToggle(button) {
     htmxoFilterTable(row);
 }
 function htmxoTreeRow(row, event) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     const button = row.querySelector('[data-htmxo-tree-toggle]');
     if (button && !button.disabled) htmxoTreeToggle(button);
 }
@@ -3213,6 +3439,80 @@ if (!window.htmxoSearchBound) {
 // htmx load event: restore what is already in the document.
 if (document.body) htmxoSearchRestore(document.body);
 
+// --- Sticky toolbar and header: `sortable_table(...; sticky=true)` ---
+// The header sticks just below its table's toolbar, so the toolbar's height
+// goes into `--htmxo-table-toolbar-h` on its parent and the header's into
+// `--htmxo-table-head-h` on the table (rows scroll into view below both). A
+// `.table-wrap` is `data-htmxo-width="fits"` while its table fits it, which
+// drops the sideways scroll box so the header can stick to the window, else
+// `"wide"`: a window-tall box scrolling both ways with the header at its top.
+// Measurements run in a task of their own, never inside the observer's
+// callback, whose layout changes would re-notify in the same frame; a newly
+// found element is measured that way too, without waiting for the
+// observer's first notice. A table inside another table's cell does not
+// stick to the window, but its wrapper is measured all the same, so a wide
+// one becomes that box too, sized to fit below the outer table's line and
+// header. Its own line and header are not measured: its rows keep scrolling
+// into view below the outer ones, whose heights they inherit.
+window.htmxoStickyTracked = window.htmxoStickyTracked || new Set();
+function htmxoStickyMeasure(el) {
+    if (!el.isConnected) return;
+    if (el.classList.contains('htmxo-table-toolbar')) {
+        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', el.offsetHeight + 'px');
+        return;
+    }
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    if (!table.parentElement.closest('td, th'))
+        table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
+    const wrap = table.parentElement;
+    if (!wrap.classList.contains('table-wrap')) return;
+    const width = wrap.scrollWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+    if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
+}
+function htmxoStickyQueue(el) {
+    (window.htmxoStickyPending || (window.htmxoStickyPending = new Set())).add(el);
+    if (window.htmxoStickyFrame) return;
+    window.htmxoStickyFrame = setTimeout(() => {
+        window.htmxoStickyFrame = 0;
+        const pending = Array.from(window.htmxoStickyPending);
+        window.htmxoStickyPending.clear();
+        pending.forEach(htmxoStickyMeasure);
+    }, 0);
+}
+// Observe the sticky toolbars and tables in `elt` (and the table wrappers,
+// whose width changes alone when a wide table's window widens); forget
+// elements that have left the document.
+function htmxoStickyTrack(elt) {
+    if (!elt || !elt.querySelectorAll || typeof ResizeObserver !== 'function') return;
+    const tracked = window.htmxoStickyTracked;
+    const ro = window.htmxoStickyObserver || (window.htmxoStickyObserver =
+        new ResizeObserver(entries => entries.forEach(e => htmxoStickyQueue(e.target))));
+    tracked.forEach(el => { if (!el.isConnected) { ro.unobserve(el); tracked.delete(el); } });
+    // No top-level `const`: this file may run more than once per page.
+    const sticky = '.htmxo-table-toolbar[data-htmxo-sticky], table[data-htmxo-sticky]';
+    const found = Array.from(elt.querySelectorAll(sticky));
+    if (elt.matches && elt.matches(sticky)) found.push(elt);
+    found.forEach(el => {
+        if (!el.isConnected || (el.tagName !== 'TABLE' && el.parentElement.closest('td, th'))) return;
+        const wrap = el.tagName === 'TABLE' && el.parentElement.classList.contains('table-wrap') ? el.parentElement : null;
+        [el, wrap].forEach(t => {
+            if (!t) return;
+            if (!tracked.has(t)) { tracked.add(t); ro.observe(t); }
+            htmxoStickyQueue(t);
+        });
+    });
+}
+if (!window.htmxoStickyBound) {
+    window.htmxoStickyBound = true;
+    document.addEventListener('htmx:load', e => htmxoStickyTrack(e.target));
+    // A morph keeps the elements but drops the measured values the server
+    // did not render: measure every tracked element again.
+    document.addEventListener('htmx:afterSettle', () => window.htmxoStickyTracked.forEach(htmxoStickyQueue));
+    document.addEventListener('DOMContentLoaded', () => htmxoStickyTrack(document.body));
+}
+if (document.body) htmxoStickyTrack(document.body);
+
 // --- Row selection: `selectable` on sortable_table / master_detail_table ---
 // State is keyed per selection (input name, form, page path) and per row key,
 // never held by row elements, so it survives sorting, filtering, a row's
@@ -3314,7 +3614,8 @@ function htmxoSelectionUpdate(root) {
     const hidden = filtered + folded;
     const notes = [filtered && htmxoText(root, 'selected_filtered', {count: filtered}),
         folded && htmxoText(root, 'selected_collapsed', {count: folded})].filter(Boolean);
-    const count = root.querySelector(':scope > div > .htmxo-selection-bar > [data-htmxo-selection-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count], ' +
+        ':scope > .htmxo-searchable-table > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count]');
     if (count) count.textContent = htmxoText(root, 'selected', {count: selected.length + unloaded.length}) +
         (notes.length ? ' (' + notes.join(', ') + ')' : '');
     document.querySelectorAll('[data-htmxo-needs-selection]').forEach(control => {
@@ -3412,18 +3713,17 @@ function htmxoSelectionKeydown(root, row, e) {
 }
 
 // The selectable row an event targets, unless it lands on a control of its
-// own (a link, button, input, label, per-row form, …), which keeps its own
-// behaviour. Returns [root, row] or null.
+// own (`htmxoRowControl`), which keeps its own behaviour. Returns [root, row]
+// or null.
 function htmxoSelectionTarget(e) {
     const row = e.target.closest && e.target.closest('tr[aria-selected]');
     const root = row && row.closest('[data-htmxo-select]');
     if (!root || !htmxoSelectionRows(root).includes(row)) return null;
-    const control = e.target.closest('a,button,input,textarea,select,label,form,summary,[contenteditable]');
-    return control && row.contains(control) ? null : [root, row];
+    return htmxoRowControl(row, e.target) ? null : [root, row];
 }
 // The search query a regroup carries to the re-rendered table.
 function htmxoGroupedQuery(el) {
-    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > label > input[type="search"]');
+    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > .htmxo-table-toolbar > label > input[type="search"]');
     return input ? input.value : '';
 }
 // The `group_by` values that render a regroupable table's current grouping
@@ -3804,7 +4104,7 @@ function htmxoSelectionRestore(elt) {
     const aroundSearch = !window.htmxoRowsUpdating && elt.closest && elt.closest('.htmxo-searchable-table');
     if (aroundSearch) searches.push(aroundSearch);
     searches.forEach(r => {
-        const input = r.querySelector(':scope > label > input[type="search"]');
+        const input = r.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
         if (input && input.value.trim()) htmxoFilterTable(r);
     });
     const roots = new Set(elt.querySelectorAll('[data-htmxo-select]'));
@@ -4479,17 +4779,19 @@ figcaption.caption { margin-bottom: 0.5rem; }
         // integer minute/hour, so those ticks are mostly no-ops.
         if (el._tbLast !== s){ el.textContent = s; el._tbLast = s; }
     }
+    // True when it turned a live poller into a finished one.
     function terminalizePoller(evt){
         var el = evt && evt.detail && evt.detail.elt;
-        if (!el || !el.classList || !el.classList.contains('treebar-terminal-content')) return;
+        if (!el || !el.classList || !el.classList.contains('treebar-terminal-content')) return false;
         var p = el.parentElement;
-        if (!p || !p.classList.contains('treebar-poller')) return;
+        if (!p || !p.classList.contains('treebar-poller')) return false;
         p.classList.replace('treebar-poller', 'treebar-terminal');
         ['paused', 'showFinished', 'showPending', 'showFailed', 'showSkipped', 'showReused', 'treebarFreshness'].forEach(function(key){
             delete p.dataset[key];
         });
         var badge = p.querySelector(':scope > .treebar-badge');
         if (badge) badge.remove();
+        return true;
     }
     // Mirror the live inner into the wrapper's badge: the badge lives on the
     // never-swapped wrapper (so the pause control keeps focus and state across
@@ -4836,7 +5138,6 @@ figcaption.caption { margin-bottom: 0.5rem; }
         paintRegions();
     }
     function reanchorAndTick(evt){
-        terminalizePoller(evt);
         // Scope the synchronous refresh to the swapped target; the observer
         // below backstops every other insertion path (OOB inserts outside
         // the target, ws frames, in-place morphs), so this never needs a
@@ -4917,8 +5218,30 @@ figcaption.caption { margin-bottom: 0.5rem; }
         }
         carryViewerState(removed, added);
     });
-    document.addEventListener('htmx:afterSwap', reanchorAndTick);
-    document.addEventListener('htmx:oobAfterSwap', reanchorAndTick);
+    // htmx 2 announces each swap on every element its answer has settled so
+    // far, all with one shared detail: an answer with N out-of-band elements
+    // fires htmx:afterSwap N+1 times and htmx:oobAfterSwap N(N+3)/2 times (its
+    // k-th out-of-band swap k+1 times). Announcements of one swap differ only
+    // in detail.elt, which only terminalization reads, so that runs on every
+    // announcement; the refresh reads detail.target and runs once per swap,
+    // and again after a terminalization, which it must follow. Without a
+    // detail.target the refresh is scoped by detail.elt, so each of those
+    // announcements refreshes. An answer then costs work linear in its swaps,
+    // not in their square.
+    function onSwapAnnounced(){
+        var refreshed = new WeakSet();
+        return function(evt){
+            var d = evt && evt.detail;
+            var ended = terminalizePoller(evt);
+            if (d && d.target){
+                if (!ended && refreshed.has(d)) return;
+                refreshed.add(d);
+            }
+            reanchorAndTick(evt);
+        };
+    }
+    document.addEventListener('htmx:afterSwap', onSwapAnnounced());
+    document.addEventListener('htmx:oobAfterSwap', onSwapAnnounced());
 
     // --- Keyed board (htmx_render_board) -----------------------------------
     // Every update — a poll response, a WebSocket frame, treebarUpdateBoard —
@@ -5125,6 +5448,16 @@ figcaption.caption { margin-bottom: 0.5rem; }
   var SETTLED = 'data-htmxo-live-settled';
   var BUSY = 'data-htmxo-live-busy';
   var MARKER = 'data-htmxo-live';
+  var OPENING_TAG = /^[\t\n\f\r ]*<[A-Za-z][^\t\n\f\r \/>]*(?:[\t\n\f\r ]+[^\t\n\f\r "'>\/=]+(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"[^"]*"|'[^']*'|[^\t\n\f\r "'=<>`]+))?)*[\t\n\f\r ]*\/?>/;
+  var OPENING_TAG_MAX = 65536;
+  function openingElement(s) {
+    var m = typeof s === 'string' ? OPENING_TAG.exec(s.slice(0, OPENING_TAG_MAX)) : null;
+    if (!m) return null;
+    var t = document.createElement('template');
+    t.innerHTML = m[0];
+    var el = t.content.firstElementChild;
+    return el && el.localName !== 'table' ? el : null;
+  }
 
   // The reporter lives "behind the hairline": a subtle, muted strip below a
   // 1px divider, so an ongoing refresh reads as quiet background progress, not
@@ -5149,29 +5482,49 @@ figcaption.caption { margin-bottom: 0.5rem; }
     if (el.hasAttribute(MARKER)) return true;
     return (el.getAttribute('hx-trigger') || '').indexOf('every') !== -1;
   }
-  // Parse a response fragment's first element. Classifying by the actual
-  // top-level class is required: a running poller's `hx-select` attribute value
-  // literally contains the string `treebar-terminal-content`, so a substring
-  // test misfires.
+  // Parse a whole response fragment for its first element.
   function firstEl(s) {
     if (typeof s !== 'string') return null;
     var t = document.createElement('template');
     t.innerHTML = s;
     return t.content.firstElementChild;
   }
+  // Classify an answer by its first element's own class — a running poller's
+  // `hx-select` attribute value literally contains the string
+  // `treebar-terminal-content`, so a substring test of the answer misfires.
+  // `own(el)` decides from the first element's classes, or returns undefined
+  // to leave it to whether an element of class `cls` sits below that element.
+  // The first element is read from the opening tag (`openingElement`), and
+  // only an answer that writes `cls` out can hold such an element (HTMX.jl
+  // escapes only `& " ' < >`, so a class name is never spelled with character
+  // references), so a large answer is classified without parsing it. Otherwise
+  // the answer is parsed, and the verdict hands that parsed first element on
+  // (`el`), so a caller that needs the content does not parse it a second time.
+  function classify(s, own, cls) {
+    var el = openingElement(s), v;
+    if (el) {
+      v = own(el);
+      if (v !== undefined) return { is: v, el: null };
+      if (s.indexOf(cls) === -1) return { is: false, el: null };
+    }
+    el = firstEl(s);
+    if (!el) return { is: false, el: null };
+    v = own(el);
+    return { is: v !== undefined ? v : !!el.querySelector('.' + cls), el: el };
+  }
   // A running Treebars poller (chrome present, not yet terminal).
   function isPoller(s) {
-    var el = firstEl(s);
-    if (!el || el.classList.contains('treebar-terminal-content')) return false;
-    return el.classList.contains('treebar-poller') ||
-           el.classList.contains('treebar-poller-inner') ||
-           !!el.querySelector('.treebar-poller-inner');
+    return classify(s, function(el) {
+      if (el.classList.contains('treebar-terminal-content')) return false;
+      if (el.classList.contains('treebar-poller') ||
+          el.classList.contains('treebar-poller-inner')) return true;
+    }, 'treebar-poller-inner').is;
   }
   // The resolved terminal result.
-  function isTerminal(s) {
-    var el = firstEl(s);
-    return !!(el && (el.classList.contains('treebar-terminal-content') ||
-                     el.querySelector('.treebar-terminal-content')));
+  function terminalOf(s) {
+    return classify(s, function(el) {
+      if (el.classList.contains('treebar-terminal-content')) return true;
+    }, 'treebar-terminal-content');
   }
   // The unobtrusive progress reporter that sits beside a live element.
   function reporterFor(el) {
@@ -5472,7 +5825,8 @@ figcaption.caption { margin-bottom: 0.5rem; }
     // (B) The diverted poll loop resolved (terminal reached the reporter):
     //     move the result to the live target, clear + hide the reporter.
     var rep2 = target && target.closest ? target.closest('.htmxo-live-reporter') : null;
-    if (rep2 && rep2.__htmxoLiveTarget && isTerminal(resp)) {
+    var found = rep2 && rep2.__htmxoLiveTarget ? terminalOf(resp) : null;
+    if (found && found.is) {
       d.shouldSwap = false;
       var live = rep2.__htmxoLiveTarget;
       // The refresh this answers lands unless an answer to a newer request
@@ -5480,9 +5834,14 @@ figcaption.caption { margin-bottom: 0.5rem; }
       var cyc = rep2.__htmxoCycleSeq || 0;
       var stale = cyc > 0 && cyc < (rep2.__htmxoLandedSeq || 0);
       if (!stale && cyc > 0) rep2.__htmxoLandedSeq = cyc;
-      var tmp = document.createElement('template');
-      tmp.innerHTML = resp;
-      var term = stale ? null : tmp.content.querySelector('.treebar-terminal-content');
+      // The terminal node is the answer's first element or the first one
+      // below it. The answer is parsed for its content only when it lands,
+      // and at most once: the classification read the opening tag, or hands
+      // over the parse it needed.
+      var first = stale ? null : (found.el || firstEl(resp));
+      var term = !first ? null :
+        first.classList.contains('treebar-terminal-content') ? first :
+        first.querySelector('.treebar-terminal-content');
       // The result content the route rendered, applied to the live target with
       // the diverted request's swap style — so `outerHTML`/`morph:outerHTML`
       // replaces the element (in place for morph) while
@@ -5505,6 +5864,16 @@ figcaption.caption { margin-bottom: 0.5rem; }
 </script><script>(function() {
   if (window.__htmxoAutoTerminal) return;
   window.__htmxoAutoTerminal = true;
+  var OPENING_TAG = /^[\t\n\f\r ]*<[A-Za-z][^\t\n\f\r \/>]*(?:[\t\n\f\r ]+[^\t\n\f\r "'>\/=]+(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"[^"]*"|'[^']*'|[^\t\n\f\r "'=<>`]+))?)*[\t\n\f\r ]*\/?>/;
+  var OPENING_TAG_MAX = 65536;
+  function openingElement(s) {
+    var m = typeof s === 'string' ? OPENING_TAG.exec(s.slice(0, OPENING_TAG_MAX)) : null;
+    if (!m) return null;
+    var t = document.createElement('template');
+    t.innerHTML = m[0];
+    var el = t.content.firstElementChild;
+    return el && el.localName !== 'table' ? el : null;
+  }
   function marked(el) {
     return !!(el && el.getAttribute && el.classList &&
                 el.classList.contains('treebar-terminal-content') &&
@@ -5699,6 +6068,10 @@ figcaption.caption { margin-bottom: 0.5rem; }
   function recordOrigin(d) {
     var req = d.requestConfig && d.requestConfig.elt, target = d.target;
     if (!d.shouldSwap || !d.xhr || !target || pollRequest(req)) return;
+    // Only an answer that opens with a poller wrapper starts a poller, which
+    // its opening tag tells: no other answer is parsed here, however large.
+    var head = openingElement(d.serverResponse);
+    if (head && !head.classList.contains('treebar-poller')) return;
     var first = firstElement(d.serverResponse);
     var inner = first && first.classList.contains('treebar-poller') &&
       first.querySelector(':scope > .treebar-poller-inner[hx-get*="__htmxo_poll"]');
@@ -5760,7 +6133,9 @@ figcaption.caption { margin-bottom: 0.5rem; }
     if (d.htmxoLiveTerminal) return;
     var r = d.xhr && d.xhr.__htmxoRetire;
     if (!r) { recordOrigin(d); return; }
-    var term = firstElement(d.serverResponse);
+    // Parsed only when its opening tag is a marked terminal, for its content.
+    var head = openingElement(d.serverResponse);
+    var term = head && !marked(head) ? null : firstElement(d.serverResponse);
     if (marked(term)) d.serverResponse = term.innerHTML;
     // HX-Reselect, which htmx reads after this event, still applies.
     d.selectOverride = 'unset';
@@ -5823,11 +6198,16 @@ figcaption.caption { margin-bottom: 0.5rem; }
   // A streamed poller nobody pushes to polls at most this often, for its
   // progress tree; its result is announced on the stream.
   var PROGRESS_MS = 1000;
+  // How long a pushing stream's poller waits for its first answer before it
+  // polls by itself. The server sends one a second after the stream opens; a
+  // proxy that holds the stream back sends none.
+  var FIRST_PUSH_MS = 3000;
   // Operations one stream covers (64-character tokens: about 2 KB of address).
   var LIMIT = 32;
   var state = { source: null, tokens: {}, push: false, retries: 0, retry: null, queued: false };
   var streamed = {};   // token -> the open stream covers it
   var pushed = {};     // token -> its poller shows pushed answers
+  var awaited = {};    // token -> since when a pushing stream owes it a first answer
   var ended = {};      // token -> the stream sent its result, ready or gone
   var lastPoll = {};   // token -> when its last timer poll went out
   function operationToken(url) {
@@ -5859,7 +6239,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
       if (!ended[t] && list.length < LIMIT) list.push(t);
     });
     // Forget operations whose pollers have left the page.
-    [ended, lastPoll].forEach(function(seen) {
+    [ended, lastPoll, awaited].forEach(function(seen) {
       Object.keys(seen).forEach(function(t) { if (!present[t]) delete seen[t]; });
     });
     return list;
@@ -5870,6 +6250,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
       pollers(t).forEach(function(el) { window.treebarPollerLost(el, ''); });
     });
     pushed = {};
+    awaited = {};
     streamed = {};
   }
   function shut() {
@@ -5904,6 +6285,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
     ended[token] = true;
     delete streamed[token];
     delete pushed[token];
+    delete awaited[token];
   }
   // The poller asks for its answer now, with its own request.
   function poll(el) {
@@ -5918,7 +6300,7 @@ figcaption.caption { margin-bottom: 0.5rem; }
       // Live refresh reports such a poller's answers through its own requests.
       if (el.closest('.htmxo-live-reporter')) { if (result) poll(el); return; }
       if (window.treebarUpdatePoller(el, answer.html)) {
-        if (!result) pushed[token] = true;
+        if (!result) { pushed[token] = true; delete awaited[token]; }
       } else {
         finish(token);
       }
@@ -5931,10 +6313,19 @@ figcaption.caption { margin-bottom: 0.5rem; }
     state.source = source;
     state.push = push;
     tokens.forEach(function(t) { state.tokens[t] = true; });
+    // A pushing stream brings each poller's answers, so its pollers wait for
+    // them from the moment it is opened (and again when it reconnects).
+    function owe() {
+      if (push) tokens.forEach(function(t) {
+        if (!ended[t] && !pushed[t] && !awaited[t]) awaited[t] = Date.now();
+      });
+    }
+    owe();
     source.addEventListener('open', function() {
       if (state.source !== source) return;
       state.retries = 0;
       tokens.forEach(function(t) { if (!ended[t]) streamed[t] = true; });
+      owe();
     });
     source.addEventListener('progress', function(e) {
       if (state.source === source) apply(e.data, false);
@@ -5975,12 +6366,20 @@ figcaption.caption { margin-bottom: 0.5rem; }
     });
   }
   // `htmx:confirm` comes before anything else of a request, so a held-back
-  // timer poll is never seen as a request by the page's other listeners. A
-  // poller that shows pushed answers sends none; its poller script holds them.
+  // timer poll is never seen as a request by the page's other listeners
+  // (cancelled in `htmx:beforeRequest`, as its poller script would, it would
+  // be a request that never ends). A poller that shows pushed answers sends
+  // none, nor does one waiting for its first, unless that is late.
   document.addEventListener('htmx:confirm', function(e) {
     var d = e.detail || {}, token = pollToken(d.path);
-    if (!token || !streamed[token] || pushed[token]) return;
+    if (!token) return;
     var now = Date.now();
+    if (pushed[token] || (awaited[token] && now - awaited[token] < FIRST_PUSH_MS &&
+                          !(d.elt && d.elt.closest('.htmxo-live-reporter')))) {
+      e.preventDefault();
+      return;
+    }
+    if (!streamed[token]) return;
     if (lastPoll[token] && now - lastPoll[token] < PROGRESS_MS) {
       e.preventDefault();
       return;
@@ -6158,7 +6557,7 @@ function htmxoTableFilter(target, name, predicate) {
 // Set a table's query as if typed ('' clears it) and filter.
 function htmxoTableSearch(target, query) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     root.htmxoSearchSeen = true;
     if (input) input.value = query;
     htmxoFilterTable(root);
@@ -6179,7 +6578,7 @@ function htmxoLazyLeaves(row) {
 
 function htmxoFilterTable(target) {
     const root = htmxoSearchRoot(target);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const table = root.querySelector('table');
     const all = Array.from(table.tBodies[0].rows);
     const rows = all.filter(r => !r.id.startsWith('detail-'));
@@ -6294,7 +6693,7 @@ function htmxoFilterTable(target) {
     items.forEach(item => { if (item.shown) shown++; else hiddenBy[item.by] = (hiddenBy[item.by] || 0) + 1; });
     const detail = {shown, total: items.size, query, hiddenBy, notes: []};
     root.dispatchEvent(new CustomEvent('htmxo:table-filtered', {bubbles: true, detail}));
-    const count = root.querySelector(':scope > label > [data-htmxo-table-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > label > [data-htmxo-table-count]');
     if (count) count.textContent = htmxoText(root, 'count', {shown: detail.shown, total: detail.total}) +
         detail.notes.map(note => ' · ' + note).join('');
     root.querySelector(':scope > [data-htmxo-table-empty]').hidden = visible.size !== 0;
@@ -6304,7 +6703,7 @@ function htmxoFilterTable(target) {
 // search is active, the matching paths (see `htmxoFilterTable`).
 function htmxoTreeAll(button, open) {
     const root = htmxoSearchRoot(button);
-    const input = root.querySelector(':scope > label > input[type="search"]');
+    const input = root.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
     const searching = Boolean(input && input.value.trim());
     if (searching) {
         if (open) delete root.dataset.htmxoSearchCollapsed;
@@ -6376,7 +6775,7 @@ function htmxoTreeToggle(button) {
     htmxoFilterTable(row);
 }
 function htmxoTreeRow(row, event) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     const button = row.querySelector('[data-htmxo-tree-toggle]');
     if (button && !button.disabled) htmxoTreeToggle(button);
 }
@@ -6772,6 +7171,80 @@ if (!window.htmxoSearchBound) {
 // htmx load event: restore what is already in the document.
 if (document.body) htmxoSearchRestore(document.body);
 
+// --- Sticky toolbar and header: `sortable_table(...; sticky=true)` ---
+// The header sticks just below its table's toolbar, so the toolbar's height
+// goes into `--htmxo-table-toolbar-h` on its parent and the header's into
+// `--htmxo-table-head-h` on the table (rows scroll into view below both). A
+// `.table-wrap` is `data-htmxo-width="fits"` while its table fits it, which
+// drops the sideways scroll box so the header can stick to the window, else
+// `"wide"`: a window-tall box scrolling both ways with the header at its top.
+// Measurements run in a task of their own, never inside the observer's
+// callback, whose layout changes would re-notify in the same frame; a newly
+// found element is measured that way too, without waiting for the
+// observer's first notice. A table inside another table's cell does not
+// stick to the window, but its wrapper is measured all the same, so a wide
+// one becomes that box too, sized to fit below the outer table's line and
+// header. Its own line and header are not measured: its rows keep scrolling
+// into view below the outer ones, whose heights they inherit.
+window.htmxoStickyTracked = window.htmxoStickyTracked || new Set();
+function htmxoStickyMeasure(el) {
+    if (!el.isConnected) return;
+    if (el.classList.contains('htmxo-table-toolbar')) {
+        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', el.offsetHeight + 'px');
+        return;
+    }
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    if (!table.parentElement.closest('td, th'))
+        table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
+    const wrap = table.parentElement;
+    if (!wrap.classList.contains('table-wrap')) return;
+    const width = wrap.scrollWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+    if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
+}
+function htmxoStickyQueue(el) {
+    (window.htmxoStickyPending || (window.htmxoStickyPending = new Set())).add(el);
+    if (window.htmxoStickyFrame) return;
+    window.htmxoStickyFrame = setTimeout(() => {
+        window.htmxoStickyFrame = 0;
+        const pending = Array.from(window.htmxoStickyPending);
+        window.htmxoStickyPending.clear();
+        pending.forEach(htmxoStickyMeasure);
+    }, 0);
+}
+// Observe the sticky toolbars and tables in `elt` (and the table wrappers,
+// whose width changes alone when a wide table's window widens); forget
+// elements that have left the document.
+function htmxoStickyTrack(elt) {
+    if (!elt || !elt.querySelectorAll || typeof ResizeObserver !== 'function') return;
+    const tracked = window.htmxoStickyTracked;
+    const ro = window.htmxoStickyObserver || (window.htmxoStickyObserver =
+        new ResizeObserver(entries => entries.forEach(e => htmxoStickyQueue(e.target))));
+    tracked.forEach(el => { if (!el.isConnected) { ro.unobserve(el); tracked.delete(el); } });
+    // No top-level `const`: this file may run more than once per page.
+    const sticky = '.htmxo-table-toolbar[data-htmxo-sticky], table[data-htmxo-sticky]';
+    const found = Array.from(elt.querySelectorAll(sticky));
+    if (elt.matches && elt.matches(sticky)) found.push(elt);
+    found.forEach(el => {
+        if (!el.isConnected || (el.tagName !== 'TABLE' && el.parentElement.closest('td, th'))) return;
+        const wrap = el.tagName === 'TABLE' && el.parentElement.classList.contains('table-wrap') ? el.parentElement : null;
+        [el, wrap].forEach(t => {
+            if (!t) return;
+            if (!tracked.has(t)) { tracked.add(t); ro.observe(t); }
+            htmxoStickyQueue(t);
+        });
+    });
+}
+if (!window.htmxoStickyBound) {
+    window.htmxoStickyBound = true;
+    document.addEventListener('htmx:load', e => htmxoStickyTrack(e.target));
+    // A morph keeps the elements but drops the measured values the server
+    // did not render: measure every tracked element again.
+    document.addEventListener('htmx:afterSettle', () => window.htmxoStickyTracked.forEach(htmxoStickyQueue));
+    document.addEventListener('DOMContentLoaded', () => htmxoStickyTrack(document.body));
+}
+if (document.body) htmxoStickyTrack(document.body);
+
 // --- Row selection: `selectable` on sortable_table / master_detail_table ---
 // State is keyed per selection (input name, form, page path) and per row key,
 // never held by row elements, so it survives sorting, filtering, a row's
@@ -6873,7 +7346,8 @@ function htmxoSelectionUpdate(root) {
     const hidden = filtered + folded;
     const notes = [filtered && htmxoText(root, 'selected_filtered', {count: filtered}),
         folded && htmxoText(root, 'selected_collapsed', {count: folded})].filter(Boolean);
-    const count = root.querySelector(':scope > div > .htmxo-selection-bar > [data-htmxo-selection-count]');
+    const count = root.querySelector(':scope > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count], ' +
+        ':scope > .htmxo-searchable-table > .htmxo-table-toolbar > .htmxo-selection-bar > [data-htmxo-selection-count]');
     if (count) count.textContent = htmxoText(root, 'selected', {count: selected.length + unloaded.length}) +
         (notes.length ? ' (' + notes.join(', ') + ')' : '');
     document.querySelectorAll('[data-htmxo-needs-selection]').forEach(control => {
@@ -6971,18 +7445,17 @@ function htmxoSelectionKeydown(root, row, e) {
 }
 
 // The selectable row an event targets, unless it lands on a control of its
-// own (a link, button, input, label, per-row form, …), which keeps its own
-// behaviour. Returns [root, row] or null.
+// own (`htmxoRowControl`), which keeps its own behaviour. Returns [root, row]
+// or null.
 function htmxoSelectionTarget(e) {
     const row = e.target.closest && e.target.closest('tr[aria-selected]');
     const root = row && row.closest('[data-htmxo-select]');
     if (!root || !htmxoSelectionRows(root).includes(row)) return null;
-    const control = e.target.closest('a,button,input,textarea,select,label,form,summary,[contenteditable]');
-    return control && row.contains(control) ? null : [root, row];
+    return htmxoRowControl(row, e.target) ? null : [root, row];
 }
 // The search query a regroup carries to the re-rendered table.
 function htmxoGroupedQuery(el) {
-    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > label > input[type="search"]');
+    const input = el.closest('[data-htmxo-grouped]').querySelector('.htmxo-searchable-table > .htmxo-table-toolbar > label > input[type="search"]');
     return input ? input.value : '';
 }
 // The `group_by` values that render a regroupable table's current grouping
@@ -7363,7 +7836,7 @@ function htmxoSelectionRestore(elt) {
     const aroundSearch = !window.htmxoRowsUpdating && elt.closest && elt.closest('.htmxo-searchable-table');
     if (aroundSearch) searches.push(aroundSearch);
     searches.forEach(r => {
-        const input = r.querySelector(':scope > label > input[type="search"]');
+        const input = r.querySelector(':scope > .htmxo-table-toolbar > label > input[type="search"]');
         if (input && input.value.trim()) htmxoFilterTable(r);
     });
     const roots = new Set(elt.querySelectorAll('[data-htmxo-select]'));
@@ -7591,8 +8064,18 @@ function htmxoText(el, name, values) {
     }
     return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
 }
+// The control of its own that a click inside `row` landed on (a link, button,
+// form field, label, per-row form, <details> drop-out or editable text), which
+// keeps its own behaviour instead of toggling or selecting the row; null for a
+// click on the row itself. Only a control inside the row counts, so a table
+// inside a <form> or a <details> still toggles. The row toggle, the tree row
+// and row selection all ask this.
+function htmxoRowControl(row, target) {
+    var control = target.closest && target.closest('a,button,input,textarea,select,label,form,details,[contenteditable]');
+    return control && row.contains(control) ? control : null;
+}
 function htmxoMdToggle(row, event, key, slot) {
-    if (event.target.closest('a,button,input,textarea,select,form')) return;
+    if (htmxoRowControl(row, event.target)) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
     var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
     htmxoMdShow(row, d, show);

@@ -124,7 +124,7 @@ public surface since then; `README.md` lists what the total now is, and
 
 ### Fixed — in code 0.2.1 actually loaded
 
-Only two, and the scope is deliberate: a fix to a file 0.2.1 never `include`d
+Only three, and the scope is deliberate: a fix to a file 0.2.1 never `include`d
 could not have affected anyone running 0.2.1, and listing it here would imply
 otherwise.
 
@@ -133,6 +133,13 @@ otherwise.
   gradient and calling `logdensity` with `Dual`-valued parameters, which
   native-backed targets such as BridgeStan cannot accept. Now passes
   `NoAD()` and the target's own `logdensity_and_gradient`.
+- **Pathfinder initialization survives a trajectory its fit cannot
+  factorize** (`c1750fd`). On a log density with a kink at its mode, L-BFGS
+  ends on the kink, and Pathfinder's inverse-Hessian fit throws a
+  `PosDefException`. A vector `init` then ended the sampler call, and a random
+  start could use up all ten retries. The initializer now refits on the
+  longest prefix of the trajectory that factorizes, with a warning; a run that
+  Pathfinder completes is unchanged.
 - **`AbstractMatrixExpression` has structural `hash`/`isequal`/`==`**
   (`3b3c05d`). These are matrix-free operators: they subtype `AbstractMatrix`
   for `mul!`/`ldiv!` but define no `getindex`, so Base's generic fallbacks

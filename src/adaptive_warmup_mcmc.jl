@@ -130,7 +130,7 @@ initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs.
     _check_finite_init(lpdf, init)
     initialize_mcmc(
         lpdf,
-        mypathfinder(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
+        _pathfinder_or_refit(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
         kwargs...
     )
 end
@@ -210,6 +210,102 @@ mypathfinder(args...;
     args...;
     ndraws, ntries, ndraws_elbo, adtype, optimizer, kwargs...
 )
+
+# ── Pathfinder's fit on a stalled trajectory ────────────────────────────────
+#
+# Pathfinder fits a Gaussian at every L-BFGS iterate, with that iterate's L-BFGS
+# inverse Hessian as covariance, factorized as a `WoodburyPDMat`. It keeps a
+# curvature pair (s, y) whenever `s'y > 1e-12 |y|²`. When the log density has a
+# kink at its mode (an `fmin`, `abs` or `max` in the model), L-BFGS ends on the
+# kink: steps of 1e-7 to 1e-12 units while the gradient jumps by O(1) between
+# iterates. Some of those pairs pass the test, the inverse Hessian built from
+# them is no longer positive definite in floating point, and the factorization
+# throws a `PosDefException` out of `pathfinder` (snag `adaptive-warmup-9e5a75a0`:
+# all 10 random starts of one chain on a GP whose covariance uses a min-plus
+# closure). Every iterate before the first failing one has a valid fit, and
+# both L-BFGS and the fit are deterministic, so Pathfinder rerun from the same
+# start for fewer iterations reproduces that prefix and succeeds.
+
+"""
+    _pathfinder_or_refit(lpdf; rng, init, callback, maxiters, kwargs...)
+
+`mypathfinder`, or, when its inverse-Hessian fit throws a `PosDefException`, the
+same Pathfinder run on the longest prefix of its L-BFGS trajectory that Pathfinder
+can factorize. A run that succeeds is not touched. The trajectory is recorded by
+rerunning Pathfinder on a copy of `rng`, and the failure must reproduce in
+Pathfinder's own fit of that trajectory; anything else, including a
+`PosDefException` the target threw, is rethrown.
+"""
+function _pathfinder_or_refit(lpdf; rng, init, callback, maxiters, kwargs...)
+    try
+        return mypathfinder(lpdf; rng, init, callback, maxiters, kwargs...)
+    catch err
+        err isa PosDefException || rethrow()
+        failing = _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
+        # Not Pathfinder's fit of this trajectory, or no iterate before it to fit.
+        (isnothing(failing) || failing < 2) && rethrow()
+        @warn "Pathfinder's inverse-Hessian fit is not positive definite at iteration $failing " *
+            "of its L-BFGS trajectory (a PosDefException; typical of an optimizer stalled on a " *
+            "kink of the log density). Refitting on the first $(failing - 1) iterations."
+        return mypathfinder(lpdf; rng, init, callback, maxiters=failing - 1, kwargs...)
+    end
+end
+
+"""
+    _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
+
+Rerun `mypathfinder` on a copy of `rng`, recording its L-BFGS trajectory, and return
+the first iterate (counting the start as iterate 0) at which Pathfinder's fit of
+that trajectory throws a `PosDefException`. `nothing` when the rerun does not throw
+one, or when the recorded trajectory fits, i.e. the exception came from elsewhere.
+"""
+function _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
+    # The same iterates and log-density gradients Pathfinder's own trace records.
+    points, gradients = Vector{Float64}[], Vector{Float64}[]
+    record = (state, args...) -> begin
+        push!(points, copy(state.u))
+        push!(gradients, isnothing(state.grad) ?
+            last(LogDensityProblems.logdensity_and_gradient(lpdf, state.u)) : -state.grad)
+        callback(state, args...)
+    end
+    try
+        mypathfinder(lpdf; rng=deepcopy(rng), init, callback=record, maxiters, kwargs...)
+        return nothing
+    catch err
+        err isa PosDefException || return nothing
+    end
+    failing = _first_unfactorizable(points, gradients)
+    isnothing(failing) ? nothing : failing - 1
+end
+
+"""
+    _first_unfactorizable(points, gradients)
+
+The length of the shortest prefix of the trajectory `(points, gradients)` whose
+Pathfinder fit throws a `PosDefException`, or `nothing` when the whole trajectory
+fits. A prefix fits only if every shorter one does, because the fit at an iterate
+uses only the iterates up to it, so the search bisects. A single point always
+fits: it has no curvature pair.
+"""
+function _first_unfactorizable(points, gradients)
+    # `mypathfinder` sets the optimizer's history but does not pass
+    # `history_length` to `pathfinder`, so the fit uses Pathfinder's default.
+    fits(n) = try
+        Pathfinder.fit_mvnormals(points[1:n], gradients[1:n];
+            history_length=Pathfinder.DEFAULT_HISTORY_LENGTH)
+        true
+    catch err
+        err isa PosDefException || rethrow()
+        false
+    end
+    fits(length(points)) && return nothing
+    fitting, failing = 1, length(points)
+    while failing - fitting > 1
+        n = (fitting + failing) ÷ 2
+        fits(n) ? (fitting = n) : (failing = n)
+    end
+    failing
+end
 
 # ── Windowed adaptive warm-up: explicit state object + stage functions ──────
 #
@@ -1529,6 +1625,11 @@ path, which can lie in a different basin from the start. The first L-BFGS step
 has no curvature information yet, and its line search can carry a poor start
 tens of unconstrained units. To begin warm-up exactly at a position, pass the
 `NamedTuple` form, e.g. `(; position = q, squared_scale = ones(length(q)))`.
+
+When Pathfinder's inverse-Hessian fit is not positive definite (a
+`PosDefException`, typically from L-BFGS stalling on a kink of the log density,
+such as an `fmin` in the model), the fit is redone on the longest prefix of the
+L-BFGS trajectory that factorizes, with a warning naming the iteration.
 
 For the multi-chain method, pass either a scalar to broadcast or a
 `Vector` of length `length(rngs)` for per-chain initial values. There is

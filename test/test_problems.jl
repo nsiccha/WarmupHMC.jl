@@ -1,6 +1,6 @@
 @testmodule WarmupHMCSharedFixtures begin
 using LogDensityProblems, WarmupHMC
-export DiagGaussian, NaNProblem, BadGradientProblem, fd_gradient, CaptureProgress, _Treebars
+export DiagGaussian, NaNProblem, BadGradientProblem, KinkedGaussian, fd_gradient, CaptureProgress, _Treebars
 
 # Shared LogDensityProblems fixtures + helpers for the WarmupHMC test suite.
 # Kept at top level (struct defs + method extensions can't live inside a @testset).
@@ -63,6 +63,30 @@ function LogDensityProblems.logdensity_and_gradient(p::BadGradientProblem, x)
     poisoned[p.index] = Inf
     (logdensity, poisoned)
 end
+
+"""
+    KinkedGaussian(scale, W, b, c)
+
+`-½ Σ (x ./ scale)² + c · minimum(W * x .+ b)`: a smooth concave density plus the
+minimum of affine pieces, so it is concave with a kink wherever two pieces meet,
+as a model with an `fmin` (a min-plus closure, a hinge) has. L-BFGS ends on that
+kink with tiny steps across a gradient jump, which is the trajectory Pathfinder's
+inverse-Hessian fit cannot factorize.
+"""
+struct KinkedGaussian
+    scale::Vector{Float64}
+    W::Matrix{Float64}
+    b::Vector{Float64}
+    c::Float64
+end
+LogDensityProblems.capabilities(::Type{KinkedGaussian}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::KinkedGaussian) = length(p.scale)
+function LogDensityProblems.logdensity_and_gradient(p::KinkedGaussian, x)
+    pieces = p.W * x .+ p.b
+    j = argmin(pieces)
+    (-sum(abs2, x ./ p.scale) / 2 + p.c * pieces[j], -x ./ p.scale .^ 2 .+ p.c .* p.W[j, :])
+end
+LogDensityProblems.logdensity(p::KinkedGaussian, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
 
 "Central finite-difference gradient of scalar `f` at `x`."
 function fd_gradient(f, x; h=1e-6)

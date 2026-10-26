@@ -1086,6 +1086,42 @@ td[data-status], th[data-status], span[data-status], small[data-status] { font-w
     color: var(--htmxo-muted, currentColor);
 }
 .htmxo-back-link:hover { text-decoration: underline; }
+
+/* `private` content as a private reader sees it (the live app, a private
+   export): outlined and labelled, so the reader can tell what no public
+   answer holds. The label is in the element's language. A table row or row
+   group carries its label in its first cell. Private content shown inside
+   private content (a fragment loaded into it) is marked once. An app restyles
+   it in its own stylesheet: `--htmxo-private-color`, `--htmxo-private-label`. */
+:root { --htmxo-private-label: "not public"; }
+[lang|="en"] { --htmxo-private-label: "not public"; }
+[lang|="de"] { --htmxo-private-label: "nicht \0000f6ffentlich"; }
+.htmxo-private {
+    outline: 1px dashed var(--htmxo-private-color, var(--htmxo-muted, currentColor));
+    outline-offset: 2px;
+}
+.htmxo-private::before,
+tr.htmxo-private > :first-child::before,
+:is(thead, tbody, tfoot).htmxo-private > tr:first-child > :first-child::before {
+    content: var(--htmxo-private-label);
+    display: inline-block;
+    margin-inline-end: .5em;
+    padding: 0 .4em;
+    border: 1px solid var(--htmxo-private-color, var(--htmxo-muted, currentColor));
+    border-radius: .25rem;
+    color: var(--htmxo-private-color, var(--htmxo-muted, currentColor));
+    font-size: .75rem;
+    font-style: normal;
+    font-weight: normal;
+    line-height: 1.5;
+    vertical-align: .1em;
+    white-space: nowrap;
+}
+div.htmxo-private::before { display: table; margin-block-end: .35rem; }
+:is(tr, thead, tbody, tfoot, colgroup, col, option, optgroup, script, style, head, html, body).htmxo-private::before { content: none; }
+.htmxo-private .htmxo-private { outline: none; }
+.htmxo-private .htmxo-private::before,
+.htmxo-private tr.htmxo-private > :first-child::before { content: none; }
 }
 
 /* While its request is in flight, htmx itself adds `htmx-request` to the

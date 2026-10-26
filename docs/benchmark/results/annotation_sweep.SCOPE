@@ -1,3 +1,4 @@
-Gradient-only probe: line coverage of docs/benchmark/annotation_sweep.jl at 96c171c executes src/Reparametrizations.jl alone; src/WarmupHMC.jl is added for the imports and include order that file compiles under.
+Gradient-only probe: line coverage of docs/benchmark/annotation_sweep.jl at 96c171c executes src/Reparametrizations.jl alone; src/WarmupHMC.jl is added for the imports and include order that file compiles under. ext/WarmupHMCEnzymeExt.jl is added because from b14ee88 it replaces the reverse-mode Enzyme gradient this probe times.
 src/Reparametrizations.jl
 src/WarmupHMC.jl
+ext/WarmupHMCEnzymeExt.jl

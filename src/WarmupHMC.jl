@@ -18,10 +18,11 @@ import DynamicHMC,
     CRC32c,
     Dates
 using Serialization: serialize, deserialize
-# Only the reparametrization gradient needs AD, and it needs exactly one entry
-# point. Importing the name rather than the package keeps DifferentiationInterface's
+# Only the reparametrization gradient and the window-end halo transport need AD.
+# Importing the names rather than the package keeps DifferentiationInterface's
 # broad export surface (`gradient`, `jacobian`, `pullback`, …) out of WarmupHMC.
-using DifferentiationInterface: value_and_gradient, Constant
+using DifferentiationInterface: value_and_gradient, value_and_gradient!,
+    prepare_gradient, Constant, Cache
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,

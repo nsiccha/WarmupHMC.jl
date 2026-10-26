@@ -684,12 +684,15 @@ function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
     end
     ljac, source
 end
-_inverse_with_logabsdet_jacobian(ir::IndexedReparametrization,
-                                 target::AbstractVector) =
-    _inverse_with_logabsdet_jacobian!(copy(target), ir, target)
+_inverse_with_logabsdet_jacobian!(source::AbstractVector,
+                                  ir::AbstractReparametrization,
+                                  target::AbstractVector) =
+    with_logabsdet_jacobian!(copyto!(source, target), inverse(ir), target)
 _inverse_with_logabsdet_jacobian(ir::AbstractReparametrization,
                                  target::AbstractVector) =
-    with_logabsdet_jacobian!(copy(target), inverse(ir), target)
+    _inverse_with_logabsdet_jacobian!(copy(target), ir, target)
+# `t(x)`, written into `y` instead of a fresh `copy(x)`.
+_with_logabsdet_jacobian_into!(y, t, x) = with_logabsdet_jacobian!(copyto!(y, x), t, x)
 
 # --- Controls: what adaptation changes, checkpoints record, transport compares ---
 #
@@ -1290,10 +1293,15 @@ _reparametrization_ad_backend(p::WrappedLogDensityProblem) =
 # had to move together: `function_annotation` is set on the BACKEND, so leaving
 # this one unfixed would keep the annotation mandatory and go on taxing every
 # gradient through the hot path.
-_transport_objective(new_position, new_ir, old_ir, old_gradient) = begin
-    ljac_new, model_position = new_ir(new_position)
-    ljac_old, old_position =
-        _inverse_with_logabsdet_jacobian(old_ir, model_position)
+#
+# The two maps write into `Cache` work vectors rather than fresh copies, so one
+# gradient preparation serves every column of a transport without allocating:
+# each copy was a d-vector, and its Enzyme shadow another, per halo column
+# (snag `find-reparametri-e2a5b2a7`).
+_transport_objective!(new_position, model_position, old_position,
+                      new_ir, old_ir, old_gradient) = begin
+    ljac_new, _ = _with_logabsdet_jacobian_into!(model_position, new_ir, new_position)
+    ljac_old, _ = _inverse_with_logabsdet_jacobian!(old_position, old_ir, model_position)
     ljac_new + ljac_old + dot(old_gradient, old_position)
 end
 
@@ -1319,29 +1327,44 @@ Compute the two terms together as the gradient of the scalar
 transform per halo column, so dependencies of a block's location or scale on
 other coordinates contribute their chain-rule terms. The wrapped model is
 never evaluated.
+
+Every column is computed in a fixed set of d-vectors, allocated and prepared
+once per call, so the cost in memory is independent of the number of columns.
+Each column is read completely before it is written, so `position` may be
+`old_position`.
 """
 function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                                   position, gradient)
+    size(position, 2) == 0 && return gradient
     new_ir = reparametrizer(lpdf)
     backend = _reparametrization_ad_backend(lpdf)
+    # Differentiate at a plain Vector, not the halo column view: Enzyme on Julia
+    # 1.13 cannot prove the storage activity of a view into the ElasticMatrix
+    # halo, nor of the ElasticVector a copy of one becomes
+    # (EnzymeRuntimeActivityError).
+    model_position, x, g_old, g_new =
+        ntuple(_ -> Vector{eltype(position)}(undef, size(position, 1)), 4)
+    contexts = (Cache(similar(x)), Cache(similar(x)),
+                Constant(new_ir), Constant(old_ir), Constant(g_old))
+    # Prepared at the first column's values, for backends whose preparation
+    # evaluates the objective.
+    _transport_position!(x, model_position, new_ir, old_ir, view(old_position, :, 1))
+    copyto!(g_old, view(old_gradient, :, 1))
+    prep = prepare_gradient(_transport_objective!, backend, x, contexts...)
     columns = zip(eachcol(old_position), eachcol(old_gradient),
                   eachcol(position), eachcol(gradient))
-    for (x_old, g_old, x_new, g_new) in columns
-        _, y = old_ir(x_old)
-        _, transported_position = _inverse_with_logabsdet_jacobian(new_ir, y)
-        x_new .= transported_position
-        # Differentiate at a plain Vector, not the halo column view. The
-        # default `AbstractReparametrization` call copies its argument, so a
-        # view into the ElasticMatrix halo becomes an ElasticVector output,
-        # and Enzyme on Julia 1.13 cannot prove that type's storage
-        # activity (EnzymeRuntimeActivityError).
-        _, transported_gradient = value_and_gradient(
-            _transport_objective, backend, collect(x_new),
-            Constant(new_ir), Constant(old_ir), Constant(collect(g_old)),
-        )
-        g_new .= transported_gradient
+    for (x_old_j, g_old_j, x_new_j, g_new_j) in columns
+        _transport_position!(x_new_j, model_position, new_ir, old_ir, x_old_j)
+        copyto!(x, x_new_j)
+        copyto!(g_old, g_old_j)
+        value_and_gradient!(_transport_objective!, g_new, prep, backend, x, contexts...)
+        g_new_j .= g_new
     end
     gradient
+end
+_transport_position!(x_new, model_position, new_ir, old_ir, x_old) = begin
+    _with_logabsdet_jacobian_into!(model_position, old_ir, x_old)
+    _inverse_with_logabsdet_jacobian!(x_new, new_ir, model_position)
 end
 
 # A centering switch changes coordinate meaning. Preserve the active physical

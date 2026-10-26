@@ -149,9 +149,10 @@ verified-clean tree, which is the whole defect.
 
 **`src_dirty` narrows that verdict, and is read when present.** `git_provenance`
 records two flags from the same call: `worktree_dirty` over the whole tree, and
-`src_dirty` from `git status --porcelain --untracked-files=no -- src`. Where the
-second is `false`, no tracked file under `src/` differed, so the recorded SHA
-*does* describe the package source that ran and the full-strength sentence above
+`src_dirty` from `git status --porcelain --untracked-files=no -- src ext` (`-- src`
+before the package had extensions). Where the second is `false`, no tracked file
+under `src/` or `ext/` differed, so the recorded SHA *does* describe the package
+source that ran and the full-strength sentence above
 would be false about the code the numbers are a measurement of. This function
 therefore renders the narrower claim in that case, and the unqualified one only
 when `src_dirty` is `true` or absent — the pre-`src_dirty` artifacts, where
@@ -161,7 +162,8 @@ Read a `worktree_dirty = true` beside a `src_dirty = false` with the trap
 documented on `git_provenance` in `docs/benchmark/common.jl` in mind: a harness
 that splats `git_provenance()` *inside* its own `open(path, "w")` block sees the
 output file it is truncating and records `true` over a clean tree. That shape
-dirties only the results path, never `src/`, so it produces exactly this pair.
+dirties only the results path, never `src/` or `ext/`, so it produces exactly
+this pair.
 
 **This caption is the later of two checks, not the only one.** It reads a
 committed artifact, so it can only fire once the bad flag has been recorded —
@@ -191,9 +193,9 @@ the checkout is depth 1, so an artifact's base SHA does not even resolve — a
 currency check wired into the docs build would be red for the wrong reason on
 every run. The question is answered out of band, by
 `docs/benchmark/artifact_currency.jl`, which walks every tracked artifact and
-asks `code_identical.jl` whether `src/` at the recorded SHA still defines the
-same methods as `src/` at a given revision. Run it after anything lands in
-`src/`; nothing on this side can notice for you.
+asks `code_identical.jl` whether `src/` and `ext/` at the recorded SHA still
+define the same methods as at a given revision. Run it after anything lands in
+`src/` or `ext/`; nothing on this side can notice for you.
 """
 function provenance(d::AbstractDict; harness::AbstractString)
     cfg = get(d, "config", nothing)
@@ -210,7 +212,7 @@ function provenance(d::AbstractDict; harness::AbstractString)
     dirty = field("worktree_dirty")
     dirty === true && return base * (field("src_dirty") === false ?
         " **Recorded from a worktree with uncommitted changes, though none under" *
-        " `src/`** — so the revision named above does describe the package source" *
+        " `src/` or `ext/`** — so the revision named above does describe the package source" *
         " that ran. What differed was elsewhere in the tree, which this flag does" *
         " not localise further; the harness itself is one such place." :
         " **Recorded from a worktree with uncommitted changes**, so the revision" *

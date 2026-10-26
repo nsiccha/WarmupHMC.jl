@@ -111,9 +111,15 @@ public surface since then; `README.md` lists what the total now is, and
 
 ### Changed
 
-- **No more package extensions.** 0.2.1 carried two (`SerializationExt` on
-  `Serialization`, `TermExt` on `Term`). 1.0.0 has no `[weakdeps]` and no
-  `[extensions]`: `Serialization` is a plain dependency, and `Term` is gone.
+- **Neither of 0.2.1's package extensions survives; one new one is added.**
+  0.2.1 carried two (`SerializationExt` on `Serialization`, `TermExt` on
+  `Term`). In 1.0.0 `Serialization` is a plain dependency and `Term` is gone.
+  The new `WarmupHMCEnzymeExt` on `Enzyme` changes no API (`b14ee88`): with a
+  reverse-mode `AutoEnzyme` backend and an `IndexedReparametrization` it
+  differentiates the reparametrization pair by pair instead of in one pass,
+  which removes a per-accessor-call allocation from every gradient and every
+  window-end transport on accessors that read shared mutable state. The
+  gradient agrees with the one-pass one to rounding.
 - **Progress reporting moved to `Treebars`** (from `Term`), which is what
   renders the tree-shaped progress bar.
 - **`DifferentiationInterface` is a hard dependency** — new in this window,

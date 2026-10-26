@@ -214,7 +214,7 @@ function main()
                           "--startup-file=no --project=docs/benchmark/brm " *
                           "docs/benchmark/run_brm_catalogue_benchmark.jl",
         "warmuphmc_sha" => gitsha(whmc_dir),
-        "src_dirty" => gitdirty(whmc_dir, "src"),
+        "src_dirty" => gitdirty(whmc_dir, "src", "ext"),
         "worktree_dirty" => gitdirty(whmc_dir),
         # The two packages that make this benchmark possible are UNREGISTERED.
         # Recording their SHAs is the only pin available; a reader cannot resolve

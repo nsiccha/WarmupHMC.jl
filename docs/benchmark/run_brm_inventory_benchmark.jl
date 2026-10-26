@@ -772,7 +772,7 @@ function main()
         "dynamichmc_version" => string(Base.pkgversion(WarmupHMC.DynamicHMC)),
         "brm_sha" => gitsha(brm_dir),
         "stanblocks_sha" => gitsha(pkgdir_of(StanBlocks)),
-        "warmuphmc_src_dirty" => gitdirty(whmc_dir, "src"),
+        "warmuphmc_src_dirty" => gitdirty(whmc_dir, "src", "ext"),
         "brm_inventory_dirty" => gitdirty(brm_dir, "research/historical_model_inventory"),
         "translations_sha256" => bytes2hex(open(sha256, TRANSLATIONS)),
         "model_matrix_sha256" => bytes2hex(open(sha256, MODEL_MATRIX)),

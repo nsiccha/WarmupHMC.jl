@@ -7,7 +7,8 @@
 # page, and nothing recomputes the one thing a reader actually needs to know:
 # does the sampler that produced these numbers still exist? This walks every
 # TRACKED artifact, reads its recorded SHA, and asks code_identical.jl whether
-# `src/` at that SHA defines the same methods as `src/` at `rev`.
+# the sampler code (`src/` and `ext/`) at that SHA defines the same methods as
+# at `rev`.
 #
 # Green: every live measurement still describes the current sampler.
 # Red:   names the artifact that has gone stale, so you re-measure THAT one
@@ -63,22 +64,22 @@
 #
 # WHY A PER-ARTIFACT SCOPE, AND WHY IT IS NOT THE DEFAULT
 #
-# The rule above compares all of `src/`. That is right for anything that runs
-# the sampler and wrong for a micro-benchmark that only times one gradient: a
-# commit relabelling completion-policy progress text cannot reach the AD path,
-# yet it re-stales every gradient timing, and re-measuring those on a contended
-# host flips their direction from run to run (2026-09-30: 22 artifacts went red
-# for exactly that). So an artifact MAY carry `<stem>.SCOPE` beside its
+# The rule above compares all of the sampler code. That is right for anything
+# that runs the sampler and wrong for a micro-benchmark that only times one
+# gradient: a commit relabelling completion-policy progress text cannot reach the
+# AD path, yet it re-stales every gradient timing, and re-measuring those on a
+# contended host flips their direction from run to run (2026-09-30: 22 artifacts
+# went red for exactly that). So an artifact MAY carry `<stem>.SCOPE` beside its
 # `<stem>.json`: line 1 is the reason, every further non-blank, non-`#` line a
-# repo-relative `src/*.jl` file the measurement exercises, and only those files
-# are compared. Per artifact, not per directory like `SUPERSEDED`, because the
+# repo-relative `src/*.jl` or `ext/*.jl` file the measurement exercises, and only
+# those files are compared. Per artifact, not per directory like `SUPERSEDED`, because the
 # gradient-only probes sit flat in results/ next to everything else.
 #
 # A scope is a claim that the other files cannot change the number, so it is
 # held to the same standard as the rest of this script: a scope naming a path
-# outside `src/`, or a file the tip does not have, is RED, not ignored; every
-# line it applies to prints the scope, and the out-of-scope files that differ
-# are listed rather than hidden. No `SCOPE` keeps the whole-`src/` rule.
+# outside `src/` and `ext/`, or a file the tip does not have, is RED, not
+# ignored; every line it applies to prints the scope, and the out-of-scope files
+# that differ are listed rather than hidden. No `SCOPE` keeps the whole-code rule.
 #
 # WHY AN EQUIVALENCE RECORD, AND WHAT IT MUST CARRY
 #
@@ -131,8 +132,8 @@ function recorded_flag(text, key)
     m.captures[1] == "true" ? true : m.captures[1] == "false" ? false : nothing
 end
 
-"""The narrow `src/`-only dirty flag under either of the two names harnesses
-record it as — see `dirty_reason` for why there are two. `missing` only when
+"""The narrow sampler-code (`src/` and `ext/`) dirty flag under either of the
+two names harnesses record it as — see `dirty_reason` for why there are two. `missing` only when
 neither is present, so an absent unqualified key never masks a recorded
 qualified one."""
 function recorded_src_flag(text)
@@ -180,8 +181,8 @@ function superseded_reason(path)
 end
 
 const REPR_CACHE = Dict{String,Any}()
-src_reprs(rev) = get!(REPR_CACHE, rev) do
-    Dict(p => code_repr(rev, p) for p in src_files(rev))
+code_reprs(rev) = get!(REPR_CACHE, rev) do
+    Dict(p => code_repr(rev, p) for p in code_files(rev))
 end
 
 resolves(rev) = success(Cmd(["git", "-C", REPO, "rev-parse", "-q", "--verify", "$rev^{commit}"]))
@@ -244,15 +245,15 @@ retroactive remedy: the only discharge is to measure again.
 
 WHY `src_dirty` AND NOT `worktree_dirty`. The drivers' `worktree_dirty` is
 whole-tree, and it is the right thing for a human reading a provenance header.
-It is the wrong thing to GATE on, because this check's subject is `src/` alone.
-A dirty `docs/` cannot change what sampler ran — and a session writing up the
+It is the wrong thing to GATE on, because this check's subject is `src/` and
+`ext/` alone. A dirty `docs/` cannot change what sampler ran — and a session writing up the
 measurement it just took has a dirty `docs/` essentially always, so gating on
 the whole tree would fire constantly for a reason that is never the reason. A
 gate red for the wrong reason is a gate that gets muted rather than fixed.
 
 WHY OLD ARTIFACTS DO NOT NEED RE-MEASURING. A clean whole tree implies a clean
-`src/`, so `worktree_dirty: false` is STRICTLY STRONGER than what is being
-asked and is accepted on its own. That is what makes adding the narrower flag
+`src/` and `ext/`, so `worktree_dirty: false` is STRICTLY STRONGER than what
+is being asked and is accepted on its own. That is what makes adding the narrower flag
 cheap: it costs nothing already recorded.
 
 WHY `null` IS NOT `false`. All the helpers `catch` into `missing`, which
@@ -331,7 +332,7 @@ function mislabel_reason(path, sha)
 end
 
 """The artifact's `<stem>.SCOPE`, as `(; reason, files)`; `nothing` when it has
-none (whole-`src/` rule); a `String` naming the defect when it is malformed.
+none (whole-code rule); a `String` naming the defect when it is malformed.
 See the header for the format and why a malformed scope is red."""
 function scope_of(path, tip)
     file = joinpath(REPO, splitext(path)[1] * ".SCOPE")
@@ -341,9 +342,9 @@ function scope_of(path, tip)
     isempty(reason) && return "$(relpath(file, REPO)) has no reason on line 1"
     files = [String(l) for l in lines[2:end] if !isempty(l) && !startswith(l, "#")]
     isempty(files) && return "$(relpath(file, REPO)) names no files"
-    outside = [f for f in files if !(startswith(f, "src/") && endswith(f, ".jl"))]
-    isempty(outside) || return "$(relpath(file, REPO)) names non-`src/*.jl` path(s): $(join(outside, ", "))"
-    missing_at_tip = setdiff(files, src_files(tip))
+    outside = [f for f in files if !(startswith(f, r"src/|ext/") && endswith(f, ".jl"))]
+    isempty(outside) || return "$(relpath(file, REPO)) names path(s) outside `src/*.jl` and `ext/*.jl`: $(join(outside, ", "))"
+    missing_at_tip = setdiff(files, code_files(tip))
     isempty(missing_at_tip) || return "$(relpath(file, REPO)) names file(s) absent at $tip: $(join(missing_at_tip, ", "))"
     (; reason, files = sort(unique(files)))
 end
@@ -431,8 +432,8 @@ end
 to its `from`, and its `to` code-identical to `tip` (both within `scope`)."""
 function covering_equivalence(equivs, sha, tip, scope)
     for e in equivs
-        isempty(first(scoped_differences(src_reprs(sha), src_reprs(e.from), scope))) &&
-            isempty(first(scoped_differences(src_reprs(e.to), src_reprs(tip), scope))) &&
+        isempty(first(scoped_differences(code_reprs(sha), code_reprs(e.from), scope))) &&
+            isempty(first(scoped_differences(code_reprs(e.to), code_reprs(tip), scope))) &&
             return e
     end
     nothing
@@ -496,7 +497,7 @@ function main_currency(args)
             # count toward `checked` -- a base nobody else can resolve is not a
             # verified one, whatever the comparison says.
             if resolves(sha)
-                differing, ignored = scoped_differences(src_reprs(sha), src_reprs(tip), scope)
+                differing, ignored = scoped_differences(code_reprs(sha), code_reprs(tip), scope)
                 println(" "^58, "(locally: ", isempty(differing) ?
                     "code-identical to $tip anyway" :
                     "also differs in " * join(differing, ", "), ")", scope_note(scope, ignored))
@@ -505,7 +506,7 @@ function main_currency(args)
         end
 
         checked += 1
-        differing, ignored = scoped_differences(src_reprs(sha), src_reprs(tip), scope)
+        differing, ignored = scoped_differences(code_reprs(sha), code_reprs(tip), scope)
         eq = isempty(differing) ? nothing : covering_equivalence(equivs, sha, tip, scope)
         if isempty(differing)
             println(rpad(p, 56), "  current — $(sha[1:7]) is code-identical to $tip",

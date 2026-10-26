@@ -359,7 +359,7 @@ catch
 end
 # Duplicated from `git_provenance()` in common.jl rather than shared, because
 # this driver deliberately does not include that harness. Keep the two in
-# lockstep: whole-tree AND `src/`-scoped, `missing` (JSON `null`) on failure
+# lockstep: whole-tree AND scoped to `src/` and `ext/`, `missing` (JSON `null`) on failure
 # rather than `false`, since git being unreachable is not evidence of
 # cleanliness. `artifact_currency.jl` gates on `src_dirty`; `worktree_dirty` is
 # what a human reading the provenance header wants.
@@ -412,7 +412,7 @@ provenance = Dict(
     "timestamp_utc" => string(now(UTC)),
     "warmuphmc_sha" => repo_sha(),
     "worktree_dirty" => repo_dirty(),
-    "src_dirty" => repo_dirty("--", "src"),
+    "src_dirty" => repo_dirty("--", "src", "ext"),
     "host" => get(ENV, "KB_HOST", gethostname()),
     "native_hostname" => gethostname(),
     "julia" => string(VERSION),

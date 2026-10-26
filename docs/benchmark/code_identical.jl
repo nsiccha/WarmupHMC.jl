@@ -28,16 +28,21 @@
 #
 # The second is the one that matters: a check that has never been observed to
 # fail is not evidence of anything.
+#
+# The sampler's code is `src/` AND `ext/`. A package extension is loaded whenever
+# its trigger package is, and the Enzyme one replaces the reparametrization
+# gradient in every harness that differentiates with Enzyme, so comparing `src/`
+# alone would call two revisions identical across a change to that gradient.
 
 const REPO = normpath(joinpath(@__DIR__, "..", ".."))
 
 git(args...) = read(`git -C $REPO $args`, String)
 
-"""Files under `src/` in a revision, as a Set. Compared as a UNION across the
-two revisions, never as one side's listing: a file that exists in only one of
-them is a difference, and enumerating one side would silently skip it."""
-function src_files(rev)
-    out = git("ls-tree", "-r", "--name-only", rev, "src/")
+"""Files under `src/` and `ext/` in a revision, as a Set. Compared as a UNION
+across the two revisions, never as one side's listing: a file that exists in only
+one of them is a difference, and enumerating one side would silently skip it."""
+function code_files(rev)
+    out = git("ls-tree", "-r", "--name-only", rev, "src/", "ext/")
     Set(f for f in split(strip(out), '\n') if endswith(f, ".jl"))
 end
 
@@ -68,7 +73,7 @@ function main(args)
     length(args) >= 2 || error("usage: julia code_identical.jl <rev-a> <rev-b> [path ...]")
     a, b = args[1], args[2]
     paths = length(args) > 2 ? args[3:end] :
-        sort(collect(union(src_files(a), src_files(b))))
+        sort(collect(union(code_files(a), code_files(b))))
 
     differing = String[]
     for p in paths
@@ -99,7 +104,7 @@ function main(args)
 end
 
 # Guarded so `artifact_currency.jl` can `include` this for `code_repr` /
-# `src_files` without the include itself calling `exit`.
+# `code_files` without the include itself calling `exit`.
 if abspath(PROGRAM_FILE) == @__FILE__
     exit(main(ARGS))
 end

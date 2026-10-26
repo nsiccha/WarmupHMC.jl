@@ -370,7 +370,7 @@ function main()
             "gradient, a short sample. The stage it stopped at is recorded. No K-based " *
             "exclusion is applied before testing.",
         "warmuphmc_sha" => gitsha(whmc_dir),
-        "warmuphmc_src_dirty" => gitdirty(whmc_dir, "src"),
+        "warmuphmc_src_dirty" => gitdirty(whmc_dir, "src", "ext"),
         "brm_sha" => gitsha(brm_dir),
         "stanblocks_sha" => gitsha(pkgdir_of(StanBlocks)),
         "translations_sha256" => bytes2hex(open(sha256, TRANSLATIONS)),

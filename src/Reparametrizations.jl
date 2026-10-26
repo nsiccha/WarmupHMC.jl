@@ -391,14 +391,33 @@ Cost per gradient evaluation: one inner `logdensity_and_gradient`, one extra
 forward evaluation of the transform, and one AD pass over it. This is the
 gradient hot path, so the accessor closures inside each `Reparametrization` have
 to be AD-friendly.
+
+The AD pass is [`_reparam_gradient`](@ref), which an extension may specialize.
 """
 function _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x::AbstractVector)
     ljac, y = p.reparametrizer(x)
     ld, g_y = LogDensityProblems.logdensity_and_gradient(p.problem, y)
-    _, g_x = value_and_gradient(_reparam_objective, p.ad_backend, x,
-                                Constant(p.reparametrizer), Constant(g_y))
-    ljac + ld, g_x
+    ljac + ld, _reparam_gradient(p.ad_backend, p.reparametrizer, x, g_y)
 end
+
+"""
+    WarmupHMC._reparam_gradient(backend, reparametrizer, x, g_y)
+
+The gradient in `x` of `_reparam_objective(x, reparametrizer, g_y)`, i.e. of
+`ljac(x) + dot(g_y, y(x))`.
+
+This method differentiates the whole transform in one pass. With a reverse-mode
+`AutoEnzyme` backend and an [`IndexedReparametrization`](@ref), the Enzyme
+extension differentiates it pair by pair instead, in reverse pair order. The
+result agrees to rounding: a coordinate that several pairs read may sum their
+contributions in a different order. In one pass Enzyme allocates for every accessor
+call (about 770 bytes per pair on a correlated random-effect block, snag
+`find-reparametri-e2a5b2a7`); pair by pair it allocates only the result and one
+working vector.
+"""
+_reparam_gradient(backend, reparametrizer, x, g_y) =
+    last(value_and_gradient(_reparam_objective, backend, x,
+                            Constant(reparametrizer), Constant(g_y)))
 
 # The objective is a TOP-LEVEL function taking its non-differentiated operands as
 # `Constant` contexts, not a closure capturing them. Enzyme differentiates the
@@ -1344,23 +1363,40 @@ function _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
     # (EnzymeRuntimeActivityError).
     model_position, x, g_old, g_new =
         ntuple(_ -> Vector{eltype(position)}(undef, size(position, 1)), 4)
-    contexts = (Cache(similar(x)), Cache(similar(x)),
-                Constant(new_ir), Constant(old_ir), Constant(g_old))
     # Prepared at the first column's values, for backends whose preparation
     # evaluates the objective.
     _transport_position!(x, model_position, new_ir, old_ir, view(old_position, :, 1))
     copyto!(g_old, view(old_gradient, :, 1))
-    prep = prepare_gradient(_transport_objective!, backend, x, contexts...)
+    transport_gradient! = _transport_gradient_method(backend, new_ir, old_ir, x, g_old)
     columns = zip(eachcol(old_position), eachcol(old_gradient),
                   eachcol(position), eachcol(gradient))
     for (x_old_j, g_old_j, x_new_j, g_new_j) in columns
         _transport_position!(x_new_j, model_position, new_ir, old_ir, x_old_j)
         copyto!(x, x_new_j)
         copyto!(g_old, g_old_j)
-        value_and_gradient!(_transport_objective!, g_new, prep, backend, x, contexts...)
+        transport_gradient!(g_new, x, g_old)
         g_new_j .= g_new
     end
     gradient
+end
+
+"""
+    WarmupHMC._transport_gradient_method(backend, new_ir, old_ir, x, g_old)
+
+Return `f!(g_new, x, g_old)`, which writes into `g_new` the gradient in `x` of
+`_transport_objective!` for the vectors `x` and `g_old` it is called with. Those
+are the same two vectors on every call; their contents change per column.
+
+This method prepares one DifferentiationInterface gradient of the whole objective.
+With a reverse-mode `AutoEnzyme` backend and two
+[`IndexedReparametrization`](@ref)s, the Enzyme extension differentiates it pair
+by pair instead, as for [`_reparam_gradient`](@ref).
+"""
+function _transport_gradient_method(backend, new_ir, old_ir, x, g_old)
+    contexts = (Cache(similar(x)), Cache(similar(x)),
+                Constant(new_ir), Constant(old_ir), Constant(g_old))
+    prep = prepare_gradient(_transport_objective!, backend, x, contexts...)
+    (g_new, x, _) -> value_and_gradient!(_transport_objective!, g_new, prep, backend, x, contexts...)
 end
 _transport_position!(x_new, model_position, new_ir, old_ir, x_old) = begin
     _with_logabsdet_jacobian_into!(model_position, old_ir, x_old)

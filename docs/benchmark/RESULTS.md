@@ -40,8 +40,9 @@ showed the same bit-for-bit agreement between its Enzyme run and an earlier
 code-identical one (`be6fb23`): all 184 runs, every field except wall-clock.
 
 `b5c0b95` will fall behind the tip, so the gap is **checked** rather than stated.
-`docs/benchmark/code_identical.jl` parses every file under `src/` at two
-revisions, strips docstrings and line numbers, and compares the resulting ASTs:
+`docs/benchmark/code_identical.jl` parses every file under `src/` and `ext/` (the
+package extensions, which replace code whenever their trigger package loads) at
+two revisions, strips docstrings and line numbers, and compares the resulting ASTs:
 
     julia docs/benchmark/code_identical.jl b5c0b95 <tip>
 
@@ -74,9 +75,9 @@ is correct by construction. The statement worth having is not "this document's
 base is fine" but "nothing checked in has quietly gone stale", and the script is
 the only thing that can say it.
 
-"Stale" means "some file under `src/` changed" unless the artifact says
+"Stale" means "some file under `src/` or `ext/` changed" unless the artifact says
 otherwise. A gradient-only probe can say so with a `<stem>.SCOPE` file beside
-its JSON. Line 1 is the reason; each further line is one `src/*.jl` file the
+its JSON. Line 1 is the reason; each further line is one `src/*.jl` or `ext/*.jl` file the
 measurement exercises: the files line coverage of that harness executes, plus
 `src/WarmupHMC.jl` for the imports and include order they compile under. The
 script then compares only those files. It prints the scope

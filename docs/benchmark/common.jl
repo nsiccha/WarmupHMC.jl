@@ -275,7 +275,7 @@ function git_provenance()
     end
     Dict{String,Any}("warmuphmc_sha" => sha,
                      "worktree_dirty" => dirty(),
-                     "src_dirty" => dirty("--", "src"))
+                     "src_dirty" => dirty("--", "src", "ext"))
 end
 
 """

@@ -139,9 +139,25 @@ you fill in.
     `web/src/test/enzyme.jl` exists to catch exactly that. It is tagged `:enzyme`
     and skipped by the main matrix, so run it with `--tag=enzyme`.
 
+!!! note "Under reverse-mode Enzyme, an `IndexedReparametrization` is differentiated pair by pair"
+    WarmupHMC has one package extension, `WarmupHMCEnzymeExt`, which loads with
+    Enzyme. With a reverse-mode `AutoEnzyme` backend (any of the spellings
+    above) and an [`IndexedReparametrization`](@ref), it takes both AD sites —
+    the gradient path and the halo transport — with one `Enzyme.autodiff` per
+    pair instead of one over the whole transform. In one pass, Enzyme allocates a
+    tape for every accessor call on accessors that read their layout through
+    shared mutable state, as a regression package's correlated random-effect
+    blocks do; pair by pair, the gradient path allocates only its result and the
+    transport nothing. You change nothing to get it, and write no derivative code.
+    The gradient agrees with the one-pass one to rounding, not bit for bit: the
+    pairs' contributions to a coordinate several of them read may be summed in a
+    different order. Forward mode, other backends and other reparametrizer types
+    keep the one-pass path, as does the transport when the previous map writes a
+    coordinate twice.
+
 !!! note "WarmupHMC does not depend on ForwardDiff, and does not want to"
-    `Project.toml` has no ForwardDiff entry — not a direct dependency, and there
-    is no `[weakdeps]` section for it to hide in either. ForwardDiff reaches the
+    `Project.toml` has no ForwardDiff entry — not a direct dependency, and not
+    in its `[weakdeps]`, which names Enzyme alone. ForwardDiff reaches the
     environment only transitively, through Pathfinder, and warm-up *actively
     defuses* it — the Pathfinder initialization passes `adtype=NoAD()` so
     Pathfinder's forward-mode default cannot call your `logdensity` with

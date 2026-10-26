@@ -74,4 +74,29 @@ end
     @test point.ℓq == value
     @test point.∇ℓq == g
 end
+
+# Snag find-reparametri-e2a5b2a7: the transport used to copy ~9 d-vectors per
+# halo column (2.1 GiB per window end at d = 31,360 with 1000 columns).
+@testset "halo transport allocates no per-column vectors" begin
+    d=2000
+    inner=DiagGaussian(zeros(d),ones(d))
+    mk(c)=WarmupHMC.IndexedReparametrization([
+        k=>WarmupHMC.Reparametrization(WarmupHMC.PartiallyCentered(1.0),
+            WarmupHMC.PartiallyCentered(c),x->x[1],x->x[2]) for k in 3:d])
+    rp=WarmupHMC.ReparametrizedProblem(mk(0.7),inner,AutoEnzyme())
+    old_ir=mk(0.0)
+    rng=Xoshiro(5)
+    P=0.3 .* randn(rng,d,64);G=randn(rng,d,64)
+    transport!(position,gradient)=WarmupHMC._jointly_transport_halo!(rp,old_ir,P,G,position,gradient)
+    transport!(P[:,1:2],G[:,1:2])
+    short=(P[:,1:16],G[:,1:16]);long=(copy(P),copy(G))
+    bytes_short=@allocated transport!(short...)
+    bytes_long=@allocated transport!(long...)
+    @test (bytes_long-bytes_short)/48 < 8d/4
+    @test long[1][:,1:16]==short[1] && long[2][:,1:16]==short[2]
+    # in place, as each column is read before it is written
+    inplace=(copy(P),copy(G))
+    WarmupHMC._jointly_transport_halo!(rp,old_ir,inplace...,inplace...)
+    @test inplace==long
+end
 end

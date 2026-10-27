@@ -114,7 +114,11 @@ draw_count = out.completion.n_samples
 The twelfth completed chain calls the last round: each unfinished worker
 finishes its current initialization or sampling window, then stops at the
 checkpoint boundary. Every chain that completes its requested draws is
-included, even if it finishes during shutdown. There is no grace period or
+included, even if it finishes during shutdown, unless it is stuck: a chain
+whose retained draws are more than `max_admitted_divergent_fraction` (default
+0.1) divergent, or whose step size sits more than `stuck_stepsize_ratio`
+(default 10) below its sibling chains' median, does not count and is listed in
+`out.completion.stuck_chain_indices`. There is no grace period or
 admission cutoff. Workers are joined before return, so initialization or a
 long window can still delay the return. All returned chains carry their
 original identities.

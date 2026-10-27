@@ -42,6 +42,7 @@
             :adaptive_warmup_mcmc    => adaptive_warmup_mcmc,
             :resume_warmup_mcmc      => resume_warmup_mcmc,
             :cooperative_warmup_mcmc => cooperative_warmup_mcmc,
+            :completion_warmup_mcmc  => completion_warmup_mcmc,
         )
             declared = _declared_kwargs(f)
             accepted = Set(_SAMPLER_KWARGS[fname])

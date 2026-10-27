@@ -29,6 +29,28 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.2
+
+The first patch bump under the per-landing version policy: a landing that adds
+or changes public API bumps the patch version, so a dependant can state it as
+its `[compat]` floor. 0.2.2 also contains everything listed under 1.0.0 below,
+which is written against 0.2.1.
+
+### Changed
+
+- `completion_warmup_mcmc` no longer admits a chain merely because it reached
+  `n_draws`. A chain whose step size collapsed, or whose transitions diverge,
+  takes short, cheap trajectories and can finish before every healthy chain,
+  and the quorum kept it. Such a chain is now left out as `:stuck`: it does not
+  count toward `min_completed`, so the quorum waits for chains that pass. Two
+  new keywords set the checks: `max_admitted_divergent_fraction` (default
+  `0.1`) and `stuck_stepsize_ratio` (default `10`, against the median latest
+  step size of the sibling chains that are keeping draws). `completion` reports
+  `stuck_chain_indices`, `n_stuck` and both thresholds, and each chain's
+  `stepsize`, `reference_stepsize`, `divergent_fraction` and `stuck_reason`; its
+  `schema_version` is now 3. A finished run recorded before this change reopens
+  as recorded.
+
 ## 1.0.0 — unreleased
 
 First release with a stated compatibility contract. The code has been usable for

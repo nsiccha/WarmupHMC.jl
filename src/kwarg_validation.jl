@@ -89,7 +89,8 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
 )
 
 _SAMPLER_KWARGS[:completion_warmup_mcmc] = (
-    :min_completed, _SAMPLER_KWARGS[:adaptive_warmup_mcmc]...,
+    :min_completed, :stuck_stepsize_ratio, :max_admitted_divergent_fraction,
+    _SAMPLER_KWARGS[:adaptive_warmup_mcmc]...,
 )
 
 """

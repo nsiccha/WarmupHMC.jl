@@ -13,7 +13,7 @@
 # BLAS.set_num_threads(1); TestItemRunner.run_tests(pwd(); filter=ti->endswith(ti.filename, "completion_policy.jl"))'
 
 _completion_fixture(i; n=5) = (; posterior_position=fill(Float64(i), 2, n),
-    n_divergent_samples=i % 2)
+    n_divergent_samples=i % 2, stepsize=1.0)
 
 struct CompletionBimodal end
 LogDensityProblems.dimension(::CompletionBimodal) = 1
@@ -27,9 +27,7 @@ LogDensityProblems.logdensity(p::CompletionBimodal, x) = first(LogDensityProblem
 
 @testset "controlled completion times and original identities" begin
     now = Ref(0.0)
-    s = WarmupHMC._CompletionState(ReentrantLock(), () -> now[], 0.0, 2,
-        nothing, fill(:pending, 5), Any[nothing for _ in 1:5],
-        Any[nothing for _ in 1:5], Union{Nothing,Float64}[nothing for _ in 1:5])
+    s = WarmupHMC._CompletionState(5; clock=() -> now[], min_completed=2)
     # Finishing out of order preserves IDs; quorum is based on full results.
     complete = (i, stop) -> (_completion_fixture(i), true)
     now[] = 1.0
@@ -152,6 +150,210 @@ end
     @test out.completion.omitted_chain_indices == [2, 4]
 end
 
+# Snag quorum-admits-a-7aa7f768, decision 1dl030w: reaching n_draws first is no
+# evidence of health. A chain whose step size collapsed, or whose transitions
+# diverge, takes short cheap trajectories and can finish before every sibling.
+_admission_fixture(stepsize; n=20, n_divergent=0) = (; posterior_position=zeros(2, n),
+    n_divergent_samples=n_divergent, stepsize)
+const _ADMISSION_CHECKS = WarmupHMC._CompletionAdmission(10.0, 0.1)
+
+@testset "a collapsed chain that finishes first does not count" begin
+    s = WarmupHMC._CompletionState(4; clock=() -> 0.0, min_completed=2,
+        admission=_ADMISSION_CHECKS)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._report_boundary!(stop1, 0.17, 30)
+        WarmupHMC._completion_worker!(s, 2) do _, stop2
+            WarmupHMC._report_boundary!(stop2, 0.16, 30)
+            # Chains 1 and 2 keep draws at a healthy step size when chain 4,
+            # whose step size collapsed, finishes first.
+            WarmupHMC._completion_worker!((_, _) -> (_admission_fixture(0.004), true), s, 4)
+            @test s.statuses[4] === :stuck
+            @test s.admissions[4].stuck_reason === :stepsize
+            @test s.admissions[4].stepsize == 0.004
+            @test s.admissions[4].reference_stepsize ≈ 0.165
+            _admission_fixture(0.16), true
+        end
+        # Counted, chain 4 would have met the quorum of two with chain 2 and
+        # stopped this chain. It does not count.
+        @test s.statuses[2] === :completed
+        @test !stop1()
+        _admission_fixture(0.17), true
+    end
+    @test s.statuses[1] === :completed
+    @test !isnothing(s.quorum_at)
+    WarmupHMC._completion_worker!((_, _) -> error("the quorum is met"), s, 3)
+    @test s.statuses == [:completed, :completed, :not_started, :stuck]
+end
+
+@testset "a finished chain waits, uncounted, for a sibling's step size" begin
+    s = WarmupHMC._CompletionState(3; clock=() -> 0.0, min_completed=1,
+        admission=_ADMISSION_CHECKS)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        # Chain 2 finishes while no sibling keeps draws yet.
+        WarmupHMC._completion_worker!((_, _) -> (_admission_fixture(0.17), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        @test !stop1()
+        # A boundary that keeps no draws (initialization, or a window that
+        # restarted) is no reference.
+        WarmupHMC._report_boundary!(stop1, 0.9, 0)
+        @test s.statuses[2] === :awaiting_reference
+        # The first boundary that keeps draws settles it, and with it the quorum.
+        WarmupHMC._report_boundary!(stop1, 0.15, 30)
+        @test s.statuses[2] === :completed
+        @test s.admissions[2].reference_stepsize == 0.15
+        @test stop1()
+        _admission_fixture(0.15; n=5), false
+    end
+    WarmupHMC._completion_worker!((_, _) -> error("the quorum is met"), s, 3)
+    @test s.statuses == [:stopped, :completed, :not_started]
+
+    # A chain judged after waiting can be left out too.
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1,
+        admission=_ADMISSION_CHECKS)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._completion_worker!((_, _) -> (_admission_fixture(0.004), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        WarmupHMC._report_boundary!(stop1, 0.17, 30)
+        @test s.statuses[2] === :stuck
+        @test !stop1()
+        _admission_fixture(0.17), true
+    end
+    @test s.statuses == [:completed, :stuck]
+
+    # Once no sibling can supply a step size, the waiting chain is admitted.
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1,
+        admission=_ADMISSION_CHECKS)
+    WarmupHMC._completion_worker!(s, 1) do _, _
+        WarmupHMC._completion_worker!((_, _) -> (_admission_fixture(0.17), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        error("chain 1 fails before it keeps draws")
+    end
+    @test s.statuses == [:failed, :completed]
+    @test isnothing(s.admissions[2].reference_stepsize)
+    @test !isnothing(s.quorum_at)
+    single = WarmupHMC._completion_batch((_, _) -> (_admission_fixture(1e-6), true), 1;
+        min_completed=1, admission=_ADMISSION_CHECKS)
+    @test single.completion.completed_chain_indices == [1]
+end
+
+@testset "a stuck sibling is no reference" begin
+    s = WarmupHMC._CompletionState(3; clock=() -> 0.0, min_completed=1,
+        admission=_ADMISSION_CHECKS)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        # Chain 3 is left out for its divergences. Its large step size must not
+        # make chain 2's healthy one look collapsed.
+        WarmupHMC._completion_worker!((_, _) ->
+            (_admission_fixture(5.0; n_divergent=10), true), s, 3)
+        @test s.statuses[3] === :stuck
+        @test s.admissions[3].stuck_reason === :divergence
+        WarmupHMC._completion_worker!((_, _) -> (_admission_fixture(0.17), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        WarmupHMC._report_boundary!(stop1, 0.18, 30)
+        @test s.statuses[2] === :completed
+        _admission_fixture(0.18), true
+    end
+    @test s.statuses == [:completed, :completed, :stuck]
+end
+
+@testset "stuck chains are omitted and named in the outcome" begin
+    # Chain 3 diverges on 15% of its draws. That needs no sibling to judge.
+    out = WarmupHMC._completion_batch(4; min_completed=3, admission=_ADMISSION_CHECKS) do i, stop
+        _admission_fixture(0.17; n_divergent=i == 3 ? 3 : 0), true
+    end
+    c = out.completion
+    @test c.completed_chain_indices == [1, 2, 4]
+    @test c.stuck_chain_indices == [3]
+    @test c.omitted_chain_indices == [3]
+    @test c.n_stuck == 1
+    @test c.quorum_met && c.stop_reason === :quorum_reached
+    @test getproperty.(out.results, :chain_index) == [1, 2, 4]
+    @test c.n_samples == 60
+    @test c.chains[3].status === :stuck
+    @test c.chains[3].stuck_reason === :divergence
+    @test c.chains[3].divergent_fraction == 0.15
+    @test c.chains[3].n_samples == 20
+    @test c.chains[3].n_retained_samples == 0
+    @test all(i -> isnothing(c.chains[i].stuck_reason), (1, 2, 4))
+    @test all(i -> c.chains[i].stepsize == 0.17, 1:4)
+    @test c.stuck_stepsize_ratio == 10.0
+    @test c.max_admitted_divergent_fraction == 0.1
+    # Fewer passing chains than the quorum: the existing error, naming them.
+    unmet = WarmupHMC._completion_batch(2; min_completed=2, admission=_ADMISSION_CHECKS) do i, stop
+        _admission_fixture(0.17; n_divergent=i == 1 ? 10 : 0), true
+    end
+    @test !unmet.completion.quorum_met
+    @test unmet.completion.stuck_chain_indices == [1]
+    message = sprint(showerror, WarmupHMC.CompletionQuorumError(unmet))
+    @test occursin("1 of 2", message)
+    @test occursin("left out as stuck after reaching `n_draws`: [1]", message)
+    # Switched off, both checks admit every full chain.
+    off = WarmupHMC._completion_batch(2; min_completed=2,
+            admission=WarmupHMC._CompletionAdmission(Inf, 1.0)) do i, stop
+        i == 1 ? (_admission_fixture(1e-6; n_divergent=20), true) : (_admission_fixture(0.17), true)
+    end
+    @test off.completion.completed_chain_indices == [1, 2]
+    @test off.completion.chains[1].divergent_fraction == 1.0
+    @test isnothing(off.completion.chains[1].reference_stepsize)
+end
+
+@testset "resume judges already-complete checkpoints before scheduling" begin
+    # Slot 3's checkpoint keeps draws at 0.18 but is not complete yet.
+    initial = Dict(1 => _admission_fixture(0.004), 2 => _admission_fixture(0.17))
+    out = WarmupHMC._completion_batch(3; min_completed=1, admission=_ADMISSION_CHECKS,
+            initial_results=initial, initial_stepsizes=Dict(3 => 0.18)) do i, stop
+        error("No incomplete worker should start after quorum.")
+    end
+    c = out.completion
+    @test c.stuck_chain_indices == [1]
+    @test c.chains[1].reference_stepsize ≈ 0.175
+    @test c.completed_chain_indices == [2]
+    @test c.chains[3].status === :not_started
+    @test c.quorum_at_seconds == 0.0
+end
+
+# A standard normal cut by a hard wall through its mode: every trajectory that
+# crosses x[1] = 0 meets -Inf, which the sampler counts as a divergence.
+struct CompletionWall end
+LogDensityProblems.dimension(::CompletionWall) = 2
+LogDensityProblems.capabilities(::Type{CompletionWall}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity_and_gradient(::CompletionWall, x) =
+    x[1] < 0 ? (-Inf, zero(x)) : (-sum(abs2, x) / 2, -x)
+LogDensityProblems.logdensity(p::CompletionWall, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+
+@testset "a real chain that reaches n_draws mostly divergent is left out" begin
+    BLAS.set_num_threads(1)
+    healthy = DiagGaussian([0.0, 0.0], [1.0, 1.0])
+    init = (; position=[0.5, 0.0], squared_scale=Diagonal(ones(2)))
+    # The healthy chains hold their final boundary until the walled chain has
+    # reached n_draws, so it is judged however the threads are scheduled.
+    walled_finished = Threads.Atomic{Bool}(false)
+    hold = (state, stage) -> begin
+        if size(state.recording_lpdf.posterior_position, 2) >= state.n_draws
+            state.lpdf isa CompletionWall ? (walled_finished[] = true) :
+                timedwait(() -> walled_finished[], 120)
+        end
+        false
+    end
+    # `max_divergent_fraction=1` keeps the adaptive sampler's own restart gate
+    # out of the way: the walled chain returns its draws as they are.
+    out = completion_warmup_mcmc([Xoshiro(i) for i in 1:4],
+        [healthy, healthy, CompletionWall(), healthy];
+        min_completed=3, n_draws=200, init, callback=hold, max_divergent_fraction=1.0)
+    c = out.completion
+    @test walled_finished[]
+    @test c.completed_chain_indices == [1, 2, 4]
+    @test c.stuck_chain_indices == [3]
+    @test c.omitted_chain_indices == [3]
+    @test c.stop_reason === :quorum_reached
+    @test getproperty.(out.results, :chain_index) == [1, 2, 4]
+    @test c.chains[3].stuck_reason === :divergence
+    @test c.chains[3].n_samples == 200
+    @test c.chains[3].divergent_fraction > 0.5
+    @test all(i -> c.chains[i].divergent_fraction == 0, (1, 2, 4))
+    @test all(i -> !isnothing(c.chains[i].reference_stepsize), (1, 2, 4))
+    @test c.n_samples == 600
+end
+
 @testset "numerical equivalence and recovery" begin
     BLAS.set_num_threads(1)
     p = DiagGaussian([0.5, -1.0], [1.0, 1.5])
@@ -237,16 +439,19 @@ end
         WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_manifest.jls"),
             (; schema_version=1, sampler=:completion, n_requested=2))
         # Complete chain 2 separately. Resume must admit it before any worker
-        # has a chance to initialize chain 1.
+        # has a chance to initialize chain 1. Chain 1 keeps no draws, so the
+        # step-size check would make chain 2 wait for it to sample ("a finished
+        # chain waits, uncounted"); this run pins admission without that check.
         ordinary = adaptive_warmup_mcmc(Xoshiro(999), p;
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_2"), resume=true)
+        unchecked = (; stuck_stepsize_ratio=Inf)
         out = completion_warmup_mcmc([Xoshiro(999), Xoshiro(999)], p;
-            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true)
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...)
         @test out.completion.completed_chain_indices == [2]
         @test out.completion.omitted_chain_indices == [1]
         @test out.results[1].posterior_position == ordinary.posterior_position
         @test out.completion.chains[1].status === :not_started
-        @test out.completion.schema_version == 2
+        @test out.completion.schema_version == 3
         @test out.completion.stop_policy === :finish_current_round
         cp1 = read(joinpath(dir, "chain_1", "cp_latest.jls"))
         @test isfile(joinpath(dir, "completion_terminal.jls"))
@@ -263,7 +468,7 @@ end
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_1"), resume=true)
         @test read(joinpath(dir, "chain_1", "cp_latest.jls")) != cp1
         again = completion_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
-            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true,
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...,
             callback=(s, stage) -> error("Terminal reopen must never run a callback"))
         @test again.completion == out.completion
         @test again.results[1].posterior_position == out.results[1].posterior_position
@@ -274,21 +479,27 @@ end
             n_draws=41, min_completed=1, checkpoint_dir=dir, resume=true)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
             n_draws=40, min_completed=1, grace_seconds=1, checkpoint_dir=dir, resume=true)
+        # refused: the admission thresholds are part of a finished run's
+        # immutable policy, like `min_completed` (docstring, decision 1dl030w).
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true)
         # A crash between terminal serialization and JSON publication is
         # recoverable from the immutable record, without sampling again.
         summary = joinpath(out.completion.attempt_directory, "run_summary.json")
         original_summary = read(summary)
         rm(summary)
         recovered = completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
-            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true)
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...)
         @test recovered.completion == out.completion
         @test read(summary) == original_summary
         # A schema-1 terminal fixture retains the OLD selection semantics,
         # including a full chain omitted after cutoff. It must not be silently
         # reinterpreted under the new policy when reopened.
         legacy_fields = (; (k => v for (k, v) in pairs(out.completion)
-            if k ∉ (:schema_version, :stop_policy, :stop_requested_at_seconds))...)
-        legacy_chains = copy(out.completion.chains)
+            if k ∉ (:schema_version, :stop_policy, :stop_requested_at_seconds,
+                :stuck_stepsize_ratio, :max_admitted_divergent_fraction, :n_stuck,
+                :stuck_chain_indices))...)
+        legacy_chains = Any[Base.structdiff(c, WarmupHMC._UNJUDGED) for c in out.completion.chains]
         legacy_chains[1] = merge(legacy_chains[1], (; status=:completed_after_cutoff,
             finished_at_seconds=4.0, n_samples=40))
         legacy = (; out.results, completion=merge(legacy_fields, (; grace_seconds=3.0,
@@ -298,6 +509,8 @@ end
         WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_terminal.jls"),
             (; schema_version=1, n_draws=40, outcome=legacy))
         rm(summary)
+        # It predates the admission checks, so it reopens whatever thresholds
+        # are passed: its recorded selection was made without them.
         old = completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true,
             callback=(s, stage) -> error("Legacy terminal reopen must not sample"))
@@ -305,6 +518,7 @@ end
         @test getproperty.(old.results, :chain_index) == [2]
         @test old.results[1].posterior_position == out.results[1].posterior_position
         @test occursin("\"grace_seconds\":3.0", read(summary, String))
+        @test !occursin("chain_stuck_reasons", read(summary, String))
         # Explicit overwrite starts a new run and clears the old selection.
         fresh = completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
             n_draws=40, checkpoint_dir=dir, overwrite=true)
@@ -352,6 +566,17 @@ end
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; grace_seconds=value)
     end
     @test :grace_seconds ∉ WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
+    # refused: a step-size ratio below 1 would leave out chains above their
+    # siblings' median, and a fraction outside [0, 1] bounds nothing (decision 1dl030w).
+    for value in (0.5, NaN, true, "10")
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; stuck_stepsize_ratio=value)
+    end
+    for value in (-0.1, 1.5, NaN, true)
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p;
+            max_admitted_divergent_fraction=value)
+    end
+    @test :stuck_stepsize_ratio in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
+    @test :max_admitted_divergent_fraction in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
     for value in (0, -1, typemax(Int), true, 1.5)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; n_draws=value)
     end
@@ -383,6 +608,8 @@ end
     @test occursin("stopped", done)
     @test occursin("not started", done)
     @test occursin("failed", done)
+    @test occursin("stuck", done)
+    @test occursin("awaiting reference", done)
     # Live run: the first callback parks one chain behind a gate while the main
     # task snapshots the mid-flight tree — labelled subtrees and quorum state
     # must already be visible, before any chain has completed.
@@ -426,11 +653,11 @@ end
     end
     # Over-quorum completions stay exact in the labels: the rendered counter
     # clamps at N, so the `finished` label (not the bar) is the source of truth.
-    s = WarmupHMC._CompletionState(ReentrantLock(), () -> 0.0, 0.0, 2,
-        1.0, [:completed, :completed, :completed],
-        Any[_completion_fixture(i) for i in 1:3],
-        Any[nothing, nothing, nothing],
-        Union{Nothing,Float64}[1.0, 1.0, 1.0])
+    s = WarmupHMC._CompletionState(3; clock=() -> 0.0, min_completed=2)
+    s.quorum_at = 1.0
+    s.statuses .= :completed
+    s.results .= [_completion_fixture(i) for i in 1:3]
+    s.finished_at .= 1.0
     over_root = Ref{Any}(nothing)
     _Treebars.with_progress(:state; description="over") do probe
         over_root[] = probe

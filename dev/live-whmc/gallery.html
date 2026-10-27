@@ -1164,6 +1164,24 @@ a.htmxo-semantic-artifact > small {
     position: relative;
     z-index: 2;
 }
+
+/* A `presentation=:tabs` page: a tab's own inputs sit side by side above its
+   result, each as wide as a field rather than the whole column; a row of
+   pills takes its own width. */
+.htmxo-semantic-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1.5rem;
+    align-items: flex-start;
+}
+.htmxo-semantic-inputs > .htmxo-semantic-controls { display: contents; }
+.htmxo-semantic-inputs > *,
+.htmxo-semantic-inputs > .htmxo-semantic-controls > * {
+    flex: 0 1 16rem;
+    min-width: 0;
+}
+.htmxo-semantic-inputs fieldset,
+.htmxo-semantic-inputs .htmxo-relevant:has(> fieldset) { flex-basis: auto; }
 .htmxo-semantic-card[data-rich="true"] > label {
     position: absolute;
     inset: 0;
@@ -2723,6 +2741,226 @@ if (!window.htmxoComparisonInstalled) {
       if (group) group.querySelectorAll('.htmxo-semantic-context-control').forEach(send);
     }, 0);
   }, true);
+})();
+</script><script>(function() {
+  if (window.__htmxoSemanticFollow) return;
+  window.__htmxoSemanticFollow = true;
+  var PRESSED = /^(submit|reset|button|image|file)$/;
+  var DELAY = 300;
+  function regions() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-htmxo-follow]'));
+  }
+  function formsOf(region) {
+    return (region.getAttribute('data-htmxo-inputs') || '').split(' ').filter(Boolean)
+      .map(function(s) { return document.querySelector(s); }).filter(Boolean);
+  }
+  function visible(el) {
+    if (!el.isConnected) return false;
+    if (el.checkVisibility) return el.checkVisibility();
+    return el.getClientRects().length > 0;
+  }
+  // The values a region's request carries: every named control of its forms,
+  // as the form would submit it, but a hidden one (a `@relevant` input that
+  // does not apply), and an unchecked checkbox as `false`.
+  function pairsOf(region) {
+    var pairs = [];
+    formsOf(region).forEach(function(form) {
+      Array.prototype.forEach.call(form.elements, function(c) {
+        if (!c.name || c.disabled || PRESSED.test(c.type)) return;
+        if (c.closest('[hidden]')) return;
+        if (c.type === 'radio') { if (c.checked) pairs.push([c.name, c.value]); return; }
+        if (c.type === 'checkbox') {
+          pairs.push([c.name, c.checked ? c.value : (c.value === 'true' ? 'false' : null)]);
+          if (pairs[pairs.length - 1][1] === null) pairs.pop();
+          return;
+        }
+        if (c.type === 'select-multiple') {
+          Array.prototype.forEach.call(c.selectedOptions, function(o) { pairs.push([c.name, o.value]); });
+          return;
+        }
+        pairs.push([c.name, c.value]);
+      });
+    });
+    return pairs;
+  }
+  // What the region's result depends on: the values of the inputs it reads,
+  // or of every input sent when the reads are not known.
+  function keyOf(region, pairs) {
+    var reads = region.getAttribute('data-htmxo-reads');
+    var wanted = reads === null ? null : reads.split(' ');
+    return JSON.stringify(pairs.filter(function(p) {
+      return wanted === null || wanted.indexOf(p[0]) >= 0;
+    }).sort());
+  }
+  function valid(region) {
+    return formsOf(region).every(function(f) { return !f.checkValidity || f.checkValidity(); });
+  }
+  function consider(region) {
+    if (!window.htmx || !visible(region) || !valid(region)) return;
+    var pairs = pairsOf(region);
+    var key = keyOf(region, pairs);
+    if (region.getAttribute('data-htmxo-shown') === key) return;
+    region.setAttribute('data-htmxo-shown', key);
+    // A result asked for the first time shows that it is coming.
+    if (!region.children.length) region.appendChild(document.createElement('progress'));
+    var url = region.getAttribute('data-htmxo-follow');
+    var query = new URLSearchParams(pairs).toString();
+    window.htmx.ajax('GET', query ? url + (url.indexOf('?') >= 0 ? '&' : '?') + query : url,
+                     {source: region, target: region, swap: 'innerHTML'});
+  }
+  var timers = new Map();
+  function later(region) {
+    clearTimeout(timers.get(region));
+    timers.set(region, setTimeout(function() { timers.delete(region); consider(region); }, DELAY));
+  }
+  function readers(form) {
+    return regions().filter(function(r) { return formsOf(r).indexOf(form) >= 0; });
+  }
+  var seen = new WeakSet();
+  var observer = 'IntersectionObserver' in window ? new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) { if (e.isIntersecting) later(e.target); });
+  }) : null;
+  // A region the page rendered with its first answer under way was asked for
+  // with the values on the page: that is its shown key.
+  function arm(root) {
+    var found = root.matches && root.matches('[data-htmxo-follow]') ? [root] : [];
+    if (root.querySelectorAll) found = found.concat(Array.prototype.slice.call(
+      root.querySelectorAll('[data-htmxo-follow]')));
+    found.forEach(function(region) {
+      if (seen.has(region)) return;
+      seen.add(region);
+      if (region.children.length && !region.hasAttribute('data-htmxo-shown')) {
+        region.setAttribute('data-htmxo-shown', keyOf(region, pairsOf(region)));
+      }
+      if (observer) observer.observe(region);
+      else later(region);
+    });
+  }
+  document.addEventListener('change', function(e) {
+    var form = e.target && e.target.form;
+    if (!form) return;
+    readers(form).forEach(function(r) { if (visible(r)) later(r); });
+  });
+  document.addEventListener('htmx:load', function(e) { arm(e.target); });
+  // A control re-rendered in place (a dependent domain, a `@relevant` input
+  // the browser cannot evaluate) can change what the forms send.
+  document.addEventListener('htmx:afterSettle', function(e) {
+    var t = e.target, form = t && t.closest && t.closest('form');
+    if (form) readers(form).forEach(function(r) { if (visible(r)) later(r); });
+  });
+  function forget(e) {
+    var t = e.target;
+    if (t && t.matches && t.matches('[data-htmxo-follow]')) t.removeAttribute('data-htmxo-shown');
+  }
+  document.addEventListener('htmx:responseError', forget);
+  document.addEventListener('htmx:sendError', forget);
+  // A mutation's answer can change what every read of the page shows.
+  document.addEventListener('htmx:afterSwap', function(e) {
+    var config = e.detail && e.detail.requestConfig;
+    if (!config || !config.verb) return;
+    if (config.verb === 'get' && !/[?&]__htmxo_verb=/.test(config.path || '')) return;
+    var page = e.target && e.target.closest && e.target.closest('.htmxo-semantic-page');
+    if (!page) return;
+    page.querySelectorAll('[data-htmxo-follow]').forEach(function(r) {
+      r.removeAttribute('data-htmxo-shown');
+    });
+  });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { arm(document.body); });
+  } else {
+    arm(document.body);
+  }
+})();
+</script><script>(function() {
+  if (window.__htmxoShowWhen) return;
+  window.__htmxoShowWhen = true;
+  // Controls that carry a value only when pressed never count.
+  var PRESSED = /^(submit|reset|button|image)$/;
+  function scopeOf(el) {
+    return el.closest('form') || el.closest('[hx-target]') || document.body;
+  }
+  // The values the field `name` carries in `scope` as the form would submit
+  // them; [''] when it carries nothing, null when the scope has no such field.
+  function fieldValues(scope, name) {
+    var controls = scope.tagName === 'FORM' ? scope.elements
+                 : scope.querySelectorAll('input, select, textarea');
+    var found = false, values = [];
+    Array.prototype.forEach.call(controls, function(c) {
+      if (c.name !== name || typeof c.value !== 'string' || PRESSED.test(c.type)) return;
+      found = true;
+      if (c.type === 'radio' || c.type === 'checkbox') {
+        if (c.checked) values.push(c.value);
+      } else if (c.type === 'select-multiple') {
+        Array.prototype.forEach.call(c.selectedOptions, function(o) { values.push(o.value); });
+      } else {
+        values.push(c.value);
+      }
+    });
+    if (!found) return null;
+    return values.length ? values : [''];
+  }
+  function evalShowWhen(el) {
+    var values = fieldValues(scopeOf(el), el.dataset.showWhenField);
+    if (!values) return;
+    var op = el.dataset.showWhenOp;
+    var val = el.dataset.showWhenValue;
+    var hit = values.some(function(v) {
+      return op === 'eq' || op === 'neq' ? v === val
+           : op === 'startswith' ? v.startsWith(val)
+           : op === 'endswith' ? v.endsWith(val)
+           : false;
+    });
+    el.hidden = op === 'neq' ? hit : !hit;
+  }
+  // A JSON condition: true or false, or null when a field it reads is on no
+  // form of the page.
+  function number(v) { return v === '' ? NaN : Number(v); }
+  function holds(p, el) {
+    var parts, i, r;
+    if (p.all || p.any) {
+      parts = p.all || p.any;
+      for (i = 0; i < parts.length; i++) {
+        r = holds(parts[i], el);
+        if (r === null) return null;
+        if (p.all ? !r : r) return !p.all;
+      }
+      return !!p.all;
+    }
+    if (p.not) { r = holds(p.not, el); return r === null ? null : !r; }
+    var values = fieldValues(scopeOf(el), p.field);
+    if (!values && scopeOf(el) !== document.body) values = fieldValues(document.body, p.field);
+    if (!values) return null;
+    var wanted = p.op === 'in' ? p.values : [p.value];
+    function same(v, w) { return p.numeric ? number(v) === number(w) : v === w; }
+    if (p.op === 'eq' || p.op === 'in') {
+      return values.some(function(v) { return wanted.some(function(w) { return same(v, w); }); });
+    }
+    if (p.op === 'neq') return !values.some(function(v) { return same(v, p.value); });
+    return values.some(function(v) {
+      var a = number(v), b = number(p.value);
+      return p.op === 'lt' ? a < b : p.op === 'le' ? a <= b : p.op === 'gt' ? a > b : a >= b;
+    });
+  }
+  function evalCondition(el) {
+    var r;
+    try { r = holds(JSON.parse(el.dataset.showWhen), el); } catch (e) { return; }
+    if (r !== null) el.hidden = !r;
+  }
+  function evalAll() {
+    document.querySelectorAll('[data-show-when-field]').forEach(evalShowWhen);
+    document.querySelectorAll('[data-show-when]').forEach(evalCondition);
+  }
+  document.addEventListener('change', function(e) {
+    var name = e.target && e.target.name;
+    if (!name) return;
+    document.querySelectorAll('[data-show-when-field]').forEach(function(el) {
+      if (el.dataset.showWhenField === name) evalShowWhen(el);
+    });
+    document.querySelectorAll('[data-show-when]').forEach(evalCondition);
+  });
+  document.addEventListener('htmx:afterSettle', evalAll);
+  evalAll();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', evalAll);
 })();
 </script><script>(function () {
   'use strict';

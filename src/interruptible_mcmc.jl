@@ -199,7 +199,7 @@ FixedKernelNUTSState(checkpoint_path::AbstractString; kwargs...) =
     FixedKernelNUTSState(deserialize(checkpoint_path)::NamedTuple; kwargs...)
 
 """
-    fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf)
+    fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=1)
 
 Take exactly one fixed-kernel NUTS transition under the supplied
 `LogDensityProblems` target. Return `(; state, divergent, stats)`, where `state`
@@ -218,8 +218,12 @@ read. A checkpoint's adapted reparametrization
 controls are restored onto a private copy of each supplied target. The fixed
 metric, step size and tree depth are not adapted. Mixed-target positions are
 not a stationary posterior sample and must not be pooled for ESS.
+
+The transition runs with `blas_threads` BLAS threads and restores the caller's
+count afterwards, as for [`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS
+untouched.
 """
-fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf) = begin
+fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=_DEFAULT_BLAS_THREADS) = _with_blas_threads(blas_threads) do
     dimension = LogDensityProblems.dimension(lpdf)
     length(state.position) == dimension || throw(DimensionMismatch(
         "state holds a $(length(state.position))-dimensional position but the " *
@@ -674,13 +678,17 @@ EVERY draw's divergence flag — their sum is the total), `rng_states` (a
 Call [`close_stream`](@ref) on each result once its mapped views are no longer
 needed, before removing the stream files on Windows.
 
-Reproducibility of resume-equals-uninterrupted is byte-for-byte for a fixed seed
-only under single-threaded BLAS (`LinearAlgebra.BLAS.set_num_threads(1)`).
+Every method takes `blas_threads=1`: BLAS runs with that many threads for the
+whole call and gets the caller's count back afterwards, as for
+[`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS untouched.
+Resume-equals-uninterrupted is byte-for-byte for a fixed seed only under
+single-threaded BLAS, which is the default.
 """
 stream_mcmc(rng, lpdf, position::AbstractVector;
         path, n_draws::Integer, metric, stepsize::Real, max_tree_depth::Integer=10,
         overwrite::Bool=false, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = _with_blas_threads(blas_threads) do
     dimension = LogDensityProblems.dimension(lpdf)
     length(position) == dimension || throw(DimensionMismatch(
         "initial `position` has length $(length(position)) but the lpdf has " *
@@ -699,7 +707,8 @@ end
 # kernel is re-supplied by the caller.
 stream_mcmc(lpdf; path, n_draws::Integer, metric, stepsize::Real,
         max_tree_depth::Integer=10, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = _with_blas_threads(blas_threads) do
     ring_path = _ring_path(path)
     _is_resumable(path, ring_path) || throw(ArgumentError(
         "no resumable run at $(repr(path)) (need both the samples file and a valid " *
@@ -716,7 +725,8 @@ end
 # of it. An already-resumable `path` continues that streaming run instead.
 stream_mcmc(payload::NamedTuple, lpdf; path, n_draws::Integer,
         max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = _with_blas_threads(blas_threads) do
     kinetic_energy, stepsize = _checkpoint_kernel!(payload, lpdf)
     ring_path = _ring_path(path)
     resumable = !overwrite && _is_resumable(path, ring_path)
@@ -735,7 +745,8 @@ end
 # the streams. An already-resumable `path` still continues that streaming run.
 stream_mcmc(payload::NamedTuple, lpdf, position::AbstractVector; path, n_draws::Integer,
         rng=nothing, max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = _with_blas_threads(blas_threads) do
     kinetic_energy, stepsize = _checkpoint_kernel!(payload, lpdf)
     length(position) == payload.dimension || throw(DimensionMismatch(
         "start `position` has length $(length(position)) but the checkpoint holds a " *
@@ -764,7 +775,7 @@ stream_mcmc(checkpoint_path::AbstractString, lpdf, position::AbstractVector; kwa
 # `Vector` of the per-chain result NamedTuples.
 _chain_stream_path(path, i) = joinpath(path, "chain_$i")
 
-_stream_multichain(run_chain, n_chains; path, parallel, progress, description) = begin
+_stream_multichain(run_chain, n_chains; path, parallel, progress, description, blas_threads) = _with_blas_threads(blas_threads) do
     isnothing(path) && throw(ArgumentError("multi-chain stream_mcmc needs a base `path` directory"))
     mkpath(path)
     with_progress(progress, n_chains; description) do prog
@@ -790,16 +801,17 @@ end
 stream_mcmc(payload::NamedTuple, lpdf, positions::AbstractVector{<:AbstractVector};
         path, n_draws::Integer, rngs=nothing, parallel::Bool=true, max_tree_depth::Integer=10,
         overwrite::Bool=false, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = begin
     n_chains = length(positions)
     n_chains >= 1 || throw(ArgumentError("`positions` must be non-empty"))
     chain_rngs = isnothing(rngs) ? _derive_chain_rngs(payload.rng, n_chains) : rngs
     length(chain_rngs) == n_chains || throw(DimensionMismatch(
         "got $(length(chain_rngs)) rngs for $n_chains chains"))
     lpdfs = _stream_lpdfs(lpdf, n_chains)
-    _stream_multichain(n_chains; path, parallel, progress, description) do i, prog, chain_path, chain_desc
+    _stream_multichain(n_chains; path, parallel, progress, description, blas_threads) do i, prog, chain_path, chain_desc
         stream_mcmc(payload, lpdfs[i], positions[i]; path=chain_path, n_draws, rng=chain_rngs[i],
-            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc)
+            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc, blas_threads)
     end
 end
 
@@ -811,14 +823,15 @@ stream_mcmc(checkpoint_path::AbstractString, lpdf, positions::AbstractVector{<:A
 stream_mcmc(rngs::AbstractVector, lpdf, positions::AbstractVector{<:AbstractVector};
         path, n_draws::Integer, metric, stepsize::Real, parallel::Bool=true,
         max_tree_depth::Integer=10, overwrite::Bool=false, durable::Bool=false,
-        progress=nothing, description::AbstractString="stream_mcmc") = begin
+        progress=nothing, description::AbstractString="stream_mcmc",
+        blas_threads=_DEFAULT_BLAS_THREADS) = begin
     n_chains = length(positions)
     length(rngs) == n_chains || throw(DimensionMismatch(
         "got $(length(rngs)) rngs for $n_chains chains"))
     lpdfs = _stream_lpdfs(lpdf, n_chains)
-    _stream_multichain(n_chains; path, parallel, progress, description) do i, prog, chain_path, chain_desc
+    _stream_multichain(n_chains; path, parallel, progress, description, blas_threads) do i, prog, chain_path, chain_desc
         stream_mcmc(rngs[i], lpdfs[i], positions[i]; path=chain_path, n_draws, metric, stepsize,
-            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc)
+            max_tree_depth, overwrite, durable, progress=prog, description=chain_desc, blas_threads)
     end
 end
 

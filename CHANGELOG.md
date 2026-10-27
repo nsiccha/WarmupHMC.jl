@@ -29,6 +29,25 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.3
+
+### Changed
+
+- Every sampler now runs with single-threaded BLAS by default, and gives the
+  caller's BLAS thread count back when it returns or throws. A new keyword on
+  every entry point (`adaptive_warmup_mcmc`, `resume_warmup_mcmc`,
+  `completion_warmup_mcmc`, `cooperative_warmup_mcmc`, `stream_mcmc`,
+  `fixed_kernel_nuts_step`), `blas_threads` (default `1`), sets the count;
+  `blas_threads = nothing` leaves BLAS untouched, which is the previous
+  behaviour. Every leapfrog step takes `dot` products of posterior-length
+  vectors, which OpenBLAS runs on all its threads above 10,000 entries; its
+  idle workers then busy-wait while the gradient is computed, and under a CPU
+  quota or with chains on Julia threads they take the gradient's CPU (snag
+  `openblas-threads-2f1bf9e9`). The count is process-global: nested and
+  concurrent sampler calls share one setting, and other BLAS work in the same
+  process runs single-threaded while a sampler runs. A fixed seed now
+  reproduces its draws without the caller setting BLAS threads.
+
 ## 0.2.2
 
 The first patch bump under the per-landing version policy: a landing that adds

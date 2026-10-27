@@ -449,6 +449,9 @@ adaptive single-chain keywords, including `callback(state, stage)`: returning
 one chain's node it stops that chain, on the node passed as `progress` (or an
 ancestor) it stops every running chain and starts no further slot.
 Callbacks may run concurrently and must be observational and thread-safe.
+`blas_threads=1` holds BLAS at that many threads for the whole call, every chain
+included, as for [`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS
+untouched.
 `progress=` builds one quorum parent node — chains completed of `min_completed`,
 the stop state, and the stopped/never-started/failed slots — with one
 `"<description>.<i>"` child subtree per original chain slot, as multi-chain
@@ -510,13 +513,14 @@ identifies that invocation. `completion_terminal.jls` stores the successful
 outcome, including returned draws, atomically before the summary is published.
 These run records do not change chain payloads.
 """
-function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
+completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         min_completed=length(rngs), n_draws=1000,
         stuck_stepsize_ratio=_DEFAULT_STUCK_STEPSIZE_RATIO,
         max_admitted_divergent_fraction=_DEFAULT_MAX_ADMITTED_DIVERGENT_FRACTION,
         init=missing, checkpoint_dir=nothing, resume=false, overwrite=false,
         callback=nothing, progress=nothing, description="MCMC",
-        monitor_ess=!isnothing(progress), kwargs...)
+        monitor_ess=!isnothing(progress), blas_threads=_DEFAULT_BLAS_THREADS,
+        kwargs...) = _with_blas_threads(blas_threads) do
     n = length(rngs)
     Base.require_one_based_indexing(rngs, lpdfs)
     n > 0 || throw(ArgumentError("At least one RNG is required."))
@@ -585,7 +589,8 @@ function completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             end
             result = adaptive_warmup_mcmc(rngs[i], densities[i]; n_draws, init=deepcopy(inits[i]),
                 checkpoint_dir=dir, resume=resume_chain, callback=boundary,
-                progress=cprogress, description=description * ".$i", monitor_ess, kwargs...)
+                progress=cprogress, description=description * ".$i", monitor_ess, blas_threads,
+                kwargs...)
             result, size(result.posterior_position, 2) >= n_draws
         end
         initial_results = Dict{Int,Any}()

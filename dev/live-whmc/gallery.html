@@ -2085,7 +2085,7 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width"};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -5703,22 +5703,29 @@ figcaption.caption { margin-bottom: 0.5rem; }
                 groupNames[col++] = th.colSpan > 1 ? name(th) : '';
         }
     }
-    const headers = Array.from(table.querySelectorAll(grouped ? 'thead th[data-htmxo-sort-col]' : 'thead th'))
-        .sort((a, b) => grouped ? Number(a.dataset.htmxoSortCol) - Number(b.dataset.htmxoSortCol) : 0)
-        .map(th => {
-            const group = grouped ? groupNames[Number(th.dataset.htmxoSortCol) - 1] : '';
-            return esc(group ? group + ' / ' + name(th) : name(th));
-        });
+    // A column of interval cells (`interval_cell`) is three columns: the
+    // estimate, then its bounds, named with the words its header carries.
+    const ths = Array.from(table.querySelectorAll(grouped ? 'thead th[data-htmxo-sort-col]' : 'thead th'))
+        .sort((a, b) => grouped ? Number(a.dataset.htmxoSortCol) - Number(b.dataset.htmxoSortCol) : 0);
+    const bounds = ths.map(th => th.dataset.htmxoIntervalCsv ? JSON.parse(th.dataset.htmxoIntervalCsv) : null);
+    const headers = ths.flatMap((th, i) => {
+        const group = grouped ? groupNames[Number(th.dataset.htmxoSortCol) - 1] : '';
+        const n = group ? group + ' / ' + name(th) : name(th);
+        return (bounds[i] ? [n, n + ' / ' + bounds[i][0], n + ' / ' + bounds[i][1]] : [n]).map(esc);
+    });
     // A number cell (`number_cell`, a group summary) exports its number, not
-    // the text it shows in the table's language. A master/detail first cell
-    // holds its row controls beside the content; export the content only, as
-    // sorting and search read it. A cell's lines stay lines of one quoted field.
+    // the text it shows in the table's language, and an interval cell its
+    // three numbers. A master/detail first cell holds its row controls beside
+    // the content; export the content only, as sorting and search read it. A
+    // cell's lines stay lines of one quoted field.
     const text = td => td.dataset.htmxoNumber ??
         lines(td.querySelector(':scope > [data-htmxo-row-label]') || td).join('\n');
+    const fields = (td, i) => !bounds[i] ? [text(td)] :
+        td.dataset.htmxoInterval ? JSON.parse(td.dataset.htmxoInterval) : [text(td), '', ''];
     const rows = Array.from(table.querySelectorAll('tbody tr'))
         .filter(tr => !(tr.id && tr.id.startsWith('detail-')))
         .map(tr =>
-            Array.from(tr.cells).map(td => esc(text(td))).join(','));
+            Array.from(tr.cells).flatMap((td, i) => fields(td, i).map(esc)).join(','));
     const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);

@@ -471,8 +471,9 @@ chain dispositions and captured errors, quorum and stop-request times (seconds
 since worker scheduling begins), and retained draw/divergence counts. Each
 `completion.chains[i]` of a chain that reached `n_draws` also records its
 `stepsize`, `divergent_fraction`, the `reference_stepsize` it was compared with
-(`nothing` if none existed), and, for a stuck chain, `stuck_reason`
-(`:divergence` or `:stepsize`). A failed chain's `n_samples` is `nothing` because it
+(`nothing` when it was not compared: no sibling ever kept draws, the step-size
+check is off, or the divergence check already left it out), and, for a stuck
+chain, `stuck_reason` (`:divergence` or `:stepsize`). A failed chain's `n_samples` is `nothing` because it
 has no finalized result; its `n_retained_samples` is zero. Failed and stuck
 chains are also omitted. If the quorum is unmet, throws
 `WarmupHMC.CompletionQuorumError` with this same `outcome`; partial results are

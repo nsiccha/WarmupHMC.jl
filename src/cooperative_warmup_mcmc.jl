@@ -1013,6 +1013,9 @@ abandoned.
   The `target_ess` stop needs `monitor_ess` (the default).
 * `init` (as for [`adaptive_warmup_mcmc`](@ref)) is shared by every chain, or a
   vector of per-chain inits; a position vector of reals is one shared start.
+* `blas_threads=1` holds BLAS at that many threads for the whole call and
+  restores the caller's count afterwards, as for
+  [`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS untouched.
 
 ## Checkpointing and resume
 
@@ -1059,8 +1062,9 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     resume=false,
     overwrite=false,
     pathfinder_kw=(;),
+    blas_threads=_DEFAULT_BLAS_THREADS,
     kwargs...
-) = begin
+) = _with_blas_threads(blas_threads) do
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
     guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))

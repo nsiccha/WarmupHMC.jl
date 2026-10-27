@@ -167,6 +167,8 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     :checkpoint_dir, :resume, :overwrite,
     # deliberate passthrough to the Pathfinder initializer
     :pathfinder_kw,
+    # BLAS threads for the duration of the call
+    :blas_threads,
 ]
 
 # Named in this package's own source and therefore forwarded on purpose; every

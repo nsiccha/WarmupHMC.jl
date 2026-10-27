@@ -31,6 +31,7 @@ export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
     completion_warmup_mcmc
 
 include("kwarg_validation.jl")
+include("blas_threads.jl")
 include("MatrixExpressions.jl")
 include("NUTSLeafWeights.jl")
 include("WrappedLogDensityProblems.jl")

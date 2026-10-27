@@ -63,7 +63,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :variance_cond_target, :max_divergent_fraction, :callback,
         :linear_restart_source, :linear_trajectory_weighting,
         :linear_metric_fallback, :max_reflections,
-        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
+        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw, :blas_threads,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
     # `resume_warmup_mcmc` is deprecated in favour of `resume=true` on the sampler
@@ -76,6 +76,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :nonlinear_good_leaf_threshold,
         :linear_restart_source, :linear_trajectory_weighting,
         :linear_metric_fallback, :max_reflections, :max_divergent_fraction,
+        :blas_threads,
     ),
     # Every keyword it honours is declared by its own signature: nothing is
     # forwarded to a per-chain constructor.
@@ -84,7 +85,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :n_evaluations, :stepsize_adaptation_limit, :target_acceptance_rate, :max_tree_depth,
         :restart_threshold, :max_clusters, :bandwidth, :kappa_prior_weight, :kappa_decay,
         :recording_target, :init, :nonlinear_adapt, :monitor_ess, :progress, :description,
-        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw,
+        :checkpoint_dir, :resume, :overwrite, :pathfinder_kw, :blas_threads,
     ),
 )
 

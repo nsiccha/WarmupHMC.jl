@@ -29,6 +29,35 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.4
+
+### Added
+
+- `ContinuousNUTSState` and `continuous_nuts_step`: a NUTS chain for a target
+  that changes between transitions, whose diagonal metric and step size keep
+  adapting on every transition. `FixedKernelNUTSState` / `fixed_kernel_nuts_step`
+  advance a changing target under a kernel learned once, which mixes worse the
+  further the target moves from where it was learned (snag
+  `continuous-nuts-15212ad7`, reporter NLMEEstimation: SAEM's conditional
+  posteriors move at every iteration). The new state starts as
+  `adaptive_warmup_mcmc` does (`init` takes every form documented there;
+  Pathfinder by default), and each `continuous_nuts_step` feeds every good
+  leapfrog leaf of its transition into exponentially forgotten position and
+  gradient moments (half-life `half_life` transitions, default 20; the start
+  scale enters as `prior_weight` pseudo-states, default 10), takes the Nutpie
+  diagonal scale of those moments as the next metric, carries the step size
+  through the metric change, and moves it toward `target_acceptance_rate`
+  through the cooperative sampler's κ fit over the recent transitions.
+  `adapt=false` takes the transition under the current kernel and is the fixed
+  kernel's draw. The state is advanced in place and holds O(d) memory; the
+  leaves are not stored. `bench/continuous_nuts_saem.jl` compares it with the
+  frozen kernel on SAEM-shaped changing targets.
+
+### Changed
+
+- `_fit_log_kappa` (internal) takes the sizes of its two search grids as
+  keywords; the cooperative sampler's defaults are unchanged.
+
 ## 0.2.3
 
 ### Changed

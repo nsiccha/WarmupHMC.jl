@@ -162,7 +162,11 @@ end
 # Weighted least squares of the (step size, acceptance) pairs against the model,
 # with a Normal prior on log κ. The grid spans both the prior and the previous
 # estimate, so a chain whose own evidence disagrees with its pool can still move.
-_fit_log_kappa(stepsizes, acceptances, weights, previous, prior, prior_weight) = begin
+# `coarse_points` and `fine_points` size the two grids; the defaults are the
+# cooperative sampler's. The continuous sampler (`continuous_nuts.jl`) fits on
+# every transition and passes smaller grids.
+_fit_log_kappa(stepsizes, acceptances, weights, previous, prior, prior_weight;
+               coarse_points=61, fine_points=21) = begin
     loss(lk) = begin
         c = _kappa_floor(lk, stepsizes, acceptances, weights)
         sum(w * abs2(a - c * _kappa_acceptance(lk, e)) for (e, a, w) in zip(stepsizes, acceptances, weights); init=0.0) +
@@ -170,9 +174,9 @@ _fit_log_kappa(stepsizes, acceptances, weights, previous, prior, prior_weight) =
     end
     center = (previous + prior) / 2
     half_width = 3 + abs(previous - prior) / 2
-    coarse = center .+ range(-half_width, half_width; length=61)
+    coarse = center .+ range(-half_width, half_width; length=coarse_points)
     best = coarse[argmin(loss.(coarse))]
-    fine = best .+ range(-step(coarse), step(coarse); length=21)
+    fine = best .+ range(-step(coarse), step(coarse); length=fine_points)
     fine[argmin(loss.(fine))]
 end
 

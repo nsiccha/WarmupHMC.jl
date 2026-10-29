@@ -100,6 +100,24 @@ the supplied target. The metric, step size and tree depth stay fixed; no files
 are written. Keep the same dimension and coordinate frame across targets.
 Positions from different targets are not a stationary posterior sample.
 
+When the target keeps moving, as SAEM's conditional posteriors do at every
+iteration, a kernel learned once mixes worse and worse. `ContinuousNUTSState`
+and `continuous_nuts_step` keep adapting instead: Pathfinder (or a supplied
+`init`) gives the start position and the first diagonal metric, and then every
+transition updates that metric and the step size from the leapfrog states it
+visited, with exponential forgetting, for as long as the caller keeps stepping.
+There is no warm-up phase, no window, no restart and no freeze.
+
+```julia
+state = ContinuousNUTSState(rng, first_target; init=η0)   # Pathfinder from η0
+for problem in changing_targets
+    result = continuous_nuts_step(state, problem)          # advances `state` in place
+    # state.position, state.scale and state.stepsize are this transition's;
+    # result.divergent describes this transition only.
+end
+continuous_nuts_step(state, problem; adapt=false)           # the fixed kernel, for posterior draws
+```
+
 ## Completion quorum (opt-in)
 
 ```julia

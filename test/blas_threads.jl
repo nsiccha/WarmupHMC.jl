@@ -90,6 +90,16 @@ try
         @test observe(() -> fixed_kernel_nuts_step(state, probe; blas_threads = nothing)) == (Set([caller]), caller)
     end
 
+    @testset "ContinuousNUTSState and continuous_nuts_step" begin
+        @test observe(() -> ContinuousNUTSState(Xoshiro(1), probe; init)) == (Set([1]), caller)
+        @test observe(() -> ContinuousNUTSState(Xoshiro(1), probe; init, blas_threads = nothing)) ==
+            (Set([caller]), caller)
+        state = ContinuousNUTSState(Xoshiro(1), probe; init)
+        @test observe(() -> continuous_nuts_step(state, probe)) == (Set([1]), caller)
+        @test observe(() -> continuous_nuts_step(state, probe; blas_threads = 2)) == (Set([2]), caller)
+        @test observe(() -> continuous_nuts_step(state, probe; blas_threads = nothing)) == (Set([caller]), caller)
+    end
+
     @testset "concurrent calls share one pin and restore once" begin
         @test observe(() -> fetch.([Threads.@spawn(adaptive_warmup_mcmc(Xoshiro(i), probe; init, n_draws = 20))
             for i in 1:2])) == (Set([1]), caller)

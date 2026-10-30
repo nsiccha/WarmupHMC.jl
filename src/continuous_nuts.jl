@@ -86,8 +86,10 @@ diagonal metric and step size keep adapting on every transition, for a target
 that changes between transitions. Initialization is
 [`adaptive_warmup_mcmc`](@ref)'s: `init` takes every form documented there, so
 by default Pathfinder runs from a random start on `lpdf`, a vector `init` runs
-Pathfinder from it, and `init = (; position, squared_scale)` starts exactly
-there with that diagonal covariance. The start position and the diagonal of
+Pathfinder from it (from a jitter of it when it is a stationary point such as a
+mode; the `init` section of [`adaptive_warmup_mcmc`](@ref)), and
+`init = (; position, squared_scale)` starts exactly there with that diagonal
+covariance. The start position and the diagonal of
 the initializer's covariance give the first metric; DynamicHMC's initial
 step-size search gives the first step size. A Pathfinder start is a point at
 which `lpdf` is finite: a draw a bounded support excludes is redrawn from the

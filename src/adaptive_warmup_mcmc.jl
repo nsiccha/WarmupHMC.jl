@@ -24,9 +24,13 @@ end
 
 initialize_mcmc(lpdf, ::Missing; kwargs...) = initialize_mcmc(lpdf, 2.; kwargs...)
 initialize_mcmc(lpdf, init::Real; kwargs...) = initialize_mcmc(lpdf, Uniform(-init,+init); kwargs...)
+# A random draw is never a stationary point and has no basin worth keeping, so a
+# Pathfinder run that yields no fit from it is retried from a FRESH draw here,
+# never from a jitter of the failed one (`_pathfinder_from_start`, `recover=false`).
 initialize_mcmc(lpdf, init::Distribution; rng, ntries=10, kwargs...) = for i in 1:ntries
     try
-        return initialize_mcmc(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf)); rng, kwargs...)
+        return _pathfinder_from_start(lpdf, rand(rng, init, LogDensityProblems.dimension(lpdf));
+            rng, recover=false, kwargs...)
     catch
         i == ntries && rethrow()
         @warn "Initialization failed the $i-th time, trying again..."
@@ -106,15 +110,19 @@ _empty_elbo_message(result) = """
         already stationary.
 
     Pathfinder does not retry from a fresh point by default (`mypathfinder` sets
-    `ntries=1`); `initialize_mcmc(lpdf, ::Distribution)` is the retry loop, and it
-    draws a new random starting point each time.
+    `ntries=1`). A caller-supplied vector `init` does not reach this error: a
+    stationary start, or one Pathfinder returns no fit from, is retried from
+    jittered starts and then falls back to a unit diagonal metric at the start
+    (`_pathfinder_from_start`). So this result came from a `PathfinderResult`
+    passed as `init`, or from one of WarmupHMC's own random starts, which
+    `initialize_mcmc(lpdf, ::Distribution)` redraws up to `ntries` times.
     """
 
 """
     _check_finite_init(lpdf, init)
 
-Evaluate `lpdf` and its gradient at `init`, and throw an explicit, actionable error
-when either is non-finite.
+Evaluate `lpdf` and its gradient at `init`; return the gradient, or throw an
+explicit, actionable error when either is non-finite.
 
 The evaluation itself is not optional — it also works around
 https://github.com/roualdes/bridgestan/issues/272, which is why its result used to
@@ -122,18 +130,92 @@ be computed and discarded here.
 """
 function _check_finite_init(lpdf, init)
     logdensity, gradient = LogDensityProblems.logdensity_and_gradient(lpdf, init)
-    (isfinite(logdensity) && all(isfinite, gradient)) && return nothing
+    (isfinite(logdensity) && all(isfinite, gradient)) && return gradient
     error(_nonfinite_init_message(logdensity, gradient, init))
 end
 
-initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs...) = with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
-    _check_finite_init(lpdf, init)
-    initialize_mcmc(
-        lpdf,
-        _pathfinder_or_refit(lpdf; rng, init, callback=pathfinder_callback(pprogress), maxiters, kwargs...);
-        kwargs...
-    )
-end
+# ── A stationary start ──────────────────────────────────────────────────────
+#
+# A caller-supplied start can be a stationary point of the log density: a MAP
+# estimate, an empirical-Bayes mode (snag `pathfinder-start-890fde27`:
+# NLMEEstimation's Louis information and `saem(…; η0 = modes)` start every
+# subject's chain at its FOCE(I) mode). Optim's L-BFGS then declares convergence
+# before its first step, Pathfinder's trajectory has length zero, no Gaussian is
+# scored, and the result carries an empty `elbo_estimates` — the shape a
+# first-step line-search failure from a finite start gives too. Pathfinder
+# cannot fit anything there, but the sampler does not need it to: L-BFGS from a
+# point a small random distance away walks back to the mode, and its
+# inverse-Hessian fit along that path is the same curvature-informed metric
+# Pathfinder gives from any other start. Measured on a 20-dimensional Gaussian
+# whose scales span e^±1.5 (`bench/stationary_start.jl`): the fitted scales'
+# mean |log ratio| to the true ones is 0.13–0.17 for jitters of 0.01–3, against
+# 0.14 from a random ±2 start and 0.79 for a unit metric, 20 of 20 seeds. So a
+# stationary start, or one Pathfinder returns no fit from, is retried from the
+# start plus a Gaussian jitter of `_STATIONARY_START_JITTERS[i]` per coordinate,
+# once per entry; if no try fits, the chain starts exactly at the given position
+# with a unit diagonal metric (the `NamedTuple` form), with a warning. Only
+# caller-supplied vector starts recover this way: WarmupHMC's own random draws
+# have no basin worth keeping and redraw instead (`initialize_mcmc(lpdf,
+# ::Distribution)`). The retries are WarmupHMC's own loop rather than
+# Pathfinder's `ntries`, which `deepcopy`s the optimization problem, and so the
+# target, on every retry.
+
+"Per-coordinate standard deviations of the successive jitters of a stationary start."
+const _STATIONARY_START_JITTERS = (0.05, 1.0)
+
+"""
+    _stationary_start(gradient)
+
+Whether Optim's L-BFGS declares convergence at a start with this `gradient`
+before taking a step: its largest component is at most the optimizer's gradient
+tolerance (`Optim.Options().g_abstol`, 1e-8). Measured on a Gaussian, a start
+whose largest gradient component is 1e-7 gives a 29-iteration trajectory, 1e-8
+none.
+"""
+_stationary_start(gradient) = maximum(abs, gradient) <= Pathfinder.Optim.Options().g_abstol
+
+initialize_mcmc(lpdf, init::AbstractVector; kwargs...) =
+    _pathfinder_from_start(lpdf, init; recover=true, kwargs...)
+
+"""
+    _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs...)
+
+Pathfinder from the vector `init`, i.e. `initialize_mcmc(lpdf, ::AbstractVector)`.
+With `recover=true` a stationary start, or one Pathfinder returns no fit from, is
+retried from jittered starts and then falls back to a unit diagonal metric at
+`init` (the comment above); with `recover=false` such a start throws the
+`_empty_elbo_message` error.
+"""
+_pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs...) =
+    with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
+        gradient = _check_finite_init(lpdf, init)
+        callback = pathfinder_callback(pprogress)
+        pathfind(start) = _pathfinder_or_refit(lpdf; rng, init=start, callback, maxiters, kwargs...)
+        stationary = recover && _stationary_start(gradient)
+        result = stationary ? nothing : pathfind(init)
+        if recover && (stationary || isempty(result.elbo_estimates))
+            why = stationary ?
+                "the start is a stationary point of the log density (largest gradient " *
+                "component $(maximum(abs, gradient)))" :
+                "Pathfinder returned no fit from the start (its L-BFGS trajectory had length zero)"
+            for scale in _STATIONARY_START_JITTERS
+                jittered = init .+ scale .* randn(rng, length(init))
+                isnothing(_evaluate_if_finite(lpdf, jittered)) && continue
+                result = pathfind(jittered)
+                isempty(result.elbo_estimates) || break
+            end
+            if isnothing(result) || isempty(result.elbo_estimates)
+                @warn "Initialization: $why, and Pathfinder found no fit from the jittered starts " *
+                    "either (per-coordinate sd $(join(_STATIONARY_START_JITTERS, ", "))). The " *
+                    "chain starts exactly at the given position with a unit diagonal metric."
+                return initialize_mcmc(lpdf, (; position=collect(Float64, init),
+                    squared_scale=ones(length(init))))
+            end
+            @info "Initialization: $why; Pathfinder ran from the start plus a Gaussian jitter " *
+                "instead, and the chain starts from that run's draw with its metric." maxlog=1
+        end
+        initialize_mcmc(lpdf, result; kwargs...)
+    end
 initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, kwargs...) = begin
     isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
     # The start is a point at which the target is finite: the draw, a redraw, or
@@ -1700,6 +1782,16 @@ path, which can lie in a different basin from the start. The first L-BFGS step
 has no curvature information yet, and its line search can carry a poor start
 tens of unconstrained units. To begin warm-up exactly at a position, pass the
 `NamedTuple` form, e.g. `(; position = q, squared_scale = ones(length(q)))`.
+
+An `AbstractVector` start may be a stationary point of the log density (a mode:
+a MAP estimate, an empirical-Bayes estimate). L-BFGS has nothing to do there, so
+Pathfinder is run from the start plus a Gaussian jitter instead (standard
+deviation 0.05 per coordinate, then 1.0 if that run yields no fit), and the chain
+starts from that run's draw with its metric, as from any other start. The same
+retry serves a finite start from which Pathfinder's first line search fails. If
+no jittered run yields a fit either, the chain starts exactly at the given
+position with a unit diagonal metric, with a warning. WarmupHMC's own random
+starts redraw on a failure instead.
 
 The start is a point at which `lpdf` is finite. Pathfinder's fit is a Gaussian,
 so its draw can land outside a bounded support, or where the model answers

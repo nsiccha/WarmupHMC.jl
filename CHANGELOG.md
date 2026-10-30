@@ -29,6 +29,25 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.6
+
+### Fixed
+
+- A vector `init` on a target with a bounded support starts the chain inside
+  it. Pathfinder's fit is a Gaussian, so the draw it starts the chain from
+  could land where the log density is `-Inf` (or the model answers `NaN`), and
+  every sampler then refused a start the caller never chose:
+  `ContinuousNUTSState` with "the log density is -Inf at the initial position",
+  `adaptive_warmup_mcmc` with DynamicHMC's "Starting point has non-finite
+  density." (snag `pathfinder-draw-c1e43cb7`, reporter NLMEEstimation: a SAEM
+  conditional whose first random effect is bounded at 0.6 in magnitude; 12 of
+  40 seeds on a Gaussian whose mode sits 0.2 SD inside such a bound). The
+  initializer now redraws from the same fit, up to ten times, and failing that
+  starts at the L-BFGS iterate the fit was made at (then the other iterates,
+  from the trajectory's end back to the start), with a warning; the fit's
+  covariance gives the first metric either way. A run whose first draw is
+  finite is unchanged, draw for draw.
+
 ## 0.2.5
 
 ### Added

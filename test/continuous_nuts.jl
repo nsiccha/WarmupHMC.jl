@@ -18,6 +18,19 @@ target = DiagGaussian(zeros(d), sigma)
 unit_start = (; position=zeros(d), squared_scale=ones(d))
 exact_start = (; position=zeros(d), squared_scale=sigma .^ 2)
 
+# `target` restricted to the half-space x[1] > 0: outside it the log density is
+# -Inf, so a position there is one a transition cannot start from (§1a's
+# out-of-support contract).
+struct HalfSpace{P}
+    inner::P
+end
+LogDensityProblems.capabilities(::Type{<:HalfSpace{P}}) where {P} = LogDensityProblems.capabilities(P)
+LogDensityProblems.dimension(p::HalfSpace) = LogDensityProblems.dimension(p.inner)
+LogDensityProblems.logdensity(p::HalfSpace, x) =
+    x[1] > 0 ? LogDensityProblems.logdensity(p.inner, x) : -Inf
+LogDensityProblems.logdensity_and_gradient(p::HalfSpace, x) =
+    x[1] > 0 ? LogDensityProblems.logdensity_and_gradient(p.inner, x) : (-Inf, zero(x))
+
 blas_threads = BLAS.get_num_threads()
 BLAS.set_num_threads(1)
 try
@@ -151,6 +164,148 @@ try
         end
         @test all(0.5 .< state.scale.diag ./ sigma .< 2)
         @test state.n_divergent < 10
+    end
+
+    # Everything a transition reads besides the position and the mean of the
+    # position evidence (which `reposition!` translates with it): the kernel,
+    # the evidence's spread and weight, the counters and the random stream.
+    kernel(s) = (; scale=copy(s.scale.diag), stepsize=s.stepsize,
+        moments=(copy(s.moments.position_m2), copy(s.moments.gradient_mean),
+            copy(s.moments.gradient_m2), s.moments.weight, s.moments.weight2),
+        prior_weight=s.prior_weight, log_kappa=s.log_kappa, backoff=s.backoff,
+        stepsizes=copy(s.stepsizes), acceptances=copy(s.acceptances),
+        n_transitions=s.n_transitions, evaluations=s.total_evaluation_counter,
+        n_divergent=s.n_divergent, rng=WarmupHMC._xoshiro_words(s.rng))
+
+    @testset "reposition! translates the chain and its evidence, and changes nothing else" begin
+        state = ContinuousNUTSState(Xoshiro(8), target; init=exact_start)
+        for _ in 1:30
+            continuous_nuts_step(state, target)
+        end
+        before = kernel(state)
+        mean_before = copy(state.moments.position_mean)
+        old = state.position
+        old_copy = copy(old)
+        moved = old .+ 0.5
+        @test reposition!(state, moved) === state
+        @test state.position == moved
+        @test state.position !== moved          # copied: the caller's vector is not aliased
+        moved[1] = 99.0
+        @test state.position[1] != 99.0
+        @test old == old_copy                   # a vector read earlier keeps its value
+        @test state.moments.position_mean ≈ mean_before .+ 0.5
+        @test kernel(state) == before
+        # Any real vector, stored as Float64.
+        rounded = Float64.(Float32.(old_copy))
+        reposition!(state, Float32.(old_copy))
+        @test state.position isa Vector{Float64} && state.position == rounded
+        reposition!(state, 1:d)
+        @test state.position == 1:d
+        reposition!(state, old_copy)
+        @test state.moments.position_mean ≈ mean_before   # the moves telescope
+        @test kernel(state) == before
+        # refused: the wrong length, or a position no transition can start from;
+        # a refused move changes nothing.
+        @test_throws DimensionMismatch reposition!(state, zeros(d + 1))
+        @test_throws ArgumentError reposition!(state, [NaN; zeros(d - 1)])
+        @test_throws ArgumentError reposition!(state, [Inf; zeros(d - 1)])
+        @test state.position == old_copy
+        @test state.moments.position_mean ≈ mean_before
+        @test kernel(state) == before
+    end
+
+    @testset "a translated target sampled by the translated chain is the same chain" begin
+        still = ContinuousNUTSState(Xoshiro(9), target; init=exact_start)
+        for _ in 1:30
+            continuous_nuts_step(still, target)
+        end
+        moved = deepcopy(still)
+        δ = 3 .* sigma
+        shifted = DiagGaussian(δ, sigma)
+        reposition!(moved, moved.position .+ δ)
+        for _ in 1:10
+            a = continuous_nuts_step(still, target)
+            b = continuous_nuts_step(moved, shifted)
+            @test b.stats.steps == a.stats.steps
+            @test b.divergent == a.divergent
+            @test moved.position .- δ ≈ still.position rtol=1e-6
+            @test moved.scale.diag ≈ still.scale.diag rtol=1e-6
+            @test moved.stepsize ≈ still.stepsize rtol=1e-6
+            @test moved.moments.position_mean .- δ ≈ still.moments.position_mean rtol=1e-6
+            @test moved.moments.position_m2 ≈ still.moments.position_m2 rtol=1e-6
+        end
+    end
+
+    @testset "the next step starts from the moved position under its target" begin
+        state = ContinuousNUTSState(Xoshiro(10), target; init=exact_start)
+        for _ in 1:20
+            continuous_nuts_step(state, target)
+        end
+        # adapt=false from the moved position is the fixed kernel's draw from there.
+        q = 0.5 .* sigma
+        reposition!(state, q)
+        fixed = FixedKernelNUTSState(copy(state.rng), q; metric=copy(state.scale.diag), stepsize=state.stepsize)
+        frozen = continuous_nuts_step(state, target; adapt=false)
+        reference = fixed_kernel_nuts_step(fixed, target)
+        @test state.position == reference.state.position
+        @test frozen.divergent == reference.divergent
+        # The move evaluates nothing: a position the next target excludes is
+        # that step's error (§1a's contract), and the refused step changes nothing.
+        outside = [-1.0; zeros(d - 1)]
+        reposition!(state, outside)
+        before = kernel(state)
+        err = try
+            continuous_nuts_step(state, HalfSpace(target))
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("at the state's position, so it lies outside the target's support", err.msg)
+        @test state.position == outside
+        @test kernel(state) == before
+        # Positive control: one step inside the half-space samples.
+        reposition!(state, [1.0; zeros(d - 1)])
+        @test continuous_nuts_step(state, HalfSpace(target)).state.position[1] > 0
+    end
+
+    @testset "a re-centred chain keeps tracking: a translation leaves the kernel valid" begin
+        # SAEM's mu-referenced re-centring: after every M-step the target moves
+        # by δ and the chain is moved with it. Three chains from one adapted
+        # state and random stream: `still` samples the fixed target; `moved` is
+        # re-centred by δ_t and samples the target shifted by the running sum;
+        # `left` samples the shifted target from where it was. The first two
+        # must start every transition on the target (Mahalanobis²/d ≈ 1), cost
+        # the same and keep the same kernel; `left` starts every transition
+        # δ_t off, the drift `reposition!` removes.
+        still = ContinuousNUTSState(Xoshiro(11), target; init=exact_start)
+        for _ in 1:50
+            continuous_nuts_step(still, target)
+        end
+        moved = deepcopy(still)
+        left = deepcopy(still)
+        mahalanobis(q, mu) = sum(abs2, (q .- mu) ./ sigma) / d
+        mu = zeros(d)
+        pre = (; still=Float64[], moved=Float64[], left=Float64[])
+        shifts = Xoshiro(12)
+        for t in 1:150
+            δ = sigma .* randn(shifts, d)
+            mu .+= δ
+            shifted = DiagGaussian(copy(mu), sigma)
+            reposition!(moved, moved.position .+ δ)
+            push!(pre.still, mahalanobis(still.position, zeros(d)))
+            push!(pre.moved, mahalanobis(moved.position, mu))
+            push!(pre.left, mahalanobis(left.position, mu))
+            continuous_nuts_step(still, target)
+            continuous_nuts_step(moved, shifted)
+            continuous_nuts_step(left, shifted)
+        end
+        @test 0.8 < mean(pre.still) < 1.2
+        @test 0.8 < mean(pre.moved) < 1.2
+        @test mean(pre.left) > 1.5                 # E = 1 + E‖δ/σ‖²/d = 2 when it tracked the last target
+        @test all(0.8 .< moved.scale.diag ./ sigma .< 1.25)
+        @test 0.8 < moved.stepsize / still.stepsize < 1.25
+        @test 0.8 < moved.total_evaluation_counter / still.total_evaluation_counter < 1.25
+        @test moved.n_divergent <= still.n_divergent + 2
     end
 finally
     BLAS.set_num_threads(blas_threads)

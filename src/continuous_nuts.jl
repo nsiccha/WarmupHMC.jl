@@ -103,7 +103,7 @@ Fields a caller reads: `position` (the current position, in the target's
 coordinates), `scale` (the metric, a `Diagonal`; `scale * scale'` is the
 estimated posterior covariance), `stepsize`, `rng`, `n_transitions`,
 `total_evaluation_counter` and `n_divergent`. The state is advanced in place
-by [`continuous_nuts_step`](@ref).
+by [`continuous_nuts_step`](@ref) and moved by [`reposition!`](@ref).
 """
 mutable struct ContinuousNUTSState{R,K,A}
     const rng::R
@@ -179,7 +179,8 @@ evaluations). Read the new position from `state.position`.
 
 The target may change on every call, but must keep the same dimension and
 coordinate frame. Its log density and gradient are freshly evaluated at the
-saved position before sampling; a position the new target puts outside its
+saved position (the last transition's, or the one [`reposition!`](@ref)
+stored) before sampling; a position the new target puts outside its
 support (log density `-Inf`) is an `ArgumentError` saying so, and a `NaN` or
 `+Inf` log density or a non-finite gradient there fails DynamicHMC's
 evaluation. At a leapfrog position, leaving the support is an ordinary
@@ -222,6 +223,46 @@ continuous_nuts_step(state::ContinuousNUTSState, lpdf; adapt::Bool=true,
     divergent && (state.n_divergent += 1)
     adapt && _adapt_continuous!(state, ε, stats.acceptance_rate)
     (; state, divergent, stats)
+end
+
+"""
+    reposition!(state::ContinuousNUTSState, position::AbstractVector)
+
+Translate the chain to `position` and leave its kernel alone. A caller that
+moves the target and the chain together calls it instead of building a new
+state: SAEM's mu-referenced re-centring shifts each subject's η after an M-step
+that moved θ, so that φ = Dθ + η stays where it was, and a translation of the
+target leaves the metric and step size valid. The saved position and the mean
+of the position evidence move by the same vector, so the leapfrog states the
+metric is estimated from are translated with the chain (their spread, the
+gradient evidence, and so the metric, are what they were); `scale`, `stepsize`,
+the forgetting, the κ fit, `rng`, `n_transitions` and the counters stay. A
+translated target sampled by the translated chain is therefore the same chain,
+draw for draw up to rounding. Rebuilding the state through
+`init = (; position, squared_scale)` would instead restart the metric evidence
+from `prior_weight` pseudo-states and run DynamicHMC's step-size search again,
+and leaving the position evidence where it was would inflate the metric by the
+move until it is forgotten.
+
+`position` is copied (any real `AbstractVector` of length `state.dimension`; a
+wrong length is a `DimensionMismatch`, a non-finite entry an `ArgumentError`,
+and a refused move changes nothing) and not evaluated: the next
+[`continuous_nuts_step`](@ref) evaluates it under the target it is given, and a
+position that target excludes is that call's `ArgumentError`. Returns `state`.
+"""
+function reposition!(state::ContinuousNUTSState, position::AbstractVector)
+    length(position) == state.dimension || throw(DimensionMismatch(
+        "`position` has length $(length(position)) but the state holds a " *
+        "$(state.dimension)-dimensional position."))
+    q = collect(Float64, position)
+    all(isfinite, q) || throw(ArgumentError(
+        "`position` must contain only finite values; a NUTS transition cannot start from it."))
+    # The evidence moves with the chain: every leapfrog state it holds is
+    # translated by the same vector, which shifts their mean and nothing else
+    # (`fit!` keeps the squared deviations about the mean).
+    state.moments.position_mean .+= q .- state.position
+    state.position = q
+    state
 end
 
 # The next diagonal scale into `out`: the Nutpie estimate of the forgotten

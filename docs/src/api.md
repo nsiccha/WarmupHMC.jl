@@ -13,7 +13,7 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`close_stream`](@ref),
   [`FixedKernelNUTSState`](@ref), [`fixed_kernel_nuts_step`](@ref),
   [`ContinuousNUTSState`](@ref), [`continuous_nuts_step`](@ref),
-  [`resume_warmup_mcmc`](@ref),
+  [`reposition!`](@ref), [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
   [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref),
@@ -57,6 +57,7 @@ WarmupHMC.FixedKernelNUTSState
 WarmupHMC.fixed_kernel_nuts_step
 WarmupHMC.ContinuousNUTSState
 WarmupHMC.continuous_nuts_step
+WarmupHMC.reposition!
 WarmupHMC.resume_warmup_mcmc
 ```
 

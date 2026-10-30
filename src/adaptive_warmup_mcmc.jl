@@ -275,8 +275,41 @@ initialize_mcmc(lpdf, init::NamedTuple; kwargs...) = begin
 
     merge(init, (;position, squared_scale))
 end
+# ── The optimizer's objective: O(d), never a d × d Hessian buffer ───────────
+#
+# Pathfinder builds Optimization.jl's `OptimizationFunction` from a log density
+# itself, without a `hess_prototype`. OptimizationOptimJL then wraps EVERY Optim
+# optimizer, L-BFGS included, in an `Optim.TwiceDifferentiable`, whose Hessian
+# buffer defaults to `NLSolversBase.alloc_H(x, F) = x * x'` — a dense d × d
+# matrix the constructor copies once more: 2 × d² × 8 bytes that a first-order
+# method never reads (OptimizationOptimJL 0.4.22 `src/OptimizationOptimJL.jl:289`;
+# SciML/Optimization.jl#893 reported it and was closed by #910, which converted
+# only the constrained path). At d = 35,784 that is 20 GB for a start whose
+# every other part is O(d · k) (snag `pathfinder-start-ff294a50`). The buffer
+# takes the prototype's shape when one is given, so WarmupHMC hands Pathfinder
+# the objective itself with a `Diagonal` prototype: O(d). `pathfinder` on an
+# `OptimizationFunction` is Pathfinder's public entry point, and its contract
+# is the one Pathfinder's own builder satisfies — `f` is the NEGATIVE log
+# density, `grad` its gradient — so the trajectory, the fit, the ELBO and the
+# draw are bit-identical (`test/linear_scaling.jl`). No `hess` is supplied even
+# for a second-order target: L-BFGS never asks for one, and WarmupHMC never
+# forms a full Hessian.
+function _pathfinder_objective(lpdf, adtype)
+    f(x, _...) = -LogDensityProblems.logdensity(lpdf, x)
+    grad(res, x, _...) = (res .= .-last(LogDensityProblems.logdensity_and_gradient(lpdf, x)); res)
+    Pathfinder.SciMLBase.OptimizationFunction(f, adtype; grad,
+        hess_prototype=Diagonal(zeros(LogDensityProblems.dimension(lpdf))))
+end
+
+"The L-BFGS Pathfinder's trajectory is optimized with: `history_length` curvature pairs, Hager–Zhang line search."
+_pathfinder_optimizer(history_length) = Pathfinder.Optim.LBFGS(;
+    m=history_length,
+    linesearch=Pathfinder.LineSearches.HagerZhang(),
+    alphaguess=Pathfinder.LineSearches.InitialHagerZhang()
+)
+
 "Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"
-mypathfinder(args...;
+mypathfinder(lpdf;
     ndraws=1, ndraws_elbo=1, ntries=1,
     history_length=6,
     # WarmupHMC targets already provide `logdensity_and_gradient`. Telling
@@ -285,15 +318,12 @@ mypathfinder(args...;
     # such as BridgeStan cannot accept. `NoAD()` keeps that default unreachable,
     # so no second AD package is ever pulled into the initializer.
     adtype=Pathfinder.SciMLBase.NoAD(),
-    optimizer=Pathfinder.Optim.LBFGS(;
-        m=history_length,
-        linesearch=Pathfinder.LineSearches.HagerZhang(),
-        alphaguess=Pathfinder.LineSearches.InitialHagerZhang()
-    ),
+    optimizer=_pathfinder_optimizer(history_length),
     kwargs...
 ) = pathfinder(
-    args...;
-    ndraws, ntries, ndraws_elbo, adtype, optimizer, kwargs...
+    _pathfinder_objective(lpdf, adtype);
+    input=lpdf, dim=LogDensityProblems.dimension(lpdf),
+    ndraws, ntries, ndraws_elbo, optimizer, kwargs...
 )
 
 # ── Pathfinder's fit on a stalled trajectory ────────────────────────────────

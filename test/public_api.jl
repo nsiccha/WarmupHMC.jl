@@ -55,6 +55,7 @@ const PUBLIC_EXPORTS = [
     # continuously adapting changing-target NUTS (snag continuous-nuts-15212ad7)
     :ContinuousNUTSState,
     :continuous_nuts_step,
+    :reposition!,               # moves the chain, leaves its kernel (snag continuous-nuts-a09d94e2)
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,

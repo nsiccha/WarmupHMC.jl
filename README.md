@@ -116,7 +116,14 @@ for problem in changing_targets
     # result.divergent describes this transition only.
 end
 continuous_nuts_step(state, problem; adapt=false)           # the fixed kernel, for posterior draws
+reposition!(state, η_shifted)                               # translate the chain, keep its kernel
 ```
+
+`reposition!` is for a caller that moves the target and the chain together, as
+SAEM's re-centring does after an M-step: a translation of the target leaves the
+metric and step size valid, so the chain and its metric evidence are translated
+and nothing is re-learned; the next step evaluates the new position under the
+target it is given.
 
 ## Completion quorum (opt-in)
 

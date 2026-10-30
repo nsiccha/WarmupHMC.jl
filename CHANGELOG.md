@@ -29,6 +29,24 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.5
+
+### Added
+
+- `reposition!(state::ContinuousNUTSState, position)`: translates the chain to
+  a caller-supplied position, moving the mean of its position evidence by the
+  same vector and nothing else, so the adapted metric, step size, evidence
+  spread, κ fit, counters and random stream carry on and a translated target
+  sampled by the translated chain is the same chain (snag
+  `continuous-nuts-a09d94e2`, reporter NLMEEstimation: SAEM's mu-referenced
+  re-centring shifts each subject's η after every M-step so that φ = Dθ + η
+  stays where it was, and under a minibatch replaces an excluded chain by a
+  prior draw; a translation of the target leaves the kernel valid). The
+  position is copied and not evaluated; the next `continuous_nuts_step`
+  evaluates it under its target. Rebuilding the state through
+  `init = (; position, squared_scale)` instead restarts the metric evidence
+  from the pseudo-count and runs the step-size search again.
+
 ## 0.2.4
 
 ### Added

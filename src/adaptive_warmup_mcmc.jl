@@ -134,11 +134,14 @@ initialize_mcmc(lpdf, init::AbstractVector; rng, progress, maxiters=100, kwargs.
         kwargs...
     )
 end
-initialize_mcmc(lpdf, init::PathfinderResult; kwargs...) = begin
+initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, kwargs...) = begin
     isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
-    position = collect(init.draws[:, 1])::Vector{Float64}
+    # The start is a point at which the target is finite: the draw, a redraw, or
+    # an L-BFGS iterate (`_finite_pathfinder_start`). `rng` is the stream
+    # Pathfinder drew on, so a redraw continues it as a second draw would have.
+    position_and_gradient = _finite_pathfinder_start(lpdf, init, rng)
+    position = position_and_gradient.q
     dimension = length(position)
-    position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
     squared_scale = init.fit_distribution.Σ
     scale = _initial_pathfinder_scale(squared_scale, dimension)
     initialize_mcmc(lpdf, (;position, position_and_gradient, scale, squared_scale))
@@ -305,6 +308,78 @@ function _first_unfactorizable(points, gradients)
         fits(n) ? (fitting = n) : (failing = n)
     end
     failing
+end
+
+# ── Pathfinder's draw outside the support ───────────────────────────────────
+#
+# Pathfinder's approximation is a Gaussian, so the draw it starts the chain from
+# can land where the target is not finite: outside a bounded support (snag
+# `pathfinder-draw-c1e43cb7`, reporter NLMEEstimation: a SAEM conditional whose
+# first random effect is bounded at 0.6 in magnitude; on a Gaussian whose mode
+# sits 0.2 SD inside such a bound the draw crossed it in 12 of 40 seeds), or
+# where the model answers NaN. The caller's `init` was finite
+# (`_check_finite_init`), and a NUTS transition cannot start from a point of
+# zero density (`_evaluate_transition_start`, DynamicHMC's step-size search), so
+# every sampler refused a position the caller never chose. The start the
+# initializer settles on is therefore always a point at which the target is
+# finite: the draw when it is; else up to `_PATHFINDER_REDRAWS` fresh draws from
+# the same fit, which keep the start a draw from Pathfinder's approximation (and
+# chains with the same `init` apart); else an L-BFGS iterate, the one the fit
+# was made at first and then the others from the trajectory's end back to the
+# start, which the optimizer evaluated and so are finite wherever the target is
+# deterministic. A run whose first draw is finite is untouched: the same
+# position, the same evaluation, no further random number.
+
+"Fresh draws from Pathfinder's fit tried before an L-BFGS iterate stands in for the start."
+const _PATHFINDER_REDRAWS = 10
+
+"""
+    _evaluate_if_finite(lpdf, q)
+
+`lpdf` and its gradient evaluated at `q` (a `DynamicHMC.EvaluatedLogDensity`),
+or `nothing` when the log density is not finite there or the gradient has a
+non-finite entry: DynamicHMC's lenient evaluation, which folds every such answer
+into a `-Inf` log density, as at a leapfrog position.
+"""
+function _evaluate_if_finite(lpdf, q)
+    pg = DynamicHMC.evaluate_ℓ(lpdf, q; strict=false)
+    isfinite(pg.ℓq) ? pg : nothing
+end
+
+"""
+    _finite_pathfinder_start(lpdf, result, rng)
+
+The position Pathfinder's `result` starts the chain from, evaluated: its first
+draw when the target is finite there; else the first of up to
+`_PATHFINDER_REDRAWS` fresh draws from `result.fit_distribution` on `rng` at
+which it is; else the first L-BFGS iterate at which it is, the one the fit was
+made at and then the rest from the trajectory's end backwards, with a warning.
+"""
+function _finite_pathfinder_start(lpdf, result, rng)
+    pg = _evaluate_if_finite(lpdf, collect(Float64, result.draws[:, 1]))
+    isnothing(pg) || return pg
+    for _ in 1:_PATHFINDER_REDRAWS
+        pg = _evaluate_if_finite(lpdf, collect(Float64, rand(rng, result.fit_distribution)))
+        isnothing(pg) || return pg
+    end
+    points = result.optim_trace.points
+    # `fit_distributions[i]` is Pathfinder's fit at `points[i]`; `points[1]` is the start.
+    fit = result.fit_iteration + 1
+    for i in unique!(vcat(fit, length(points):-1:1))
+        pg = _evaluate_if_finite(lpdf, collect(Float64, points[i]))
+        isnothing(pg) && continue
+        @warn "Pathfinder's draw and $(_PATHFINDER_REDRAWS) further draws from its fit lie " *
+            "where the log density is not finite (outside the target's support); the " *
+            "chain starts at L-BFGS iterate $(i - 1) of $(length(points) - 1) instead, " *
+            "with the fit's scale."
+        return pg
+    end
+    error("""
+        Initialization failed: no point of Pathfinder's run has a finite log density and
+        gradient. Not its draw, not $(_PATHFINDER_REDRAWS) further draws from its fit, and
+        not one of the $(length(points)) L-BFGS iterates, which the optimizer evaluated as
+        finite: the target answers differently now from when it ran.
+        """)
 end
 
 # ── Windowed adaptive warm-up: explicit state object + stage functions ──────
@@ -1625,6 +1700,14 @@ path, which can lie in a different basin from the start. The first L-BFGS step
 has no curvature information yet, and its line search can carry a poor start
 tens of unconstrained units. To begin warm-up exactly at a position, pass the
 `NamedTuple` form, e.g. `(; position = q, squared_scale = ones(length(q)))`.
+
+The start is a point at which `lpdf` is finite. Pathfinder's fit is a Gaussian,
+so its draw can land outside a bounded support, or where the model answers
+`NaN`; such a draw is replaced by a fresh draw from the same fit, up to ten
+times, and failing that by the L-BFGS iterate the fit was made at (then the
+other iterates, from the trajectory's end back to the start), with a warning.
+The fit's covariance gives the initial metric either way, and a run whose first
+draw is finite is unchanged.
 
 When Pathfinder's inverse-Hessian fit is not positive definite (a
 `PosDefException`, typically from L-BFGS stalling on a kink of the log density,

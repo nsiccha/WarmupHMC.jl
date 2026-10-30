@@ -12,6 +12,7 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`completion_warmup_mcmc`](@ref), [`stream_mcmc`](@ref), [`open_stream`](@ref),
   [`close_stream`](@ref),
   [`FixedKernelNUTSState`](@ref), [`fixed_kernel_nuts_step`](@ref),
+  [`ContinuousNUTSState`](@ref), [`continuous_nuts_step`](@ref),
   [`resume_warmup_mcmc`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
@@ -54,6 +55,8 @@ WarmupHMC.open_stream
 WarmupHMC.close_stream
 WarmupHMC.FixedKernelNUTSState
 WarmupHMC.fixed_kernel_nuts_step
+WarmupHMC.ContinuousNUTSState
+WarmupHMC.continuous_nuts_step
 WarmupHMC.resume_warmup_mcmc
 ```
 

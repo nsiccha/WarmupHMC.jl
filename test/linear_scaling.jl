@@ -73,6 +73,36 @@ end
     @test @allocated(mul!(y, M, x)) <= 2 * (8d + 64)
 end
 
+@testset "the continuous sampler's state and transition are O(d)" begin
+    # Seven length-d vectors and a Diagonal: no d × d object anywhere, and a
+    # transition allocates the trajectory's leapfrog states plus O(d), as the
+    # fixed kernel does.
+    rng = Xoshiro(6)
+    state = ContinuousNUTSState(rng, target; init=(; position=zeros(d), squared_scale=ones(d)))
+    @test state.scale isa Diagonal
+    @test Base.summarysize(state) < 16 * 8d
+    continuous_nuts_step(state, target)   # compiles
+    step = continuous_nuts_step(state, target)
+    bytes = @allocated continuous_nuts_step(state, target)
+    @test bytes < dense_bytes / 4
+    # Per leapfrog step the allocation is linear: twice the dimension costs
+    # about twice the bytes per step, never four times.
+    d2 = 2d
+    target2 = DiagGaussian(zeros(d2), exp.(range(-1, 1, length = d2)))
+    state2 = ContinuousNUTSState(Xoshiro(6), target2; init=(; position=zeros(d2), squared_scale=ones(d2)))
+    continuous_nuts_step(state2, target2)
+    per_step(s, t) = begin
+        total, steps = 0, 0
+        for _ in 1:5
+            r = continuous_nuts_step(s, t)
+            total += @allocated(continuous_nuts_step(s, t))
+            steps += r.stats.steps
+        end
+        total / steps
+    end
+    @test per_step(state2, target2) < 3 * per_step(state, target)
+end
+
 @testset "a caller-supplied dense matrix still factorizes (f210206's case)" begin
     small = 30
     A = randn(Xoshiro(3), small, small)

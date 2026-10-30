@@ -76,6 +76,24 @@ marginal_scales(a::WeightedScaleAdaptation) = begin
     (position ./ gradient) .^ 0.25
 end
 
+"""
+    _forget!(a::WeightedScaleAdaptation, λ)
+
+Multiply every observation's weight by `λ ∈ (0, 1]`: the means stay, the summed
+squared deviations and `W = Σw` scale by `λ`, and `W₂ = Σw²` by `λ²`. Applied
+once per transition, this makes the estimator exponentially forget, with
+half-life `-log(2) / log(λ)` transitions (`continuous_nuts.jl`). `λ = 1` is a no-op.
+"""
+function _forget!(a::WeightedScaleAdaptation, λ)
+    0 < λ <= 1 || throw(ArgumentError("forgetting factor must lie in (0, 1], got $λ"))
+    λ == 1 && return a
+    a.position_m2 .*= λ
+    a.gradient_m2 .*= λ
+    a.weight *= λ
+    a.weight2 *= abs2(λ)
+    a
+end
+
 function reset!(a::WeightedScaleAdaptation)
     fill!(a.position_mean, 0)
     fill!(a.position_m2, 0)

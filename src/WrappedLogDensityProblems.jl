@@ -70,7 +70,15 @@ The halo is what the linear-transformation selection,
 
 `reset!` empties all four and is what a restarting warm-up window does.
 """
-struct RecordingPosterior2{P,T,L,R,G} <: WrappedLogDensityProblem{P}
+# A wrapped target that sees every leaf of a NUTS trajectory as it is visited:
+# `DynamicHMC.leaf` on a Hamiltonian over such a target calls
+# `observe_leaf!(p, z, Δ, is_initial)` with the phase point and its energy error
+# before deciding whether the leaf diverged. `RecordingPosterior2` stores the
+# leaves and fills the halo; `LeafMomentsPosterior` (continuous_nuts.jl) feeds
+# running moments and stores nothing.
+abstract type LeafObservingPosterior{P} <: WrappedLogDensityProblem{P} end
+
+struct RecordingPosterior2{P,T,L,R,G} <: LeafObservingPosterior{P}
     posterior::P
     halo_position::ElasticMatrix{T,Vector{T}}
     halo_gradient::ElasticMatrix{T,Vector{T}}
@@ -94,12 +102,11 @@ RecordingPosterior2(p; rng, recorder=nothing) = begin
     )
 end
 Base.parent(p::RecordingPosterior2) = p.posterior
-function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamiltonian{K,P}}, z, is_initial) where {K, P<:RecordingPosterior2}
+function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamiltonian{K,P}}, z, is_initial) where {K, P<:LeafObservingPosterior}
     (;H, π₀, min_Δ, turn_statistic_configuration) = trajectory
     p = H.ℓ
     Δ = is_initial ? zero(π₀) : DynamicHMC.logdensity(H, z) - π₀
-    record_leaf!(p.leaves, z, Δ)
-    record!(p, z; is_initial, dH=Δ)
+    observe_leaf!(p, z, Δ, is_initial)
     isdiv = Δ < min_Δ
     v = DynamicHMC.leaf_acceptance_statistic(Δ, is_initial)
     if isdiv
@@ -109,6 +116,11 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
         (z, Δ, τ), v
     end
 end
+observe_leaf!(p::RecordingPosterior2, z, Δ, is_initial) = begin
+    record_leaf!(p.leaves, z, Δ)
+    record!(p, z; is_initial, dH=Δ)
+end
+
 mutable struct LimitedRecorder2
     target::Int64
     # `thin` is the number of leaf evaluations per retained state. Warm-up sets

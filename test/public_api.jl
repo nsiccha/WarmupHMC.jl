@@ -52,6 +52,9 @@ const PUBLIC_EXPORTS = [
     :close_stream,
     :FixedKernelNUTSState,
     :fixed_kernel_nuts_step,
+    # continuously adapting changing-target NUTS (snag continuous-nuts-15212ad7)
+    :ContinuousNUTSState,
+    :continuous_nuts_step,
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,

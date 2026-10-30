@@ -109,6 +109,24 @@ try
             end
             check_same_run(results)
         end
+        @testset "continuous_nuts_step" begin
+            results = runs() do p
+                state = ContinuousNUTSState(Xoshiro(7), p; init=init)
+                positions = Vector{Float64}[]
+                n_divergent = 0
+                for _ in 1:100
+                    step = continuous_nuts_step(state, p)
+                    n_divergent += step.divergent
+                    push!(positions, copy(state.position))
+                end
+                @test all(q -> q[1] > 0, positions)
+                # The metric adapted from the good leaves only: finite whatever
+                # the gradient outside the support was.
+                @test all(isfinite, state.scale.diag) && isfinite(state.stepsize)
+                (; fingerprint=(positions, state.scale.diag, state.stepsize), n_divergent)
+            end
+            check_same_run(results)
+        end
         @testset "stream_mcmc" begin
             results = runs() do p
                 result = stream_mcmc(Xoshiro(7), p, inside;
@@ -147,6 +165,12 @@ try
             end
         end
         @test_throws DomainError steps(p)
+        continuous_steps(p) = let state = ContinuousNUTSState(Xoshiro(7), p; init=init)
+            for _ in 1:100
+                continuous_nuts_step(state, p)
+            end
+        end
+        @test_throws DomainError continuous_steps(p)
         @test_throws DomainError stream_mcmc(Xoshiro(7), p, inside;
             path=joinpath(mktempdir(), "stream"), n_draws=100, metric=ones(3), stepsize=1.5)
         # Chains run as tasks surface it wrapped (`CompositeException`/`TaskFailedException`).
@@ -189,6 +213,18 @@ try
             end
             @test err isa ArgumentError
             @test occursin("at the start position, so it lies outside the target's support", err.msg)
+            # The continuous sampler: at construction, and when a new target
+            # excludes the state's position.
+            err = start_error() do
+                ContinuousNUTSState(Xoshiro(7), TruncatedNormal(answer);
+                    init=(; position=outside, squared_scale=ones(3)))
+            end
+            @test err isa ArgumentError
+            @test occursin("at the initial position, so it lies outside the target's support", err.msg)
+            moved = ContinuousNUTSState(Xoshiro(7), TruncatedNormal(answer); init=init)
+            err = start_error(() -> continuous_nuts_step(moved, Excluded()))
+            @test err isa ArgumentError
+            @test occursin("at the state's position, so it lies outside the target's support", err.msg)
         end
         # A resumed stream re-evaluates its last stored draw under the new target.
         path = joinpath(mktempdir(), "stream")
@@ -204,6 +240,8 @@ try
             @test_throws WarmupHMC.DynamicHMC.DynamicHMCError fixed_kernel_nuts_step(
                 FixedKernelNUTSState(Xoshiro(7), outside; metric=ones(3), stepsize=0.5),
                 TruncatedNormal(answer))
+            @test_throws WarmupHMC.DynamicHMC.DynamicHMCError ContinuousNUTSState(
+                Xoshiro(7), TruncatedNormal(answer); init=(; position=outside, squared_scale=ones(3)))
         end
         # Positive control: the same start one step inside the support samples.
         @test fixed_kernel_nuts_step(

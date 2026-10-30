@@ -29,6 +29,25 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.7
+
+### Fixed
+
+- A vector `init` at a stationary point of the log density (a mode: a MAP
+  estimate, an empirical-Bayes estimate) initializes. L-BFGS declares
+  convergence there before its first step, so Pathfinder returned no fit and
+  `initialize_mcmc` raised "Pathfinder produced no ELBO estimates" from every
+  sampler, `ContinuousNUTSState` included (snag `pathfinder-start-890fde27`,
+  reporter NLMEEstimation: its Louis information and `saem(…; η0 = modes)`
+  start every subject's chain at its FOCE(I) mode). Pathfinder now runs from
+  the start plus a Gaussian jitter (standard deviation 0.05 per coordinate,
+  then 1.0), and the chain starts from that run's draw with its metric; the
+  same retry serves a finite start from which Pathfinder's first line search
+  fails. If no jittered run fits either, the chain starts exactly at the given
+  position with a unit diagonal metric, with a warning. A start Pathfinder
+  fits is initialized exactly as before, and WarmupHMC's own random starts
+  still redraw on a failure.
+
 ## 0.2.6
 
 ### Fixed

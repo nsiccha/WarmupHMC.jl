@@ -1054,6 +1054,18 @@ function htmxoColumnsApply(table, held) {
     table.style.width = held.fill ? '100%' : held.width + 'px';
     table.dataset.htmxoColumns = 'held';
 }
+// How much an ancestor's transform or zoom (a report tile scaled to fit)
+// scales the table's client rects, given its rect width `box`: the held
+// widths are layout pixels, so a zoomed table must look as it does unzoomed.
+// A table's box is its border box (the browser's own table style), whose
+// width getComputedStyle reports in layout pixels; offsetWidth, in whole
+// pixels, stands in for any other box. A difference within either's
+// rounding is no scale.
+function htmxoColumnsScale(table, box) {
+    const style = getComputedStyle(table), exact = style.boxSizing === 'border-box';
+    const layout = exact ? parseFloat(style.width) : table.offsetWidth;
+    return layout > 0 && Math.abs(box - layout) >= (exact ? 0.01 : 1) ? box / layout : 1;
+}
 function htmxoColumnsMeasure(table, force) {
     if (!table.isConnected || !('htmxoColumns' in table.dataset)) return;
     const room = table.parentElement.clientWidth, cells = htmxoColumnCells(table);
@@ -1070,9 +1082,10 @@ function htmxoColumnsMeasure(table, force) {
     const own = held ? held.own : table.style.width;
     table.style.width = own;
     table.dataset.htmxoColumns = 'sizing';
-    const width = table.getBoundingClientRect().width;
+    const box = table.getBoundingClientRect().width, scale = htmxoColumnsScale(table, box);
+    const width = box / scale;
     const next = {room, own, width, fill: Math.abs(width - room) < 1,
-                  widths: cells.map(c => c.getBoundingClientRect().width)};
+                  widths: cells.map(c => c.getBoundingClientRect().width / scale)};
     window.htmxoColumnsHeld.set(table, next);
     htmxoColumnsApply(table, next);
 }

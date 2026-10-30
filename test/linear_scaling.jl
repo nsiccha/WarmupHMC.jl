@@ -1,6 +1,6 @@
 @testitem "linear scaling in the dimension" setup=[WarmupHMCSharedFixtures] begin
     using Test, WarmupHMC, LinearAlgebra, Random
-    using LogDensityProblems
+    using LogDensityProblems, Profile
     const Pathfinder = WarmupHMC.Pathfinder
 
 # Focused invocation from the package root (test environment instantiates per
@@ -101,6 +101,45 @@ end
         total / steps
     end
     @test per_step(state2, target2) < 3 * per_step(state, target)
+end
+
+@testset "a Pathfinder start allocates no d × d object" begin
+    # OptimizationOptimJL wraps L-BFGS in an `Optim.TwiceDifferentiable` whose
+    # Hessian buffer defaults to dense d × d and is copied once: 2 × d² × 8 bytes
+    # a first-order method never reads (SciML/Optimization.jl#893; 20 GB at
+    # d = 35,784, snag `pathfinder-start-ff294a50`). WarmupHMC's objective shapes
+    # that buffer `Diagonal` (`_pathfinder_objective`). Record EVERY allocation of
+    # a whole start — Pathfinder, the diagonal scale, the kinetic energy and the
+    # step-size search — and refuse any object of d × d size: the largest O(d · k)
+    # object is Pathfinder's d × 2k history (192 kB here), the dense buffer 32 MB.
+    init = fill(2.0, d)
+    ContinuousNUTSState(Xoshiro(7), target; init)   # compiles
+    Profile.Allocs.clear()
+    Profile.Allocs.@profile sample_rate=1 ContinuousNUTSState(Xoshiro(7), target; init)
+    allocs = Profile.Allocs.fetch().allocs
+    Profile.Allocs.clear()
+    @test !isempty(allocs)
+    @test maximum(a -> a.size, allocs) < 64 * 8d
+    @test sum(a -> a.size, allocs) < dense_bytes * 4
+    # The same objective, with Pathfinder's own default-built one as the
+    # control: the prototype is the ONLY difference, and the trajectory, the
+    # fit, the ELBO and the draw are bit-identical.
+    ours = WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100)
+    theirs = Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
+        ndraws=1, ndraws_elbo=1, ntries=1, adtype=Pathfinder.SciMLBase.NoAD(),
+        optimizer=WarmupHMC._pathfinder_optimizer(6))
+    @test ours.optim_solution.cache.f.hess_prototype isa Diagonal
+    @test theirs.optim_solution.cache.f.hess_prototype === nothing
+    @test ours.optim_trace.points == theirs.optim_trace.points
+    @test ours.optim_trace.gradients == theirs.optim_trace.gradients
+    @test ours.fit_iteration == theirs.fit_iteration
+    @test [e.value for e in ours.elbo_estimates] == [e.value for e in theirs.elbo_estimates]
+    @test ours.draws == theirs.draws
+    @test ours.input === target
+    @test @allocated(WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100)) <
+        @allocated(Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
+            ndraws=1, ndraws_elbo=1, ntries=1, adtype=Pathfinder.SciMLBase.NoAD(),
+            optimizer=WarmupHMC._pathfinder_optimizer(6))) - dense_bytes
 end
 
 @testset "a caller-supplied dense matrix still factorizes (f210206's case)" begin

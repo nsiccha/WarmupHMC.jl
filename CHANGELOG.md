@@ -29,6 +29,26 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.8
+
+### Fixed
+
+- A Pathfinder start — every sampler's default `init`, and a vector `init`,
+  on `adaptive_warmup_mcmc`, `cooperative_warmup_mcmc`, `completion_warmup_mcmc`
+  and `ContinuousNUTSState` alike — no longer allocates two dense d × d
+  matrices. Pathfinder hands Optimization.jl an objective without a
+  `hess_prototype`, and OptimizationOptimJL wraps L-BFGS in an
+  `Optim.TwiceDifferentiable` whose Hessian buffer defaults to dense d × d
+  and is copied once (SciML/Optimization.jl#893, closed by a change that
+  covers only the constrained path): 2 × d² × 8 bytes a first-order method
+  never reads, 20 GB at d = 35,784 (snag `pathfinder-start-ff294a50`,
+  reporter NLMEEstimation: one SAEM subject of 35,783 nested random effects).
+  WarmupHMC now builds the objective itself (`_pathfinder_objective`) with a
+  `Diagonal` Hessian prototype, so the start allocates O(d · history), and the
+  trajectory, fit, ELBO and draw are bit-identical to Pathfinder's own builder.
+  `test/linear_scaling.jl` records every allocation of a full
+  `ContinuousNUTSState` start and refuses any object of d × d size.
+
 ## 0.2.7
 
 ### Fixed

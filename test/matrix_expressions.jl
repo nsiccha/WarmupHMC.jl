@@ -372,6 +372,33 @@ end
         BLAS.set_num_threads(blas_threads)
     end
 
+    # A product of two diagonals, the `:pathfinder` entry after a diagonal
+    # `init` (no Pathfinder run), exports as their entrywise product: equal to
+    # rounding, one multiplication per coordinate, not bit for bit. Reported in
+    # snag `smc-pilot-kernel-fe4ff9a2`, where such an entry was the active scale
+    # and the first `scale_data` refused it.
+    D1, D2 = _diag(d), _diag(d)
+    DD = MF(D1, D2)
+    dd = scale_data(DD)
+    @test isempty(dd.indices) && isempty(dd.reflections)
+    @test dd.diagonal == D1.diag .* D2.diag
+    DDrebuilt = scale_from_data(dd)
+    @test DDrebuilt * z ≈ DD * z rtol = 1e-14
+    @test DDrebuilt \ z ≈ DD \ z rtol = 1e-14
+    @test first(logabsdet(DDrebuilt)) ≈ first(logabsdet(DD)) rtol = 1e-14
+    pilot = adaptive_warmup_mcmc(Xoshiro(827), DiagGaussian([0.0, 0.0], [1.0, 0.5]);
+        init=(; position=[0.1, -0.1], squared_scale=ones(2)),
+        n_draws=64, n_evaluations=100, recording_target=64, stepsize_adaptation_limit=24,
+        max_reflections=4, nonlinear_adapt=false, monitor_ess=false, max_tree_depth=6)
+    @test pilot.scale_options.pathfinder isa MF{Float64,<:Diagonal,<:Diagonal}
+    for k in keys(pilot.scale_options)          # every entry of a diagonal-init run exports
+        Lk = pilot.scale_options[k]
+        rk = scale_from_data(scale_data(Lk))
+        x2 = [0.3, -0.7]
+        @test rk * x2 ≈ Lk * x2 rtol = 1e-14
+        @test first(logabsdet(rk)) ≈ first(logabsdet(Lk)) rtol = 1e-14 atol = 1e-14
+    end
+
     # Refused: a scale with no plain-data form (the `:pathfinder` family is a
     # foreign factor times a diagonal), and data that cannot describe a scale.
     @test_throws ArgumentError scale_data(MF(_lower(4), _diag(4)))

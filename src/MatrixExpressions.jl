@@ -179,20 +179,28 @@ coordinates `indices[i]`. On a vector, in O(d · k):
 * `log|det L| = sum(log ∘ abs, diagonal) + sum(log(abs(1 - 2 dot(r_i, r_i))))`,
   whose second sum is zero for the unit `r_i` a fit stores.
 
-A `Diagonal` has no reflections. Any other scale is an `ArgumentError`,
-including the `:pathfinder` option, whose Pathfinder low-rank factor has no
-such form.
+A `Diagonal` has no reflections. A product of two diagonals, which is what the
+`:pathfinder` option is after a diagonal `init = (; position, squared_scale)`
+(no Pathfinder run), has no reflections either, and its `diagonal` is the two
+factors' entrywise product. That product is rounded once per coordinate, so
+the rebuilt scale agrees with such an `L` to rounding, not bit for bit. Any
+other scale is an `ArgumentError`, including the `:pathfinder` option after a
+Pathfinder run, whose low-rank factor has no such form.
 """
 scale_data(L::Diagonal) = (; diagonal=Vector{Float64}(L.diag),
+    indices=Vector{Int}[], reflections=Vector{Float64}[])
+scale_data(L::MatrixFactorization{<:Any,<:Diagonal,<:Diagonal}) =
+    (; diagonal=Vector{Float64}(L.m1.diag .* L.m2.diag),
     indices=Vector{Int}[], reflections=Vector{Float64}[])
 scale_data(L::ScaleThenReflect) = (; diagonal=Vector{Float64}(L.m2.diag),
     indices=[Vector{Int}(idx) for idx in L.m1.idxs],
     reflections=[Vector{Float64}(r) for r in L.m1.reflections])
 scale_data(L::AbstractMatrix) = throw(ArgumentError(
-    "`scale_data` takes a `Diagonal` or a successive-reflections scale (the " *
-    "`:diagonal` and `:adaptive` entries of `scale_options`); got a " *
-    "$(nameof(typeof(L))). The `:pathfinder` entry, Pathfinder's low-rank factor, " *
-    "has no plain-data form."))
+    "`scale_data` takes a `Diagonal`, a product of two `Diagonal`s or a " *
+    "successive-reflections scale (the `:diagonal` and `:adaptive` entries of " *
+    "`scale_options`, and the `:pathfinder` entry after a diagonal `init`); got " *
+    "a $(nameof(typeof(L))). The `:pathfinder` entry after a Pathfinder run, a " *
+    "low-rank factor, has no plain-data form."))
 
 """
     scale_from_data(data) -> L
@@ -203,7 +211,8 @@ properties. The result is a `WarmupHMC.ScaleThenReflect` (with no reflections
 for diagonal data) that [`FixedKernelNUTSState`](@ref) takes as `metric` and
 that answers `L * z`, `L \\ x`, `mul!`, `ldiv!`, `logabsdet` and `det` without
 forming a d × d matrix. Its products, solves and the kernel built from it are
-bit-identical to those of the scale `data` was taken from. `data` is copied.
+bit-identical to those of the `Diagonal` or reflection scale `data` was taken
+from, and agree to rounding with a product of two diagonals. `data` is copied.
 
 An `ArgumentError` names the offending entry when the data cannot describe such
 a scale: `indices` and `reflections` differ in length; a `diagonal` entry is not

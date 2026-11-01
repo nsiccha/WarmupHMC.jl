@@ -39,8 +39,10 @@ Numbers quoted here must come from a checked-in artifact under
   solves and fixed kernel are bit-identical to the original's. The docstring
   states the exact draw, solve and `log|det|` formulas on the data, so a
   normalized Gaussian reference or a tuning schedule can be carried and
-  evaluated without WarmupHMC's internal types. A Pathfinder-family scale has
-  no such form and is refused (snag `smc-pilot-kernel-fe4ff9a2`).
+  evaluated without WarmupHMC's internal types. The `:pathfinder` entry after
+  a diagonal `init` (a product of two diagonals) exports as their entrywise
+  product, equal to rounding; after a Pathfinder run it is a low-rank factor
+  with no such form and is refused (snag `smc-pilot-kernel-fe4ff9a2`).
 
 ### Fixed
 

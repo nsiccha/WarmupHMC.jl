@@ -29,7 +29,7 @@ export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
     CandidateScoringPlan, candidate_scoring_losses, WindowSelectionPlan,
     stream_mcmc, open_stream, close_stream, FixedKernelNUTSState, fixed_kernel_nuts_step,
     ContinuousNUTSState, continuous_nuts_step, reposition!,
-    completion_warmup_mcmc
+    completion_warmup_mcmc, scale_data, scale_from_data
 
 include("kwarg_validation.jl")
 include("blas_threads.jl")

@@ -31,6 +31,17 @@ Numbers quoted here must come from a checked-in artifact under
 
 ## 0.2.9
 
+### Added
+
+- `scale_data(L)` and `scale_from_data(data)` (exported): a learned diagonal
+  or successive-reflections scale as plain arrays,
+  `(; diagonal, indices, reflections)`, and back to an operator whose products,
+  solves and fixed kernel are bit-identical to the original's. The docstring
+  states the exact draw, solve and `log|det|` formulas on the data, so a
+  normalized Gaussian reference or a tuning schedule can be carried and
+  evaluated without WarmupHMC's internal types. A Pathfinder-family scale has
+  no such form and is refused (snag `smc-pilot-kernel-fe4ff9a2`).
+
 ### Fixed
 
 - A scale the samplers learn — `scale_options[active_transformation]` of an

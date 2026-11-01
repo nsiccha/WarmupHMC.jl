@@ -289,4 +289,106 @@ end
         @test reference_logpdf(x) ≈ logpdf(reference, x)
     end
 end
+@testset "scale_data / scale_from_data: a learned scale as plain arrays and back" begin
+    d = 40
+    p, g = _correlated_pairs_window(Xoshiro(5), d)
+    L = MF(SR(d), Diagonal(ones(d)))
+    WarmupHMC.update_loss!(L, p, g)
+    @test !isempty(L.m1.idxs)                      # positive control: reflections were fitted
+    data = scale_data(L)
+    @test data isa NamedTuple{(:diagonal, :indices, :reflections)}
+    @test data.diagonal isa Vector{Float64}
+    @test data.indices isa Vector{Vector{Int}}
+    @test data.reflections isa Vector{Vector{Float64}}
+    @test length(data.indices) == length(L.m1.idxs)
+    # fresh arrays: mutating the data leaves the scale alone
+    before = mul!(zeros(d), L, ones(d))
+    data2 = scale_data(L)
+    data2.diagonal .= 99.0; data2.indices[1][1] = 1; data2.reflections[1] .= 0.0
+    @test mul!(zeros(d), L, ones(d)) == before
+
+    rebuilt = scale_from_data(data)
+    @test rebuilt isa STR
+    rng = Xoshiro(21)
+    for _ in 1:5
+        x = randn(rng, d)
+        @test mul!(zeros(d), rebuilt, x) == mul!(zeros(d), L, x)   # bit-identical
+        @test ldiv!(zeros(d), rebuilt, x) == ldiv!(zeros(d), L, x)
+        @test rebuilt \ x == L \ x
+    end
+    @test logabsdet(rebuilt) == logabsdet(L)
+
+    # The documented formula, implemented from the data alone, is the operator.
+    function formula_mul(data, z)
+        y = data.diagonal .* z
+        for i in reverse(eachindex(data.reflections))
+            idx, r = data.indices[i], data.reflections[i]
+            y[idx] .-= 2 .* r .* dot(r, y[idx])
+        end
+        y
+    end
+    function formula_ldiv(data, x)
+        y = copy(x)
+        for i in eachindex(data.reflections)
+            idx, r = data.indices[i], data.reflections[i]
+            y[idx] .-= 2 .* r .* dot(r, y[idx])
+        end
+        y ./ data.diagonal
+    end
+    formula_logabsdet(data) = sum(log ∘ abs, data.diagonal) +
+        sum(r -> log(abs(1 - 2 * dot(r, r))), data.reflections; init=0.0)
+    z = randn(rng, d)
+    @test formula_mul(data, z) ≈ L * z
+    @test formula_ldiv(data, z) ≈ L \ z
+    @test formula_logabsdet(data) ≈ first(logabsdet(L)) atol = 1e-12
+
+    # The kernel built from the rebuilt scale takes the original's transitions.
+    target = DiagGaussian(zeros(d), collect(range(0.5, 2.0, length=d)))
+    same_steps(a, b) = begin
+        sa = FixedKernelNUTSState(Xoshiro(3), zeros(d); metric=a, stepsize=0.4)
+        sb = FixedKernelNUTSState(Xoshiro(3), zeros(d); metric=b, stepsize=0.4)
+        for _ in 1:5
+            ra, rb = fixed_kernel_nuts_step(sa, target), fixed_kernel_nuts_step(sb, target)
+            ra.state.position == rb.state.position || return false
+            ra.stats.steps == rb.stats.steps || return false
+            sa, sb = ra.state, rb.state
+        end
+        true
+    end
+    blas_threads = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
+    try
+        @test same_steps(L, rebuilt)
+        D = Diagonal(collect(range(0.5, 2.0, length=d)))
+        ddata = scale_data(D)
+        @test isempty(ddata.indices) && isempty(ddata.reflections)
+        @test ddata.diagonal == D.diag && ddata.diagonal !== D.diag
+        Drebuilt = scale_from_data(ddata)
+        @test Drebuilt isa STR
+        @test mul!(zeros(d), Drebuilt, z) == D * z
+        @test Drebuilt \ z == D \ z
+        @test same_steps(D, Drebuilt)
+    finally
+        BLAS.set_num_threads(blas_threads)
+    end
+
+    # Refused: a scale with no plain-data form (the `:pathfinder` family is a
+    # foreign factor times a diagonal), and data that cannot describe a scale.
+    @test_throws ArgumentError scale_data(MF(_lower(4), _diag(4)))
+    good = (; diagonal=[1.0, 2.0, 3.0], indices=[[1, 2, 3], [2, 3]],
+        reflections=[normalize([1.0, 1.0, 0.0]), normalize([1.0, -1.0])])
+    @test scale_from_data(good) isa STR
+    bad(; kw...) = merge(good, (; kw...))
+    @test_throws ArgumentError scale_from_data(bad(diagonal=Float64[], indices=Vector{Int}[], reflections=Vector{Float64}[]))
+    @test_throws ArgumentError scale_from_data(bad(reflections=good.reflections[1:1]))
+    @test_throws ArgumentError scale_from_data(bad(diagonal=[1.0, 0.0, 3.0]))
+    @test_throws ArgumentError scale_from_data(bad(diagonal=[1.0, NaN, 3.0]))
+    @test_throws ArgumentError scale_from_data(bad(indices=[[1, 2, 4], [2, 3]]))
+    @test_throws ArgumentError scale_from_data(bad(indices=[[1, 2, 2], [2, 3]]))
+    @test_throws ArgumentError scale_from_data(bad(indices=[Int[], [2, 3]], reflections=[Float64[], good.reflections[2]]))
+    @test_throws ArgumentError scale_from_data(bad(reflections=[good.reflections[1], [1.0]]))
+    @test_throws ArgumentError scale_from_data(bad(reflections=[good.reflections[1], [Inf, 0.0]]))
+    @test_throws ArgumentError scale_from_data(bad(indices=[[1, 2], [1, 2, 3]],
+        reflections=[normalize([1.0, 1.0]), normalize([1.0, 1.0, 1.0])]))
+end
 end

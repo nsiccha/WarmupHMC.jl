@@ -82,19 +82,24 @@ details summary[role=button]:not(.secondary, .contrast)::after,
    bar, the new chevron) has zero specificity and what Pico sets (the label's
    line height and colours, its chevron, the gap under an open label) has
    exactly Pico's, so a component that styles its own `<details>` still wins
-   wherever it sets something. */
+   wherever it sets something. The box itself has no padding: the bar reaches
+   its edges, and the inner spacing sits on the bar and on the content
+   (`::details-content`, which also holds bare text). Padding a component sets
+   on its `<details>` so insets both, and nothing sticks out of its box; a
+   component drops the inner spacing with `--htmxo-disclosure-padding: 0`. */
 :where(details:not(.dropdown, :has(> summary[role]))) {
     --pico-accordion-active-summary-color: var(--pico-accordion-close-summary-color);
     --pico-accordion-open-summary-color: var(--pico-accordion-close-summary-color);
-    padding: 0 var(--htmxo-disclosure-padding, 1rem);
     border: var(--pico-border-width) solid var(--pico-form-element-border-color);
     border-radius: var(--pico-border-radius);
 }
-:where(details:not(.dropdown, :has(> summary[role]))[open]) {
+:where(details:not(.dropdown, :has(> summary[role])))::details-content {
+    padding-inline: var(--htmxo-disclosure-padding, 1rem);
+}
+:where(details:not(.dropdown, :has(> summary[role]))[open])::details-content {
     padding-bottom: var(--htmxo-disclosure-padding, 1rem);
 }
 :where(details:not(.dropdown, :has(> summary[role]))) > :where(summary) {
-    margin-inline: calc(-1 * var(--htmxo-disclosure-padding, 1rem));
     padding: 0.6rem var(--htmxo-disclosure-padding, 1rem);
     border-radius: calc(var(--pico-border-radius) - var(--pico-border-width));
     background: var(--pico-card-sectioning-background-color);
@@ -5034,7 +5039,10 @@ function htmxoStickyMeasure(el) {
         table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
     const wrap = table.parentElement;
     if (!wrap.classList.contains('table-wrap')) return;
-    const width = wrap.scrollWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+    // The table's own width, not `wrap.scrollWidth`, which also counts anything
+    // poking out of a cell: a few pixels in one open row would box the whole
+    // table, shortening the page and moving the row just clicked off screen.
+    const width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
     if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
 }
 function htmxoStickyQueue(el) {

@@ -963,7 +963,10 @@ function htmxoStickyMeasure(el) {
         table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
     const wrap = table.parentElement;
     if (!wrap.classList.contains('table-wrap')) return;
-    const width = wrap.scrollWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+    // The table's own width, not `wrap.scrollWidth`, which also counts anything
+    // poking out of a cell: a few pixels in one open row would box the whole
+    // table, shortening the page and moving the row just clicked off screen.
+    const width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
     if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
 }
 function htmxoStickyQueue(el) {

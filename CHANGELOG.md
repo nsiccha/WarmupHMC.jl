@@ -29,6 +29,26 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.9
+
+### Fixed
+
+- A scale the samplers learn — `scale_options[active_transformation]` of an
+  `adaptive_warmup_mcmc` result or checkpoint, for each of its three families
+  (the `Diagonal`, the Pathfinder low-rank-plus-diagonal factor and the
+  bounded successive-reflections `ScaleThenReflect`) — answers
+  `LinearAlgebra.logabsdet`, `det` and `logdet`, and a vector solve `L \ x`.
+  All four threw `CanonicalIndexError` on the two structured families: Base
+  answers them through `lu`, which indexes the matrix, and these operators
+  define no `getindex` (snag `smc-pilot-kernel-fe4ff9a2`, reporter
+  ReactiveKernels: a normalized Gaussian reference `N(μ, L L')` built from a
+  pilot's scale needs `log|det L|`). Each is computed from the operator's
+  factors in O(d · reflections), never through a d × d matrix; a reflection
+  `I - 2 r r'` contributes `log|1 - 2 r ⋅ r|` (zero for the unit `r` a fit
+  stores) and its sign. `logdet` of a real scale with a negative determinant
+  (an odd number of reflections) throws `DomainError`, as for a dense matrix;
+  a Gaussian's normalizing constant takes `first(logabsdet(L))`.
+
 ## 0.2.8
 
 ### Fixed

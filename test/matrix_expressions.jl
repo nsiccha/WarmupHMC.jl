@@ -232,4 +232,61 @@ end
     @test bounded.idxs == unbounded.idxs[1:3]
     @test isempty(fit(max_reflections=0).reflections)
 end
+
+@testset "determinants and vector solves (a scale as a Gaussian reference's square root)" begin
+    # Base answers `logabsdet`, `det`, `logdet` and `A \ x` through `lu`, which
+    # indexes element by element: on these operators all four threw
+    # `CanonicalIndexError` (snag `smc-pilot-kernel-fe4ff9a2`), so a learned
+    # scale could not give a normalized `N(μ, L L')` its `log|det L|`.
+    n = 6
+    rng = Xoshiro(11)
+    dense(A) = reduce(hcat, [mul!(zeros(n), A, Matrix{Float64}(I, n, n)[:, i]) for i in 1:n])
+    reflections(k) = SR([collect(1:n - i + 1) for i in 1:k],
+        [normalize(randn(rng, n - i + 1)) for i in 1:k], zeros(n), zeros(n), zeros(n))
+    operators = (
+        "ScaleThenReflect, 2 reflections" => MF(reflections(2), _diag(n)),
+        "ScaleThenReflect, 3 reflections" => MF(reflections(3), _diag(n)),
+        "triangular then diagonal" => MF(_lower(n), _diag(n)),
+        "MatrixInverse of a ScaleThenReflect" => MI(MF(reflections(2), _diag(n))),
+        "adjoint of a ScaleThenReflect" => MF(reflections(2), _diag(n))',
+        "no reflections" => SR(n),
+    )
+    @testset "$label" for (label, A) in operators
+        M = dense(A)
+        x = randn(rng, n)
+        @test A \ x ≈ M \ x
+        @test (A \ x) isa Vector{Float64}
+        l, s = logabsdet(A)
+        lM, sM = logabsdet(M)
+        @test l ≈ lM atol = 1e-12
+        @test s == sM
+        @test det(A) ≈ det(M)
+        if sM > 0
+            @test logdet(A) ≈ logdet(M) atol = 1e-12
+        else
+            # A real matrix with a negative determinant has no real logdet; the
+            # operator answers as the dense matrix does.
+            @test_throws DomainError logdet(M)
+            @test_throws DomainError logdet(A)
+        end
+    end
+    # The determinant lemma is exact for a stored vector that is not unit norm.
+    nonunit = SR([collect(1:n)], [fill(0.3, n)], zeros(n), zeros(n), zeros(n))
+    @test all(logabsdet(nonunit) .≈ logabsdet(dense(nonunit)))
+    # A sampler-fitted scale: the reference density built from it is exactly
+    # the dense Gaussian's, with no d × d matrix formed along the way.
+    d = 40
+    p, g = _correlated_pairs_window(Xoshiro(5), d)
+    L = MF(SR(d), Diagonal(ones(d)))
+    WarmupHMC.update_loss!(L, p, g)
+    @test !isempty(L.m1.idxs)                      # positive control: reflections were fitted
+    μ = randn(Xoshiro(6), d)
+    reference_logpdf(x) = (z = L \ (x .- μ); -dot(z, z) / 2 - first(logabsdet(L)) - d * log(2π) / 2)
+    Ld = reduce(hcat, [mul!(zeros(d), L, Matrix{Float64}(I, d, d)[:, i]) for i in 1:d])
+    reference = MvNormal(μ, Symmetric(Ld * Ld'))
+    for _ in 1:5
+        x = μ .+ L * randn(rng, d)
+        @test reference_logpdf(x) ≈ logpdf(reference, x)
+    end
+end
 end

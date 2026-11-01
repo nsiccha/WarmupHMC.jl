@@ -117,6 +117,47 @@ LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVect
     _apply_reflections!(y, A, x, eachindex(A.idxs))
 ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diagonal{T,V}}
 
+# A scale `L` the sampler learned (`scale_options[active_transformation]`) is
+# also the square root of a Gaussian `N(μ, L * L')`, which a caller can use as a
+# reference distribution: a draw is `μ + L * z`, a whitening solve `L \ (x - μ)`,
+# and the normalizing constant needs `log|det L|`. Base answers the solve and
+# the determinant through `lu`, which indexes the matrix element by element and
+# so throws `CanonicalIndexError` on these index-free operators. Each expression
+# therefore defines them from its factors, without forming a d × d matrix.
+Base.:\(A::AbstractMatrixExpression, x::AbstractVector) =
+    ldiv!(similar(x, promote_type(eltype(A), eltype(x)), size(A, 2)), A, x)
+# One reflection `y[idx] -= 2 r (r ⋅ y[idx])` is `I - 2 r r'` on the coordinates
+# `idx`, whose determinant is `1 - 2 r ⋅ r` (the matrix determinant lemma): -1
+# for the unit `r` a fit stores, and exact for whatever `r` the operator holds.
+LinearAlgebra.logabsdet(A::SuccessiveReflections) = begin
+    l, s = zero(eltype(A)), one(eltype(A))
+    for r in A.reflections
+        δ = 1 - 2 * dot(r, r)
+        l += log(abs(δ))
+        s *= sign(δ)
+    end
+    (l, s)
+end
+LinearAlgebra.logabsdet(A::MatrixInverse) = begin
+    l, s = _logabsdet(parent(A))
+    (-l, s)
+end
+LinearAlgebra.logabsdet(A::MatrixFactorization) = begin
+    l1, s1 = _logabsdet(A.m1)
+    l2, s2 = _logabsdet(A.m2)
+    (l1 + l2, s1 * s2)
+end
+LinearAlgebra.det(A::AbstractMatrixExpression) = begin
+    l, s = logabsdet(A)
+    s * exp(l)
+end
+# A factor may be a transposed operator from another package (the `:pathfinder`
+# scale holds a transposed Pathfinder Woodbury factor). A real matrix and its
+# transpose share their determinant, so take it from the parent, which defines
+# it; Base's `logabsdet` would index the transpose instead.
+_logabsdet(A) = logabsdet(A)
+_logabsdet(A::Union{Transpose{<:Real},Adjoint{<:Real}}) = _logabsdet(parent(A))
+
 # Top left singular vector of `g` (d × n): the direction `tsvd(g)[1][:, 1]`
 # returns. Power iteration on `g * g'`, applied as two products, never forms a
 # d × d matrix: O(d n) per iteration (linear-in-d rule, decision `1o12joq`).

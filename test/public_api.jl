@@ -59,6 +59,7 @@ const PUBLIC_EXPORTS = [
     # a learned scale as plain data and back (snag smc-pilot-kernel-fe4ff9a2)
     :scale_data,
     :scale_from_data,
+    :fit_gaussian_moments,
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,

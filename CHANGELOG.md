@@ -29,6 +29,17 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.10
+
+### Added
+
+- `fit_gaussian_moments`: a public weighted-draw moment fitter returning an
+  owned mean, portable successive-reflections scale and bounded direction-fit
+  diagnostics. It learns directions without gradients, retains no cloud and
+  forms no dense covariance. See the [API contract](https://nsiccha.github.io/WarmupHMC.jl/dev/api#Weighted-posterior-moments)
+  for probability-weight semantics, computational bounds and approximation
+  limits (snag `public-bounded-w-71cc4bc3`).
+
 ## 0.2.9
 
 ### Added

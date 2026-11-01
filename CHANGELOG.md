@@ -29,6 +29,45 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.9
+
+### Added
+
+- `scale_data(L)` and `scale_from_data(data)` (exported): a learned diagonal
+  or successive-reflections scale as plain arrays,
+  `(; diagonal, indices, reflections)`, and back to an operator whose products,
+  solves and fixed kernel are bit-identical to the original's. The docstring
+  states the exact draw, solve and `log|det|` formulas on the data, so a
+  normalized Gaussian reference or a tuning schedule can be carried and
+  evaluated without WarmupHMC's internal types. The `:pathfinder` entry after
+  a diagonal `init` (a product of two diagonals) exports as their entrywise
+  product, equal to rounding; after a Pathfinder run it is a low-rank factor
+  with no such form and is refused (snag `smc-pilot-kernel-fe4ff9a2`).
+- `FixedKernelNUTSState(state; position, rng)`: a new chain on an existing
+  state's kernel. It takes its own copies of `position` and `rng` and shares
+  the metric, step size, tree depth and reparametrization controls, so N
+  particles of an SMC sampler hold one kernel instead of N copies, and it steps
+  exactly as a state with its own copy of the kernel does (snag
+  `smc-pilot-kernel-fe4ff9a2`).
+
+### Fixed
+
+- A scale the samplers learn — `scale_options[active_transformation]` of an
+  `adaptive_warmup_mcmc` result or checkpoint, for each of its three families
+  (the `Diagonal`, the Pathfinder low-rank-plus-diagonal factor and the
+  bounded successive-reflections `ScaleThenReflect`) — answers
+  `LinearAlgebra.logabsdet`, `det` and `logdet`, and a vector solve `L \ x`.
+  All four threw `CanonicalIndexError` on the two structured families: Base
+  answers them through `lu`, which indexes the matrix, and these operators
+  define no `getindex` (snag `smc-pilot-kernel-fe4ff9a2`, reporter
+  ReactiveKernels: a normalized Gaussian reference `N(μ, L L')` built from a
+  pilot's scale needs `log|det L|`). Each is computed from the operator's
+  factors in O(d · reflections), never through a d × d matrix; a reflection
+  `I - 2 r r'` contributes `log|1 - 2 r ⋅ r|` (zero for the unit `r` a fit
+  stores) and its sign. `logdet` of a real scale with a negative determinant
+  (an odd number of reflections) throws `DomainError`, as for a dense matrix;
+  a Gaussian's normalizing constant takes `first(logabsdet(L))`.
+
 ## 0.2.8
 
 ### Fixed

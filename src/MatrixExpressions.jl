@@ -117,6 +117,142 @@ LinearAlgebra.ldiv!(y::AbstractVector, A::SuccessiveReflections, x::AbstractVect
     _apply_reflections!(y, A, x, eachindex(A.idxs))
 ScaleThenReflect{T,I,V} = MatrixFactorization{T,SuccessiveReflections{T,I},Diagonal{T,V}}
 
+# A scale `L` the sampler learned (`scale_options[active_transformation]`) is
+# also the square root of a Gaussian `N(μ, L * L')`, which a caller can use as a
+# reference distribution: a draw is `μ + L * z`, a whitening solve `L \ (x - μ)`,
+# and the normalizing constant needs `log|det L|`. Base answers the solve and
+# the determinant through `lu`, which indexes the matrix element by element and
+# so throws `CanonicalIndexError` on these index-free operators. Each expression
+# therefore defines them from its factors, without forming a d × d matrix.
+Base.:\(A::AbstractMatrixExpression, x::AbstractVector) =
+    ldiv!(similar(x, promote_type(eltype(A), eltype(x)), size(A, 2)), A, x)
+# One reflection `y[idx] -= 2 r (r ⋅ y[idx])` is `I - 2 r r'` on the coordinates
+# `idx`, whose determinant is `1 - 2 r ⋅ r` (the matrix determinant lemma): -1
+# for the unit `r` a fit stores, and exact for whatever `r` the operator holds.
+LinearAlgebra.logabsdet(A::SuccessiveReflections) = begin
+    l, s = zero(eltype(A)), one(eltype(A))
+    for r in A.reflections
+        δ = 1 - 2 * dot(r, r)
+        l += log(abs(δ))
+        s *= sign(δ)
+    end
+    (l, s)
+end
+LinearAlgebra.logabsdet(A::MatrixInverse) = begin
+    l, s = _logabsdet(parent(A))
+    (-l, s)
+end
+LinearAlgebra.logabsdet(A::MatrixFactorization) = begin
+    l1, s1 = _logabsdet(A.m1)
+    l2, s2 = _logabsdet(A.m2)
+    (l1 + l2, s1 * s2)
+end
+LinearAlgebra.det(A::AbstractMatrixExpression) = begin
+    l, s = logabsdet(A)
+    s * exp(l)
+end
+# A factor may be a transposed operator from another package (the `:pathfinder`
+# scale holds a transposed Pathfinder Woodbury factor). A real matrix and its
+# transpose share their determinant, so take it from the parent, which defines
+# it; Base's `logabsdet` would index the transpose instead.
+_logabsdet(A) = logabsdet(A)
+_logabsdet(A::Union{Transpose{<:Real},Adjoint{<:Real}}) = _logabsdet(parent(A))
+
+"""
+    scale_data(L) -> (; diagonal, indices, reflections)
+
+The plain-data form of a scale `L` the samplers learn: `scale_options.diagonal`
+or `scale_options.adaptive` of an [`adaptive_warmup_mcmc`](@ref) result or
+checkpoint, or a [`ContinuousNUTSState`](@ref)'s `scale`. Every field is a fresh
+array (`diagonal::Vector{Float64}`, `indices::Vector{Vector{Int}}`,
+`reflections::Vector{Vector{Float64}}`), never an alias of `L`.
+[`scale_from_data`](@ref) rebuilds the operator.
+
+`L` is `H₁ ⋯ H_k · Diagonal(diagonal)` with `k = length(reflections)`, where
+`H_i = I - 2 P_iᵀ r_i r_iᵀ P_i`, `r_i = reflections[i]`, and `P_i` selects the
+coordinates `indices[i]`. On a vector, in O(d · k):
+
+* `y = L * z`: `y = diagonal .* z`, then for `i = k, …, 1`,
+  `y[indices[i]] .-= 2 .* r_i .* dot(r_i, y[indices[i]])`;
+* `y = L \\ x`: `y = copy(x)`, the same step for `i = 1, …, k`, then
+  `y ./= diagonal`;
+* `log|det L| = sum(log ∘ abs, diagonal) + sum(log(abs(1 - 2 dot(r_i, r_i))))`,
+  whose second sum is zero for the unit `r_i` a fit stores.
+
+A `Diagonal` has no reflections. A product of two diagonals, which is what the
+`:pathfinder` option is after a diagonal `init = (; position, squared_scale)`
+(no Pathfinder run), has no reflections either, and its `diagonal` is the two
+factors' entrywise product. That product is rounded once per coordinate, so
+the rebuilt scale agrees with such an `L` to rounding, not bit for bit. Any
+other scale is an `ArgumentError`, including the `:pathfinder` option after a
+Pathfinder run, whose low-rank factor has no such form.
+"""
+scale_data(L::Diagonal) = (; diagonal=Vector{Float64}(L.diag),
+    indices=Vector{Int}[], reflections=Vector{Float64}[])
+scale_data(L::MatrixFactorization{<:Any,<:Diagonal,<:Diagonal}) =
+    (; diagonal=Vector{Float64}(L.m1.diag .* L.m2.diag),
+    indices=Vector{Int}[], reflections=Vector{Float64}[])
+scale_data(L::ScaleThenReflect) = (; diagonal=Vector{Float64}(L.m2.diag),
+    indices=[Vector{Int}(idx) for idx in L.m1.idxs],
+    reflections=[Vector{Float64}(r) for r in L.m1.reflections])
+scale_data(L::AbstractMatrix) = throw(ArgumentError(
+    "`scale_data` takes a `Diagonal`, a product of two `Diagonal`s or a " *
+    "successive-reflections scale (the `:diagonal` and `:adaptive` entries of " *
+    "`scale_options`, and the `:pathfinder` entry after a diagonal `init`); got " *
+    "a $(nameof(typeof(L))). The `:pathfinder` entry after a Pathfinder run, a " *
+    "low-rank factor, has no plain-data form."))
+
+"""
+    scale_from_data(data) -> L
+
+Rebuild the scale that `data` describes, in the form [`scale_data`](@ref)
+returns: `(; diagonal, indices, reflections)`, any object with those three
+properties. The result is a `WarmupHMC.ScaleThenReflect` (with no reflections
+for diagonal data) that [`FixedKernelNUTSState`](@ref) takes as `metric` and
+that answers `L * z`, `L \\ x`, `mul!`, `ldiv!`, `logabsdet` and `det` without
+forming a d × d matrix. Its products, solves and the kernel built from it are
+bit-identical to those of the `Diagonal` or reflection scale `data` was taken
+from, and agree to rounding with a product of two diagonals. `data` is copied.
+
+An `ArgumentError` names the offending entry when the data cannot describe such
+a scale: `indices` and `reflections` differ in length; a `diagonal` entry is not
+finite and positive; an index set is empty, leaves `1:length(diagonal)`, repeats
+a coordinate, or differs in length from its reflection; a reflection entry is
+not finite; or an index set is longer than the first. A fitted scale's index
+sets only shrink, and the product's work buffer is sized by the first one.
+"""
+function scale_from_data(data)
+    diagonal = Vector{Float64}(data.diagonal)
+    indices = [Vector{Int}(idx) for idx in data.indices]
+    reflections = [Vector{Float64}(r) for r in data.reflections]
+    d = length(diagonal)
+    d >= 1 || throw(ArgumentError("`diagonal` is empty."))
+    length(indices) == length(reflections) || throw(ArgumentError(
+        "`indices` has $(length(indices)) index sets but `reflections` has " *
+        "$(length(reflections)) reflections; each reflection needs its index set."))
+    for (j, s) in enumerate(diagonal)
+        _usable_scale(s) || throw(ArgumentError(
+            "`diagonal[$j]` is $s; a scale entry must be finite and positive."))
+    end
+    for (i, (idx, r)) in enumerate(zip(indices, reflections))
+        isempty(idx) && throw(ArgumentError("`indices[$i]` is empty."))
+        all(j -> 1 <= j <= d, idx) || throw(ArgumentError(
+            "`indices[$i]` holds a coordinate outside 1:$d."))
+        allunique(idx) || throw(ArgumentError(
+            "`indices[$i]` repeats a coordinate; a reflection acts on distinct coordinates."))
+        length(r) == length(idx) || throw(ArgumentError(
+            "`reflections[$i]` has $(length(r)) entries but `indices[$i]` has $(length(idx))."))
+        all(isfinite, r) || throw(ArgumentError(
+            "`reflections[$i]` holds a non-finite entry."))
+        length(idx) <= length(first(indices)) || throw(ArgumentError(
+            "`indices[$i]` has $(length(idx)) coordinates, more than `indices[1]` " *
+            "($(length(first(indices)))); the index sets may only shrink."))
+    end
+    MatrixFactorization(
+        SuccessiveReflections(indices, reflections, zeros(d), zeros(d), zeros(d)),
+        Diagonal(diagonal))
+end
+
 # Top left singular vector of `g` (d × n): the direction `tsvd(g)[1][:, 1]`
 # returns. Power iteration on `g * g'`, applied as two products, never forms a
 # d × d matrix: O(d n) per iteration (linear-in-d rule, decision `1o12joq`).

@@ -84,6 +84,126 @@
     end
 end
 
+@testitem "fixed-kernel particles share one kernel" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC, Random, LinearAlgebra
+    using DifferentiationInterface, Enzyme
+
+    d = 40
+    target = DiagGaussian(collect(range(-1.0, 1.0; length=d)), collect(range(0.5, 2.0; length=d)))
+    reflected(d, k; rng=Xoshiro(1)) = scale_from_data((; diagonal=rand(rng, d) .+ 0.5,
+        indices=[collect(1:d) for _ in 1:k],
+        reflections=[normalize(randn(rng, d)) for _ in 1:k]))
+    # Every family a pilot returns: a Pathfinder run's low-rank factor, the
+    # reflections (the structure whose copy costs the most per particle) and a
+    # diagonal.
+    pilot = adaptive_warmup_mcmc(Xoshiro(11), target; n_draws=100, progress=nothing)
+    @test !(pilot.scale_options.pathfinder.m1 isa Diagonal)
+    scales = (; pathfinder=pilot.scale_options.pathfinder, reflections=reflected(d, 8),
+        diagonal=Diagonal(target.sigma))
+    same_step(a, b) = a.state.position == b.state.position &&
+        WarmupHMC._xoshiro_words(a.state.rng) == WarmupHMC._xoshiro_words(b.state.rng) &&
+        a.stats.steps == b.stats.steps && a.divergent == b.divergent
+    blas_threads = BLAS.get_num_threads()
+    BLAS.set_num_threads(1)
+    try
+        @testset "$family scale" for (family, L) in pairs(scales)
+            base = FixedKernelNUTSState(Xoshiro(1), zeros(d);
+                metric=L, stepsize=0.3, max_tree_depth=7)
+            q = randn(Xoshiro(2), d)
+            rng = Xoshiro(3)
+            words = WarmupHMC._xoshiro_words(rng)
+            particle = FixedKernelNUTSState(base; position=q, rng)
+
+            # One kernel, its own position and stream.
+            @test particle.kinetic_energy === base.kinetic_energy
+            @test particle.reparam_sources === base.reparam_sources
+            @test particle.algorithm === base.algorithm
+            @test particle.stepsize === base.stepsize
+            @test particle.position == q && particle.position !== q
+            @test particle.rng !== rng
+            q_copy = copy(q)
+            q[1] = 99.0
+            @test particle.position == q_copy
+            q[1] = q_copy[1]
+
+            # Steps are the ones a state with its own copy of the kernel takes.
+            copied = FixedKernelNUTSState(Xoshiro(3), q; metric=L, stepsize=0.3, max_tree_depth=7)
+            @test copied.kinetic_energy !== base.kinetic_energy
+            a, b = particle, copied
+            for _ in 1:5
+                sa, sb = fixed_kernel_nuts_step(a, target), fixed_kernel_nuts_step(b, target)
+                @test same_step(sa, sb)
+                a, b = sa.state, sb.state
+            end
+            @test a.kinetic_energy === base.kinetic_energy   # stepping keeps sharing
+            @test WarmupHMC._xoshiro_words(rng) == words     # the caller's stream did not move
+
+            # Concurrent transitions on the shared kernel equal the serial ones;
+            # nothing in the kernel is scratch space.
+            n = 16
+            particles = [FixedKernelNUTSState(base; position=randn(Xoshiro(i), d), rng=Xoshiro(i))
+                for i in 1:n]
+            serial = [fixed_kernel_nuts_step(p, target) for p in particles]
+            concurrent = Vector{Any}(undef, n)
+            Threads.@threads for i in 1:n
+                concurrent[i] = fixed_kernel_nuts_step(particles[i], target)
+            end
+            @test all(same_step.(serial, concurrent))
+
+            # The defaults keep the position and continue a copy of the stream,
+            # so a particle that keeps the default rng repeats `base`'s momenta.
+            clone = FixedKernelNUTSState(base)
+            @test clone.position == base.position && clone.position !== base.position
+            @test clone.rng !== base.rng
+            @test same_step(fixed_kernel_nuts_step(clone, target), fixed_kernel_nuts_step(base, target))
+
+            # Refused, as for the other constructors.
+            @test_throws DimensionMismatch FixedKernelNUTSState(base; position=zeros(d + 1))
+            bad = zeros(d)
+            bad[2] = NaN
+            @test_throws ArgumentError FixedKernelNUTSState(base; position=bad)
+        end
+
+        # What a particle holds beyond its position does not grow with the kernel:
+        # bytes per particle, from the growth of a vector of particles (so the
+        # one kernel they share is not charged to them).
+        per_particle(make, n=8) =
+            (Base.summarysize([make(i) for i in 1:2n]) - Base.summarysize([make(i) for i in 1:n])) / n
+        @testset "memory at d = $D with $k reflections" for (D, k) in ((40, 0), (40, 8), (2000, 16))
+            L = reflected(D, k)
+            base = FixedKernelNUTSState(Xoshiro(1), zeros(D); metric=L, stepsize=0.3)
+            shared = per_particle(i -> FixedKernelNUTSState(base; position=zeros(D), rng=Xoshiro(i)))
+            copied = per_particle(i -> FixedKernelNUTSState(Xoshiro(i), zeros(D); metric=L, stepsize=0.3))
+            @test shared < Base.summarysize(zeros(D)) + 2048
+            # A copied kernel charges each state with the whole operator.
+            @test copied - shared >= k * D * sizeof(Float64)
+        end
+
+        # A checkpoint state's particles keep its reparametrization controls: each
+        # step restores them onto a private copy of the target.
+        cp_dir = mktempdir()
+        small = DiagGaussian([0.3, -1.0], [0.5, 1.2])
+        adaptive_warmup_mcmc(Xoshiro(7), small; checkpoint_dir=cp_dir, n_draws=40, progress=nothing)
+        payload = WarmupHMC.deserialize(joinpath(cp_dir, "cp_latest.jls"))
+        adapted = merge(payload, (; reparam_sources=[2 => PartiallyCentered(1.0)]))
+        ir = IndexedReparametrization([
+            2 => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(0.0), 0.0, log(2.0))
+        ])
+        reparam_target = ReparametrizedProblem(ir, small, AutoEnzyme())
+        sources_before = WarmupHMC.reparam_sources(reparam_target)
+        from_checkpoint = FixedKernelNUTSState(adapted)
+        particle = FixedKernelNUTSState(from_checkpoint; position=[0.1, 0.2], rng=Xoshiro(5))
+        seeded = FixedKernelNUTSState(adapted; position=[0.1, 0.2], rng=Xoshiro(5))
+        @test particle.kinetic_energy === from_checkpoint.kinetic_energy
+        @test particle.reparam_sources === from_checkpoint.reparam_sources
+        @test same_step(fixed_kernel_nuts_step(particle, reparam_target),
+            fixed_kernel_nuts_step(seeded, reparam_target))
+        @test WarmupHMC.reparam_sources(reparam_target) == sources_before
+    finally
+        BLAS.set_num_threads(blas_threads)
+    end
+end
+
 @testitem "fixed-kernel metric: a dense matrix scale" setup=[WarmupHMCSharedFixtures] begin
     using Test, WarmupHMC, Random, LinearAlgebra
 

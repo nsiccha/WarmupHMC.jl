@@ -14,6 +14,7 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`FixedKernelNUTSState`](@ref), [`fixed_kernel_nuts_step`](@ref),
   [`ContinuousNUTSState`](@ref), [`continuous_nuts_step`](@ref),
   [`reposition!`](@ref), [`resume_warmup_mcmc`](@ref),
+  [`scale_data`](@ref), [`scale_from_data`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
   [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref),
@@ -59,6 +60,8 @@ WarmupHMC.ContinuousNUTSState
 WarmupHMC.continuous_nuts_step
 WarmupHMC.reposition!
 WarmupHMC.resume_warmup_mcmc
+WarmupHMC.scale_data
+WarmupHMC.scale_from_data
 ```
 
 ## Reparametrizations

@@ -56,6 +56,9 @@ const PUBLIC_EXPORTS = [
     :ContinuousNUTSState,
     :continuous_nuts_step,
     :reposition!,               # moves the chain, leaves its kernel (snag continuous-nuts-a09d94e2)
+    # a learned scale as plain data and back (snag smc-pilot-kernel-fe4ff9a2)
+    :scale_data,
+    :scale_from_data,
     # reparametrization types
     :CandidateScoringPlan,
     :candidate_scoring_losses,

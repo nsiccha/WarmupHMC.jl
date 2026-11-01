@@ -14,7 +14,7 @@ only worth reading if it says what it is *about*, so here is the whole of it.
   [`FixedKernelNUTSState`](@ref), [`fixed_kernel_nuts_step`](@ref),
   [`ContinuousNUTSState`](@ref), [`continuous_nuts_step`](@ref),
   [`reposition!`](@ref), [`resume_warmup_mcmc`](@ref),
-  [`scale_data`](@ref), [`scale_from_data`](@ref),
+  [`scale_data`](@ref), [`scale_from_data`](@ref), [`fit_gaussian_moments`](@ref),
   [`ReparametrizedProblem`](@ref), [`IndexedReparametrization`](@ref),
   [`Reparametrization`](@ref), [`PartiallyCentered`](@ref),
   [`CandidateScoringPlan`](@ref), [`candidate_scoring_losses`](@ref),
@@ -62,6 +62,26 @@ WarmupHMC.reposition!
 WarmupHMC.resume_warmup_mcmc
 WarmupHMC.scale_data
 WarmupHMC.scale_from_data
+```
+
+## Weighted posterior moments
+
+`fit_gaussian_moments` fits a mean and a bounded successive-reflections scale
+from a completed weighted cloud. The population moments of those draws are its
+target; a sampler's tuning scale is a different estimate. For a later data
+window, using this Gaussian as the prior is an approximation: a finite
+reflection budget can discard correlations even when the posterior is Gaussian.
+
+```julia
+summary = fit_gaussian_moments(draws; weights, max_reflections=16, maxiter=100)
+L = scale_from_data(summary.scale)
+# summary.mean + L * randn(rng, size(draws, 1)) draws from the fitted Gaussian.
+# summary.diagnostics.converged reports the direction-iteration residuals,
+# not the accuracy of the Gaussian approximation.
+```
+
+```@docs
+WarmupHMC.fit_gaussian_moments
 ```
 
 ## Reparametrizations

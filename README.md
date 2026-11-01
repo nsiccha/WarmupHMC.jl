@@ -26,7 +26,9 @@ Exports the samplers `adaptive_warmup_mcmc` and `cooperative_warmup_mcmc`, plus
 read its output back and `close_stream` to release its mapped views;
 `FixedKernelNUTSState` and `fixed_kernel_nuts_step` for
 in-memory transitions under changing targets, with `scale_data` and
-`scale_from_data` to carry a learned scale as plain arrays and back; the reparametrization types
+`scale_from_data` to carry a learned scale as plain arrays and back, and
+`fit_gaussian_moments` to fit a bounded mean-and-scale summary from weighted draws;
+the reparametrization types
 `ReparametrizedProblem`, `IndexedReparametrization`, `PartiallyCentered` and
 `Reparametrization`; and
 `CandidateScoringPlan` for steering candidate adaptation, with

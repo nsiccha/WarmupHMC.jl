@@ -585,13 +585,20 @@ a.htmxo-semantic-artifact > small {
             autoGrow(el);
             el.addEventListener('input', function() { autoGrow(el); });
             el.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    var f = el.closest('form');
-                    if (!f) return;
-                    if (f.requestSubmit) f.requestSubmit();
-                    else f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-                }
+                if (e.key !== 'Enter') return;
+                // data-htmxo-submit="modifier": Enter and Shift+Enter keep
+                // their new line and Ctrl/Cmd+Enter sends. Otherwise Enter
+                // sends and Shift+Enter keeps its new line. Read on every
+                // press, so a box re-rendered in another mode needs no rebind.
+                var send = el.getAttribute('data-htmxo-submit') === 'modifier'
+                    ? (e.ctrlKey || e.metaKey)
+                    : !e.shiftKey;
+                if (!send) return;
+                e.preventDefault();
+                var f = el.closest('form');
+                if (!f) return;
+                if (f.requestSubmit) f.requestSubmit();
+                else f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
             });
         });
     }
@@ -4114,6 +4121,9 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
         if (!keyed.has(row)) keyed.set(row, htmxoSortValue(row.cells[col], key, keys.length, sortKey));
         return keyed.get(row);
     };
+    // Two texts that start with the same number compare as whole texts, each
+    // run of digits read as its number: '2 x 5' before '2 x 10'.
+    const natural = new Intl.Collator(undefined, {numeric: true}).compare;
     const byValue = keys ? (a, b) => {
         const av = keyOf(a), bv = keyOf(b);
         if (av === null || bv === null) return av === bv ? 0 : av === null ? 1 : -1;
@@ -4123,8 +4133,9 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
         const av = sortKey(a.cells[col]);
         const bv = sortKey(b.cells[col]);
         const an = parseFloat(av), bn = parseFloat(bv);
-        if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
-        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+        // `an - bn` is 0 for the same number and NaN for two infinities: both tie.
+        const c = !isNaN(an) && !isNaN(bn) ? (an - bn) || natural(av, bv) : av.localeCompare(bv);
+        return asc ? c : -c;
     };
     // A pinned row (`data-htmxo-pinned`) stays ahead of the others in every
     // sort; pinned rows sort among themselves.
@@ -8539,6 +8550,9 @@ figcaption.caption { margin-bottom: 0.5rem; }
         if (!keyed.has(row)) keyed.set(row, htmxoSortValue(row.cells[col], key, keys.length, sortKey));
         return keyed.get(row);
     };
+    // Two texts that start with the same number compare as whole texts, each
+    // run of digits read as its number: '2 x 5' before '2 x 10'.
+    const natural = new Intl.Collator(undefined, {numeric: true}).compare;
     const byValue = keys ? (a, b) => {
         const av = keyOf(a), bv = keyOf(b);
         if (av === null || bv === null) return av === bv ? 0 : av === null ? 1 : -1;
@@ -8548,8 +8562,9 @@ figcaption.caption { margin-bottom: 0.5rem; }
         const av = sortKey(a.cells[col]);
         const bv = sortKey(b.cells[col]);
         const an = parseFloat(av), bn = parseFloat(bv);
-        if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
-        return asc ? av.localeCompare(bv) : bv.localeCompare(av);
+        // `an - bn` is 0 for the same number and NaN for two infinities: both tie.
+        const c = !isNaN(an) && !isNaN(bn) ? (an - bn) || natural(av, bv) : av.localeCompare(bv);
+        return asc ? c : -c;
     };
     // A pinned row (`data-htmxo-pinned`) stays ahead of the others in every
     // sort; pinned rows sort among themselves.

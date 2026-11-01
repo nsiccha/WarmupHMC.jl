@@ -43,6 +43,12 @@ Numbers quoted here must come from a checked-in artifact under
   a diagonal `init` (a product of two diagonals) exports as their entrywise
   product, equal to rounding; after a Pathfinder run it is a low-rank factor
   with no such form and is refused (snag `smc-pilot-kernel-fe4ff9a2`).
+- `FixedKernelNUTSState(state; position, rng)`: a new chain on an existing
+  state's kernel. It takes its own copies of `position` and `rng` and shares
+  the metric, step size, tree depth and reparametrization controls, so N
+  particles of an SMC sampler hold one kernel instead of N copies, and it steps
+  exactly as a state with its own copy of the kernel does (snag
+  `smc-pilot-kernel-fe4ff9a2`).
 
 ### Fixed
 

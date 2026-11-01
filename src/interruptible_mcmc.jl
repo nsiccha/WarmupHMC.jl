@@ -128,6 +128,7 @@ end
 """
     FixedKernelNUTSState(rng, position; metric, stepsize, max_tree_depth=10)
     FixedKernelNUTSState(checkpoint; max_tree_depth=10, position=..., rng=...)
+    FixedKernelNUTSState(state::FixedKernelNUTSState; position=state.position, rng=state.rng)
 
 In-memory state for [`fixed_kernel_nuts_step`](@ref). `position` is in the
 sampler's source frame. `metric` is the mass-matrix scale accepted by
@@ -140,6 +141,13 @@ Construction does not evaluate a target. Each step evaluates the *current*
 target at the stored position, so the target may change between calls while
 the kernel remains fixed. State creation and stepping do not write files.
 The position, RNG and metric are copied when the state is created.
+
+The third form starts a new chain on an existing state's kernel: it takes its
+own copies of `position` and `rng` and shares `state`'s metric, step size, tree
+depth and reparametrization controls, which nothing mutates. N particles built
+this way from one state hold one kernel instead of N, and may be stepped
+concurrently. Pass each particle its own `rng`: the default continues a copy of
+`state`'s stream, so two states that keep it draw the same momenta.
 """
 struct FixedKernelNUTSState{R,P,K,A,S}
     rng::R
@@ -197,6 +205,17 @@ end
 
 FixedKernelNUTSState(checkpoint_path::AbstractString; kwargs...) =
     FixedKernelNUTSState(deserialize(checkpoint_path)::NamedTuple; kwargs...)
+
+FixedKernelNUTSState(state::FixedKernelNUTSState;
+        position=state.position, rng=state.rng) = begin
+    length(position) == length(state.position) || throw(DimensionMismatch(
+        "start `position` has length $(length(position)) but the state holds a " *
+        "$(length(state.position))-dimensional position."))
+    q = collect(float.(position))
+    all(isfinite, q) || throw(ArgumentError("`position` must contain only finite values."))
+    FixedKernelNUTSState(copy(rng), q, state.kinetic_energy, state.stepsize,
+        state.algorithm, state.reparam_sources)
+end
 
 """
     fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=1)

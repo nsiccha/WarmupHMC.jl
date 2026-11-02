@@ -65,12 +65,18 @@ jobs:
         # runner has no `Manifest.toml` either (it is gitignored) and WarmupHMC's
         # `[sources]` is not consulted for a dev'd *dependency* of another
         # environment, so this cannot be dropped on the strength of a local run.
-        # Batched (§ the one-resolve rule) so Pkg sees both paths in one resolve.
+        # RD 0.3 is also not registered: use the exact revision in the root
+        # Project.toml. Keep its checkout outside TestItemRunner's scan root.
+        # Batched (§ the one-resolve rule) so Pkg sees all paths in one resolve.
+        shell: bash
         run: |
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
+          git clone https://github.com/nsiccha/ReparametrizableDistributions.jl.git "$RUNNER_TEMP/ReparametrizableDistributions.jl"
+          git -C "$RUNNER_TEMP/ReparametrizableDistributions.jl" checkout --detach 8f7d382df700d3780ed31d093bc4983d3734a6c6
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
           ]); Pkg.instantiate()'
       - name: Run tests
         # NOT `julia-actions/julia-runtest@v1`: this web/integration suite lives
@@ -82,11 +88,16 @@ jobs:
         # carries it, so this stays correct if the Enzyme items are ever removed.
         run: julia --project=web/src/test -e 'include("web/src/test/runtests.jl")' -- --skip-tag=enzyme
       # The package-level 1.0 suite uses a modern `test/Project.toml` alongside
-      # the existing web suite. Reuse the Treebars checkout from the preceding
-      # step and develop both local packages into that environment in one
+      # the existing web suite. Reuse the dependency checkouts from the preceding
+      # step and develop all three packages into that environment in one
       # resolve; Julia 1.10 ignores `[sources]`.
       - name: Instantiate the package test environment
-        run: julia --project=test -e 'using Pkg; Pkg.develop([PackageSpec(path=pwd()), PackageSpec(path="Treebars.jl")]); Pkg.instantiate(); Pkg.precompile()'
+        run: |
+          julia --project=test -e 'using Pkg; Pkg.develop([
+            PackageSpec(path=pwd()),
+            PackageSpec(path="Treebars.jl"),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
+          ]); Pkg.instantiate(); Pkg.precompile()'
       - name: Run package tests
         run: julia --project=test -e 'include("test/runtests.jl")'
 
@@ -122,11 +133,15 @@ jobs:
       - name: Instantiate the test environment
         # Identical to the matrix job's step, and for the same reasons — the two
         # now share one environment, so keep them in step.
+        shell: bash
         run: |
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
+          git clone https://github.com/nsiccha/ReparametrizableDistributions.jl.git "$RUNNER_TEMP/ReparametrizableDistributions.jl"
+          git -C "$RUNNER_TEMP/ReparametrizableDistributions.jl" checkout --detach 8f7d382df700d3780ed31d093bc4983d3734a6c6
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
           ]); Pkg.instantiate()'
       - name: Run the Enzyme items
         # `--tag=enzyme` errors if it matches nothing, so deleting or retagging

@@ -2236,7 +2236,9 @@ function htmxoRowControl(row, target) {
 function htmxoMdToggle(row, event, key, slot) {
     if (htmxoRowControl(row, event.target)) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
-    var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
+    // A flat row's detail says whether it is open; a tree row's may be hidden
+    // only because a search or a closed branch hides it.
+    var show = row.dataset.htmxoParent === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
     htmxoMdShow(row, d, show);
     if (show && slot) {
         var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
@@ -2246,10 +2248,15 @@ function htmxoMdToggle(row, event, key, slot) {
 }
 // Open or close a row's detail `d`, mirroring the state on the row and on its
 // detail control. A row update re-applies it to the rows it replaces.
+// `aria-expanded` is valid on a row only inside a treegrid, so a flat table's
+// row (`data-htmxo-detail-open` without `data-htmxo-parent`) keeps its state in
+// the data attribute, and its detail control tells assistive technology.
 function htmxoMdShow(row, d, show) {
     d.hidden = !show;
     if (row.dataset.htmxoDetailOpen !== undefined) row.dataset.htmxoDetailOpen = String(show);
-    if (row.dataset.htmxoTreeOpen === undefined) row.setAttribute('aria-expanded', show);
+    if (row.dataset.htmxoTreeOpen === undefined &&
+        (row.dataset.htmxoDetailOpen === undefined || row.dataset.htmxoParent !== undefined))
+        row.setAttribute('aria-expanded', show);
     var control = row.querySelector('[data-htmxo-detail-toggle]');
     if (control) {
         control.setAttribute('aria-expanded', show);
@@ -2403,6 +2410,9 @@ if (!window.__htmxoMdReady) {
    the layout or covers the row's own text. */
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked] { outline: 2px solid var(--htmxo-accent, Highlight); outline-offset: -2px; }
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] > td { background-color: var(--htmxo-linked-row, color-mix(in srgb, var(--htmxo-accent, Highlight) 18%, transparent)); }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] { --htmxo-tinted-primary: color-mix(in srgb, var(--pico-primary) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-primary-hover: color-mix(in srgb, var(--pico-primary-hover) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-secondary: color-mix(in srgb, var(--pico-secondary) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-secondary-hover: color-mix(in srgb, var(--pico-secondary-hover) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-muted: color-mix(in srgb, var(--pico-muted-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-htmxo-muted: color-mix(in srgb, var(--htmxo-muted) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-del: color-mix(in srgb, var(--pico-del-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-ins: color-mix(in srgb, var(--pico-ins-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-success: color-mix(in srgb, var(--htmxo-success) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-warning: color-mix(in srgb, var(--htmxo-warning) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-error: color-mix(in srgb, var(--htmxo-error) 40%, var(--pico-contrast, CanvasText)); }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] > td { --pico-primary: var(--htmxo-tinted-primary); --pico-primary-hover: var(--htmxo-tinted-primary-hover); --pico-secondary: var(--htmxo-tinted-secondary); --pico-secondary-hover: var(--htmxo-tinted-secondary-hover); --pico-muted-color: var(--htmxo-tinted-muted); --htmxo-muted: var(--htmxo-tinted-htmxo-muted); --pico-del-color: var(--htmxo-tinted-del); --pico-ins-color: var(--htmxo-tinted-ins); --htmxo-success: var(--htmxo-tinted-success); --htmxo-warning: var(--htmxo-tinted-warning); --htmxo-error: var(--htmxo-tinted-error); }
+
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked="inside"] { outline-style: dashed; }
 table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note] { position: relative; }
 table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note]::after { content: attr(data-htmxo-linked-note); position: absolute; z-index: 1; inset-inline-start: .5rem; top: 0; transform: translateY(-50%); padding: 0 .5em; border: 1px dashed var(--htmxo-accent, Highlight); border-radius: 1em; background: var(--pico-background-color, Canvas); color: var(--pico-color, CanvasText); font-size: .7em; line-height: 1.5; white-space: nowrap; pointer-events: none; }

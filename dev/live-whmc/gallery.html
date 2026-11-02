@@ -17,9 +17,9 @@
     :where(:root) {
         --htmxo-bg:      Canvas;
         --htmxo-accent:  #4a90d9;
-        --htmxo-success: #2a9d8f;
-        --htmxo-warning: #e9a23b;
-        --htmxo-error:   #e76f51;
+--htmxo-success: light-dark(#217d72, #2a9d8f);
+--htmxo-warning: light-dark(#9c6311, #e9a23b);
+--htmxo-error:   light-dark(#ca3f1c, #e76f51);
         --htmxo-border:  currentColor;
         --htmxo-muted:   color-mix(in srgb, currentColor 60%, transparent);
     }
@@ -27,9 +27,9 @@
 </style><style>:root {
     --htmxo-bg:      var(--pico-background-color, Canvas);
     --htmxo-accent:  var(--pico-primary, #4a90d9);
-    --htmxo-success: var(--pico-color-green-550, #2a9d8f);
-    --htmxo-warning: var(--pico-color-amber-550, #e9a23b);
-    --htmxo-error:   var(--pico-color-red-550, #e76f51);
+--htmxo-success: light-dark(#217d72, #2a9d8f);
+--htmxo-warning: light-dark(#9c6311, #e9a23b);
+--htmxo-error:   light-dark(#ca3f1c, #e76f51);
     /* Pico has no root-level border color: `--pico-border-color` exists only
        on form controls and buttons, and its divider color
        (`--pico-muted-border-color`) is too faint for a status banner's edge. */
@@ -47,6 +47,23 @@
                        calc(100% - 2 * var(--htmxo-container-gutter, 2rem)));
     }
 }
+/* Pico keeps a `nav` on one line, and `.container`, which holds the header of
+   `pico_page`, is well narrower than the window below 1280 px. So labels broke
+   and then the last entries ran off the page and widened it. The nav may now
+   use the window, up to a 1rem margin: `(100vw + 100%) / 2` is the distance from
+   a centred container's left edge to the window's right edge. Past that it
+   continues on further lines, its entries whole. A nav that fits the container
+   stays as wide as the container. On one line the gap and the margin cancel;
+   on its own line the navigation starts where the brand does. */
+body > header nav {
+    flex-wrap: wrap;
+    width: max-content;
+    min-width: 100%;
+    max-width: calc((100vw + 100%) / 2 - 1rem);
+    column-gap: var(--pico-nav-element-spacing-horizontal);
+}
+body > header nav ul { flex-wrap: wrap; }
+body > header nav ul:last-of-type { margin-left: calc(var(--pico-nav-element-spacing-horizontal) * -1); }
 /* Pico paints a button without a colour class in its primary azure. It takes
    Pico's slate outline (`.secondary.outline`) instead, through the same three
    variables Pico sets on every button; `.secondary` and `.contrast` keep
@@ -174,6 +191,16 @@ a.htmxo-semantic-artifact > small {
     font-size: .85em;
     white-space: nowrap;
 }
+/* Pico's unlayered `td, th` rule sets every cell's colour and weight, and beats
+   any rule in a layer, so the `data-status` rules of `htmxo_utility_styles()`
+   never reach a cell. These match that rule's specificity and follow it, so an
+   app's rule still wins. Only the cell's own attribute counts: the KB's
+   `tr[data-status]` keeps Pico's cells. */
+:is(td, th):where([data-status]) { font-weight: bold; }
+:is(td, th):where([data-status="success"]) { color: var(--htmxo-success); }
+:is(td, th):where([data-status="error"]) { color: var(--htmxo-error); }
+:is(td, th):where([data-status="warning"]) { color: var(--htmxo-warning); }
+:is(td, th):where([data-status="muted"]) { color: var(--htmxo-muted); }
 </style><style>/* A part being replaced: dimmed, with the progress cursor that the in-flight
    rule of `htmxo_utility_styles` gives it no longer. UNLAYERED, like that rule,
    so it holds against an unlayered page rule of lower specificity. Pico draws
@@ -1333,7 +1360,8 @@ dl > div:not([hidden]) {
 
 /* `data-status` on a leaf text element (cells, badges, pills) colors the
    text by status; on a container with `.htmxo-status-banner` it colors the
-   left border instead (see banner rules below). */
+   left border instead (see banner rules below). Under Pico, a cell takes these
+   from `pico_bridge()`, because Pico's own cell rule is unlayered. */
 td[data-status], th[data-status], span[data-status], small[data-status] { font-weight: bold; }
 [data-status="success"]:not(.htmxo-status-banner) { color: var(--htmxo-success); }
 [data-status="error"]:not(.htmxo-status-banner)   { color: var(--htmxo-error); }
@@ -1841,7 +1869,11 @@ fieldset:not([role]) > label:has(> input[type="radio"]:disabled) {
 
 /* A table's own controls (the search field with its count, Group by,
    Expand/Collapse all, the selection bar) share one line, wrapping only when
-   the window is too narrow. With `sticky=true` (the default) the line stays
+   the table's column is too narrow. The search label wraps too (its text,
+   the field and the count each move to a further line only when they no
+   longer fit), and the field and the count shrink with the column, so a
+   narrow column (a sidebar, a split pane) keeps them inside it instead of
+   widening the page. With `sticky=true` (the default) the line stays
    at the top of the window while its table is in view, with the column
    headers just below it; `--htmxo-sticky-top` moves both below an app's own
    sticky header. The table runtime measures the line
@@ -1858,9 +1890,9 @@ fieldset:not([role]) > label:has(> input[type="radio"]:disabled) {
 .htmxo-table-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem 1rem; margin: 0 0 calc(var(--pico-spacing, 1rem) / 2); }
 .htmxo-table-toolbar[hidden], .htmxo-table-toolbar > label[hidden] { display: none; }
 .htmxo-table-toolbar > * { margin: 0; }
-.htmxo-table-toolbar > label { display: flex; flex: 1 1 22rem; align-items: center; gap: .5rem; font-size: .875em; }
-.htmxo-table-toolbar > label > input[type="search"] { flex: 1 1 8rem; width: auto; min-width: 8rem; height: auto; margin: 0; padding-block: .3em; font-size: inherit; }
-.htmxo-table-toolbar > label > small { display: inline; width: auto; margin: 0; font-size: inherit; white-space: nowrap; }
+.htmxo-table-toolbar > label { display: flex; flex: 1 1 22rem; flex-wrap: wrap; align-items: center; gap: .5rem; min-width: 0; font-size: .875em; }
+.htmxo-table-toolbar > label > input[type="search"] { flex: 1 1 8rem; width: auto; min-width: min(8rem, 100%); height: auto; margin: 0; padding-block: .3em; font-size: inherit; }
+.htmxo-table-toolbar > label > small { display: inline; width: auto; margin: 0; font-size: inherit; }
 .htmxo-table-toolbar > .htmxo-tree-controls, .htmxo-table-toolbar > .htmxo-selection-bar { margin: 0; }
 .htmxo-table-toolbar[data-htmxo-sticky] { position: sticky; top: var(--htmxo-sticky-top, 0px); z-index: 3; padding-block: .35rem; background: var(--htmxo-sticky-bg, var(--pico-background-color, Canvas)); }
 table[data-htmxo-sticky] > thead { position: sticky; top: calc(var(--htmxo-sticky-top, 0px) + var(--htmxo-table-toolbar-h, 0px)); z-index: 2; }
@@ -1935,6 +1967,8 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
 </style><script>(() => {
     if (window.htmxoTabset) return;
     const links = ts => Array.from(ts.querySelectorAll(':scope > nav a[data-tab-name]'));
+    const tabs = ts => Array.from(ts.querySelectorAll(':scope > nav [role=tab]'));
+    const tabOf = e => e.target instanceof Element ? e.target.closest('.tabset > nav [role=tab]') : null;
     const panelOf = (ts, a) => ts.querySelector(':scope > .tab-panel[data-panel="' + a.dataset.panel + '"]');
     const recording = ts => Boolean(ts.dataset.tabParam) && !ts.closest('.htmxo-embed');
 
@@ -1960,9 +1994,13 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
             target.setAttribute('hx-swap', 'innerHTML');
             ['hx-get', 'hx-target', 'hx-swap', 'hx-trigger', 'preload'].forEach(n => a.removeAttribute(n));
         }
-        links(ts).forEach(l => { l.classList.remove('contrast'); l.classList.add('secondary'); });
-        a.classList.remove('secondary');
-        a.classList.add('contrast');
+        links(ts).forEach(l => {
+            const on = l === a;
+            l.classList.toggle('contrast', on);
+            l.classList.toggle('secondary', !on);
+            l.setAttribute('aria-selected', String(on));
+            l.setAttribute('tabindex', on ? '0' : '-1');
+        });
         ts.querySelectorAll(':scope > .tab-panel').forEach(p => p.classList.add('u-hidden'));
         target.classList.remove('u-hidden');
     };
@@ -1989,17 +2027,19 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
         }, 0);
     };
 
-    // A tab click records its name. Capture phase, because the tab's hyperscript
-    // halts the click. The history entry is replaced, not pushed, and keeps its
+    // A tab click makes it the tabset's one stop in the page's Tab order, and
+    // records its name. Capture phase, because the tab's hyperscript halts the
+    // click. The history entry is replaced, not pushed, and keeps its
     // state: htmx 2 restores an entry on Back/Forward only when that state says
     // `htmx`. htmx files its Back snapshot of this page under the path it keeps
     // in sessionStorage (`saveCurrentPageToHistory`), so that path follows the
     // address too; where storage is blocked htmx keeps the path in memory and
     // refetches the page on Back instead, which shows the same tab.
     document.addEventListener('click', e => {
-        const a = e.target instanceof Element ? e.target.closest('.tabset > nav a[data-tab-name]') : null;
+        const a = tabOf(e);
         if (!a) return;
         const ts = a.closest('.tabset');
+        tabs(ts).forEach(t => t.setAttribute('tabindex', t === a ? '0' : '-1'));
         if (!recording(ts)) return;
         const url = new URL(location.href);
         url.searchParams.set(ts.dataset.tabParam, a.dataset.tabName);
@@ -2007,6 +2047,21 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
         history.replaceState(history.state, '', url);
         if (window.htmx) try { sessionStorage.setItem('htmx-current-path-for-history', url.pathname + url.search); } catch (_) {}
     }, true);
+
+    // The arrow keys, Home and End move the focus; Enter (a link's own click)
+    // or Space opens the focused tab. Moving the focus opens nothing: it would
+    // fetch every lazy panel on the way and rewrite the URL at each step. A key
+    // held with a modifier is the browser's, such as Alt+Left for Back.
+    document.addEventListener('keydown', e => {
+        const a = tabOf(e);
+        if (!a || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        if (e.key === ' ') { e.preventDefault(); a.click(); return; }
+        const all = tabs(a.closest('.tabset')), at = all.indexOf(a), n = all.length;
+        const next = {ArrowRight: (at + 1) % n, ArrowLeft: (at - 1 + n) % n, Home: 0, End: n - 1}[e.key];
+        if (next === undefined) return;
+        e.preventDefault();
+        all[next].focus();
+    });
 })();
 </script><style>.htmxo-comparison > nav, .htmxo-comparison [role=tablist] { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .htmxo-comparison > nav button { width: auto; margin: 0; }
@@ -2282,7 +2337,9 @@ function htmxoRowControl(row, target) {
 function htmxoMdToggle(row, event, key, slot) {
     if (htmxoRowControl(row, event.target)) return;
     var d = document.getElementById('detail-' + key); if (!d) return;
-    var show = row.dataset.htmxoDetailOpen === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
+    // A flat row's detail says whether it is open; a tree row's may be hidden
+    // only because a search or a closed branch hides it.
+    var show = row.dataset.htmxoParent === undefined ? d.hidden : row.dataset.htmxoDetailOpen !== 'true';
     htmxoMdShow(row, d, show);
     if (show && slot) {
         var s = document.getElementById(slot === 1 ? 'detail-slot-' + key : slot);
@@ -2292,10 +2349,15 @@ function htmxoMdToggle(row, event, key, slot) {
 }
 // Open or close a row's detail `d`, mirroring the state on the row and on its
 // detail control. A row update re-applies it to the rows it replaces.
+// `aria-expanded` is valid on a row only inside a treegrid, so a flat table's
+// row (`data-htmxo-detail-open` without `data-htmxo-parent`) keeps its state in
+// the data attribute, and its detail control tells assistive technology.
 function htmxoMdShow(row, d, show) {
     d.hidden = !show;
     if (row.dataset.htmxoDetailOpen !== undefined) row.dataset.htmxoDetailOpen = String(show);
-    if (row.dataset.htmxoTreeOpen === undefined) row.setAttribute('aria-expanded', show);
+    if (row.dataset.htmxoTreeOpen === undefined &&
+        (row.dataset.htmxoDetailOpen === undefined || row.dataset.htmxoParent !== undefined))
+        row.setAttribute('aria-expanded', show);
     var control = row.querySelector('[data-htmxo-detail-toggle]');
     if (control) {
         control.setAttribute('aria-expanded', show);
@@ -6324,24 +6386,67 @@ function htmxoSortState(target) {
    the layout or covers the row's own text. */
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked] { outline: 2px solid var(--htmxo-accent, Highlight); outline-offset: -2px; }
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] > td { background-color: var(--htmxo-linked-row, color-mix(in srgb, var(--htmxo-accent, Highlight) 18%, transparent)); }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] { --htmxo-tinted-primary: color-mix(in srgb, var(--pico-primary) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-primary-hover: color-mix(in srgb, var(--pico-primary-hover) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-secondary: color-mix(in srgb, var(--pico-secondary) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-secondary-hover: color-mix(in srgb, var(--pico-secondary-hover) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-muted: color-mix(in srgb, var(--pico-muted-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-htmxo-muted: color-mix(in srgb, var(--htmxo-muted) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-del: color-mix(in srgb, var(--pico-del-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-ins: color-mix(in srgb, var(--pico-ins-color) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-success: color-mix(in srgb, var(--htmxo-success) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-warning: color-mix(in srgb, var(--htmxo-warning) 40%, var(--pico-contrast, CanvasText)); --htmxo-tinted-error: color-mix(in srgb, var(--htmxo-error) 40%, var(--pico-contrast, CanvasText)); }
+table[data-htmxo-link] > tbody > tr[data-htmxo-linked=""] > td { --pico-primary: var(--htmxo-tinted-primary); --pico-primary-hover: var(--htmxo-tinted-primary-hover); --pico-secondary: var(--htmxo-tinted-secondary); --pico-secondary-hover: var(--htmxo-tinted-secondary-hover); --pico-muted-color: var(--htmxo-tinted-muted); --htmxo-muted: var(--htmxo-tinted-htmxo-muted); --pico-del-color: var(--htmxo-tinted-del); --pico-ins-color: var(--htmxo-tinted-ins); --htmxo-success: var(--htmxo-tinted-success); --htmxo-warning: var(--htmxo-tinted-warning); --htmxo-error: var(--htmxo-tinted-error); }
+
 table[data-htmxo-link] > tbody > tr[data-htmxo-linked="inside"] { outline-style: dashed; }
 table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note] { position: relative; }
 table[data-htmxo-link] > tbody > tr > td[data-htmxo-linked-note]::after { content: attr(data-htmxo-linked-note); position: absolute; z-index: 1; inset-inline-start: .5rem; top: 0; transform: translateY(-50%); padding: 0 .5em; border: 1px dashed var(--htmxo-accent, Highlight); border-radius: 1em; background: var(--pico-background-color, Canvas); color: var(--pico-color, CanvasText); font-size: .7em; line-height: 1.5; white-space: nowrap; pointer-events: none; }
 </style><style>@layer htmxo {
 figure.captioned { margin: 0 0 1rem 0; }
-figcaption.caption { margin-bottom: 0.5rem; }
+/* The header takes what the toggle of a long text leaves of the row. */
+figcaption.caption { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem; margin-bottom: 0.5rem; }
+figcaption.caption > .caption-header { flex: 1 1 16rem; min-width: 0; }
 .caption-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.25rem 1rem; }
 /* The title keeps 16rem beside the actions, else they wrap below it. An empty
    placeholder (the uncaptioned download header) takes no basis, so its button
    stays on the right. */
 .caption-header > :first-child:not(:empty) { flex: 1 1 16rem; min-width: 0; }
 .caption-actions { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
-.caption-long { margin-top: 0.25rem; }
-.caption-long > summary { font-size: 0.9em; }
 }
 /* Caption buttons — INTENTIONALLY UNLAYERED, at (0,2,0) so they beat Pico's
    unlayered button and [type=button] rules (0,0,1)/(0,1,0) in any order. */
 .caption-actions > .caption-action { padding: 0.1rem 0.5rem; font-size: 0.85em; margin: 0; }
+/* The toggle of a long text, drawn like those buttons: the one disclosure that
+   is not the Pico bridge's full-width box, because it repeats on every figure
+   and a row of its own would push the figure down. The `<details>` gives up its
+   box, so its label and its content are items of the caption's row; closed
+   content stays out of that row. INTENTIONALLY UNLAYERED, and stronger than
+   Pico's and the bridge's `details` rules in any order. */
+figcaption.caption > details.caption-long { display: contents; }
+figcaption.caption > details.caption-long > summary {
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0.1rem 0.5rem;
+    border: var(--pico-border-width, 1px) solid var(--pico-secondary, currentColor);
+    border-radius: var(--pico-border-radius, 0.25rem);
+    background: transparent;
+    color: var(--pico-secondary, inherit);
+    font-size: 0.85em;
+    font-weight: 400;
+    line-height: var(--pico-line-height, 1.5);
+}
+figcaption.caption > details.caption-long > summary:is(:hover, :focus-visible) {
+    border-color: var(--pico-secondary-hover, currentColor);
+    background: transparent;
+    color: var(--pico-secondary-hover, inherit);
+}
+figcaption.caption > details.caption-long > summary::before {
+    width: 0.85rem;
+    height: 0.85rem;
+    margin-inline-end: 0.25rem;
+    background-size: 0.85rem auto;
+}
+figcaption.caption > details.caption-long::details-content { position: absolute; padding: 0; }
+figcaption.caption > details.caption-long[open]::details-content {
+    position: static;
+    flex: 1 0 100%;
+    box-sizing: border-box;
+    padding: 0.75rem 1rem;
+    border: var(--pico-border-width, 1px) solid var(--pico-form-element-border-color, currentColor);
+    border-radius: var(--pico-border-radius, 0.25rem);
+}
+figcaption.caption > details.caption-long > :last-child > :last-child { margin-bottom: 0; }
 </style><script>function downloadTableCsv(btn, filename) {
     const wrap = btn.closest('figure, .table-wrap') || btn.parentElement;
     const table = wrap.querySelector('table');
@@ -6994,7 +7099,8 @@ figcaption.caption { margin-bottom: 0.5rem; }
         return req && req.classList && req.classList.contains('treebar-poller-inner') &&
             d.elt && d.elt.classList && d.elt.classList.contains('treebar-poller') ? d.elt : null;
     }
-    // Failures arrive as their own events; an aborted request is neither.
+    // Failures arrive as their own events; an aborted request or a dropped
+    // poll answer (see "Pushed pollers") is neither.
     document.addEventListener('htmx:afterRequest', function(evt){
         var d = evt.detail || {};
         if (d.successful !== true) return;
@@ -7004,7 +7110,9 @@ figcaption.caption { margin-bottom: 0.5rem; }
     function pollFailed(evt){
         var d = evt.detail || {};
         var r = requestRegion(d);
-        if (!r) return;
+        // While pushed, only a poll left running at the first push can fail,
+        // and that says nothing about the push source.
+        if (!r || r._tbPushed) return;
         var s = evt.type === 'htmx:responseError' && d.xhr ? d.xhr.status : 0;
         markFail(r, s === 0 || s === 502 || s === 503 || s === 504 ? '' : 'HTTP ' + s, true);
     }
@@ -7051,10 +7159,13 @@ figcaption.caption { margin-bottom: 0.5rem; }
     // poller live. Called without html it only confirms that the shown
     // answer is still current: a heartbeat. The first call puts the poller
     // in push mode: its own polls are suspended (see the pause hook below)
-    // and a poll already in flight is aborted, so a late poll answer cannot
-    // replace a newer pushed one. While the viewer has paused the poller,
-    // the newest pushed answer is held and shown on resume; meanwhile the
-    // shown state ages as a paused polled one does.
+    // and the answer of a poll already in flight is dropped, so a late poll
+    // answer cannot replace a newer pushed one. That poll is left to finish:
+    // htmx reports every aborted request as an error (console.error and
+    // htmx:error), however deliberate the abort, and has no setting for it.
+    // While the viewer has paused the poller, the newest pushed answer is
+    // held and shown on resume; meanwhile the shown state ages as a paused
+    // polled one does.
     // window.treebarPollerLost(el, why) ends push mode: the poller falls
     // back to its own polls, which retry by themselves, and reads
     // "Connection lost" (empty `why`) or "Updates failing (why)" once those
@@ -7077,13 +7188,29 @@ figcaption.caption { margin-bottom: 0.5rem; }
             {select: inner.getAttribute('hx-select'), contextElement: inner});
         markOk(p, at);
     }
+    // Registered on the polling element, not the document: a pushed answer
+    // replaces that element, and a detached element's events never reach the
+    // document. htmx returns before parsing an answer dropped here, so its
+    // out-of-band content and response headers do nothing, and it still ends
+    // the request, so the element can poll again if it is handed back. The
+    // answer stops here too: to the page's own listeners (HTMXObjects marks
+    // an operation finished on seeing its last answer) this poll was never
+    // answered, and a poller handed back asks again. A request of an element
+    // inside the inner passes through; a handed-back poller's answer is an
+    // ordinary poll answer.
+    function dropLatePoll(evt){
+        if (evt.target !== this) return;
+        if (this.isConnected && !this.parentElement._tbPushed) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+    }
     window.treebarUpdatePoller = function(el, html){
         var inner = pushTarget(el);
         if (!inner) return false;
         var p = inner.parentElement, at = Date.now();
         if (!p._tbPushed){
             p._tbPushed = true;
-            htmx.trigger(inner, 'htmx:abort');
+            inner.addEventListener('htmx:beforeOnLoad', dropLatePoll);
         }
         if (p.dataset.paused === '1'){
             p._tbHeld = {html: html != null ? html : p._tbHeld && p._tbHeld.html, at: at};

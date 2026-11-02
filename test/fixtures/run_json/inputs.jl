@@ -1,0 +1,48 @@
+# These inputs were written by src/run_files.jl at 41b7fba7ccfc to capture the
+# pre-JSON.jl file contract. Compare parsed values, not object order or escapes.
+(
+    cooperative_manifest = Pair{String,Any}[
+        "schema_version" => 2, "sampler" => "cooperative",
+        "n_chains" => 4, "n_cores" => 2, "n_draws" => nothing,
+        "target_ess" => 100.0, "n_evaluations_budget" => 10000,
+        "time_budget" => Inf, "n_evaluations" => 100,
+        "seed_rng" => "Xoshiro(0x1, 0x2, 0x3, 0x4, 0x5)",
+        "start_time_unix" => 1793620800.25,
+    ],
+    cooperative_summary = Pair{String,Any}[
+        "schema_version" => 2, "sampler" => "cooperative", "is_final" => true,
+        "stop_reason" => "eval_budget", "n_chains" => 4, "n_used" => 3,
+        "joint_ess" => NaN, "n_pooled" => 30, "n_batches" => 2,
+        "total_evaluation_counter" => 10000, "elapsed" => 12.5,
+        "end_time_unix" => 1793620812.75,
+    ],
+    completion_manifest = Pair{String,Any}[
+        "schema_version" => 3, "sampler" => "completion", "n_requested" => 3,
+        "min_completed" => 2, "stop_policy" => "finish_current_round",
+        "stuck_stepsize_ratio" => Inf, "max_admitted_divergent_fraction" => 0.1,
+        "n_draws" => 5, "resume" => false,
+        "selection_warning" => "Runtime completion can bias inference.",
+    ],
+    completion_summary = Pair{String,Any}[
+        "schema_version" => 3, "policy" => :completion_quorum,
+        "stop_policy" => :finish_current_round, "min_completed" => 2,
+        "stuck_stepsize_ratio" => Inf, "max_admitted_divergent_fraction" => 0.1,
+        "n_requested" => 3, "n_started" => 3, "n_completed" => 2,
+        "n_failed" => 1, "n_stuck" => 0, "n_omitted" => 1,
+        "requested_chain_indices" => [1, 2, 3], "started_chain_indices" => [1, 2, 3],
+        "completed_chain_indices" => [1, 3], "failed_chain_indices" => [2],
+        "stuck_chain_indices" => Int[], "omitted_chain_indices" => [2],
+        "quorum_met" => true, "stop_reason" => :quorum_reached,
+        "quorum_at_seconds" => 1.25, "stop_requested_at_seconds" => 1.25,
+        "elapsed_seconds" => 2.5, "n_samples" => 10, "n_divergent_samples" => 0,
+        "selection_warning" => "Runtime completion can bias inference.",
+        "chain_statuses" => ["completed", "failed", "completed"],
+        "chain_finished_at_seconds" => [1.0, 0.5, 1.25],
+        "chain_n_samples" => [5, nothing, 5], "chain_n_retained_samples" => [5, 0, 5],
+        "chain_errors" => [nothing, "α😀\tline\nreturn\rnull\0quote\"slash\\", nothing],
+        "chain_stuck_reasons" => [nothing, nothing, nothing],
+        "chain_stepsizes" => [0.2, NaN, 0.3],
+        "chain_reference_stepsizes" => [Inf, -Inf, 0.3],
+        "chain_divergent_fractions" => [0.0, nothing, 0.0],
+    ],
+)

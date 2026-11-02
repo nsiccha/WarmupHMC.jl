@@ -133,11 +133,6 @@ end
     @test occursin("0 of 2", sprint(showerror, WarmupHMC.CompletionQuorumError(unmet)))
 end
 
-@testset "control characters in failure JSON" begin
-    @test WarmupHMC._json_val("tab\tnewline\nreturn\rnull\0quote\"slash\\") ==
-        "\"tab\\u0009newline\\nreturn\\u000dnull\\u0000quote\\\"slash\\\\\""
-end
-
 @testset "already-complete admission precedes scheduling" begin
     initial = Dict(3 => _completion_fixture(3), 1 => _completion_fixture(1))
     out = WarmupHMC._completion_batch(4; min_completed=1,

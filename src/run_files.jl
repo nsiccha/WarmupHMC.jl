@@ -17,23 +17,8 @@
 # torn-read hazard in the one file every consumer must read to identify a run,
 # so it was rejected in review.
 #
-# JSON rather than .jls so a web process can read run identity WITHOUT a Julia
-# runtime — that is the whole point, and it is why this hand-rolls a tiny writer
-# instead of taking a JSON dependency: the contents are a flat, fully-controlled
-# set of scalars and small arrays, and WarmupHMC is heading for General
-# registration where every added dep is a liability.
-
-_json_esc(s) = replace(
-    replace(string(s), '\\' => "\\\\", '"' => "\\\"", '\n' => "\\n"),
-    r"[\x00-\x1f]" => c -> "\\u" * string(Int(only(c)); base=16, pad=4))
-_json_val(::Nothing) = "null"
-_json_val(x::Bool) = x ? "true" : "false"
-_json_val(x::Real) = isfinite(x) ? string(x) : "null"   # Inf/NaN are not JSON
-_json_val(x::Union{AbstractString,Symbol}) = "\"" * _json_esc(x) * "\""
-_json_val(x::AbstractVector) = "[" * join(map(_json_val, x), ",") * "]"
-_json_val(x) = _json_val(string(x))
-_json_object(pairs) = "{" * join(
-    [ "\"" * _json_esc(k) * "\":" * _json_val(v) for (k, v) in pairs ], ",") * "}"
+# JSON rather than .jls lets a web process read run identity without Julia.
+# JSON.jl owns encoding; non-finite numbers keep the on-disk null convention.
 
 # Atomic write, same reason as the checkpoints: a crash during a WRITE-ONCE file
 # must not strand a half-written one that a consumer would read as authoritative.
@@ -44,7 +29,7 @@ _write_json(path, pairs) = begin
     mkpath(dirname(path))
     tmp, io = mktemp(dirname(path); cleanup=false)
     try
-        write(io, _json_object(pairs))
+        JSON.json(io, Dict(pairs); allownan=true, nan="null", inf="null", ninf="null")
         close(io)
         mv(tmp, path; force=true)
     catch

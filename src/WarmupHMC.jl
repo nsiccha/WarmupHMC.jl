@@ -19,6 +19,7 @@ import DynamicHMC,
     CRC32c,
     Dates
 using Serialization: serialize, deserialize
+import ReparametrizableDistributions: PartiallyCentered, reparam
 # Only the reparametrization gradient and the window-end halo transport need AD.
 # Importing the names rather than the package keeps DifferentiationInterface's
 # broad export surface (`gradient`, `jacobian`, `pullback`, …) out of WarmupHMC.

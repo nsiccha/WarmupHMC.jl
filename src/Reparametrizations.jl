@@ -458,90 +458,6 @@ with_logabsdet_jacobian!(Y::AbstractMatrix, t, X::AbstractMatrix) = begin
 end
 
 """
-    PartiallyCentered(c)
-
-One coordinate's centering, `c ∈ [0, 1]`: `c = 1` is fully centered, `c = 0`
-fully non-centered, and anything in between is a partial centering.
-
-For a coordinate with location `loc` and log-scale `log_scale`, mapping a value
-`x` from `PartiallyCentered(source)` to `PartiallyCentered(target)` is
-
-    y    = target * loc + (x - source * loc) * exp(log_scale * (target - source))
-    ljac = log_scale * (target - source)
-
-so `source == target` is the identity, and `source = 1, target = 0` is exactly
-the textbook non-centering — subtract the location, divide by the scale.
-
-Use `Float64` centerings (`PartiallyCentered(1.0)`, not `PartiallyCentered(1)`):
-warm-up writes the fitted value back into the same `pairs` vector it read, and an
-`Int`-parameterized element cannot hold a `Float64` centering. This fails *late* —
-not at construction, but with `MethodError: Cannot convert` at the end of the
-first restarting warm-up window, the first time a centering is written back.
-
-# How the value gets chosen
-
-At each warm-up window that restarts, every reparametrized coordinate is scored
-against a fixed grid of 11 candidate centerings, `range(0, 1, 11)`. Each
-candidate accumulates the correlation between the candidate-coordinate position
-and its gradient over the recorded halo states, and the candidate minimizing that
-correlation becomes the coordinate's new `source`. A perfectly conditioned
-coordinate has position and gradient exactly anti-correlated, so the minimum is
-the most standard-normal-looking candidate. Coordinates that saw 2 or fewer halo
-states keep the centering they had.
-
-The grid is deliberate, not an approximation of a continuous search. Centering is
-a bounded one-dimensional quantity, so the candidate set can be *enumerated*; and
-because it is enumerable, all candidates can be scored in a single pass over the
-halo with online accumulators — every state is visited once, per coordinate,
-regardless of how many candidates there are, and nothing has to be stored or
-re-visited for an inner optimization loop. Resolution finer than `0.1` is not
-what decides how the sampler behaves here. The grid size is fixed; no sampler
-keyword exposes it.
-
-See [`Reparametrization`](@ref) for the object that pairs a `target` with an
-adapted `source`.
-"""
-struct PartiallyCentered{C}
-    c::C
-end
-# Plain `* exp(ljac)`, NOT `LogExpFunctions.xexpy(u, ljac)`. `xexpy` returns a
-# CONSTANT `zero(u * exp(ljac))` whenever `iszero(u) && isfinite(ljac)`, and under
-# AD that branch has derivative 0 where the true derivative is `exp(ljac)`. Since
-# `u == x - source.c * loc`, any coordinate sitting exactly on its own centered
-# location silently lost its entire gradient contribution — no error, no NaN, just
-# a zero. With `source.c == 0` (fully non-centered, the ordinary starting
-# configuration) the trigger collapses to `x == 0`. Measured at
-# `x = [0.7, 0, 0, 0, 0]`: 49% off central differences, the three zero coordinates
-# reading 0.0 against a true -0.49328 each.
-#
-# Dropping the guard costs essentially nothing, which is why this is a plain fix
-# and not a trade:
-#
-#   * The branch that was biting is VALUE-NEUTRAL. When `u` is zero and `ljac` is
-#     finite, `u * exp(ljac)` is already exactly zero; `xexpy` only normalizes the
-#     sign of the zero. So it was destroying a derivative to change nothing.
-#   * `u == 0` with `ljac == +Inf` is NaN either way — `xexpy` takes neither branch
-#     there (it requires `isfinite(ljac)`), so this is not a regression.
-#   * The one case that genuinely differs is `u == ±Inf` with `ljac == -Inf`, where
-#     `xexpy` gave 0 and this gives NaN. That needs an infinite coordinate AND an
-#     infinite log-scale; the density is already unusable, and DynamicHMC treats a
-#     non-finite value as a divergence, which is the correct response. Trading a
-#     silently wrong gradient at ordinary points for a NaN in an already-broken
-#     state is the right direction.
-#
-# The `g`-carrying method below has always used plain multiplication, so the two
-# were inconsistent with each other; they now agree.
-reparam(target::PartiallyCentered, source::PartiallyCentered, x::Real, loc::Real, log_scale::Real) = begin
-    ljac = log_scale * (target.c - source.c)
-    ljac, target.c * loc + (x - source.c * loc) * exp(ljac)
-end
-reparam(target::PartiallyCentered, source::PartiallyCentered, x::Real, g::Real, loc::Real, log_scale::Real) = begin
-    ljac = log_scale * (target.c - source.c)
-    s = exp(ljac)
-    ljac, target.c * loc + (x - source.c * loc) * s, g / s
-end
-
-"""
     Reparametrization(target, source, args...)
 
 One coordinate's rule: map that coordinate's value from `source` coordinates into
@@ -573,6 +489,14 @@ so keep them cheap and type-generic — index, arithmetic, `exp`/`log`, not
 
 `InverseFunctions.inverse` returns the same rule with `target` and `source`
 swapped.
+
+`PartiallyCentered` and the scalar transform come from
+ReparametrizableDistributions. Use floating-point centerings such as
+`PartiallyCentered(1.0)`: adaptation writes fitted floating-point values back
+into the same pairs vector. By default, each restarting warm-up window scores
+11 candidates over `range(0, 1, 11)` and updates the source centering; the target
+remains fixed. See [`CandidateScoringPlan`](@ref) and [`WindowSelectionPlan`](@ref)
+for custom scoring and selection.
 
 # Example
 ```julia

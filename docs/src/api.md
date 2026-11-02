@@ -86,13 +86,24 @@ WarmupHMC.fit_gaussian_moments
 
 ## Reparametrizations
 
+`PartiallyCentered` is re-exported from ReparametrizableDistributions. WarmupHMC
+provides the wrappers and adaptation described by [`Reparametrization`](@ref).
+
+### [PartiallyCentered](@id PartiallyCentered)
+
+```@eval
+using Markdown, WarmupHMC
+Markdown.parse(string(@doc WarmupHMC.PartiallyCentered))
+```
+
+### Wrappers and adaptation
+
 ```@docs
 WarmupHMC.ReparametrizedProblem
 WarmupHMC.CandidateScoringPlan
 WarmupHMC.candidate_scoring_losses
 WarmupHMC.WindowSelectionPlan
 WarmupHMC.IndexedReparametrization
-WarmupHMC.PartiallyCentered
 WarmupHMC.Reparametrization
 ```
 

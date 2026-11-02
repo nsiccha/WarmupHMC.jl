@@ -12,6 +12,7 @@ using LogDensityProblems,
     InverseFunctions,
     Treebars
 import DynamicHMC,
+    JSON,
     OnlineStatsBase,
     Random,
     Mmap,

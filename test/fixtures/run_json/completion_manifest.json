@@ -1,0 +1,1 @@
+{"schema_version":3,"sampler":"completion","n_requested":3,"min_completed":2,"stop_policy":"finish_current_round","stuck_stepsize_ratio":null,"max_admitted_divergent_fraction":0.1,"n_draws":5,"resume":false,"selection_warning":"Runtime completion can bias inference."}

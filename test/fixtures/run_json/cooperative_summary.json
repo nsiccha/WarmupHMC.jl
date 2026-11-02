@@ -1,0 +1,1 @@
+{"schema_version":2,"sampler":"cooperative","is_final":true,"stop_reason":"eval_budget","n_chains":4,"n_used":3,"joint_ess":null,"n_pooled":30,"n_batches":2,"total_evaluation_counter":10000,"elapsed":12.5,"end_time_unix":1.79362081275e9}

@@ -1,0 +1,1 @@
+{"schema_version":2,"sampler":"cooperative","n_chains":4,"n_cores":2,"n_draws":null,"target_ess":100.0,"n_evaluations_budget":10000,"time_budget":null,"n_evaluations":100,"seed_rng":"Xoshiro(0x1, 0x2, 0x3, 0x4, 0x5)","start_time_unix":1.79362080025e9}

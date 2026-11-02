@@ -103,34 +103,42 @@ details summary[role=button]:not(.secondary, .contrast)::after,
    its edges, and the inner spacing sits on the bar and on the content
    (`::details-content`, which also holds bare text). Padding a component sets
    on its `<details>` so insets both, and nothing sticks out of its box; a
-   component drops the inner spacing with `--htmxo-disclosure-padding: 0`. */
+   component drops the inner spacing with `--htmxo-disclosure-padding: 0`.
+   Only the box's own rule asks `:has()` whether its summary is a button, and
+   hands the content's spacing to `::details-content` as
+   `--htmxo-disclosure-inset` (0 in any other disclosure, a nested one
+   included); the rules for what is in the box ask the summary itself
+   (`summary:not([role])`, `summary[role] ~`). A `:has()` on a rule for the
+   content or the summary made the browser restyle everything inside a
+   `<details>` whenever anything in it changed: each update of one cell in a
+   table inside a disclosure restyled the whole table, twice. The last child's
+   rule checks its parent before its siblings: written as `summary ~
+   :last-child`, every class change on the page restyled later siblings. */
+:where(details) { --htmxo-disclosure-inset: 0px; }
 :where(details:not(.dropdown, :has(> summary[role]))) {
+    --htmxo-disclosure-inset: var(--htmxo-disclosure-padding, 1rem);
     --pico-accordion-active-summary-color: var(--pico-accordion-close-summary-color);
     --pico-accordion-open-summary-color: var(--pico-accordion-close-summary-color);
     border: var(--pico-border-width) solid var(--pico-form-element-border-color);
     border-radius: var(--pico-border-radius);
 }
-:where(details:not(.dropdown, :has(> summary[role])))::details-content {
-    padding-inline: var(--htmxo-disclosure-padding, 1rem);
-}
-:where(details:not(.dropdown, :has(> summary[role]))[open])::details-content {
-    padding-bottom: var(--htmxo-disclosure-padding, 1rem);
-}
-:where(details:not(.dropdown, :has(> summary[role]))) > :where(summary) {
+:where(details)::details-content { padding-inline: var(--htmxo-disclosure-inset); }
+:where(details[open])::details-content { padding-bottom: var(--htmxo-disclosure-inset); }
+:where(details:not(.dropdown) > summary:not([role])) {
     padding: 0.6rem var(--htmxo-disclosure-padding, 1rem);
     border-radius: calc(var(--pico-border-radius) - var(--pico-border-width));
     background: var(--pico-card-sectioning-background-color);
     font-weight: 600;
 }
-:where(details:not(.dropdown, :has(> summary[role]))) > :where(summary):hover {
+:where(details:not(.dropdown) > summary:not([role])):hover {
     background: color-mix(in srgb, currentColor 7%, var(--pico-card-sectioning-background-color));
 }
-:where(details:not(.dropdown, :has(> summary[role]))[open]) > :where(summary) {
+:where(details:not(.dropdown)[open] > summary:not([role])) {
     border-bottom: var(--pico-border-width) solid var(--pico-muted-border-color);
     border-end-start-radius: 0;
     border-end-end-radius: 0;
 }
-:where(details:not(.dropdown, :has(> summary[role]))) > :where(summary)::before {
+:where(details:not(.dropdown) > summary:not([role]))::before {
     content: "";
     display: inline-block;
     width: 1rem;
@@ -144,16 +152,16 @@ details summary[role=button]:not(.secondary, .contrast)::after,
     transform: rotate(-90deg);
     transition: transform var(--pico-transition);
 }
-:where(details:not(.dropdown, :has(> summary[role]))[open]) > :where(summary)::before {
+:where(details:not(.dropdown)[open] > summary:not([role]))::before {
     transform: rotate(0);
 }
-:where(details:not(.dropdown, :has(> summary[role]))) > :last-child { margin-bottom: 0; }
-details:where(:not(.dropdown, :has(> summary[role]))) > summary { line-height: var(--pico-line-height); }
-details:where(:not(.dropdown, :has(> summary[role]))) > summary::after { content: none; }
-details:where(:not(.dropdown, :has(> summary[role])))[open] > summary {
+:last-child:where(details:not(.dropdown) > *):where(:not(summary[role], summary[role] ~ *)) { margin-bottom: 0; }
+details:where(:not(.dropdown)) > summary:where(:not([role])) { line-height: var(--pico-line-height); }
+details:where(:not(.dropdown)) > summary:where(:not([role]))::after { content: none; }
+details:where(:not(.dropdown))[open] > summary:where(:not([role])) {
     margin-bottom: var(--htmxo-disclosure-padding, 1rem);
 }
-details:where(:not(.dropdown, :has(> summary[role]))) > summary:focus-visible:not([role]) {
+details:where(:not(.dropdown)) > summary:focus-visible:not([role]) {
     outline-offset: calc(-1 * var(--pico-outline-width));
 }
 /* A `SemanticArtifact` is a download control, drawn in the buttons' slate
@@ -5088,24 +5096,59 @@ if (document.body) htmxoSearchRestore(document.body);
 // one becomes that box too, sized to fit below the outer table's line and
 // header. Its own line and header are not measured: its rows keep scrolling
 // into view below the outer ones, whose heights they inherit.
+// Only the observer and a newly found element measure. A swap anywhere on the
+// page can drop the values the server did not render (a morph, or htmx's
+// settle giving a same-id element its new `style`), so after every swap the
+// last measured values are put back as they were, reading no layout: reading
+// it there forced the browser to lay out the whole page again on each swap,
+// one cell's update included. A swap that changes a size reaches the
+// observer, which measures after the browser's own layout.
 window.htmxoStickyTracked = window.htmxoStickyTracked || new Set();
+window.htmxoStickyHeld = window.htmxoStickyHeld || new WeakMap();
 function htmxoStickyMeasure(el) {
     if (!el.isConnected) return;
     if (el.classList.contains('htmxo-table-toolbar')) {
-        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', el.offsetHeight + 'px');
+        const height = el.offsetHeight + 'px';
+        window.htmxoStickyHeld.set(el, height);
+        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', height);
         return;
     }
     const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
     if (!table) return;
-    if (!table.parentElement.closest('td, th'))
-        table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
+    const held = {};
+    if (!table.parentElement.closest('td, th')) {
+        held.head = (table.tHead ? table.tHead.offsetHeight : 0) + 'px';
+        table.style.setProperty('--htmxo-table-head-h', held.head);
+    }
     const wrap = table.parentElement;
-    if (!wrap.classList.contains('table-wrap')) return;
-    // The table's own width, not `wrap.scrollWidth`, which also counts anything
-    // poking out of a cell: a few pixels in one open row would box the whole
-    // table, shortening the page and moving the row just clicked off screen.
-    const width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
-    if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
+    if (wrap.classList.contains('table-wrap')) {
+        // The table's own width, not `wrap.scrollWidth`, which also counts anything
+        // poking out of a cell: a few pixels in one open row would box the whole
+        // table, shortening the page and moving the row just clicked off screen.
+        held.width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+        if (wrap.dataset.htmxoWidth !== held.width) wrap.dataset.htmxoWidth = held.width;
+    }
+    window.htmxoStickyHeld.set(table, held);
+}
+// Put back what a swap dropped from a measured element; an element not
+// measured yet is measured.
+function htmxoStickyRestore(el) {
+    if (!el.isConnected) return;
+    if (el.classList.contains('htmxo-table-toolbar')) {
+        const height = window.htmxoStickyHeld.get(el);
+        if (!height) return htmxoStickyQueue(el);
+        if (el.parentElement.style.getPropertyValue('--htmxo-table-toolbar-h') !== height)
+            el.parentElement.style.setProperty('--htmxo-table-toolbar-h', height);
+        return;
+    }
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    const held = window.htmxoStickyHeld.get(table);
+    if (!held) return htmxoStickyQueue(el);
+    if (held.head && table.style.getPropertyValue('--htmxo-table-head-h') !== held.head)
+        table.style.setProperty('--htmxo-table-head-h', held.head);
+    const wrap = table.parentElement;
+    if (held.width && wrap.dataset.htmxoWidth !== held.width) wrap.dataset.htmxoWidth = held.width;
 }
 function htmxoStickyQueue(el) {
     (window.htmxoStickyPending || (window.htmxoStickyPending = new Set())).add(el);
@@ -5135,17 +5178,24 @@ function htmxoStickyTrack(elt) {
         const wrap = el.tagName === 'TABLE' && el.parentElement.classList.contains('table-wrap') ? el.parentElement : null;
         [el, wrap].forEach(t => {
             if (!t) return;
-            if (!tracked.has(t)) { tracked.add(t); ro.observe(t); }
+            if (tracked.has(t)) return htmxoStickyRestore(t);
+            tracked.add(t);
+            // A toolbar or table by its border box, the height and width
+            // measured; the wrapper by its content box, which a scrollbar changes.
+            ro.observe(t, {box: t === wrap ? 'content-box' : 'border-box'});
             htmxoStickyQueue(t);
         });
     });
 }
+function htmxoStickyRestoreAll() {
+    window.htmxoStickyTracked.forEach(htmxoStickyRestore);
+}
 if (!window.htmxoStickyBound) {
     window.htmxoStickyBound = true;
     document.addEventListener('htmx:load', e => htmxoStickyTrack(e.target));
-    // A morph keeps the elements but drops the measured values the server
-    // did not render: measure every tracked element again.
-    document.addEventListener('htmx:afterSettle', () => window.htmxoStickyTracked.forEach(htmxoStickyQueue));
+    // A morph drops the values at the swap, htmx's settle at the settle.
+    document.addEventListener('htmx:afterSwap', htmxoStickyRestoreAll);
+    document.addEventListener('htmx:afterSettle', htmxoStickyRestoreAll);
     document.addEventListener('DOMContentLoaded', () => htmxoStickyTrack(document.body));
 }
 if (document.body) htmxoStickyTrack(document.body);
@@ -5164,9 +5214,14 @@ if (document.body) htmxoStickyTrack(document.body);
 // fonts have loaded. A table that is not laid out yet (a closed tab or detail
 // row) is sized when it first shows. A morph keeps the element but drops the
 // colgroup and marks the server did not render: they are put back on the
-// swap, before the browser paints.
+// swap, before the browser paints. Putting them back reads no layout, as a
+// table already sized or not laid out yet reads none on a swap: the room's
+// observer is what notices a new width. Reading it on every swap made the
+// browser lay out the whole page there, for each update of a single cell.
 window.htmxoColumnsHeld = window.htmxoColumnsHeld || new WeakMap();
 window.htmxoColumnsWatched = window.htmxoColumnsWatched || new Map();
+// Tables whose room had no width when last measured (a closed tab or detail).
+window.htmxoColumnsUnlaid = window.htmxoColumnsUnlaid || new WeakSet();
 // The header cell of each column: the one spanning that column alone (a
 // grouped header's leaf, or a cell spanning both header rows).
 function htmxoColumnCells(table) {
@@ -5213,8 +5268,11 @@ function htmxoColumnsScale(table, box) {
 }
 function htmxoColumnsMeasure(table, force) {
     if (!table.isConnected || !('htmxoColumns' in table.dataset)) return;
-    const room = table.parentElement.clientWidth, cells = htmxoColumnCells(table);
-    if (!room || !cells.length || cells.length !== cells.filter(Boolean).length) return;
+    const cells = htmxoColumnCells(table);
+    if (!cells.length || cells.length !== cells.filter(Boolean).length) return;
+    const room = table.parentElement.clientWidth;
+    window.htmxoColumnsUnlaid[room ? 'delete' : 'add'](table);
+    if (!room) return;
     const held = window.htmxoColumnsHeld.get(table);
     if (held && !force && held.widths.length === cells.length && Math.abs(held.room - room) <= 40) {
         if (table.dataset.htmxoColumns !== 'held' ||
@@ -5266,12 +5324,22 @@ function htmxoColumnsTrack(elt) {
     if (elt.matches && elt.matches('table[data-htmxo-columns]')) found.unshift(elt);
     found.forEach(t => {
         if (!t.isConnected) return;
+        if (watched.has(t) && ro && (htmxoColumnsRestore(t) || window.htmxoColumnsUnlaid.has(t))) return;
         if (!watched.has(t) && t.parentElement) {
             watched.set(t, t.parentElement);
             if (ro) ro.observe(t.parentElement);
         }
         htmxoColumnsMeasure(t);
     });
+}
+// Put back the widths a table holds if a swap dropped them, reading no
+// layout. False when it holds none, or none for its present columns.
+function htmxoColumnsRestore(table) {
+    const held = window.htmxoColumnsHeld.get(table), cells = htmxoColumnCells(table);
+    if (!held || held.widths.length !== cells.length || cells.length !== cells.filter(Boolean).length) return false;
+    if (table.dataset.htmxoColumns !== 'held' ||
+        !table.querySelector(':scope > colgroup[data-htmxo-columns]')) htmxoColumnsApply(table, held);
+    return true;
 }
 if (!window.htmxoColumnsBound) {
     window.htmxoColumnsBound = true;
@@ -5662,7 +5730,7 @@ function htmxoRegroupConfig(wrapper) {
     }
     return wrapper.htmxoRegroupConfig;
 }
-// `_md_safe_key` and `_md_json_list`, as the server writes them.
+// `_md_safe_key` and JSON.jl string arrays, as the server writes them.
 function htmxoSafeKey(key) { return String(key).replace(/[^A-Za-z0-9_\-]/gu, '--'); }
 // A group row's id holds the name of its table (`data-htmxo-group-scope`,
 // see `_grouped_master_detail_table`). Give `rows`, rendered under the name
@@ -5682,13 +5750,7 @@ function htmxoRescope(rows, from, to) {
     });
     return rename;
 }
-function htmxoJsonString(s) {
-    let out = '"';
-    for (const c of String(s))
-        out += c === '"' ? '\\' + '"' : c === '\\' ? '\\\\' : c < ' ' ? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0') : c;
-    return out + '"';
-}
-function htmxoJsonList(xs) { return '[' + xs.map(htmxoJsonString).join(',') + ']'; }
+function htmxoJsonList(xs) { return JSON.stringify(xs.map(String)); }
 // A group summary over its leaves' inputs (`_md_summary_value`), folded left
 // to right, and written as the table writes numbers (`_md_summary_cell`).
 function htmxoSummaryValue(reduce, inputs) {
@@ -9585,24 +9647,59 @@ if (document.body) htmxoSearchRestore(document.body);
 // one becomes that box too, sized to fit below the outer table's line and
 // header. Its own line and header are not measured: its rows keep scrolling
 // into view below the outer ones, whose heights they inherit.
+// Only the observer and a newly found element measure. A swap anywhere on the
+// page can drop the values the server did not render (a morph, or htmx's
+// settle giving a same-id element its new `style`), so after every swap the
+// last measured values are put back as they were, reading no layout: reading
+// it there forced the browser to lay out the whole page again on each swap,
+// one cell's update included. A swap that changes a size reaches the
+// observer, which measures after the browser's own layout.
 window.htmxoStickyTracked = window.htmxoStickyTracked || new Set();
+window.htmxoStickyHeld = window.htmxoStickyHeld || new WeakMap();
 function htmxoStickyMeasure(el) {
     if (!el.isConnected) return;
     if (el.classList.contains('htmxo-table-toolbar')) {
-        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', el.offsetHeight + 'px');
+        const height = el.offsetHeight + 'px';
+        window.htmxoStickyHeld.set(el, height);
+        el.parentElement.style.setProperty('--htmxo-table-toolbar-h', height);
         return;
     }
     const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
     if (!table) return;
-    if (!table.parentElement.closest('td, th'))
-        table.style.setProperty('--htmxo-table-head-h', (table.tHead ? table.tHead.offsetHeight : 0) + 'px');
+    const held = {};
+    if (!table.parentElement.closest('td, th')) {
+        held.head = (table.tHead ? table.tHead.offsetHeight : 0) + 'px';
+        table.style.setProperty('--htmxo-table-head-h', held.head);
+    }
     const wrap = table.parentElement;
-    if (!wrap.classList.contains('table-wrap')) return;
-    // The table's own width, not `wrap.scrollWidth`, which also counts anything
-    // poking out of a cell: a few pixels in one open row would box the whole
-    // table, shortening the page and moving the row just clicked off screen.
-    const width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
-    if (wrap.dataset.htmxoWidth !== width) wrap.dataset.htmxoWidth = width;
+    if (wrap.classList.contains('table-wrap')) {
+        // The table's own width, not `wrap.scrollWidth`, which also counts anything
+        // poking out of a cell: a few pixels in one open row would box the whole
+        // table, shortening the page and moving the row just clicked off screen.
+        held.width = table.offsetWidth > wrap.clientWidth + 1 ? 'wide' : 'fits';
+        if (wrap.dataset.htmxoWidth !== held.width) wrap.dataset.htmxoWidth = held.width;
+    }
+    window.htmxoStickyHeld.set(table, held);
+}
+// Put back what a swap dropped from a measured element; an element not
+// measured yet is measured.
+function htmxoStickyRestore(el) {
+    if (!el.isConnected) return;
+    if (el.classList.contains('htmxo-table-toolbar')) {
+        const height = window.htmxoStickyHeld.get(el);
+        if (!height) return htmxoStickyQueue(el);
+        if (el.parentElement.style.getPropertyValue('--htmxo-table-toolbar-h') !== height)
+            el.parentElement.style.setProperty('--htmxo-table-toolbar-h', height);
+        return;
+    }
+    const table = el.tagName === 'TABLE' ? el : el.querySelector(':scope > table');
+    if (!table) return;
+    const held = window.htmxoStickyHeld.get(table);
+    if (!held) return htmxoStickyQueue(el);
+    if (held.head && table.style.getPropertyValue('--htmxo-table-head-h') !== held.head)
+        table.style.setProperty('--htmxo-table-head-h', held.head);
+    const wrap = table.parentElement;
+    if (held.width && wrap.dataset.htmxoWidth !== held.width) wrap.dataset.htmxoWidth = held.width;
 }
 function htmxoStickyQueue(el) {
     (window.htmxoStickyPending || (window.htmxoStickyPending = new Set())).add(el);
@@ -9632,17 +9729,24 @@ function htmxoStickyTrack(elt) {
         const wrap = el.tagName === 'TABLE' && el.parentElement.classList.contains('table-wrap') ? el.parentElement : null;
         [el, wrap].forEach(t => {
             if (!t) return;
-            if (!tracked.has(t)) { tracked.add(t); ro.observe(t); }
+            if (tracked.has(t)) return htmxoStickyRestore(t);
+            tracked.add(t);
+            // A toolbar or table by its border box, the height and width
+            // measured; the wrapper by its content box, which a scrollbar changes.
+            ro.observe(t, {box: t === wrap ? 'content-box' : 'border-box'});
             htmxoStickyQueue(t);
         });
     });
 }
+function htmxoStickyRestoreAll() {
+    window.htmxoStickyTracked.forEach(htmxoStickyRestore);
+}
 if (!window.htmxoStickyBound) {
     window.htmxoStickyBound = true;
     document.addEventListener('htmx:load', e => htmxoStickyTrack(e.target));
-    // A morph keeps the elements but drops the measured values the server
-    // did not render: measure every tracked element again.
-    document.addEventListener('htmx:afterSettle', () => window.htmxoStickyTracked.forEach(htmxoStickyQueue));
+    // A morph drops the values at the swap, htmx's settle at the settle.
+    document.addEventListener('htmx:afterSwap', htmxoStickyRestoreAll);
+    document.addEventListener('htmx:afterSettle', htmxoStickyRestoreAll);
     document.addEventListener('DOMContentLoaded', () => htmxoStickyTrack(document.body));
 }
 if (document.body) htmxoStickyTrack(document.body);
@@ -9661,9 +9765,14 @@ if (document.body) htmxoStickyTrack(document.body);
 // fonts have loaded. A table that is not laid out yet (a closed tab or detail
 // row) is sized when it first shows. A morph keeps the element but drops the
 // colgroup and marks the server did not render: they are put back on the
-// swap, before the browser paints.
+// swap, before the browser paints. Putting them back reads no layout, as a
+// table already sized or not laid out yet reads none on a swap: the room's
+// observer is what notices a new width. Reading it on every swap made the
+// browser lay out the whole page there, for each update of a single cell.
 window.htmxoColumnsHeld = window.htmxoColumnsHeld || new WeakMap();
 window.htmxoColumnsWatched = window.htmxoColumnsWatched || new Map();
+// Tables whose room had no width when last measured (a closed tab or detail).
+window.htmxoColumnsUnlaid = window.htmxoColumnsUnlaid || new WeakSet();
 // The header cell of each column: the one spanning that column alone (a
 // grouped header's leaf, or a cell spanning both header rows).
 function htmxoColumnCells(table) {
@@ -9710,8 +9819,11 @@ function htmxoColumnsScale(table, box) {
 }
 function htmxoColumnsMeasure(table, force) {
     if (!table.isConnected || !('htmxoColumns' in table.dataset)) return;
-    const room = table.parentElement.clientWidth, cells = htmxoColumnCells(table);
-    if (!room || !cells.length || cells.length !== cells.filter(Boolean).length) return;
+    const cells = htmxoColumnCells(table);
+    if (!cells.length || cells.length !== cells.filter(Boolean).length) return;
+    const room = table.parentElement.clientWidth;
+    window.htmxoColumnsUnlaid[room ? 'delete' : 'add'](table);
+    if (!room) return;
     const held = window.htmxoColumnsHeld.get(table);
     if (held && !force && held.widths.length === cells.length && Math.abs(held.room - room) <= 40) {
         if (table.dataset.htmxoColumns !== 'held' ||
@@ -9763,12 +9875,22 @@ function htmxoColumnsTrack(elt) {
     if (elt.matches && elt.matches('table[data-htmxo-columns]')) found.unshift(elt);
     found.forEach(t => {
         if (!t.isConnected) return;
+        if (watched.has(t) && ro && (htmxoColumnsRestore(t) || window.htmxoColumnsUnlaid.has(t))) return;
         if (!watched.has(t) && t.parentElement) {
             watched.set(t, t.parentElement);
             if (ro) ro.observe(t.parentElement);
         }
         htmxoColumnsMeasure(t);
     });
+}
+// Put back the widths a table holds if a swap dropped them, reading no
+// layout. False when it holds none, or none for its present columns.
+function htmxoColumnsRestore(table) {
+    const held = window.htmxoColumnsHeld.get(table), cells = htmxoColumnCells(table);
+    if (!held || held.widths.length !== cells.length || cells.length !== cells.filter(Boolean).length) return false;
+    if (table.dataset.htmxoColumns !== 'held' ||
+        !table.querySelector(':scope > colgroup[data-htmxo-columns]')) htmxoColumnsApply(table, held);
+    return true;
 }
 if (!window.htmxoColumnsBound) {
     window.htmxoColumnsBound = true;
@@ -10159,7 +10281,7 @@ function htmxoRegroupConfig(wrapper) {
     }
     return wrapper.htmxoRegroupConfig;
 }
-// `_md_safe_key` and `_md_json_list`, as the server writes them.
+// `_md_safe_key` and JSON.jl string arrays, as the server writes them.
 function htmxoSafeKey(key) { return String(key).replace(/[^A-Za-z0-9_\-]/gu, '--'); }
 // A group row's id holds the name of its table (`data-htmxo-group-scope`,
 // see `_grouped_master_detail_table`). Give `rows`, rendered under the name
@@ -10179,13 +10301,7 @@ function htmxoRescope(rows, from, to) {
     });
     return rename;
 }
-function htmxoJsonString(s) {
-    let out = '"';
-    for (const c of String(s))
-        out += c === '"' ? '\\' + '"' : c === '\\' ? '\\\\' : c < ' ' ? '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0') : c;
-    return out + '"';
-}
-function htmxoJsonList(xs) { return '[' + xs.map(htmxoJsonString).join(',') + ']'; }
+function htmxoJsonList(xs) { return JSON.stringify(xs.map(String)); }
 // A group summary over its leaves' inputs (`_md_summary_value`), folded left
 // to right, and written as the table writes numbers (`_md_summary_cell`).
 function htmxoSummaryValue(reduce, inputs) {

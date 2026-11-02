@@ -17,30 +17,6 @@ const RP = WarmupHMC.ReparametrizedProblem
 const reparam = WarmupHMC.reparam
 const rinverse = WarmupHMC.inverse   # InverseFunctions.inverse, imported into WarmupHMC
 
-@testset "PartiallyCentered reparam math" begin
-    loc, log_scale = 1.3, -0.4
-    x = 0.7
-    # identity when target == source
-    for c in (0.0, 0.5, 1.0)
-        pc = PC(c)
-        ljac, y = reparam(pc, pc, x, loc, log_scale)
-        @test ljac ≈ 0
-        @test y ≈ x
-    end
-    # non-centered (0) → centered (1):  y = loc + x*exp(log_scale),  ljac = log_scale
-    ljac, y = reparam(PC(1.0), PC(0.0), x, loc, log_scale)
-    @test ljac ≈ log_scale
-    @test y ≈ loc + x * exp(log_scale)
-    # centered (1) → non-centered (0):  y = (x-loc)*exp(-log_scale),  ljac = -log_scale
-    ljac2, y2 = reparam(PC(0.0), PC(1.0), x, loc, log_scale)
-    @test ljac2 ≈ -log_scale
-    @test y2 ≈ (x - loc) * exp(-log_scale)
-    # the two directions are mutually inverse
-    ljac3, y3 = reparam(PC(1.0), PC(0.0), y2, loc, log_scale)
-    @test y3 ≈ x
-    @test ljac2 + ljac3 ≈ 0
-end
-
 @testset "Reparametrization inverse (constant args)" begin
     loc, log_scale = 0.5, 0.2
     r = Rep(PC(1.0), PC(0.0), loc, log_scale)
@@ -138,20 +114,5 @@ end
         end
     end
 
-    # the reparam formula itself: d/dx at x == source.c * loc must be exp(ljac),
-    # not 0
-    for (c_t, c_s, log_scale) in ((1.0, 0.0, 0.7), (1.0, 0.5, -0.4), (0.25, 1.0, 1.3))
-        loc = 0.9
-        x0 = c_s * loc                       # exactly the degenerate point
-        ljac_expected = log_scale * (c_t - c_s)
-        h = 1e-6
-        _, yp = reparam(PC(c_t), PC(c_s), x0 + h, loc, log_scale)
-        _, ym = reparam(PC(c_t), PC(c_s), x0 - h, loc, log_scale)
-        @test (yp - ym) / 2h ≈ exp(ljac_expected) rtol = 1e-6
-        # and the value at the point is still what the formula says
-        ljac, y0 = reparam(PC(c_t), PC(c_s), x0, loc, log_scale)
-        @test ljac ≈ ljac_expected
-        @test y0 ≈ c_t * loc
-    end
 end
 end

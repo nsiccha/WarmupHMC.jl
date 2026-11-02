@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.2.10"
+version = "0.2.11"
 
 [deps]
 CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
@@ -21,6 +21,7 @@ Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
 OnlineStatsBase = "925886fa-5bf2-5e8e-b522-a9147a512338"
 Pathfinder = "b1d3bc72-d0e7-4279-b92f-7fa5d6d2d454"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+ReparametrizableDistributions = "7d03e222-df96-4b80-bcdc-d089be88b5f2"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
@@ -51,6 +52,7 @@ Mmap = "1.10"
 OnlineStatsBase = "1.7"
 Pathfinder = "0.9, 0.10.7"
 Random = "1.10"
+ReparametrizableDistributions = "0.3"
 Serialization = "1.10"
 Statistics = "1.10"
 TSVD = "0.4"
@@ -70,3 +72,7 @@ julia = "1.10"
 [sources.Treebars]
 url = "https://github.com/nsiccha/Treebars.jl"
 rev = "main"
+
+[sources.ReparametrizableDistributions]
+url = "https://github.com/nsiccha/ReparametrizableDistributions.jl"
+rev = "8f7d382df700d3780ed31d093bc4983d3734a6c6"

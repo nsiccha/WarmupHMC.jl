@@ -29,6 +29,14 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.11
+
+### Changed
+
+- The scalar partial-centering transform now comes from
+  ReparametrizableDistributions 0.3. `WarmupHMC.PartiallyCentered` re-exports
+  that type; the wrappers, adaptation and gradient behavior are preserved.
+
 ## 0.2.10
 
 ### Added

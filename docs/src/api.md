@@ -92,8 +92,8 @@ provides the wrappers and adaptation described by [`Reparametrization`](@ref).
 ### [PartiallyCentered](@id PartiallyCentered)
 
 ```@eval
-using WarmupHMC
-@doc WarmupHMC.PartiallyCentered
+using Markdown, WarmupHMC
+Markdown.parse(string(@doc WarmupHMC.PartiallyCentered))
 ```
 
 ### Wrappers and adaptation

@@ -35,6 +35,33 @@ LogDensityProblems.logdensity_and_gradient(p::TwoModes, x) = begin
     (l, -wa .* za ./ p.sigma_a .- (1 - wa) .* zb ./ p.sigma_b)
 end
 
+# Two equally weighted modes that differ only in the first `k` coordinates, by
+# `delta` scales each (at -delta/2 and +delta/2 there, 0 elsewhere). With few
+# separating coordinates among many, the chains' clustering distance (a mean over
+# coordinates) stays below the new-cluster threshold, so chains in different modes
+# share one cluster (snag cooperative-warm-ef9483e4).
+struct SparseTwoModes
+    k::Int
+    delta::Float64
+    sigma::Vector{Float64}
+end
+LogDensityProblems.dimension(p::SparseTwoModes) = length(p.sigma)
+LogDensityProblems.capabilities(::Type{SparseTwoModes}) = LogDensityProblems.LogDensityOrder{1}()
+_sparse_mode(p::SparseTwoModes, side) =
+    [i <= p.k ? side * p.delta / 2 * s : 0.0 for (i, s) in enumerate(p.sigma)]
+# Which mode a position is in: the sign of its mean standardized separating coordinate.
+_sparse_side(p::SparseTwoModes, x) = sign(sum(x[i] / p.sigma[i] for i in 1:p.k))
+LogDensityProblems.logdensity(p::SparseTwoModes, x) =
+    first(LogDensityProblems.logdensity_and_gradient(p, x))
+LogDensityProblems.logdensity_and_gradient(p::SparseTwoModes, x) = begin
+    za = (x .- _sparse_mode(p, -1)) ./ p.sigma
+    zb = (x .- _sparse_mode(p, 1)) ./ p.sigma
+    la, lb = -sum(abs2, za) / 2, -sum(abs2, zb) / 2
+    l = max(la, lb) + log1p(exp(-abs(la - lb)))
+    wa = exp(la - l)
+    (l, -(wa .* za .+ (1 - wa) .* zb) ./ p.sigma)
+end
+
 target = DiagGaussian(collect(range(-1.0, 1.0, 10)), 10 .^ collect(range(-2.0, 2.0, 10)))
 
 @testset "moments combine exactly" begin
@@ -143,6 +170,28 @@ end
     for r in out.results
         sigma = r.chain_index <= 2 ? p.sigma_a : p.sigma_b
         @test all(0.7 .< diag(r.scale) ./ sigma .< 1.4)
+    end
+end
+
+@testset "pooling never moves a chain out of its mode; R-hat shows the split" begin
+    # warmuphmc-use §5a (snag cooperative-warm-ef9483e4): chains pool metric and
+    # step-size evidence, never positions, so chains started in separated modes stay
+    # there and their cross-chain R-hat reports both modes, as independent chains'
+    # does. d = 4 gives two clusters; at d = 200 the chains share one cluster (and
+    # so a metric fit to neither mode), which must not move them either.
+    for d in (4, 200)
+        p = SparseTwoModes(4, 8.0, exp.(range(log(0.3), log(3.0), d)))
+        start(side) = (; position=_sparse_mode(p, side), squared_scale=ones(d))
+        init = [start(-1), start(-1), start(1), start(1)]
+        out = cooperative_warmup_mcmc(Xoshiro(1), p; n_chains=4, init, n_draws=500)
+        @test out.stop_reason === :n_draws
+        for r in out.results
+            side = r.chain_index <= 2 ? -1 : 1
+            @test all(x -> _sparse_side(p, x) == side, eachcol(r.posterior_position))
+        end
+        draws = stack(Matrix.(getproperty.(out.results, :posterior_position)))   # d × draws × chains
+        rhat = WarmupHMC.MCMCDiagnosticTools.rhat(permutedims(draws, (2, 3, 1)))
+        @test maximum(rhat) > 1.5
     end
 end
 

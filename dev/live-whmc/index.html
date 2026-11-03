@@ -2320,7 +2320,7 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","minus":"-","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -4452,7 +4452,10 @@ function htmxoFilterTable(target) {
     state.input = raw;
     const query = raw.toLocaleLowerCase().trim().replace(/\s+/g, ' ');
     const registered = state.filters;
-    const phrase = (row, ctx) => ctx.text.includes(ctx.query);
+    // A German table writes a negative number with the minus sign `−`
+    // (`TableTexts.minus`); the `-` a keyboard types finds it, and back.
+    const unsigned = t => t.replace(/\u2212/g, '-');
+    const phrase = (row, ctx) => unsigned(ctx.text).includes(unsigned(ctx.query));
     const filters = [['search', registered.get('search') || phrase],
         ...Array.from(registered).filter(([name]) => name !== 'search')];
     const visible = new Set();
@@ -5782,10 +5785,11 @@ function htmxoGrouped(whole, thousands) {
     }
     return out;
 }
-function htmxoFixed(x, digits, decimal, thousands) {
+// `_format_fixed`; `minus` is the sign (a machine-read key keeps `-`).
+function htmxoFixed(x, digits, decimal, thousands, minus = '-') {
     const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
     const s = BigInt(scaled).toString().padStart(digits + 1, '0');
-    const out = (x < 0 && scaled !== 0 ? '-' : '') + htmxoGrouped(s.slice(0, s.length - digits), thousands);
+    const out = (x < 0 && scaled !== 0 ? minus : '') + htmxoGrouped(s.slice(0, s.length - digits), thousands);
     return digits > 0 ? out + decimal + s.slice(s.length - digits) : out;
 }
 // `_round_sig`: x to k significant digits, halves away from zero, as
@@ -5802,28 +5806,29 @@ function htmxoSigDigits(x, k) {
     return [x < 0, s.replace(/0+$/, ''), s.length + e + 1 - k];
 }
 // `_format_digits`: ±0.ds × 10^point, as a power of ten (`sci`) or positionally.
-function htmxoDigitsText(negative, ds, point, decimal, thousands, sci) {
+function htmxoDigitsText(negative, ds, point, decimal, thousands, sci, minus = '-') {
     if (!ds) return '0';
     const sup = n => (n < 0 ? '⁻' : '') + String(Math.abs(n)).replace(/[0-9]/g, c => '⁰¹²³⁴⁵⁶⁷⁸⁹'[c]);
-    const out = negative ? '-' : '';
+    const out = negative ? minus : '';
     if (sci) return out + ds[0] + (ds.length > 1 ? decimal + ds.slice(1) : '') + '·10' + sup(point - 1);
     if (point <= 0) return out + '0' + decimal + '0'.repeat(-point) + ds;
     if (point >= ds.length) return out + htmxoGrouped(ds + '0'.repeat(point - ds.length), thousands);
     return out + htmxoGrouped(ds.slice(0, point), thousands) + decimal + ds.slice(point);
 }
 // `_md_summary_cell`: a summary `s` as the table writes it, or as the ⬇ CSV
-// does (`csv`: no power of ten).
-function htmxoSummaryText(x, s, decimal, thousands, csv) {
-    if (!s.sigdigits) return htmxoFixed(x, s.digits, decimal, thousands);
+// does (`csv`: no power of ten, and `-` whatever `minus` is).
+function htmxoSummaryText(x, s, decimal, thousands, csv, minus = '-') {
+    if (csv) minus = '-';
+    if (!s.sigdigits) return htmxoFixed(x, s.digits, decimal, thousands, minus);
     const [negative, ds, point] = htmxoSigDigits(x, s.sigdigits);
-    return htmxoDigitsText(negative, ds, point, decimal, thousands, !csv && (point <= -4 || point >= 16));
+    return htmxoDigitsText(negative, ds, point, decimal, thousands, !csv && (point <= -4 || point >= 16), minus);
 }
 // `_md_summary_cell(::Val{:tally})`: a :tally cell's total, then one bar
 // segment per category with a count, in the table's category order (others
 // after them, grey), named for the screen reader as the Markdown writes it.
 // The bar takes its length from the scale of the column's rows of `level`
 // (`htmxoTallyScale`).
-function htmxoTallyFill(cell, counts, s, decimal, thousands, level) {
+function htmxoTallyFill(cell, counts, s, decimal, thousands, level, minus = '-') {
     const value = cell.querySelector('[data-htmxo-tally]');
     let total = 0;
     if (counts) counts.forEach(n => { total += n; });
@@ -5836,7 +5841,7 @@ function htmxoTallyFill(cell, counts, s, decimal, thousands, level) {
         cell.removeAttribute('data-htmxo-number');
         return;
     }
-    const num = x => htmxoSummaryText(x, s, decimal, thousands, false);
+    const num = x => htmxoSummaryText(x, s, decimal, thousands, false, minus);
     const known = new Set(s.categories.map(c => c.key));
     const shown = [...s.categories, ...Array.from(counts.keys()).filter(k => !known.has(k))
         .map(k => ({key: k, label: k, color: 'var(--htmxo-category-other)'}))]
@@ -6018,14 +6023,14 @@ function htmxoRegroup(wrapper, levels) {
         cfg.summary.forEach((s, i) => {
             const cell = row.querySelector('[data-htmxo-group-summary="' + i + '"]');
             const x = htmxoSummaryValue(s.reduce, list.map(m => m.values[i]));
-            const decimal = htmxoText(table, 'decimal'), thousands = htmxoText(table, 'thousands');
+            const decimal = htmxoText(table, 'decimal'), thousands = htmxoText(table, 'thousands'), minus = htmxoText(table, 'minus');
             const target = cell.querySelector('[data-htmxo-summary-value]') || cell;
-            if (s.reduce === 'tally') htmxoTallyFill(cell, x, s, decimal, thousands, level);
+            if (s.reduce === 'tally') htmxoTallyFill(cell, x, s, decimal, thousands, level, minus);
             else if (x === null) {
                 target.textContent = '';
                 cell.removeAttribute('data-htmxo-number');
             } else {
-                target.textContent = htmxoSummaryText(x, s, decimal, thousands, false);
+                target.textContent = htmxoSummaryText(x, s, decimal, thousands, false, minus);
                 cell.dataset.htmxoNumber = htmxoSummaryText(x, s, '.', '', true);
             }
         });
@@ -9003,7 +9008,10 @@ function htmxoFilterTable(target) {
     state.input = raw;
     const query = raw.toLocaleLowerCase().trim().replace(/\s+/g, ' ');
     const registered = state.filters;
-    const phrase = (row, ctx) => ctx.text.includes(ctx.query);
+    // A German table writes a negative number with the minus sign `−`
+    // (`TableTexts.minus`); the `-` a keyboard types finds it, and back.
+    const unsigned = t => t.replace(/\u2212/g, '-');
+    const phrase = (row, ctx) => unsigned(ctx.text).includes(unsigned(ctx.query));
     const filters = [['search', registered.get('search') || phrase],
         ...Array.from(registered).filter(([name]) => name !== 'search')];
     const visible = new Set();
@@ -10333,10 +10341,11 @@ function htmxoGrouped(whole, thousands) {
     }
     return out;
 }
-function htmxoFixed(x, digits, decimal, thousands) {
+// `_format_fixed`; `minus` is the sign (a machine-read key keeps `-`).
+function htmxoFixed(x, digits, decimal, thousands, minus = '-') {
     const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
     const s = BigInt(scaled).toString().padStart(digits + 1, '0');
-    const out = (x < 0 && scaled !== 0 ? '-' : '') + htmxoGrouped(s.slice(0, s.length - digits), thousands);
+    const out = (x < 0 && scaled !== 0 ? minus : '') + htmxoGrouped(s.slice(0, s.length - digits), thousands);
     return digits > 0 ? out + decimal + s.slice(s.length - digits) : out;
 }
 // `_round_sig`: x to k significant digits, halves away from zero, as
@@ -10353,28 +10362,29 @@ function htmxoSigDigits(x, k) {
     return [x < 0, s.replace(/0+$/, ''), s.length + e + 1 - k];
 }
 // `_format_digits`: ±0.ds × 10^point, as a power of ten (`sci`) or positionally.
-function htmxoDigitsText(negative, ds, point, decimal, thousands, sci) {
+function htmxoDigitsText(negative, ds, point, decimal, thousands, sci, minus = '-') {
     if (!ds) return '0';
     const sup = n => (n < 0 ? '⁻' : '') + String(Math.abs(n)).replace(/[0-9]/g, c => '⁰¹²³⁴⁵⁶⁷⁸⁹'[c]);
-    const out = negative ? '-' : '';
+    const out = negative ? minus : '';
     if (sci) return out + ds[0] + (ds.length > 1 ? decimal + ds.slice(1) : '') + '·10' + sup(point - 1);
     if (point <= 0) return out + '0' + decimal + '0'.repeat(-point) + ds;
     if (point >= ds.length) return out + htmxoGrouped(ds + '0'.repeat(point - ds.length), thousands);
     return out + htmxoGrouped(ds.slice(0, point), thousands) + decimal + ds.slice(point);
 }
 // `_md_summary_cell`: a summary `s` as the table writes it, or as the ⬇ CSV
-// does (`csv`: no power of ten).
-function htmxoSummaryText(x, s, decimal, thousands, csv) {
-    if (!s.sigdigits) return htmxoFixed(x, s.digits, decimal, thousands);
+// does (`csv`: no power of ten, and `-` whatever `minus` is).
+function htmxoSummaryText(x, s, decimal, thousands, csv, minus = '-') {
+    if (csv) minus = '-';
+    if (!s.sigdigits) return htmxoFixed(x, s.digits, decimal, thousands, minus);
     const [negative, ds, point] = htmxoSigDigits(x, s.sigdigits);
-    return htmxoDigitsText(negative, ds, point, decimal, thousands, !csv && (point <= -4 || point >= 16));
+    return htmxoDigitsText(negative, ds, point, decimal, thousands, !csv && (point <= -4 || point >= 16), minus);
 }
 // `_md_summary_cell(::Val{:tally})`: a :tally cell's total, then one bar
 // segment per category with a count, in the table's category order (others
 // after them, grey), named for the screen reader as the Markdown writes it.
 // The bar takes its length from the scale of the column's rows of `level`
 // (`htmxoTallyScale`).
-function htmxoTallyFill(cell, counts, s, decimal, thousands, level) {
+function htmxoTallyFill(cell, counts, s, decimal, thousands, level, minus = '-') {
     const value = cell.querySelector('[data-htmxo-tally]');
     let total = 0;
     if (counts) counts.forEach(n => { total += n; });
@@ -10387,7 +10397,7 @@ function htmxoTallyFill(cell, counts, s, decimal, thousands, level) {
         cell.removeAttribute('data-htmxo-number');
         return;
     }
-    const num = x => htmxoSummaryText(x, s, decimal, thousands, false);
+    const num = x => htmxoSummaryText(x, s, decimal, thousands, false, minus);
     const known = new Set(s.categories.map(c => c.key));
     const shown = [...s.categories, ...Array.from(counts.keys()).filter(k => !known.has(k))
         .map(k => ({key: k, label: k, color: 'var(--htmxo-category-other)'}))]
@@ -10569,14 +10579,14 @@ function htmxoRegroup(wrapper, levels) {
         cfg.summary.forEach((s, i) => {
             const cell = row.querySelector('[data-htmxo-group-summary="' + i + '"]');
             const x = htmxoSummaryValue(s.reduce, list.map(m => m.values[i]));
-            const decimal = htmxoText(table, 'decimal'), thousands = htmxoText(table, 'thousands');
+            const decimal = htmxoText(table, 'decimal'), thousands = htmxoText(table, 'thousands'), minus = htmxoText(table, 'minus');
             const target = cell.querySelector('[data-htmxo-summary-value]') || cell;
-            if (s.reduce === 'tally') htmxoTallyFill(cell, x, s, decimal, thousands, level);
+            if (s.reduce === 'tally') htmxoTallyFill(cell, x, s, decimal, thousands, level, minus);
             else if (x === null) {
                 target.textContent = '';
                 cell.removeAttribute('data-htmxo-number');
             } else {
-                target.textContent = htmxoSummaryText(x, s, decimal, thousands, false);
+                target.textContent = htmxoSummaryText(x, s, decimal, thousands, false, minus);
                 cell.dataset.htmxoNumber = htmxoSummaryText(x, s, '.', '', true);
             }
         });
@@ -10962,7 +10972,7 @@ if (!window.htmxoMoveBeforeGuarded) {
 }
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
-var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
+var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","minus":"-","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {

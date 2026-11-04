@@ -29,6 +29,17 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.12
+
+### Changed
+
+- `cooperative_warmup_mcmc`: the default `restart_threshold` is now 2 instead of
+  √2. That is the value `adaptive_warmup_mcmc` uses for the same statistic
+  (`variance_cond_target`). At √2 a chain could restart late in warm-up on
+  estimate noise alone, dropping its draws (snag `cooperative-warm-96ff19ae`).
+  Seeded runs return different draws from the first batch end where the two
+  values decide differently; `restart_threshold=sqrt(2)` keeps the old rule.
+
 ## 0.2.11
 
 ### Changed

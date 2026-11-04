@@ -7,7 +7,7 @@
 # TestItemRunner.run_tests(pwd(); filter=ti->endswith(ti.filename, "cooperative.jl"))'
 
 # The merged cooperative sampler (decisions 0m327rr / 0m8p12j): pooled,
-# accumulating moments through soft clusters, the original's √2 restart rule,
+# accumulating moments through soft clusters, the original's restart rule,
 # rounds and doubling batches, one seed RNG.
 
 # Two Gaussian modes 100 units apart in every coordinate, with different scales:
@@ -136,6 +136,19 @@ end
         @test r.n_restarts >= 1
         @test all(0.7 .< diag(r.scale) ./ target.sigma .< 1.4)
     end
+end
+
+@testset "the default threshold keeps a metric off by less than 2" begin
+    # One coordinate's scale is 1.6× off, so a batch end reads cc·sc ≈ 1.6: above
+    # the original's √2, below the default (snag cooperative-warm-96ff19ae).
+    squared_scale = target.sigma .^ 2
+    squared_scale[1] *= 1.6^2
+    init = (; position=copy(target.mu), squared_scale)
+    run(; kw...) = cooperative_warmup_mcmc(Xoshiro(3), target; n_chains=2, init, n_evaluations_budget=40_000, kw...)
+    kept = run()
+    @test all(r -> r.n_restarts == 0 && r.n_samples > 0, kept.results)
+    @test all(r -> all(b -> sqrt(2) < b.relative_condition * b.stepsize_gain < 2, r.batches), kept.results)
+    @test all(r -> r.n_restarts == 1 && first(r.batches).restart, run(; restart_threshold=sqrt(2)).results)
 end
 
 @testset "a restart drops the monitored ESS with the draws" begin

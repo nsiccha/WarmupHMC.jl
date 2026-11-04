@@ -16,7 +16,9 @@
 #     budget doubles with no cap;
 #   * at a batch end a chain restarts only when its pooled estimate is incompatible
 #     with the metric it samples under: relative condition number × step-size gain
-#     > √2 (`restart_threshold`);
+#     > `restart_threshold`. The original used √2; the default is 2, the value
+#     `adaptive_warmup_mcmc` uses for the same statistic, because √2 restarted on
+#     estimate noise alone (snag `cooperative-warm-96ff19ae`);
 #   * no chain is ever parked or abandoned.
 # From Bruno's sampler:
 #   * the step size: a per-chain fit of κ in acceptance ≈ 2Φ(-κε²), with the pooled
@@ -1000,7 +1002,7 @@ the Nutpie diagonal scale of its pooled moments. Work proceeds in rounds of
 `n_evaluations` gradient evaluations per chain; batch k is 2^(k-1) rounds. At a
 batch end a chain restarts warm-up under its pooled estimate only when that
 estimate's relative condition number against its current metric, times the
-predicted step-size gain, exceeds `restart_threshold` (√2). A restart drops the
+predicted step-size gain, exceeds `restart_threshold` (2). A restart drops the
 chain's draws; otherwise it keeps sampling under its fixed kernel, so every kept
 draw is an MCMC draw of an unchanging kernel. Step sizes follow a per-chain fit
 of acceptance ≈ 2Φ(-κε²) with the pooled κ as prior. No chain is ever parked or
@@ -1051,7 +1053,7 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     stepsize_adaptation_limit=50,
     target_acceptance_rate=0.8,
     max_tree_depth=10,
-    restart_threshold=sqrt(2),
+    restart_threshold=2.0,
     max_clusters=8,
     bandwidth=1.0,
     kappa_prior_weight=2.0,

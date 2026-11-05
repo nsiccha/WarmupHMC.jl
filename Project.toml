@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.2.12"
+version = "0.2.13"
 
 [deps]
 CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
@@ -46,7 +46,7 @@ InverseFunctions = "0.1"
 JSON = "1"
 LinearAlgebra = "1.10"
 LogDensityProblems = "2.1"
-LogExpFunctions = "0.3"
+LogExpFunctions = "0.3, 1.0.2"
 MCMCDiagnosticTools = "0.3"
 Mmap = "1.10"
 OnlineStatsBase = "1.7"

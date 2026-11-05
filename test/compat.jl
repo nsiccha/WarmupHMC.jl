@@ -71,6 +71,24 @@ end
     @test !(v"0.11.0" in compat)
 end
 
+# WarmupHMC is in every BRM/ReactiveKernels fitting environment, so a cap here
+# holds every such environment at the LogExpFunctions it admits (snag
+# `warmuphmc-logexp-c30a5ec2`). Before 1.0.2, `logsumexp` gives a tied maximum's
+# whole derivative to one element under Enzyme (JuliaStats/LogExpFunctions.jl
+# #128, fixed by #129 in 1.0.2). 1.0.0 and 1.0.1 still carry that branch, so they
+# are left out. 0.3 stays in: Turing 0.46 (the release the Pathfinder entry above
+# admits) holds LogExpFunctions at 0.3 through AdvancedPS 0.7 and StatsFuns 1.x.
+@testset "LogExpFunctions compat admits 0.3 and the releases with tie derivatives" begin
+    compat = Pkg.Types.semver_spec(PROJECT["compat"]["LogExpFunctions"])
+
+    @test v"0.3.29" in compat
+    @test !(v"1.0.0" in compat)
+    @test !(v"1.0.1" in compat)
+    @test v"1.0.2" in compat
+    @test v"1.0.3" in compat
+    @test !(v"2.0.0" in compat)
+end
+
 @testset "declared julia bound is not below any dependency's" begin
     ours = compat_lower_bound(PROJECT["compat"]["julia"])
     @test ours !== nothing

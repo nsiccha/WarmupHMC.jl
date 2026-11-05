@@ -3940,6 +3940,229 @@ if (!window.htmxoComparisonInstalled) {
   window.addEventListener('resize', follow);
 })();
 </script><style>@layer htmxo {
+  .htmxo-units { --htmxo-unit-gap: 0.75rem; }
+  .htmxo-unit { margin-block-end: var(--htmxo-unit-gap); }
+  .htmxo-unit-content > .htmxo-semantic-section > :is(h1, h2, h3, h4, h5, h6) {
+    margin-block-end: 0.35rem; font-size: 1em; font-weight: 600;
+  }
+  .htmxo-unit-group > .htmxo-semantic-section > :is(h1, h2, h3, h4, h5, h6) { margin-block-end: 0.5rem; }
+  .htmxo-unit-layer { margin-block-end: 0.5rem; }
+  div.htmxo-unit-layer:has(> .htmxo-unit-link) { position: relative; padding-inline-end: 1.75rem; }
+  .htmxo-unit-layer > :last-child, .htmxo-unit-layer .htmxo-semantic-prose > :last-child { margin-block-end: 0; }
+  .htmxo-unit-label { display: block; margin-block-end: 0.15rem; font-size: 0.8em; color: var(--htmxo-muted, inherit); }
+  .htmxo-unit-link {
+    padding-inline: 0.3rem; font-weight: 400;
+    color: var(--htmxo-muted, inherit); text-decoration: none;
+  }
+  div.htmxo-unit-layer > .htmxo-unit-link { position: absolute; inset-block-start: 0; inset-inline-end: 0; }
+  summary > .htmxo-unit-link { float: inline-end; }
+  .htmxo-unit-link:hover, .htmxo-unit-link:focus-visible { text-decoration: underline; }
+  @media (hover: hover) {
+    .htmxo-unit-link { opacity: 0; }
+    .htmxo-unit-layer:hover > .htmxo-unit-link, .htmxo-unit-link:focus-visible { opacity: 1; }
+  }
+  .htmxo-unit-refs { font-size: 0.875em; margin-block-end: 0.5rem; }
+  .htmxo-unit-refs > p { margin-block-end: 0; }
+  .htmxo-unit-children { margin-block-start: 0.5rem; }
+  .htmxo-unit-meta { margin-block-end: 0.5rem; }
+  .htmxo-unit-view { margin-block-end: 1rem; }
+}
+</style><script>(function () {
+  'use strict';
+  if (window.htmxoUnits) return;
+  function all(q, scope) { return Array.prototype.slice.call((scope || document).querySelectorAll(q)); }
+  function embedded(el) { return !!(el && el.closest && el.closest('.htmxo-embed')); }
+  function hashAnchor() {
+    var id = location.hash.slice(1);
+    if (!id) return null;
+    try { id = decodeURIComponent(id); } catch (e) {}
+    return id;
+  }
+  function parsed(anchor) {
+    var at = anchor.indexOf('--');
+    return at < 0 ? { id: anchor, layer: null } : { id: anchor.slice(0, at), layer: anchor.slice(at + 2) };
+  }
+  // A page may hold the target somewhere it can bring back; it does so here.
+  function beforeReveal(anchor) {
+    document.dispatchEvent(new CustomEvent('htmxo:unit-before-reveal', { detail: parsed(anchor) }));
+  }
+  // A layer sharing another's panel has that panel as its place.
+  function unitElement(anchor) {
+    var el = document.getElementById(anchor);
+    if (el) return el.closest('[data-htmxo-unit]') ? el : null;
+    var p = parsed(anchor);
+    if (!p.layer) return null;
+    return all('[data-htmxo-unit-layer~="' + p.layer.replace(/["\\\\]/g, '') + '"]').filter(function (l) {
+      return l.closest('[data-htmxo-unit]').getAttribute('data-htmxo-unit') === p.id;
+    })[0] || null;
+  }
+  // A view belongs to a scope: the nearest `data-htmxo-unit-scope`, else the
+  // page. Only what is directly in a scope follows its control.
+  function scopeOf(el) { return el.closest('[data-htmxo-unit-scope]') || document; }
+  function own(q, scope) { return all(q, scope).filter(function (el) { return scopeOf(el) === scope; }); }
+  function controlOf(scope) { return own('[data-htmxo-unit-view]', scope)[0] || null; }
+  // One control per scope reads the address; one in an embed leaves it alone.
+  function addressed() {
+    var seen = [];
+    return all('[data-htmxo-unit-view]').filter(function (c) {
+      var scope = scopeOf(c);
+      if (embedded(c) || seen.indexOf(scope) >= 0) return false;
+      seen.push(scope);
+      return true;
+    });
+  }
+  function viewFromAddress(c) {
+    if (!c) return null;
+    var value = new URLSearchParams(location.search).get(c.getAttribute('data-htmxo-unit-view'));
+    if (!value || value === 'all') return null;
+    var known = all('input[type="radio"]', c).some(function (r) { return r.value === value; });
+    if (!known) console.warn('unit_view_control: this page has no layer "' + value + '"');
+    return known ? value : null;
+  }
+  var views = new WeakMap();
+  function viewOf(scope) { return views.get(scope) || null; }
+  // Opened by a view rather than by the reader, so leaving the view closes it.
+  function autoOpen(d) {
+    if (d.open) return;
+    d.open = true;
+    d.setAttribute('data-htmxo-unit-auto', '');
+  }
+  function apply(scope, next) {
+    views.set(scope, next);
+    own('[data-htmxo-unit-view] input[type="radio"]', scope).forEach(function (r) {
+      r.checked = r.value === (next || 'all');
+    });
+    var units = own('[data-htmxo-unit]', scope), layers = own('[data-htmxo-unit-layer]', scope),
+        wraps = own('[data-htmxo-unit-wrap]', scope);
+    if (!next) {
+      units.concat(layers, wraps).forEach(function (el) { el.hidden = false; });
+      own('details[data-htmxo-unit-auto]', scope).forEach(function (d) {
+        d.open = false;
+        d.removeAttribute('data-htmxo-unit-auto');
+      });
+      return;
+    }
+    units.forEach(function (u) { u.hidden = true; });
+    layers.forEach(function (l) {
+      var match = l.getAttribute('data-htmxo-unit-layer').split(' ').indexOf(next) >= 0;
+      l.hidden = !match;
+      if (!match) return;
+      if (l.tagName === 'DETAILS') autoOpen(l);
+      // Up to the first unit already shown, so this stays linear in the page.
+      for (var u = l.closest('[data-htmxo-unit]'); u && u.hidden; u = u.parentElement && u.parentElement.closest('[data-htmxo-unit]')) {
+        u.hidden = false;
+      }
+    });
+    own('details.htmxo-unit-children', scope).forEach(autoOpen);
+    // What `wrap` put around units goes when none of them shows.
+    wraps.forEach(function (w) { w.hidden = !w.querySelector('[data-htmxo-unit]:not([hidden])'); });
+  }
+  // Every scope as its address says. A scope with nothing in its address that
+  // shows nothing chosen is left as it is, so a swap costs a page without a
+  // chosen layer nothing.
+  function applyAddress(force) {
+    addressed().forEach(function (c) {
+      var scope = scopeOf(c), v = viewFromAddress(c);
+      if (v || force || viewOf(scope)) apply(scope, v);
+    });
+  }
+  function writeView(c, next) {
+    if (embedded(c)) return;
+    var url = new URL(location.href), name = c.getAttribute('data-htmxo-unit-view');
+    if (next) url.searchParams.set(name, next); else url.searchParams.delete(name);
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+    try { sessionStorage.setItem('htmx-current-path-for-history', url.pathname + url.search); } catch (e) {}
+  }
+  function detailOf(el) {
+    var unit = el.closest('[data-htmxo-unit]'), panel = el.closest('[data-htmxo-unit-layer]');
+    return { id: unit ? unit.getAttribute('data-htmxo-unit') : null,
+             layer: panel ? panel.getAttribute('data-htmxo-unit-layer').split(' ')[0] : null };
+  }
+  function reveal(x) {
+    var el = x;
+    if (typeof x === 'string') {
+      beforeReveal(x);
+      el = unitElement(x);
+    }
+    if (!el || !el.closest('[data-htmxo-unit]')) return null;
+    el.dispatchEvent(new CustomEvent('htmxo:unit-reveal', { bubbles: true, detail: detailOf(el) }));
+    // A link to what the chosen layer hides leaves that layer.
+    var scope = scopeOf(el);
+    if (viewOf(scope) && el.closest('[hidden]')) {
+      var c = controlOf(scope);
+      apply(scope, null);
+      if (c) writeView(c, null);
+    }
+    for (var d = el; d; d = d.parentElement) {
+      if (d.tagName === 'DETAILS' && !d.open) {
+        d.open = true;
+        d.removeAttribute('data-htmxo-unit-auto');
+      }
+    }
+    return el;
+  }
+  function land(scroll) {
+    var anchor = hashAnchor();
+    if (!anchor) return;
+    var el = reveal(anchor);
+    if (el && scroll) requestAnimationFrame(function () { el.scrollIntoView(); });
+  }
+  function setHash(id) {
+    history.replaceState(history.state, '', location.pathname + location.search + '#' + id);
+  }
+  // Writes the address for what the reader opens or closes. A click is the one
+  // signal that it was the reader: a `toggle` event also follows a script.
+  function recordSummary(summary) {
+    var d = summary.parentElement;
+    if (!d || d.tagName !== 'DETAILS' || !d.id || !d.hasAttribute('data-htmxo-unit-layer') || embedded(d)) return;
+    var unit = d.closest('[data-htmxo-unit]');
+    if (!d.open) setHash(d.id);
+    else if (location.hash.slice(1) === d.id && unit) setHash(unit.getAttribute('data-htmxo-unit'));
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var summary = t.closest('summary');
+    if (summary) { recordSummary(summary); return; }
+    var a = t.closest('a[href^="#"]');
+    if (a && a.getAttribute('href').length > 1) {
+      var id = a.getAttribute('href').slice(1);
+      try { id = decodeURIComponent(id); } catch (err) {}
+      reveal(id);
+    }
+  }, true);
+  document.addEventListener('change', function (e) {
+    var t = e.target;
+    if (!t || !t.matches || !t.matches('[data-htmxo-unit-view] input[type="radio"]')) return;
+    var c = t.closest('[data-htmxo-unit-view]');
+    var next = t.value === 'all' ? null : t.value;
+    apply(scopeOf(c), next);
+    writeView(c, next);
+  });
+  window.addEventListener('hashchange', function () { land(true); });
+  function start() {
+    applyAddress(false);
+    // A reload or Back restores its own scroll position, as for any `#id`.
+    var nav = window.performance && performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+    land(!nav || nav.type === 'navigate');
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+  document.addEventListener('htmx:load', function (e) {
+    var scope = e.target;
+    if (!scope || !scope.querySelector) return;
+    var hasUnits = scope.matches('[data-htmxo-unit]') || scope.querySelector('[data-htmxo-unit]');
+    if (!hasUnits && !scope.matches('[data-htmxo-unit-view]') && !scope.querySelector('[data-htmxo-unit-view]')) return;
+    applyAddress(false);
+    var anchor = hashAnchor(), el = hasUnits && anchor && unitElement(anchor);
+    // `url_anchor_script` holds an address's target in view through swaps.
+    if (el && scope.contains(el)) reveal(el);
+  });
+  // A snapshot keeps the attributes a view set, but not a radio's choice.
+  document.addEventListener('htmx:historyRestore', function () { applyAddress(true); land(false); });
+  window.htmxoUnits = { reveal: reveal, view: function (el) { return viewOf(el ? scopeOf(el) : document); } };
+})();
+</script><style>@layer htmxo {
 .htmxo-math-display { display: block; overflow-x: auto; overflow-y: hidden; }
 .htmxo-math:not([data-htmxo-math-done]) {
     font-family: monospace;
@@ -4144,7 +4367,18 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
   document.addEventListener('htmx:load', function (e) { run(e.target); });
   document.addEventListener('htmx:afterSettle', function (e) { run(e.target); });
 })();
-</script><script>function sortTable(col, th) {
+</script><script>// The cell that starts at a column. A cell spanning columns counts under its
+// first, and a row has none at the others, so it is not ordered by them.
+function htmxoCellAt(row, col) {
+    let at = 0;
+    for (const cell of row.cells) {
+        if (at === col) return cell;
+        at += cell.colSpan;
+        if (at > col) return undefined;
+    }
+    return undefined;
+}
+function sortTable(col, th) {
     // Accept sortTable(th): with a single <th> element, use its leaf-column
     // marker in a grouped header, else its position in the header row. Lets a
     // hand-built RICH header
@@ -4166,7 +4400,7 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
     // detail row) from being treated as primaries.
     const all = Array.from(tbody.querySelectorAll(':scope > tr'));
     const isCompanion = r => r.id && r.id.startsWith('detail-');
-    const primaries = all.filter(r => !isCompanion(r) && r.cells.length > col);
+    const primaries = all.filter(r => !isCompanion(r) && htmxoCellAt(r, col));
     const companions = htmxoTableCompanions(all);
     const asc = th.dataset.sortDir !== 'asc';
     th.dataset.sortDir = asc ? 'asc' : 'desc';
@@ -4193,7 +4427,7 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
     const key = keys ? Number(th.dataset.htmxoSortKey || 0) : 0;
     const keyed = new Map();
     const keyOf = row => {
-        if (!keyed.has(row)) keyed.set(row, htmxoSortValue(row.cells[col], key, keys.length, sortKey));
+        if (!keyed.has(row)) keyed.set(row, htmxoSortValue(htmxoCellAt(row, col), key, keys.length, sortKey));
         return keyed.get(row);
     };
     // Two texts that start with the same number compare as whole texts, each
@@ -4205,8 +4439,8 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
         const c = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv));
         return asc ? c : -c;
     } : (a, b) => {
-        const av = sortKey(a.cells[col]);
-        const bv = sortKey(b.cells[col]);
+        const av = sortKey(htmxoCellAt(a, col));
+        const bv = sortKey(htmxoCellAt(b, col));
         const an = parseFloat(av), bn = parseFloat(bv);
         // `an - bn` is 0 for the same number and NaN for two infinities: both tie.
         const c = !isNaN(an) && !isNaN(bn) ? (an - bn) || natural(av, bv) : av.localeCompare(bv);
@@ -4232,7 +4466,7 @@ code[class*="language-"], pre[class*="language-"] { color: inherit; }
         });
         const visit = parent => {
             const rows = siblings.get(parent) || [];
-            rows.sort((a, b) => a.cells.length > col && b.cells.length > col ? compare(a, b) : 0);
+            rows.sort((a, b) => htmxoCellAt(a, col) && htmxoCellAt(b, col) ? compare(a, b) : 0);
             rows.forEach(r => { append(r); visit(r.id); });
         };
         visit('');
@@ -4661,8 +4895,9 @@ function htmxoTreeRow(row, event) {
 // detail and child rows. The group rows a browser regroup asks for
 // (`group_masters`) replace the browser's and leave the leaf rows alone. Any
 // htmx response holding such a body is applied this way, whatever the
-// requesting element's hx-target; `htmxoUpdateRows(html)` applies one
-// fetched by other means.
+// requesting element's hx-target, and a poller that answer ends leaves with
+// the target as it was; `htmxoUpdateRows(html)` applies one fetched by other
+// means.
 function htmxoUpdateRows(update, origin) {
     if (typeof update === 'string') {
         const template = document.createElement('template');
@@ -5053,8 +5288,13 @@ if (!window.htmxoRowUpdateBound) {
         const update = template.content.querySelector('tbody[data-htmxo-row-update]');
         if (!update) return;
         d.shouldSwap = false;
+        // Nothing replaces a poller this answer ends: it leaves here, with what
+        // it displaced back first, since that can be the row being updated.
+        // The element that asked is then the one that started the operation.
+        const ended = window.htmxoPollerAnswered ? window.htmxoPollerAnswered(d, update) : null;
+        const asked = ended && ended.elt && ended.elt.isConnected ? ended.elt : d.requestConfig && d.requestConfig.elt;
         try {
-            htmxoUpdateRows(update, d.requestConfig && d.requestConfig.elt);
+            htmxoUpdateRows(update, asked);
         } catch (err) {
             if (window.htmxoToast) window.htmxoToast(err.message, 'error');
             throw err;
@@ -6578,8 +6818,16 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
         td.dataset.htmxoInterval ? JSON.parse(td.dataset.htmxoInterval) : [text(td), '', ''];
     const rows = Array.from(table.querySelectorAll('tbody tr'))
         .filter(tr => !(tr.id && tr.id.startsWith('detail-')))
-        .map(tr =>
-            Array.from(tr.cells).flatMap((td, i) => fields(td, i).map(esc)).join(','));
+        .map(tr => {
+            // A cell spanning columns keeps the others in theirs: what it covers is blank.
+            let col = 0;
+            return Array.from(tr.cells).flatMap(td => {
+                const out = fields(td, col).map(esc);
+                for (let i = 1; i < td.colSpan; i++) out.push(...(bounds[col + i] ? ['', '', ''] : ['']));
+                col += td.colSpan;
+                return out;
+            }).join(',');
+        });
     const csv = [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
@@ -8284,6 +8532,14 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
     return !!(elt && elt.classList && elt.classList.contains('treebar-poller-inner') &&
               (elt.getAttribute('hx-get') || '').indexOf('__htmxo_poll') !== -1);
   }
+  // A poller the new one replaces does not come back when that one leaves, what
+  // it displaced does: put back, it would poll again and apply an older answer.
+  function withoutPollers(nodes) {
+    return nodes.reduce(function(kept, n) {
+      if (!(n.classList && n.classList.contains('treebar-poller'))) return kept.concat([n]);
+      return n.__htmxoOrigin ? kept.concat(n.__htmxoOrigin.displaced) : kept;
+    }, []);
+  }
   // Where the original request was going, and what its poller displaced.
   // Recorded on the answer that starts an operation poller and kept on the
   // poller wrapper. The direct-page load placeholder is never put back: it
@@ -8312,6 +8568,7 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
         displaced = [target];
       }
     }
+    displaced = withoutPollers(displaced);
     d.xhr.__htmxoOrigin = { elt: req, target: target, swap: swap, displaced: displaced,
                             url: inner.getAttribute('hx-get') };
   }
@@ -8330,12 +8587,8 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
       }
     }
   });
-  document.addEventListener('htmx:beforeOnLoad', function(evt) {
-    var d = (evt && evt.detail) || {}, xhr = d.xhr, poll = d.elt;
-    if (!xhr || xhr.status !== 286 || !pollRequest(poll)) return;
-    if (!/^(hx-retarget|hx-reswap|hx-reselect|hx-location):/im
-          .test(xhr.getAllResponseHeaders() || '')) return;
-    var wrapper = (poll.closest && poll.closest('.treebar-poller')) || poll;
+  // What a poller displaced goes back in front of it; returns its origin.
+  function putBack(wrapper) {
     var origin = wrapper.__htmxoOrigin || null;
     wrapper.__htmxoOrigin = null;
     if (origin && wrapper.parentNode) {
@@ -8345,6 +8598,22 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
         if (n.nodeType === 1 && window.htmx) htmx.process(n);
       });
     }
+    return origin;
+  }
+  function removePoller(w) {
+    var parent = w && w.parentNode;
+    if (!w || !w.isConnected || !parent) return;
+    parent.removeChild(w);
+    if (parent.classList && parent.classList.contains('htmxo-live-reporter') &&
+        !parent.firstElementChild) parent.hidden = true;
+  }
+  document.addEventListener('htmx:beforeOnLoad', function(evt) {
+    var d = (evt && evt.detail) || {}, xhr = d.xhr, poll = d.elt;
+    if (!xhr || xhr.status !== 286 || !pollRequest(poll)) return;
+    if (!/^(hx-retarget|hx-reswap|hx-reselect|hx-location):/im
+          .test(xhr.getAllResponseHeaders() || '')) return;
+    var wrapper = (poll.closest && poll.closest('.treebar-poller')) || poll;
+    var origin = putBack(wrapper);
     xhr.__htmxoRetire = { origin: origin, poll: poll, wrapper: wrapper,
       retarget: !!xhr.getResponseHeader('HX-Retarget'),
       reswap: !!xhr.getResponseHeader('HX-Reswap') };
@@ -8387,16 +8656,31 @@ figcaption.caption > details.caption-long > :last-child > :last-child { margin-b
     // Once htmx has finished this response: a requester removed during
     // afterRequest makes htmx fire afterRequest again on an ancestor, which
     // would run every listener (success toasts included) twice.
-    Promise.resolve().then(function() {
-      var w = r.wrapper, parent = w && w.parentNode;
-      if (!w || !w.isConnected || !parent) return;
-      parent.removeChild(w);
-      if (parent.classList && parent.classList.contains('htmxo-live-reporter') &&
-          !parent.firstElementChild) parent.hidden = true;
-    });
+    Promise.resolve().then(function() { removePoller(r.wrapper); });
   }
   document.addEventListener('htmx:afterRequest', retire);
   document.addEventListener('htmx:onLoadError', retire);
+  // A poll's final answer the page applies itself, so that no swap replaces
+  // the poller: a table's row update (`_table_runtime_text`). `d` is the detail
+  // of the answer's `htmx:beforeSwap`, a pushed answer's too, and `content` the
+  // parsed element applied. What the poller displaced goes back now, for the
+  // answer to act on, and the poller goes once htmx has finished this response:
+  // a microtask runs only when the script stack empties, after htmx's
+  // `htmx:afterRequest`. A running answer leaves it, as does a poll that a morph
+  // reused and a poller a live refresh diverted, which that script clears.
+  // Returns where the operation started, when that is known.
+  window.htmxoPollerAnswered = function(d, content) {
+    var config = d.requestConfig || {}, poll = config.elt;
+    if (!content.closest('.treebar-terminal-content') || !pollRequest(poll) ||
+        stalePoll(poll, config.path) || poll.closest('.htmxo-live-reporter')) return null;
+    // Its headers already send this answer elsewhere: `retire` has the poller.
+    var r = d.xhr && d.xhr.__htmxoRetire;
+    if (r) return r.origin;
+    var wrapper = poll.closest('.treebar-poller') || poll;
+    var origin = putBack(wrapper);
+    Promise.resolve().then(function() { removePoller(wrapper); });
+    return origin;
+  };
 })();
 </script><script>(function() {
   if (window.__htmxoMutationPolls) return;

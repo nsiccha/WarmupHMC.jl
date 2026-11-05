@@ -29,6 +29,19 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.13
+
+### Changed
+
+- `[compat]` admits LogExpFunctions 1.0.2 and later besides 0.3
+  (`"0.3, 1.0.2"`). WarmupHMC was the package holding BRM/ReactiveKernels
+  fitting environments at 0.3, whose `logsumexp` gives a tied maximum's whole
+  derivative to one element under Enzyme (JuliaStats/LogExpFunctions.jl#128,
+  fixed in 1.0.2). 1.0.0 and 1.0.1 still carry that branch and stay excluded.
+  WarmupHMC's own `logsumexp`/`logaddexp` calls (NUTS leaf weights) are not
+  differentiated and return the same values on either version (snag
+  `warmuphmc-logexp-c30a5ec2`).
+
 ## 0.2.12
 
 ### Changed

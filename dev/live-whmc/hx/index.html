@@ -1647,15 +1647,6 @@ function htmxoSummaryValue(reduce, inputs) {
     const sum = xs.reduce((a, b) => a + b);
     return reduce === 'mean' ? sum / xs.length : sum;
 }
-// `_print_grouped`: an integer's digits with `thousands` every three from the right.
-function htmxoGrouped(whole, thousands) {
-    let out = '';
-    for (let i = 0; i < whole.length; i++) {
-        if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
-        out += whole[i];
-    }
-    return out;
-}
 // `_format_fixed`; `minus` is the sign (a machine-read key keeps `-`).
 function htmxoFixed(x, digits, decimal, thousands, minus = '-') {
     const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
@@ -1826,6 +1817,9 @@ function htmxoRegroup(wrapper, levels) {
     });
     const members = Array.from(leaves.values()).sort((a, b) => a.order - b.order);
     const template = wrapper.querySelector('template[data-htmxo-group-template]');
+    // The rows' ids carry the place the table was swapped into
+    // (`instance_scope_script`); the ids built here carry it too.
+    const place = window.htmxoInstanceSuffix ? window.htmxoInstanceSuffix(wrapper) : '';
     const out = [];
     const keysAt = (m, depth) => depth < levels.length ? m.keys[levels[depth]] || [] : [];
     // The groups of `list` at a level, in first-appearance order, or in the
@@ -1853,7 +1847,7 @@ function htmxoRegroup(wrapper, levels) {
             if (detail) { fresh.add(detail); htmxoMdShow(row, detail, false); }
         }
         m.placed = true;
-        htmxoRekeyLeaf(row, detail, htmxoSafeKey(path.length ? 'group:' + path.join('/') + '/' + m.key : m.key));
+        htmxoRekeyLeaf(row, detail, htmxoSafeKey(path.length ? 'group:' + path.join('/') + '/' + m.key : m.key) + place);
         row.dataset.htmxoParent = parent;
         row.setAttribute('aria-level', String(level));
         out.push(row);
@@ -1862,7 +1856,7 @@ function htmxoRegroup(wrapper, levels) {
     };
     const group = (path, list, parent, level) => {
         const row = template.content.querySelector('tr').cloneNode(true), name = path[path.length - 1];
-        const gid = 'group:' + path.join('/'), id = 'row-' + htmxoSafeKey(wrapper.dataset.htmxoGroupScope + gid), children = [];
+        const gid = 'group:' + path.join('/'), id = 'row-' + htmxoSafeKey(wrapper.dataset.htmxoGroupScope + gid) + place, children = [];
         out.push(row);
         if (path.length < levels.length) {
             groupsAt(list, path.length).forEach(([k, ms]) => children.push(group([...path, k], ms, id, level + 1)));
@@ -1887,7 +1881,7 @@ function htmxoRegroup(wrapper, levels) {
         }
         if ('htmxoSearch' in row.dataset) row.dataset.htmxoSearch = name;
         row.querySelector('[data-htmxo-group-label]').textContent = name;
-        row.querySelector('[data-htmxo-group-count]').textContent = '(' + list.length + ')';
+        row.querySelector('[data-htmxo-group-count]').textContent = '(' + htmxoGrouped(String(list.length), htmxoText(table, 'thousands')) + ')';
         // `_md_summary_cell`: the shown summary, and the CSV's number.
         // A cell whose row adds controls to it (the first) keeps its value
         // in an element of its own.
@@ -2288,6 +2282,15 @@ if (!window.htmxoMoveBeforeGuarded) {
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
 var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","minus":"-","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
+// `_print_grouped`: an integer's digits with `thousands` every three from the right.
+function htmxoGrouped(whole, thousands) {
+    let out = '';
+    for (let i = 0; i < whole.length; i++) {
+        if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
+        out += whole[i];
+    }
+    return out;
+}
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -2297,7 +2300,11 @@ function htmxoText(el, name, values) {
         }
         texts = holder.htmxoTexts;
     }
-    return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
+    // `_table_text`: a number takes the table's `thousands`, a string stays as it is.
+    return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) {
+        if (!values || !(k in values)) return m;
+        return typeof values[k] === 'number' ? htmxoGrouped(String(values[k]), texts.thousands) : String(values[k]);
+    });
 }
 // The control of its own that a click inside `row` landed on (a link, button,
 // form field, label, per-row form, <details> drop-out or editable text), which

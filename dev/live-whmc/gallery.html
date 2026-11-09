@@ -64,6 +64,17 @@ body > header nav {
 }
 body > header nav ul { flex-wrap: wrap; }
 body > header nav ul:last-of-type { margin-left: calc(var(--pico-nav-element-spacing-horizontal) * -1); }
+/* Pico gives every `nav li` a `::before` of its own, a zero-width space floated
+   left. Its rule is unlayered, so it beats the private mark in
+   `htmxo_utility_styles()`, which is layered, while the mark's border and
+   padding, which Pico does not set, still apply: a private entry showed an empty
+   box, and so did one inside private content, which shows no label at all. These
+   rules are as weak as Pico's and come after it, so an app's own rule still wins.
+   Pico pads a `nav li` by 1rem above and below, so the outline moves inside the
+   entry to stay within the row. */
+:where(nav li.htmxo-private) { outline-offset: calc(var(--pico-nav-element-spacing-horizontal) * -0.5); }
+:where(nav li.htmxo-private)::before { content: var(--htmxo-private-label); float: none; }
+:where(.htmxo-private *):where(nav li.htmxo-private)::before { content: none; }
 /* Pico paints a button without a colour class in its primary azure. It takes
    Pico's slate outline (`.secondary.outline`) instead, through the same three
    variables Pico sets on every button; `.secondary` and `.contrast` keep
@@ -104,8 +115,15 @@ details summary[role=button]:not(.secondary, .contrast)::after,
    (`::details-content`, which also holds bare text). Padding a component sets
    on its `<details>` so insets both, and nothing sticks out of its box; a
    component drops the inner spacing with `--htmxo-disclosure-padding: 0`.
-   Only the box's own rule asks `:has()` whether its summary is a button, and
-   hands the content's spacing to `::details-content` as
+   That variable is registered as not inheriting, so it is the spacing of the
+   `<details>` it is set on only: a custom property inherits by default, and a
+   component's 0 reached every ordinary disclosure nested inside it, whose bar
+   and content then sat flush against its border (snag
+   `followed-htmxo-s-6bd66da4`). Its universal syntax needs no initial value,
+   so an unset variable still falls back to `1rem`; a `<length>` syntax would
+   need a computationally independent initial value, which `1rem` is not.
+   Only the box's own rule reads it and asks `:has()` whether its summary is a
+   button, and hands the spacing to the bar and to `::details-content` as
    `--htmxo-disclosure-inset` (0 in any other disclosure, a nested one
    included); the rules for what is in the box ask the summary itself
    (`summary:not([role])`, `summary[role] ~`). A `:has()` on a rule for the
@@ -114,6 +132,7 @@ details summary[role=button]:not(.secondary, .contrast)::after,
    table inside a disclosure restyled the whole table, twice. The last child's
    rule checks its parent before its siblings: written as `summary ~
    :last-child`, every class change on the page restyled later siblings. */
+@property --htmxo-disclosure-padding { syntax: "*"; inherits: false; }
 :where(details) { --htmxo-disclosure-inset: 0px; }
 :where(details:not(.dropdown, :has(> summary[role]))) {
     --htmxo-disclosure-inset: var(--htmxo-disclosure-padding, 1rem);
@@ -125,7 +144,7 @@ details summary[role=button]:not(.secondary, .contrast)::after,
 :where(details)::details-content { padding-inline: var(--htmxo-disclosure-inset); }
 :where(details[open])::details-content { padding-bottom: var(--htmxo-disclosure-inset); }
 :where(details:not(.dropdown) > summary:not([role])) {
-    padding: 0.6rem var(--htmxo-disclosure-padding, 1rem);
+    padding: 0.6rem var(--htmxo-disclosure-inset);
     border-radius: calc(var(--pico-border-radius) - var(--pico-border-width));
     background: var(--pico-card-sectioning-background-color);
     font-weight: 600;
@@ -159,7 +178,7 @@ details summary[role=button]:not(.secondary, .contrast)::after,
 details:where(:not(.dropdown)) > summary:where(:not([role])) { line-height: var(--pico-line-height); }
 details:where(:not(.dropdown)) > summary:where(:not([role]))::after { content: none; }
 details:where(:not(.dropdown))[open] > summary:where(:not([role])) {
-    margin-bottom: var(--htmxo-disclosure-padding, 1rem);
+    margin-bottom: var(--htmxo-disclosure-inset);
 }
 details:where(:not(.dropdown)) > summary:focus-visible:not([role]) {
     outline-offset: calc(-1 * var(--pico-outline-width));
@@ -911,7 +930,9 @@ a.htmxo-semantic-artifact > small {
   }
   function onScroll(s) {
     var sc = s.scroller;
-    if (distance(s) <= STICK_PX) { s.stuck = true; s.unseen = 0; }
+    // A move is what sticks: the event for the client's own opening scroll
+    // arrives after `lastTop` recorded it, and is not the viewer going anywhere.
+    if (sc.scrollTop !== s.lastTop && distance(s) <= STICK_PX) { s.stuck = true; s.unseen = 0; }
     else if (sc.scrollTop < s.lastTop - 1) s.stuck = false;   // the viewer moved up
     s.lastTop = sc.scrollTop;
     s.anchors = s.stuck ? null : captureAnchors(s);
@@ -1133,10 +1154,13 @@ a.htmxo-semantic-artifact > small {
     var focus = root.getAttribute('data-focus'), target = focus && findKey(s, focus);
     if (target) {
       s.stuck = false;
-      var sr = s.scroller.getBoundingClientRect(), tr = target.getBoundingClientRect();
-      s.scroller.scrollTop += tr.top - sr.top - (s.scroller.clientHeight - tr.height) / 2;
+      var sr = s.scroller.getBoundingClientRect(), tr = target.getBoundingClientRect(), box = s.scroller.clientHeight;
+      // Centre an item that fits. A taller one opens at its start, because it
+      // has to be read from the top, and stays there: sticking to the bottom
+      // would scroll past that start even when the bottom is only a few px away.
+      s.scroller.scrollTop += tr.top - sr.top - s.scroller.clientTop - Math.max(0, (box - tr.height) / 2);
       target.classList.add('htmxo-thread-focus');
-      s.stuck = distance(s) <= STICK_PX;
+      s.stuck = tr.height <= box && distance(s) <= STICK_PX;
     } else {
       stickBottom(s);
     }
@@ -1534,7 +1558,9 @@ body > header nav a[aria-current="page"] { font-weight: 600; }
    answer holds. The label is in the element's language. A table row or row
    group carries its label in its first cell. Private content shown inside
    private content (a fragment loaded into it) is marked once. An app restyles
-   it in its own stylesheet: `--htmxo-private-color`, `--htmxo-private-label`. */
+   it in its own stylesheet: `--htmxo-private-color`, `--htmxo-private-label`.
+   Pico's own `nav li::before` beats these rules: `pico_bridge()` sets the label
+   of a `nav li` again. */
 :root { --htmxo-private-label: "not public"; }
 [lang|="en"] { --htmxo-private-label: "not public"; }
 [lang|="de"] { --htmxo-private-label: "nicht \0000f6ffentlich"; }
@@ -2321,6 +2347,15 @@ tr[id^="detail-"] > td > :is(.htmxo-md-detail, .htmxo-md-detail-slot) { contain:
 // A table text (`TableTexts`) with its {placeholders} filled in: from the
 // nearest `data-htmxo-texts` the table's `texts=` wrote, else English.
 var htmxoTableTextsDefault = {"search":"Search","count":"{shown} of {total} rows shown","empty":"No matching rows","selected":"{count} selected","selected_filtered":"{count} hidden by the filter","selected_collapsed":"{count} in collapsed groups","select_all":"Select all shown","clear_selection":"Clear","expand_all":"Expand all","collapse_all":"Collapse all","toggle_children":"Toggle child rows","details":"Details","group_by":"Group by","group_add":"Group by {name}","group_add_inner":"Also group by {name}, as the innermost level","group_level":"Level {level}: stop grouping by {name}; drag or press ←/→ to reorder","group_kept":"Grouped by {name}; add another grouping to change it","group_stop":"Stop grouping by {name}","group_earlier":"Move {name} earlier","group_later":"Move {name} later","loading":"Loading…","retrying":"Connection lost — retrying…","load_failed":"Failed to load — click to retry","rows_failed":"Loading rows failed ({status})","rows_missing":"Loading rows failed: no rows in the response","csv":"⬇ CSV","more":"More","decimal":".","thousands":",","minus":"-","linked_inside":"↳ inside","linked_deep":"↳ {levels} levels down","linked_inside_many":"↳ {count} inside","sort_by":"Sort by","sort_ascending":"{name}, ascending","sort_descending":"{name}, descending","sort_estimate":"Estimate","sort_lower":"Lower bound","sort_upper":"Upper bound","sort_width":"Interval width","sort_relative_width":"Relative width","interval":"{estimate} ({lower}–{upper})","interval_signed":"{estimate} ({lower} to {upper})"};
+// `_print_grouped`: an integer's digits with `thousands` every three from the right.
+function htmxoGrouped(whole, thousands) {
+    let out = '';
+    for (let i = 0; i < whole.length; i++) {
+        if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
+        out += whole[i];
+    }
+    return out;
+}
 function htmxoText(el, name, values) {
     var holder = el && el.closest ? el.closest('[data-htmxo-texts]') : null, texts = htmxoTableTextsDefault;
     if (holder) {
@@ -2330,7 +2365,11 @@ function htmxoText(el, name, values) {
         }
         texts = holder.htmxoTexts;
     }
-    return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) { return values && k in values ? String(values[k]) : m; });
+    // `_table_text`: a number takes the table's `thousands`, a string stays as it is.
+    return texts[name].replace(/[{]([A-Za-z_]+)[}]/g, function(m, k) {
+        if (!values || !(k in values)) return m;
+        return typeof values[k] === 'number' ? htmxoGrouped(String(values[k]), texts.thousands) : String(values[k]);
+    });
 }
 // The control of its own that a click inside `row` landed on (a link, button,
 // form field, label, per-row form, <details> drop-out or editable text), which
@@ -3848,6 +3887,148 @@ if (!window.htmxoComparisonInstalled) {
     // short bring it to the top.
     if (!queued) { queued = true; requestAnimationFrame(land); }
   });
+})();
+</script><script>(function () {
+  'use strict';
+  if (window.htmxoInstanceScope) return;
+  var KEY = /^[A-Za-z0-9_-]+$/;
+  // Attributes whose value is an id, or ids separated by spaces.
+  var IDREFS = {'for': 1, 'form': 1, 'list': 1, 'headers': 1, 'popovertarget': 1, 'commandfor': 1,
+    'anchor': 1, 'itemref': 1, 'aria-labelledby': 1, 'aria-describedby': 1, 'aria-controls': 1,
+    'aria-owns': 1, 'aria-activedescendant': 1, 'aria-details': 1, 'aria-errormessage': 1,
+    'aria-flowto': 1};
+  // Attributes that name elements as `#id`: htmx's selectors, SVG paint
+  // (`url(#id)`) and `style`.
+  var HASHES = {'hx-target': 1, 'hx-select': 1, 'hx-select-oob': 1, 'hx-include': 1,
+    'hx-indicator': 1, 'hx-disabled-elt': 1, 'hx-sync': 1, 'hx-trigger': 1, 'hx-swap-oob': 1,
+    'style': 1, 'fill': 1, 'stroke': 1, 'clip-path': 1, 'mask': 1, 'filter': 1,
+    'marker-start': 1, 'marker-mid': 1, 'marker-end': 1, 'cursor': 1};
+  // Data attributes that hold keys, values or text the server or the tables
+  // read, not ids.
+  var KEYS = {'data-key': 1, 'data-htmxo-instance': 1, 'data-htmxo-group-scope': 1,
+    'data-htmxo-leaf': 1, 'data-htmxo-leaf-keys': 1, 'data-htmxo-leaf-values': 1,
+    'data-htmxo-select-key': 1, 'data-htmxo-select-value': 1, 'data-htmxo-search': 1,
+    'data-htmxo-sort-keys': 1, 'data-htmxo-number': 1, 'data-htmxo-texts': 1,
+    'data-htmxo-group-by': 1, 'data-htmxo-grouped': 1, 'data-htmxo-regroup': 1,
+    'data-htmxo-url-params': 1, 'data-htmxo-address': 1};
+  var reEscape = function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+
+  // `--<key>` for each `data-htmxo-instance` around `el`, outermost first;
+  // '' outside any; null (reported) for a key that is not a plain word.
+  function suffix(el) {
+    var keys = [];
+    var s = el && el.closest ? el.closest('[data-htmxo-instance]') : null;
+    for (; s; s = s.parentElement ? s.parentElement.closest('[data-htmxo-instance]') : null) {
+      var key = s.getAttribute('data-htmxo-instance');
+      if (!KEY.test(key)) {
+        console.error('data-htmxo-instance="' + key + '": a place is named with letters, ' +
+          'digits, - and _; what is swapped into it keeps its ids.');
+        return null;
+      }
+      keys.unshift(key);
+    }
+    return keys.map(function (k) { return '--' + k; }).join('');
+  }
+  // Every element under `root`, with what its <template> elements hold.
+  function elements(root, out) {
+    root.querySelectorAll('*').forEach(function (e) {
+      out.push(e);
+      if (e.localName === 'template' && e.content) elements(e.content, out);
+    });
+    return out;
+  }
+  // The id an out-of-band element replaces: the `#id` its value names after
+  // the swap style, else its own.
+  function oobTarget(e) {
+    var v = e.getAttribute('hx-swap-oob') || e.getAttribute('data-hx-swap-oob') || '';
+    var at = v.indexOf(':'), m = at < 0 ? null : /#([^\s,]+)/.exec(v.slice(at + 1));
+    return m ? m[1] : e.id;
+  }
+
+  // `html`, about to be swapped into `target`, with its ids renamed for the
+  // place around `target`, and `select` (a selector the request names the
+  // part to take by) renamed with them.
+  function rewrite(target, html, select) {
+    var same = {html: html, select: select};
+    if (typeof html !== 'string' || !target || !target.closest) return same;
+    var scope = target.closest('[data-htmxo-instance]');
+    if (!scope) return same;
+    var sfx = suffix(target);
+    if (!sfx || /^\s*<(!doctype|html[\s>])/i.test(html)) return same;
+    var own = function (id) { return id.length > sfx.length && id.slice(-sfx.length) === sfx; };
+    var template = document.createElement('template');
+    template.innerHTML = html;
+    var all = elements(template.content, []);
+    // The ids earlier answers gave this place, by the names answers use.
+    var names = {};
+    scope.querySelectorAll('[id]').forEach(function (e) {
+      if (own(e.id)) names[e.id.slice(0, -sfx.length)] = true;
+    });
+    // An out-of-band element for something outside the place stays as it
+    // is, with what it holds.
+    var skip = new Set();
+    all.forEach(function (e) {
+      if (skip.has(e) || !(e.hasAttribute('hx-swap-oob') || e.hasAttribute('data-hx-swap-oob'))) return;
+      if (names[oobTarget(e)]) return;
+      skip.add(e);
+      elements(e, []).forEach(function (x) { skip.add(x); });
+    });
+    all.forEach(function (e) { if (!skip.has(e) && e.id && !own(e.id)) names[e.id] = true; });
+    var list = Object.keys(names).sort(function (a, b) { return b.length - a.length; });
+    if (!list.length) return same;
+    var alt = list.map(reEscape).join('|');
+    var worded = list.filter(function (n) { return /[A-Za-z]/.test(n); }).map(reEscape).join('|');
+    var hashRe = new RegExp('#(' + alt + ')(?![\\w-])', 'g');
+    var dataRe = new RegExp('(^|[\\s"\',\\[\\]{}#])(' + alt + ')(?=$|[\\s"\',\\[\\]{}])', 'g');
+    var textRe = worded ? new RegExp('([\'"`#-])(' + worded + ')(?![\\w-])', 'g') : null;
+    var nameRe = worded ? new RegExp('(-)(' + worded + ')(?![\\w-])', 'g') : null;
+    var add = function (m, pre, id) { return pre + id + sfx; };
+    var hash = function (m, id) { return '#' + id + sfx; };
+    var text = function (v) { return textRe ? v.replace(textRe, add) : v; };
+    // A master/detail row's toggle names its row by key, not by id.
+    var handler = function (v) {
+      return text(v).replace(/(htmxoMdToggle\(this,event,')([^']*)'/g, function (m, call, key) {
+        return names['row-' + key] && !own(key) ? call + key + sfx + "'" : m;
+      });
+    };
+    var changed = false;
+    all.forEach(function (e) {
+      if (skip.has(e)) return;
+      Array.prototype.slice.call(e.attributes).forEach(function (a) {
+        var n = a.name, v = a.value, w = v;
+        if (n === 'id') w = names[v] && !own(v) ? v + sfx : v;
+        else if (IDREFS[n]) w = v.replace(/\S+/g, function (t) { return names[t] ? t + sfx : t; });
+        else if (/^(on|hx-on|data-hx-on)/.test(n)) w = handler(v);
+        else if (n === 'name') w = nameRe ? v.replace(nameRe, add) : v;
+        else if (HASHES[n.replace(/^data-(?=hx-)/, '')] ||
+                 ((n === 'href' || n === 'xlink:href') && v.charAt(0) === '#')) w = v.replace(hashRe, hash);
+        else if (n.slice(0, 5) === 'data-' && n.slice(5, 8) !== 'hx-' && !KEYS[n]) w = v.replace(dataRe, add);
+        if (w !== v) { e.setAttribute(n, w); changed = true; }
+      });
+      var body = e.localName === 'script' && !e.hasAttribute('src') ? text(e.textContent) :
+                 e.localName === 'style' ? e.textContent.replace(hashRe, hash) : null;
+      if (body !== null && body !== e.textContent) { e.textContent = body; changed = true; }
+    });
+    return {html: changed ? template.innerHTML : html,
+            select: typeof select === 'string' && select !== 'unset' ? select.replace(hashRe, hash) : select};
+  }
+
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    var d = e.detail;
+    if (!d || !d.shouldSwap || typeof d.serverResponse !== 'string') return;
+    var elt = d.requestConfig && d.requestConfig.elt;
+    var holder = !d.selectOverride && elt && elt.closest ? elt.closest('[hx-select],[data-hx-select]') : null;
+    var select = d.selectOverride || (holder && (holder.getAttribute('hx-select') || holder.getAttribute('data-hx-select')));
+    var out = rewrite(d.target || e.target, d.serverResponse, select);
+    d.serverResponse = out.html;
+    if (out.select !== select) d.selectOverride = out.select;
+  }, true);
+
+  window.htmxoInstanceSuffix = function (el) { return suffix(el) || ''; };
+  window.htmxoInstanceScope = {
+    rewrite: function (target, html) { return rewrite(target, html).html; },
+    suffix: window.htmxoInstanceSuffix
+  };
 })();
 </script><script>(function () {
   'use strict';
@@ -6016,15 +6197,6 @@ function htmxoSummaryValue(reduce, inputs) {
     const sum = xs.reduce((a, b) => a + b);
     return reduce === 'mean' ? sum / xs.length : sum;
 }
-// `_print_grouped`: an integer's digits with `thousands` every three from the right.
-function htmxoGrouped(whole, thousands) {
-    let out = '';
-    for (let i = 0; i < whole.length; i++) {
-        if (i > 0 && (whole.length - i) % 3 === 0) out += thousands;
-        out += whole[i];
-    }
-    return out;
-}
 // `_format_fixed`; `minus` is the sign (a machine-read key keeps `-`).
 function htmxoFixed(x, digits, decimal, thousands, minus = '-') {
     const scaled = Math.round(Math.abs(x) * [1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10][digits]);
@@ -6195,6 +6367,9 @@ function htmxoRegroup(wrapper, levels) {
     });
     const members = Array.from(leaves.values()).sort((a, b) => a.order - b.order);
     const template = wrapper.querySelector('template[data-htmxo-group-template]');
+    // The rows' ids carry the place the table was swapped into
+    // (`instance_scope_script`); the ids built here carry it too.
+    const place = window.htmxoInstanceSuffix ? window.htmxoInstanceSuffix(wrapper) : '';
     const out = [];
     const keysAt = (m, depth) => depth < levels.length ? m.keys[levels[depth]] || [] : [];
     // The groups of `list` at a level, in first-appearance order, or in the
@@ -6222,7 +6397,7 @@ function htmxoRegroup(wrapper, levels) {
             if (detail) { fresh.add(detail); htmxoMdShow(row, detail, false); }
         }
         m.placed = true;
-        htmxoRekeyLeaf(row, detail, htmxoSafeKey(path.length ? 'group:' + path.join('/') + '/' + m.key : m.key));
+        htmxoRekeyLeaf(row, detail, htmxoSafeKey(path.length ? 'group:' + path.join('/') + '/' + m.key : m.key) + place);
         row.dataset.htmxoParent = parent;
         row.setAttribute('aria-level', String(level));
         out.push(row);
@@ -6231,7 +6406,7 @@ function htmxoRegroup(wrapper, levels) {
     };
     const group = (path, list, parent, level) => {
         const row = template.content.querySelector('tr').cloneNode(true), name = path[path.length - 1];
-        const gid = 'group:' + path.join('/'), id = 'row-' + htmxoSafeKey(wrapper.dataset.htmxoGroupScope + gid), children = [];
+        const gid = 'group:' + path.join('/'), id = 'row-' + htmxoSafeKey(wrapper.dataset.htmxoGroupScope + gid) + place, children = [];
         out.push(row);
         if (path.length < levels.length) {
             groupsAt(list, path.length).forEach(([k, ms]) => children.push(group([...path, k], ms, id, level + 1)));
@@ -6256,7 +6431,7 @@ function htmxoRegroup(wrapper, levels) {
         }
         if ('htmxoSearch' in row.dataset) row.dataset.htmxoSearch = name;
         row.querySelector('[data-htmxo-group-label]').textContent = name;
-        row.querySelector('[data-htmxo-group-count]').textContent = '(' + list.length + ')';
+        row.querySelector('[data-htmxo-group-count]').textContent = '(' + htmxoGrouped(String(list.length), htmxoText(table, 'thousands')) + ')';
         // `_md_summary_cell`: the shown summary, and the CSV's number.
         // A cell whose row adds controls to it (the first) keeps its value
         // in an element of its own.

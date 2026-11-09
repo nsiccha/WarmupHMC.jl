@@ -172,7 +172,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     # starting point, reporting, observation
     :init, :progress, :description, :monitor_ess, :callback,
     # checkpointing
-    :checkpoint_dir, :resume, :overwrite,
+    :checkpoint_dir, :checkpoint_interval, :stop_requested, :resume, :overwrite,
     # deliberate passthrough to the Pathfinder initializer
     :pathfinder_kw,
     # BLAS threads for the duration of the call

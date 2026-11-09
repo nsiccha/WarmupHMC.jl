@@ -143,10 +143,10 @@ coordinates and constructs the candidate-scoring plan, so you do not write an
 
 ## Checkpoints, Callbacks and Resume
 
-Warm-up has two checkpoint boundaries: **CP-0**, right after initialization
-(Pathfinder), and **CP-N**, after each outer warm-up window. Three opt-in,
-independent mechanisms hang off these boundaries. All default to off, and with
-them off the run is byte-for-byte identical to the plain sampler.
+Warm-up writes boundary checkpoints at **CP-0**, right after initialization
+(Pathfinder), and **CP-N**, after each outer warm-up window. Adaptive warm-up
+can also save and stop inside a window. All controls below default to off;
+enabling them does not change the sampling trajectory.
 
 **Observing progress.** `callback=(state, stage) -> should_stop` fires at each
 boundary with `stage ∈ (:init, :window)`. It may read `state` and request an
@@ -178,6 +178,40 @@ the reparametrizer only as its scalar centering values — so the `lpdf` you
 resume with is one **you** reconstruct, typically the same way you built it for
 the original call.
 
+**Stopping inside a long window.** Since 0.2.14, adaptive warm-up accepts a
+zero-argument `stop_requested` predicate. It is polled before starting or
+continuing a window and after each complete NUTS transition inside it. Only
+literal `true` requests a stop. If `checkpoint_dir` is set, the sampler saves
+`cp_latest.jls` before returning its partial results, including zero draws
+when stopped during step-size adaptation.
+
+`checkpoint_interval=seconds` additionally saves `cp_latest.jls` at the next
+poll after that much monotonic time has elapsed since the last save. It must
+be positive and finite and requires `checkpoint_dir`. Each chain has its own
+timer; these saves do not add numbered window files or callback stages.
+
+```@example quickstart
+slice_dir = mktempdir()
+polls = Ref(0)
+partial = adaptive_warmup_mcmc(Xoshiro(20260728), lpdf;
+    n_draws=400, progress=nothing, checkpoint_dir=slice_dir,
+    checkpoint_interval=60,
+    stop_requested=() -> (polls[] += 1; polls[] >= 3))
+size(partial.posterior_position)
+```
+
+For a wall-time budget, use a deadline instead of a poll counter, for example
+`stop_requested=() -> time() >= deadline`. With parallel chains the same
+predicate can run concurrently, so shared mutable state must be thread-safe.
+Re-pass or replace it on resume: predicates and timers are invocation settings,
+not checkpoint state.
+
+These are cooperative stop points: initialization, an individual NUTS
+transition, window finalization, and checkpoint I/O must finish. An interval
+is therefore not a maximum checkpoint age or a hard shutdown deadline. Enabling
+either control also polls Treebars interrupts at these finer stop points.
+The existing `callback` still runs only at `:init` and `:window`.
+
 **Resuming.** Point the sampler at the same directory with `resume=true`:
 
 ```@example quickstart
@@ -190,6 +224,14 @@ size(resumed.posterior_position)
 Resuming this way takes its configuration from the **call**, so asking for a
 larger `n_draws` than the original run keeps sampling rather than re-running a
 fixed-length batch.
+
+Resuming an unfinished window continues its remaining evaluation budget and
+adaptation state; it does not start another window or fit a new metric early.
+Reconstruct the same target and re-pass the same sampler configuration for an
+exact continuation under the same Julia/dependency and thread settings.
+In-window checkpoints use schema version 3 and require WarmupHMC 0.2.14 or
+later; older readers reject them. Completed-boundary checkpoints remain version
+2, and the new reader still accepts older boundary checkpoints.
 
 !!! warning "`resume_warmup_mcmc` is deprecated"
     [`resume_warmup_mcmc`](@ref)`(lpdf, "checkpoints/cp_latest.jls")` still

@@ -41,7 +41,10 @@ end
 """
     checkpoint_schema_version() -> Int
 
-Version of the on-disk checkpoint/manifest contract, shared by ALL samplers.
+Version of the shared boundary-checkpoint/manifest contract. The internal
+`checkpoint_schema_version(Val(sampler))` also reports a sampler's maximum
+readable version: adaptive v3 describes an unfinished window, while its
+completed-boundary writer retains v2 compatibility.
 
 Policy (the contract, not just the number):
 
@@ -54,3 +57,9 @@ Policy (the contract, not just the number):
   changed.
 """
 checkpoint_schema_version() = 2
+
+# Maximum readable version per sampler. Adaptive v3 can describe an unfinished
+# window. Its completed-boundary writer still emits v2, preserving compatibility
+# for old consumers and leaving other samplers' checkpoint contracts unchanged.
+checkpoint_schema_version(::Val) = checkpoint_schema_version()
+checkpoint_schema_version(::Val{:adaptive}) = 3

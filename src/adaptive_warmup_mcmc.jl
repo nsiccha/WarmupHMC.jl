@@ -592,6 +592,10 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     # min-ESS-per-gradient reporting over the draws the run keeps.
     sampling_evaluation_counter::Int
     outer_counter::Int
+    # A suspended window resumes without entering a new window or refitting its
+    # metric. The budget spent in this window used to live only on the stack.
+    window_in_progress::Bool
+    current_evaluation_counter::Int
     current_transition_counter::Int
     total_transition_counter::Int
     # Per-coordinate bulk ESS of the WORKING-frame draws, in coordinate order
@@ -880,6 +884,7 @@ init_state(
         transformed_adaptation, variance_cond, scale_changes, 0,
         position_and_gradient, stepsize, stepsize_state, n_evaluations,
         total_evaluation_counter, sampling_evaluation_counter, outer_counter,
+        false, 0,
         current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples, 0,
@@ -924,18 +929,26 @@ _returned_ess(monitored, draws, monitor_ess) =
 # One warm-up/sampling window ("big iteration"): the inner transition loop plus
 # the end-of-window step-size freeze, variance-condition check, and (on restart)
 # reparametrization + transformation reselection. Mutates `state` in place;
-# returns after one window, leaving `state` as of CP-N.
-run_outer_iteration!(state::AWMState) = begin
+# returns after one window (CP-N), or with its phase intact after a checkpointed
+# in-window stop.
+_window_has_transitions(state::AWMState) =
+    size(state.recording_lpdf.posterior_position, 2) < state.n_draws &&
+    state.current_evaluation_counter < state.n_evaluations
+
+run_outer_iteration!(state::AWMState, control=nothing) = begin
     (; progress, lpdf, recording_lpdf, algorithm, stepsize_adaptation) = state
     # Some setup that has to happen at the beginning of every warm-up window
-    state.outer_counter += 1
+    if !state.window_in_progress
+        state.outer_counter += 1
+        state.current_evaluation_counter = 0
+        state.window_in_progress = true
+    end
     hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, recording_lpdf)
-    current_evaluation_counter = 0
     # We run the current warm-up/sampling window until
     #   a) we have collected enough samples and can break out of the outer loop as well or
     #   b) we have reached the current targeted number of gradient evaluations AND we estimate that
     #       restarting (adding a new warm-up window) is better than finishing sampling with the current adaptation
-    while size(recording_lpdf.posterior_position, 2) < state.n_draws && (current_evaluation_counter < state.n_evaluations)
+    while _window_has_transitions(state)
         state.current_transition_counter += 1
         state.total_transition_counter += 1
         # One MCMC transition
@@ -950,7 +963,7 @@ run_outer_iteration!(state::AWMState) = begin
             state.stepsize,
         )
         state.total_evaluation_counter += stats.steps
-        current_evaluation_counter += stats.steps
+        state.current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(state.steps_per_draw, stats.steps)
         is_divergent = DynamicHMC.is_divergent(stats.termination)
         is_divergent && (state.n_divergent += 1)
@@ -985,7 +998,7 @@ run_outer_iteration!(state::AWMState) = begin
             # above, never a discarded epoch's.
             state.sampling_evaluation_counter += stats.steps
         end
-        if current_evaluation_counter >= state.n_evaluations
+        if state.current_evaluation_counter >= state.n_evaluations
             scale = state.scale_options[state.active_transformation]
             _linear_restart_scales!(
                 state.variance_memory, state.linear_restart_source,
@@ -1000,7 +1013,16 @@ run_outer_iteration!(state::AWMState) = begin
         end
         state.n_samples = size(recording_lpdf.posterior_position, 2)
         _transition_progress!(progress, state.current_transition_counter, state)
+        # Finish a naturally ended window before honoring a stop. Otherwise all
+        # effects of this transition are now complete and serializable.
+        _window_has_transitions(state) && _poll_adaptive_control!(control, state) && return state
     end
+    state.window_in_progress = false
+    _finish_outer_iteration!(state)
+end
+
+_finish_outer_iteration!(state::AWMState) = begin
+    (; progress, lpdf, recording_lpdf, stepsize_adaptation) = state
     if state.monitor_ess && state.n_samples > 10
         state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
         _ess_progress!(progress, state)
@@ -1199,7 +1221,9 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # all-good-leaf evidence — see `_effective_nonlinear_evidence` in
 # `Reparametrizations.jl` for the rule and for why storing it is the wrong move.
 checkpoint_payload(state::AWMState) = (;
-    schema_version=checkpoint_schema_version(),
+    # Old readers may ignore additive keys at a completed boundary, but must
+    # NEVER mistake an unfinished window for the beginning of the next one.
+    schema_version=state.window_in_progress ? checkpoint_schema_version(Val(:adaptive)) : checkpoint_schema_version(),
     sampler=:adaptive,
     state.dimension,
     halo_position=state.recording_lpdf.halo_position,
@@ -1220,6 +1244,7 @@ checkpoint_payload(state::AWMState) = (;
     state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
     state.sampling_evaluation_counter,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
+    state.window_in_progress, state.current_evaluation_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
     state.restart, state.n_samples, state.divergence_gate_restarts,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
@@ -1258,10 +1283,63 @@ _write_checkpoint(::Nothing, state::AWMState, stage::Symbol) = nothing
 _write_checkpoint(dir, state::AWMState, stage::Symbol) = begin
     mkpath(dir)
     payload = checkpoint_payload(state)
-    name = stage === :init ? "cp_init.jls" : "cp_window_$(state.outer_counter).jls"
-    _atomic_serialize(joinpath(dir, name), payload)
+    if stage !== :transition
+        name = stage === :init ? "cp_init.jls" : "cp_window_$(state.outer_counter).jls"
+        _atomic_serialize(joinpath(dir, name), payload)
+    end
     _atomic_serialize(joinpath(dir, "cp_latest.jls"), payload)
     nothing
+end
+
+# Runtime control belongs to this invocation, never to the serialized state.
+# Nothing dispatch removes the predicate, interrupt and clock reads entirely
+# from the legacy transition loop.
+mutable struct AdaptiveCheckpointControl{F,D}
+    stop_requested::F
+    directory::D
+    interval::Float64
+    last_checkpoint::UInt64
+end
+
+function _adaptive_checkpoint_control(stop_requested, interval, directory)
+    if !isnothing(interval)
+        interval isa Real && !(interval isa Bool) && isfinite(interval) && interval > 0 ||
+            throw(ArgumentError("checkpoint_interval must be nothing or a positive finite number of seconds"))
+        interval = Float64(interval)
+        isfinite(interval) && interval > 0 || throw(ArgumentError("checkpoint_interval is outside the supported range"))
+        isnothing(directory) && throw(ArgumentError("checkpoint_interval requires checkpoint_dir"))
+    end
+    isnothing(stop_requested) || applicable(stop_requested) ||
+        throw(ArgumentError("stop_requested must be a callable with no arguments"))
+    isnothing(stop_requested) && isnothing(interval) && return nothing
+    AdaptiveCheckpointControl(stop_requested, directory, something(interval, Inf), time_ns())
+end
+
+_external_stop_requested(::Nothing) = false
+_external_stop_requested(predicate) = predicate() === true
+_checkpoint_saved!(::Nothing) = nothing
+_checkpoint_saved!(control::AdaptiveCheckpointControl) = (control.last_checkpoint = time_ns(); nothing)
+_poll_adaptive_control!(::Nothing, state::AWMState) = false
+function _poll_adaptive_control!(control::AdaptiveCheckpointControl, state::AWMState)
+    stop = _external_stop_requested(control.stop_requested) || _interrupted(state.progress)
+    if stop || (time_ns() - control.last_checkpoint) / 1e9 >= control.interval
+        _write_checkpoint(control.directory, state, :transition)
+        _checkpoint_saved!(control)
+    end
+    stop
+end
+
+# Shared by the sampler and the deprecated file-based resume entry point.
+function _run_adaptive_windows!(state, callback, checkpoint_dir, control)
+    while size(state.recording_lpdf.posterior_position, 2) < state.n_draws
+        _poll_adaptive_control!(control, state) && break
+        run_outer_iteration!(state, control)
+        state.window_in_progress && break  # checkpointed stop inside the window
+        _write_checkpoint(checkpoint_dir, state, :window)
+        _checkpoint_saved!(control)
+        _stop_requested(callback, state, :window) && break
+    end
+    finalize_warmup!(state)
 end
 
 _checkpoint_files(dir) = isdir(dir) ?
@@ -1572,11 +1650,12 @@ end
 # changed and the payload must be refused rather than misread. An absent version
 # reads as 1 — pre-tag payloads predate the field and stay readable.
 _check_schema_version(p) = begin
+    supported = checkpoint_schema_version(Val(checkpoint_sampler(p)))
     v = get(p, :schema_version, 1)
-    v <= checkpoint_schema_version() && return nothing
+    v <= supported && return nothing
     throw(ArgumentError(
         "this checkpoint uses schema version $v, newer than this WarmupHMC " *
-        "knows ($(checkpoint_schema_version())): existing key semantics may " *
+        "knows ($supported): existing key semantics may " *
         "have changed. Update WarmupHMC to resume it."
     ))
 end
@@ -1722,7 +1801,8 @@ restore_state(p, lpdf, progress;
         get(p, :linear_metric_fallbacks, 0),
         p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
         p.total_evaluation_counter, get(p, :sampling_evaluation_counter, 0),
-        p.outer_counter, p.current_transition_counter,
+        p.outer_counter, get(p, :window_in_progress, false), get(p, :current_evaluation_counter, 0),
+        p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
         p.restart, p.n_samples, get(p, :divergence_gate_restarts, 0),
         # Carried forward, never read back into the sampler. `get` (not `p.x`) so
@@ -1938,6 +2018,23 @@ off, and with them off the run is byte-for-byte identical to the plain sampler.
   snapshot excludes the (possibly non-serializable) inner problem and stores the
   reparametrizer only as its scalar `source` centerings. The multi-chain method
   writes chain `i` under `path/chain_<i>/`.
+* **`stop_requested=() -> Bool`** opts into stopping inside a window. It is
+  polled before starting/continuing a window and after each complete transition
+  inside it; only literal `true` stops. The sampler saves `cp_latest.jls` when
+  `checkpoint_dir` is set, then returns partial results (possibly zero draws).
+* **`checkpoint_interval=seconds`** saves `cp_latest.jls` at the next poll after
+  a positive finite interval since the last save; it requires `checkpoint_dir`.
+  Timers are per-chain and reset on resume. Neither option adds callback stages
+  or numbered window files. With either enabled, Treebars interrupts are also
+  polled at these points. Initialization, a single NUTS transition, window
+  finalization, and checkpoint I/O are not interrupted: this is not a hard
+  deadline. Predicates may run concurrently in the multi-chain method and must
+  be thread-safe; they must not mutate sampler state.
+  An unfinished window resumes its remaining budget and adaptation state.
+  Exact continuation requires the same target, sampler configuration, and
+  Julia/dependency/thread settings. Such checkpoints use schema v3 (0.2.14+);
+  completed boundaries retain v2 compatibility. Predicates, intervals, and
+  clocks are call-owned configuration and are never serialized.
 * **[`resume_warmup_mcmc`](@ref)`(lpdf, cp_path; ...)`** re-supplies `lpdf` and
   continues from a checkpoint, returning the same result as an uninterrupted
   run. The multi-chain form takes the parent `dir` and resumes each chain from
@@ -2013,6 +2110,8 @@ adaptive_warmup_mcmc(
     # each checkpoint. Default `nothing` writes nothing and keeps the run
     # byte-identical (the write is a pure read + file I/O).
     checkpoint_dir=nothing,
+    checkpoint_interval=nothing,
+    stop_requested=nothing,
     # Continue from `checkpoint_dir`'s `cp_latest.jls` instead of initializing.
     # Config comes from THIS call, so resuming with a larger `n_draws` keeps
     # sampling rather than re-running a fixed-length batch.
@@ -2030,6 +2129,7 @@ adaptive_warmup_mcmc(
     # For monitoring purposes: Displays the progress and additional info
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
+    control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
     resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the
@@ -2069,12 +2169,8 @@ adaptive_warmup_mcmc(
                 max_reflections, kwargs...
             ), false
         end
-        while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
-            run_outer_iteration!(state)
-            _write_checkpoint(checkpoint_dir, state, :window)             # CP-N
-            stop = _stop_requested(callback, state, :window)
-        end
-        finalize_warmup!(state)
+        _checkpoint_saved!(control)
+        stop ? finalize_warmup!(state) : _run_adaptive_windows!(state, callback, checkpoint_dir, control)
     end
 end
 
@@ -2107,21 +2203,17 @@ original run's config must now pass it explicitly.
 """
 resume_warmup_mcmc(lpdf, checkpoint_path;
     progress=nothing, description="MCMC", callback=nothing, checkpoint_dir=nothing,
+    checkpoint_interval=nothing, stop_requested=nothing,
     n_draws=1000, stepsize_adaptation_limit=50, blas_threads=_DEFAULT_BLAS_THREADS, kwargs...
 ) = _with_blas_threads(blas_threads) do
+    control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
     payload = deserialize(checkpoint_path)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         state = restore_state(payload, lpdf, progress;
             n_draws, stepsize_adaptation_limit, monitor_ess=!isnothing(progress), kwargs...)
         # Continue from AFTER the resumed boundary: the original run already fired
         # the callback / wrote the checkpoint there, so we do not re-fire it here.
-        stop = false
-        while !stop && size(state.recording_lpdf.posterior_position, 2) < state.n_draws
-            run_outer_iteration!(state)
-            _write_checkpoint(checkpoint_dir, state, :window)
-            stop = _stop_requested(callback, state, :window)
-        end
-        finalize_warmup!(state)
+        _run_adaptive_windows!(state, callback, checkpoint_dir, control)
     end
 end
 
@@ -2136,6 +2228,7 @@ checkpoint_dir=dir)`. Returns a `Vector` of per-chain result `NamedTuple`s.
 """
 resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
     parallel=true, progress=nothing, description="MCMC", callback=nothing, checkpoint_dir=nothing,
+    checkpoint_interval=nothing, stop_requested=nothing,
     blas_threads=_DEFAULT_BLAS_THREADS,
 ) = _with_blas_threads(blas_threads) do
     with_progress(progress, length(lpdfs); description) do progress
@@ -2145,6 +2238,7 @@ resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
             Threads.@threads for i in 1:n_chains
                 rv[i] = resume_warmup_mcmc(lpdfs[i], joinpath(_chain_dir(dir, i), checkpoint_name);
                     progress, description=description*".$i", callback, checkpoint_dir=_chain_dir(checkpoint_dir, i),
+                    checkpoint_interval, stop_requested,
                     blas_threads)
                 update_progress!(progress)
             end
@@ -2152,6 +2246,7 @@ resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
             for i in 1:n_chains
                 rv[i] = resume_warmup_mcmc(lpdfs[i], joinpath(_chain_dir(dir, i), checkpoint_name);
                     progress, description=description*".$i", callback, checkpoint_dir=_chain_dir(checkpoint_dir, i),
+                    checkpoint_interval, stop_requested,
                     blas_threads)
                 update_progress!(progress)
             end

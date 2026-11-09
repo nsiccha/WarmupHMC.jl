@@ -29,6 +29,16 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.14
+
+### Added
+
+- Adaptive warm-up can checkpoint and stop between complete NUTS transitions
+  inside a long window. Resume preserves the unfinished window's evaluation
+  budget and adaptation state. Boundary callbacks and default sampling remain
+  unchanged; unfinished-window files require the new reader. See
+  [Checkpoints, Callbacks and Resume](https://nsiccha.github.io/WarmupHMC.jl/dev/#Checkpoints,-Callbacks-and-Resume).
+
 ## 0.2.13
 
 ### Changed

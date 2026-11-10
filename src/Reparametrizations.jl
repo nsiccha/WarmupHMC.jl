@@ -6,6 +6,12 @@
 maybecall(x::Number, args...; kwargs...) = x
 maybecall(f, args...; kwargs...) = f(args...; kwargs...)
 
+# What `IndexedReparametrization` accepts as an accessor at construction. The scalar
+# transform takes `Real` locations and log-scales, so a constant that is not `Real`
+# (or a value that cannot be called) would only fail later, inside the centering or
+# its gradient (snag built-an-indexed-3fed939c).
+_is_accessor(a) = a isa Real || a isa Function || !isempty(methods(a))
+
 struct DirectCandidateScoring end
 const DIRECT_CANDIDATE_SCORING = DirectCandidateScoring()
 
@@ -480,6 +486,13 @@ whole parameter vector, so `x -> x[9]` reads the location off coordinate 9 and
 `0.` pins it to zero. A log-scale may combine several coordinates, as in a scale
 mixture `beta = s(θ) * z` whose `log(s(θ))` the callable computes.
 
+A callable struct need not subtype `Function` (from WarmupHMC 0.2.15; before it,
+one that did not was silently used as a constant). A constant must be `Real`:
+[`IndexedReparametrization`](@ref) rejects an argument that is neither a `Real`
+nor callable at construction. Mixing constants and callables within ONE rule is
+fine; across the pairs of one `IndexedReparametrization`, see its concrete-type
+requirement.
+
 The callables are applied to the sampler's SOURCE-coordinate vector as it was on
 entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no
 coordinate's rule ever observes another coordinate's transformed value. They also
@@ -577,9 +590,33 @@ replaced by one carrying the newly fitted `source` centering. Two consequences:
   first so its source coordinate is recovered before the dependent block.
 * **The vector element type must retain every accessor's concrete type.** Julia
   widens a vector that mixes constants and differently typed closures, and AD
-  then fails late inside warm-up. Construction rejects that shape immediately.
-  Use a single concretely typed callable representation for accessors stored in
-  one vector.
+  then fails late inside warm-up. Construction rejects that shape immediately
+  with an `ArgumentError`. Two things widen it:
+  - one pair with a constant where another has a closure (a block with a fixed,
+    known location next to blocks that read it off the vector);
+  - closures written at different places in the source, even with identical
+    bodies: each `x -> x[9]` you write is its own type. Closures built at ONE
+    place, as by a comprehension `[i => Reparametrization(..., x -> x[loc[i]],
+    x -> x[ls[i]]) for i in idxs]`, share a type.
+
+  For heterogeneous blocks, give every pair one accessor type, for example a
+  struct holding either a coordinate or a constant:
+  ```julia
+  struct Coordinate          # need not subtype Function from WarmupHMC 0.2.15
+      i::Int                 # 0 means "use `value`"
+      value::Float64
+  end
+  (c::Coordinate)(x) = c.i == 0 ? c.value : x[c.i]
+  pairs = [
+      [i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(0.0),
+                              Coordinate(9, 0.0), Coordinate(10, 0.0)) for i in 1:8];
+      [i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(0.0),
+                              Coordinate(0, 0.5), Coordinate(0, log(2.0))) for i in 11:13]
+  ]
+  ```
+* **Every accessor argument must be a `Real` or callable.** Construction checks
+  the first pair (all pairs share one type) and throws an `ArgumentError`
+  naming the argument otherwise.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P
@@ -587,10 +624,32 @@ struct IndexedReparametrization{P} <: AbstractReparametrization
         isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
             "IndexedReparametrization pairs must have a concrete element type; " *
             "avoid mixing constants and differently typed accessor closures in one vector " *
-            "(got eltype $(eltype(pairs)), first element type $(typeof(first(pairs))))",
+            "(got eltype $(eltype(pairs)); the first pair's rule is a " *
+            "$(typeof(last(first(pairs))))). " *
+            "Closures written at different places in the source are different types. " *
+            "Give every pair one accessor type: closures built at one place (a " *
+            "comprehension), or one callable struct that holds either a coordinate " *
+            "index or a constant; see the IndexedReparametrization docstring.",
         ))
+        isempty(pairs) || _check_accessors(first(pairs))
         new{P}(pairs)
     end
+end
+
+# The element type is concrete, so every pair's accessors share the first pair's
+# types, and whether a value is callable depends only on its type.
+_check_accessors(pair) = _check_accessors(first(pair), last(pair))
+_check_accessors(idx, ::Any) = nothing
+function _check_accessors(idx, value::Reparametrization)
+    for (j, a) in enumerate(value.args)
+        _is_accessor(a) || throw(ArgumentError(
+            "IndexedReparametrization: argument $(j + 2) of the Reparametrization for " *
+            "index $(idx) is a $(typeof(a)), which is neither a Real constant nor " *
+            "callable. Each location/log-scale argument is a Real or a callable applied " *
+            "to the whole source-coordinate vector, such as `x -> x[9]`.",
+        ))
+    end
+    nothing
 end
 with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) = begin
     ljac = 0.

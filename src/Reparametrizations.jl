@@ -1,8 +1,10 @@
 # Generic adaptive nonlinear reparametrization machinery
 # Migrated from LocalScalesHMC.jl/julia/reparametrizations.jl
 
-maybecall(f::Function, args...; kwargs...) = f(args...; kwargs...)
-maybecall(x, args...; kwargs...) = x
+# A `Reparametrization` argument is a constant number or a callable applied to the
+# parameter vector: a `Function` or any callable struct.
+maybecall(x::Number, args...; kwargs...) = x
+maybecall(f, args...; kwargs...) = f(args...; kwargs...)
 
 struct DirectCandidateScoring end
 const DIRECT_CANDIDATE_SCORING = DirectCandidateScoring()
@@ -473,12 +475,10 @@ parametrization and let warm-up move it from there.
 
 `args` are the extra arguments the centerings need — for [`PartiallyCentered`](@ref)
 exactly two, the location and the log-scale, in that order. Each is either a
-constant or a `Function` applied to the whole parameter vector, so `x -> x[9]`
-reads the location off coordinate 9 and `0.` pins it to zero. A callable struct
-must subtype `Function`; an otherwise-callable object is treated as a constant by
-the accessor contract. That mismatch is silent at construction: the struct
-itself becomes the argument value, so any symptom appears later inside the
-centering or gradient evaluation.
+constant number or a callable (a `Function` or a callable struct) applied to the
+whole parameter vector, so `x -> x[9]` reads the location off coordinate 9 and
+`0.` pins it to zero. A log-scale may combine several coordinates, as in a scale
+mixture `beta = s(θ) * z` whose `log(s(θ))` the callable computes.
 
 The callables are applied to the sampler's SOURCE-coordinate vector as it was on
 entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no

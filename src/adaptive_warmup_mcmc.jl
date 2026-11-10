@@ -547,6 +547,7 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     stepsize_adaptation_limit::Int
     variance_cond_target::Float64
     max_divergent_fraction::Float64
+    divergence_tolerance::Float64
     linear_restart_source::Symbol
     linear_trajectory_weighting::Symbol
     linear_metric_fallback::Bool
@@ -555,6 +556,7 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     recording_target::Int
     kwargs::K
     algorithm::A
+    # Rebuilt for `target_acceptance` at a restart after a halving; same type.
     stepsize_adaptation::DA
     dimension::Int
     # ── runtime handles (re-supplied on resume, not restored) ──
@@ -610,12 +612,27 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     # bounded by `_MAX_DIVERGENCE_GATE_RESTARTS`. Checkpointed, so a resume keeps
     # the bound.
     divergence_gate_restarts::Int
-    # ── draws DROPPED at the most recent restart (consumer-facing, inert on resume) ──
+    # Opt-in step-size halvings so far (`_halve_stepsize!`), bounded by
+    # `_MAX_STEPSIZE_HALVINGS`. Checkpointed, so a resume keeps the bound.
+    stepsize_halvings::Int
+    # The acceptance rate step-size adaptation targets: the caller's
+    # `target_acceptance_rate` until a halving, then the EFFECTIVE rate of the
+    # halved step size, which every later adaptation targets (`stepsize_adaptation`
+    # is rebuilt for it at the next restart). A halving first sets the
+    # leapfrog-scaling estimate and `acceptance_pending`; the next window that
+    # retains more than 10 draws at the halved step size replaces it with their
+    # mean acceptance statistic. `retained_acceptance_sum` is that statistic
+    # summed over the retained draws, zeroed with them. All three checkpointed.
+    target_acceptance::Float64
+    acceptance_pending::Bool
+    retained_acceptance_sum::Float64
+    # ── draws DROPPED at the most recent restart or halving (consumer-facing, inert on resume) ──
     # A restarting window empties the recorder (`reset!(recording_lpdf)`) and the
     # checkpoint is serialized AFTER that, so CP-N would otherwise pair complete
     # resume state with ZERO retained draws. These hold exactly what that reset
     # threw away: the post-stepsize-adaptation draws of the epoch that just
-    # ended, sampled under the metric and step size that were frozen for it.
+    # ended, sampled under the metric and step size that were frozen for it. A
+    # step-size halving drops the retained draws the same way.
     #
     # They are NEVER read back into the sampler — `restore_state` carries them
     # forward verbatim and nothing else touches them — so a resumed run cannot
@@ -746,6 +763,107 @@ _divergence_gate!(state::AWMState) = begin
     true
 end
 
+const _DEFAULT_DIVERGENCE_TOLERANCE = 1.0
+const _MAX_STEPSIZE_HALVINGS = 3
+
+_validate_divergence_tolerance(f) = begin
+    f isa Real && 0 <= f <= 1 || throw(ArgumentError(
+        "divergence_tolerance must be a number in [0, 1] (1, the default, switches " *
+        "step-size halving off); got $(repr(f))",
+    ))
+    Float64(f)
+end
+
+# Opt-in step-size halving (snag regularised-hors-bcdcdd84). A target whose
+# curvature varies strongly across the posterior, such as the regularised
+# horseshoe, keeps diverging at the step size dual averaging picks for
+# `target_acceptance_rate`, wherever the chain is: re-adapting does not help, a
+# smaller step size does. So when the window that reaches `n_draws` has more than
+# `divergence_tolerance` of its retained draws divergent (and the divergence gate
+# did not restart warm-up), halve the frozen step size, drop those draws and
+# sample `n_draws` new ones under the same metric, from where the chain is. No
+# step size or metric is re-adapted.
+#
+# The halving is also recorded as an acceptance rate, which, unlike a step-size
+# factor, carries over to another metric or centering: `target_acceptance`
+# becomes the rate the halved step size achieves, which every later step-size
+# adaptation targets (decision 1cmvvcj, feedback 1). Until the halved step size
+# has retained draws to measure it on, the estimate is the leapfrog scaling of
+# one minus the acceptance rate with the squared step size: a quarter of the
+# dropped draws' shortfall (0.8 → 0.95). At most `_MAX_STEPSIZE_HALVINGS` per
+# run, after which the draws are returned with a warning. Returns whether it
+# halved.
+_halve_stepsize!(state::AWMState) = begin
+    state.n_divergent_samples > state.divergence_tolerance * state.n_samples || return false
+    if state.stepsize_halvings >= _MAX_STEPSIZE_HALVINGS
+        @warn "adaptive_warmup_mcmc: $(state.n_divergent_samples) of the " *
+              "$(state.n_samples) returned draws are divergent (more than " *
+              "divergence_tolerance = $(state.divergence_tolerance)) after " *
+              "$(state.stepsize_halvings) step-size halvings. Returning them."
+        return false
+    end
+    state.stepsize_halvings += 1
+    state.stepsize /= 2
+    achieved = _retained_acceptance(state)
+    state.target_acceptance = _clamp_target_acceptance(1 - (1 - achieved) / 4)
+    state.acceptance_pending = true
+    _drop_retained_draws!(state)
+    # Past `stepsize_adaptation_limit` the next transition is retained under the
+    # frozen kernel, now with the halved step size; this also keeps the progress
+    # counter at `stepsize_adaptation_limit + n_samples`, as after a restart.
+    state.current_transition_counter = state.stepsize_adaptation_limit
+    true
+end
+
+# Dual averaging needs a target strictly below 1.
+const _MAX_TARGET_ACCEPTANCE = 0.999
+_clamp_target_acceptance(x) = clamp(x, 0.0, _MAX_TARGET_ACCEPTANCE)
+_retained_acceptance(state::AWMState) = state.retained_acceptance_sum / state.n_samples
+
+# At a window end: once the halved step size has retained more than 10 draws,
+# its effective acceptance rate is their mean acceptance statistic.
+_measure_target_acceptance!(state::AWMState) = begin
+    state.acceptance_pending && state.n_samples > 10 || return state
+    state.target_acceptance = _clamp_target_acceptance(_retained_acceptance(state))
+    state.acceptance_pending = false
+    state
+end
+
+# Move the retained draws to `dropped_*` and zero what counts them: at a restart
+# and at a step-size halving. The recorder's halo is NOT touched here.
+_drop_retained_draws!(state::AWMState) = begin
+    (; recording_lpdf) = state
+    # Preserve what is about to be thrown away, BEFORE any counter is zeroed. The
+    # checkpoint is written after the window ends, so without this copy its
+    # payload carries no draws at all — see `AWMState.dropped_posterior_position`
+    # and `checkpoint_payload`.
+    state.dropped_posterior_position = Matrix{Float64}(recording_lpdf.posterior_position)
+    state.dropped_posterior_gradient = Matrix{Float64}(recording_lpdf.posterior_gradient)
+    state.dropped_n_divergent_samples = state.n_divergent_samples
+    state.steps_per_draw = OnlineStatsBase.Mean()
+    state.n_divergent_samples = 0
+    state.retained_acceptance_sum = 0.0
+    # The draws are gone, so their sampling cost goes with them: the next epoch
+    # re-accumulates from zero.
+    state.sampling_evaluation_counter = 0
+    # `n_samples` mirrors `size(posterior_position, 2)`, and the CP-N checkpoint
+    # is serialized after this, so it must be zeroed with the draws: a stale value
+    # would pair a non-zero `n_samples` with zero retained draws in the payload.
+    state.n_samples = 0
+    reset!(recording_lpdf.posterior_position)
+    reset!(recording_lpdf.posterior_gradient)
+    state
+end
+
+_grow_window!(state::AWMState) = begin
+    # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
+    state.n_evaluations *= 2
+    # Recompute the thinning factor for the intermediate positions and gradients,
+    # so the larger window still fills exactly the `recording_target`-slot ring.
+    state.recording_lpdf.recorder.thin = max(1, state.n_evaluations ÷ state.recording_target)
+    state
+end
+
 # Update every linear transformation candidate from the window's evidence and
 # return the one to activate: the smallest loss. Only a finite loss is evidence —
 # `update_loss!` scores `Inf` where the window could not measure a frame's fit —
@@ -775,10 +893,12 @@ init_state(
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
+    divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
     linear_metric_fallback=true, max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...
 ) = begin
     max_divergent_fraction = _validate_max_divergent_fraction(max_divergent_fraction)
+    divergence_tolerance = _validate_divergence_tolerance(divergence_tolerance)
     _validate_linear_trajectory_weighting(linear_trajectory_weighting)
     _validate_linear_restart_source(linear_restart_source, linear_trajectory_weighting)
     start_time = time_ns()
@@ -870,7 +990,7 @@ init_state(
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     state = AWMState(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
-        max_divergent_fraction,
+        max_divergent_fraction, divergence_tolerance,
         linear_restart_source, linear_trajectory_weighting,
         linear_metric_fallback, nonlinear_adapt,
         # `max_reflections` reaches `update_loss!` through these, and never the
@@ -887,7 +1007,7 @@ init_state(
         false, 0,
         current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
-        restart, n_samples, 0,
+        restart, n_samples, 0, 0, stepsize_adaptation.δ, false, 0.0,
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
     )
     _initial_chain_progress!(progress, current_transition_counter, state)
@@ -991,6 +1111,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             append!(recording_lpdf.posterior_position, state.position_and_gradient.q)
             append!(recording_lpdf.posterior_gradient, state.position_and_gradient.∇ℓq)
             is_divergent && (state.n_divergent_samples += 1)
+            state.retained_acceptance_sum += stats.acceptance_rate
             # ... and charge this transition's gradient evaluations to the
             # retained-epoch sampling counter: this is the ONLY arm that appends
             # a draw, so the counter holds exactly the sampling cost behind
@@ -1022,44 +1143,32 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
 end
 
 _finish_outer_iteration!(state::AWMState) = begin
-    (; progress, lpdf, recording_lpdf, stepsize_adaptation) = state
+    (; progress, lpdf, recording_lpdf) = state
     if state.monitor_ess && state.n_samples > 10
         state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
         _ess_progress!(progress, state)
     end
-    state.n_samples < state.n_draws || _divergence_gate!(state) || return state
-    # Double the targeted number of GRADIENT EVALUATIONS in the next warm-up window
-    state.n_evaluations *= 2
-    # Recompute the thinning factor for the intermediate positions and gradients,
-    # so the larger window still fills exactly the `recording_target`-slot ring.
-    recording_lpdf.recorder.thin = max(1, state.n_evaluations ÷ state.recording_target)
+    _measure_target_acceptance!(state)
+    # A window that reached `n_draws` returns its draws, unless the divergence gate
+    # restarts warm-up or the opt-in step-size halving resamples them.
+    if state.n_samples >= state.n_draws && !_divergence_gate!(state)
+        _halve_stepsize!(state) || return state
+        return _grow_window!(state)
+    end
+    _grow_window!(state)
     state.restart || return state
-    # Preserve what this restart is about to throw away, BEFORE any counter is
-    # zeroed or `reset!(recording_lpdf)` runs at the end of this function. The
-    # checkpoint is written after this call returns, so without this copy a
-    # restarting window's payload carries no draws at all — see
-    # `AWMState.dropped_posterior_position` and `checkpoint_payload`.
-    state.dropped_posterior_position = Matrix{Float64}(recording_lpdf.posterior_position)
-    state.dropped_posterior_gradient = Matrix{Float64}(recording_lpdf.posterior_gradient)
-    state.dropped_n_divergent_samples = state.n_divergent_samples
+    _drop_retained_draws!(state)
+    # Re-adapt for the effective target a halving recorded, measured or not: the
+    # new epoch's step size is adapted for it, so there is nothing left to measure.
+    state.acceptance_pending = false
+    state.target_acceptance == state.stepsize_adaptation.δ ||
+        (state.stepsize_adaptation = DynamicHMC.DualAveraging(δ=state.target_acceptance))
     state.stepsize = DynamicHMC.final_ϵ(state.stepsize_state)
-    state.stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, state.stepsize)
+    state.stepsize_state = DynamicHMC.initial_adaptation_state(state.stepsize_adaptation, state.stepsize)
     state.stepsize = DynamicHMC.current_ϵ(state.stepsize_state)
     # Reset the so far recorded intermediate and MCMC positions and gradients
     state.current_transition_counter = 0
-    state.steps_per_draw = OnlineStatsBase.Mean()
     state.n_divergent = 0
-    state.n_divergent_samples = 0
-    # The draws are gone with `reset!(recording_lpdf)` below, so their sampling
-    # cost goes with them: the next epoch re-accumulates from zero.
-    state.sampling_evaluation_counter = 0
-    # `reset!(recording_lpdf)` below empties `posterior_position`, and `n_samples`
-    # mirrors `size(posterior_position, 2)` — so it must be zeroed with the other
-    # counters. Leaving it stale is invisible internally (every read is preceded by
-    # a fresh assignment in the transition loop) but IS visible to consumers: the
-    # CP-N checkpoint is serialized after this reset, so the payload would pair a
-    # non-zero `n_samples` with zero retained draws.
-    state.n_samples = 0
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.
     uses_running_restart = _uses_running_linear_restart(state.linear_restart_source)
@@ -1126,6 +1235,8 @@ finalize_warmup!(state::AWMState) = begin
         linear_metric_fallback=state.linear_metric_fallback,
         linear_metric_fallbacks=state.linear_metric_fallbacks,
         stepsize=state.stepsize,
+        stepsize_halvings=state.stepsize_halvings,
+        effective_target_acceptance_rate=state.target_acceptance,
         total_evaluation_counter=state.total_evaluation_counter,
         sampling_evaluation_counter=state.sampling_evaluation_counter,
         n_divergent_samples=state.n_divergent_samples,
@@ -1151,7 +1262,8 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 #   * `energy_options`/`kinetic_energy` — pure functions of `scale_options`
 #     (which they alias), rebuilt on resume;
 #   * **CONFIG** — `n_draws`, `stepsize_adaptation_limit`, `variance_cond_target`,
-#     `max_divergent_fraction`, `linear_restart_source`, `linear_trajectory_weighting`,
+#     `max_divergent_fraction`, `divergence_tolerance`, `linear_restart_source`,
+#     `linear_trajectory_weighting`,
 #     `linear_metric_fallback`, `nonlinear_adapt`,
 #     `monitor_ess`, `recording_target`, `kwargs`, `algorithm` and
 #     `stepsize_adaptation` all used to live here. They are caller-owned
@@ -1215,6 +1327,13 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # so a resumed run keeps its bound. ADDITIVE as well: a checkpoint written before
 # the key existed resumes with the count at zero.
 #
+# `stepsize_halvings` counts the opt-in halvings (`_halve_stepsize!`), and
+# `target_acceptance`, `acceptance_pending` and `retained_acceptance_sum` carry
+# the effective target acceptance they recorded (see `AWMState`), so a resumed
+# run keeps the bound and adapts for that target. ADDITIVE: an older checkpoint
+# resumes with no halving and the call's `target_acceptance_rate`. `stepsize` is
+# already the halved value.
+#
 # `nonlinear_recorder.mode` and `custom_candidate_scoring` are both DECLARED
 # state. The EFFECTIVE evidence mode is a function of the two rather than a
 # stored key, because a plan silently reads `:linear_pool` as online
@@ -1247,6 +1366,8 @@ checkpoint_payload(state::AWMState) = (;
     state.window_in_progress, state.current_evaluation_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
     state.restart, state.n_samples, state.divergence_gate_restarts,
+    state.stepsize_halvings, state.target_acceptance, state.acceptance_pending,
+    state.retained_acceptance_sum,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(state.lpdf),
@@ -1728,6 +1849,7 @@ end
 restore_state(p, lpdf, progress;
     n_draws=1000, stepsize_adaptation_limit=50, variance_cond_target=2.,
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
+    divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=nothing, linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
@@ -1740,6 +1862,11 @@ restore_state(p, lpdf, progress;
     _check_schema_version(p)
     _check_candidate_scoring_compatible(p, lpdf)
     _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
+    # The call's target, unless a halving recorded a higher effective one.
+    halvings = get(p, :stepsize_halvings, 0)
+    target_acceptance = halvings > 0 ?
+        max(Float64(target_acceptance_rate), get(p, :target_acceptance, 0.0)) :
+        target_acceptance_rate
     lpdf_dimension = LogDensityProblems.dimension(lpdf)
     p.dimension == lpdf_dimension || throw(DimensionMismatch(
         "checkpoint holds a $(p.dimension)-dimensional problem but the supplied " *
@@ -1787,11 +1914,12 @@ restore_state(p, lpdf, progress;
     AWMState(
         lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
         _validate_max_divergent_fraction(max_divergent_fraction),
+        _validate_divergence_tolerance(divergence_tolerance),
         restored_linear_source, restored_linear_weighting,
         linear_metric_fallback, nonlinear_adapt,
         monitor_ess, p.recorder.target, (; kwargs...),
         DynamicHMC.NUTS(; max_depth=max_tree_depth),
-        DynamicHMC.DualAveraging(δ=target_acceptance_rate), p.dimension,
+        DynamicHMC.DualAveraging(δ=target_acceptance), p.dimension,
         progress, time_ns(),
         p.rng, recording_lpdf, nonlinear_recorder,
         p.position, p.scale_options, energy_options, p.active_transformation,
@@ -1805,6 +1933,8 @@ restore_state(p, lpdf, progress;
         p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,
         p.restart, p.n_samples, get(p, :divergence_gate_restarts, 0),
+        halvings, Float64(target_acceptance), get(p, :acceptance_pending, false),
+        get(p, :retained_acceptance_sum, 0.0),
         # Carried forward, never read back into the sampler. `get` (not `p.x`) so
         # a checkpoint written before these keys existed still resumes — they are
         # ADDITIVE, which is why `checkpoint_schema_version` does NOT move.
@@ -1864,6 +1994,18 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   run. Past that bound the draws are returned with a warning: re-adapting in
   place cannot rescue a chain whose position is the problem, and rerunning is
   the caller's job.
+* Opt-in (`divergence_tolerance` below 1): when more than `divergence_tolerance`
+  of the draws of that window diverged and the gate did not restart, halves the
+  step size, drops the draws and samples `n_draws` new ones under the same metric
+  from where the chain is, without re-adapting anything. For targets whose
+  curvature varies strongly everywhere, such as the regularised horseshoe. Each
+  halving costs about twice the gradient evaluations per draw. It also records
+  the acceptance rate the halved step size achieves (the mean acceptance
+  statistic of its draws, estimated as 0.8 → 0.95 until measured), and every
+  later step-size adaptation targets that rate instead of
+  `target_acceptance_rate`, under whatever metric and centering a restart
+  picks. At most three halvings per run; past that the draws are returned with
+  a warning.
 
 If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
 [`ReparametrizedProblem`](@ref), the active [`IndexedReparametrization`](@ref)
@@ -1973,6 +2115,14 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   `n_draws`: when more than this fraction of the retained draws diverged, warm-up
   restarts instead of returning them (at most twice per run, see above). `1.0`
   switches it off; `0` restarts on any divergent draw.
+* `divergence_tolerance=1.0` — opt-in step-size halving on the same window: when
+  more than this fraction of the retained draws diverged, the step size is halved
+  and the draws are resampled (at most three times per run, see above). `1.0`
+  (default) switches it off; `0` halves on any divergent draw. The returned
+  `stepsize_halvings` says how often it fired, `stepsize` is the halved value
+  and `effective_target_acceptance_rate` the rate later adaptation targets (the
+  call's `target_acceptance_rate` when it never fired): pass it as
+  `target_acceptance_rate` to the next fit of the same model to start there.
 * `linear_restart_source=:halo` — source for that condition number. The
   running alternatives above replace (rather than supplement) the halo-only
   criterion and retain `sum(w)` plus `sum(w^2)` for general weighted moments.
@@ -2045,7 +2195,8 @@ off, and with them off the run is byte-for-byte identical to the plain sampler.
 For the single-chain method, a `NamedTuple` with fields including
 `initial_position`, `halo_position`, `halo_gradient`,
 `posterior_position`, `posterior_gradient`, `ess`, `scale_options`,
-`active_transformation`, `stepsize`, `total_evaluation_counter`,
+`active_transformation`, `stepsize`, `stepsize_halvings`,
+`effective_target_acceptance_rate`, `total_evaluation_counter`,
 `sampling_evaluation_counter`,
 `n_divergent_samples`, `position_and_gradient`, `scale_changes`.
 For the multi-chain method, a `Vector` of such `NamedTuple`s.
@@ -2097,6 +2248,9 @@ adaptive_warmup_mcmc(
     # Divergence gate on the window that reaches `n_draws`; see `_divergence_gate!`.
     # Config, not state: a resume takes it from the call.
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
+    # Opt-in step-size halving on that window; see `_halve_stepsize!`. `1.0`
+    # (default) is off. Config, not state: a resume takes it from the call.
+    divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=nothing,
     linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
@@ -2148,7 +2302,7 @@ adaptive_warmup_mcmc(
                 nonlinear_good_leaf_threshold=something(
                     nonlinear_good_leaf_threshold, log(1e-2),
                 ),
-                variance_cond_target, max_divergent_fraction,
+                variance_cond_target, max_divergent_fraction, divergence_tolerance,
                 linear_restart_source=something(linear_restart_source, :halo),
                 linear_trajectory_weighting=something(linear_trajectory_weighting, :unit),
                 linear_metric_fallback, max_reflections,
@@ -2160,7 +2314,7 @@ adaptive_warmup_mcmc(
             restore_state(
                 resumed, lpdf, progress;
                 n_draws, stepsize_adaptation_limit, variance_cond_target,
-                max_divergent_fraction,
+                max_divergent_fraction, divergence_tolerance,
                 linear_restart_source, linear_trajectory_weighting,
                 linear_metric_fallback,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,

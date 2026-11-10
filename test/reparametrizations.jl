@@ -40,6 +40,22 @@ end
     @test y ≈ xv[2] + xv[1] * exp(xv[3])
 end
 
+# A callable struct is called like a `Function` (it used to be taken for a
+# constant and fail later inside `reparam`; snag regularised-hors-bcdcdd84).
+struct _LogScaleSum{I}
+    idx::I
+end
+(f::_LogScaleSum)(x) = sum(x[i] for i in f.idx)
+
+@testset "Reparametrization with callable-struct args" begin
+    r = Rep(PC(1.0), PC(0.0), 0.0, _LogScaleSum((2, 3)))
+    xv = [0.9, 0.5, 0.2]
+    ljac, y = reparam(r, xv[1], xv)
+    @test ljac ≈ xv[2] + xv[3]
+    @test y ≈ xv[1] * exp(xv[2] + xv[3])
+    @test reparam(r, xv[1], xv) == reparam(Rep(PC(1.0), PC(0.0), 0.0, x -> x[2] + x[3]), xv[1], xv)
+end
+
 @testset "IndexedReparametrization round-trip + passthrough" begin
     n = 5
     loc_idx, scale_idx = 4, 5                     # not among the transformed dims ⇒ passthrough

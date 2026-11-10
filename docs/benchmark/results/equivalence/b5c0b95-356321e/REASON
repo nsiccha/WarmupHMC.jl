@@ -1,0 +1,74 @@
+b5c0b95..356321e produces identical output in all four funnel arms of the reparametrization driver, excluding timing and provenance. fdd4587 adds opt-in step-size halving (`divergence_tolerance`, default 1.0 = off) and the effective target acceptance it records, which never fire and never change the dual-averaging target unless a caller opts in; no benchmark harness passes `divergence_tolerance`. It also calls a callable-struct `Reparametrization` accessor, where every harness passes closures or numbers, which select the same behaviour as before. 356321e only adds construction-time validation of those accessors: it can throw at construction but never changes a computed value, and the closures and Float64 constants this repository's harnesses pass satisfy it.
+
+Evidence: fresh runs of docs/benchmark/run_reparam_benchmark.jl from clean
+scratch clones of b5c0b956e3373ee35070200f24e490b56cc43ea4 and
+356321e7e1af716eb7d5db473e94d62752c0d0b5 (canonical dev), on gordito on
+2026-11-10:
+
+    WHMC_BENCH_TARGETS=funnel WHMC_BENCH_SEEDS=1 WHMC_BENCH_DRAWS=1000
+    WHMC_BENCH_AD=enzyme WHMC_BENCH_OUT=<side-output>
+    julia --startup-file=no --project=<side-checkout>/docs/benchmark <side-checkout>/docs/benchmark/run_reparam_benchmark.jl
+
+Both sides used Julia 1.10.12 and one BLAS thread. Each side's
+docs/benchmark environment was resolved through lib-resolve.sh with the same
+overlays: Enzyme 0.13.218 at 7532e0b525b14d39e075ae11608c4c29b002c435
+(dogfood, declared libEnzyme 10018598600593e88b99090bb231755ad3ce5d53 for
+LLVM 15 on both sides) and Treebars 0.1.6 at
+e03f2c7be5579fafce38d8759b531a6e22996ba5. ReparametrizableDistributions
+0.3.0 at 8f7d382df700d3780ed31d093bc4983d3734a6c6 is on the 356321e side
+only, because b5c0b95 predates that dependency. 356321e admits
+LogExpFunctions 1.x where b5c0b95 does not, so the 356321e side was pinned
+to b5c0b95's LogExpFunctions 0.3.29 and Gamma 1.1.0, and both sides were
+re-resolved with every version preserved. All 181 common dependency entries
+other than WarmupHMC then match exactly in version and source;
+environment.tsv records them.
+
+Both processes exited 0 with four successful runs each and no failed runs.
+Both record src_dirty=false and worktree_dirty=false. Every line of the two
+runs.json files is identical outside the EQUIV_VOLATILE fields (wall_s,
+ess_min_per_s and provenance), checked with verify_equivalence. As a
+negative control, changing one grad_evals value in a scratch copy of
+after/runs.json made verify_equivalence reject the record; restoring the
+original bytes passed again.
+
+Scope: the src/ delta b5c0b95..356321e is the delta of the previous record
+b5c0b95-1f274a2 (canonical e7f7ed8 is code-identical to 1f274a2) plus two
+landings. Snag regularised-hors-bcdcdd84 (67bafc1, de17547, 408b5a7;
+canonical fdd4587) touches adaptive_warmup_mcmc.jl,
+completion_warmup_mcmc.jl, kwarg_validation.jl and Reparametrizations.jl.
+Snag built-an-indexed-3fed939c (f920651; canonical 356321e) touches
+Reparametrizations.jl only. That second landing added no record of its own,
+so this one record covers both hops to the live tip. With
+`divergence_tolerance` at its default, `_halve_stepsize!` returns before
+any effect. The only other per-transition work added is a sum of the
+acceptance statistic over retained draws, which consumes no randomness. At
+a restart the dual-averaging object is rebuilt only when the recorded
+target differs from the current one, which needs a halving. The shared
+`_drop_retained_draws!` empties the retained draws a few statements
+earlier than before, before the reparametrization and transformation
+reselection, which read only the halo. `maybecall` now treats a `Number`
+as a constant and calls everything else, where before it called a
+`Function` and treated everything else as a constant. The two rules agree
+on closures and numbers, the only accessor arguments any harness passes.
+f920651 adds `_is_accessor` / `_check_accessors`, which the
+`IndexedReparametrization` constructor runs once on its first pair: they
+throw for an argument that is neither `Real` nor callable and otherwise
+return `nothing`, and its other edits are docstrings and error text. A
+harness whose accessors failed that check (the BRM harnesses build theirs
+inside BRM) would stop with an error, not produce different numbers.
+The benchmark driver and docs/benchmark/Project.toml are byte-identical
+across the two measured revisions; common.jl differs only in comments and
+the dirty-source check's inclusion of ext/.
+
+Limits: one seed and the four funnel arms provide output-identity
+evidence, not a timing or performance claim. This does not re-measure
+posteriordb, BRM, linear-restart, nonlinear-weighting or gradient-overhead
+artifacts. Their continued applicability rests on the source-path
+reasoning above. The four SCOPEd gradient probes, measured at fbe9030 and
+b35a718, are code-identical to b5c0b95 within their scope
+(src/Reparametrizations.jl, src/WarmupHMC.jl, ext/), and the scoped
+changes since are the `maybecall` dispatch and the construction-time
+check above. Runs that opt into
+`divergence_tolerance` have deliberately new behaviour and are outside
+this benchmark-equivalence claim; bench/horseshoe_divergences.jl and
+test/stepsize_halving.jl cover them.

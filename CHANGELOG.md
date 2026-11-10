@@ -38,9 +38,12 @@ Numbers quoted here must come from a checked-in artifact under
   `adaptive_warmup_mcmc` (and so on `completion_warmup_mcmc`). When more than
   that fraction of the draws of the window that reaches `n_draws` diverged, the
   step size is halved and the draws are resampled from where the chain is,
-  without re-adapting; at most three times per run, kept across restarts and
-  resumes. Default `1.0` (off): runs that do not opt in are unchanged.
-  The result and the checkpoint carry the new `stepsize_halvings` count.
+  without re-adapting; at most three times per run. A halving also records the
+  acceptance rate the halved step size achieves, and every later step-size
+  adaptation (after a restart, or in a resumed run) targets that rate instead of
+  `target_acceptance_rate`. Default `1.0` (off): runs that do not opt in are
+  unchanged. The result carries `stepsize_halvings` and
+  `effective_target_acceptance_rate`; the checkpoint carries the halving state.
   `completion_warmup_mcmc`'s stuck-chain check compares step sizes before any
   halving. `bench/horseshoe_divergences.jl` is the reproduction.
 

@@ -20,7 +20,8 @@
 # e.g. `center_halve`. Columns: arm, seed, admitted chains, divergent draws, draws,
 # % divergent, per-chain divergences, max R-hat, min bulk ESS, min tail ESS,
 # sampling and total gradient evaluations, per-chain step sizes, per-chain
-# step-size halvings, seconds.
+# step-size halvings, per-chain effective target acceptance, restarts that came
+# after a halving (when the recorded effective target was used), seconds.
 using LinearAlgebra, Random, Statistics, Printf
 using LogDensityProblems, DifferentiationInterface, Enzyme, MCMCDiagnosticTools
 using WarmupHMC
@@ -164,8 +165,15 @@ function fit_row(arm, seed)
     d = simulate(seed)
     lpdf = center ? ReparametrizedProblem(hs_centering(d), HSProblem(d), AutoEnzyme()) : HSProblem(d)
     rngs = [Xoshiro(1000seed + c) for c in 1:4]
+    # A window that ends with `current_transition_counter == 0` restarted.
+    restarts_after_halving = Threads.Atomic{Int}(0)
+    count_restarts(state, stage) = begin
+        stage === :window && state.stepsize_halvings > 0 && state.current_transition_counter == 0 &&
+            Threads.atomic_add!(restarts_after_halving, 1)
+        false
+    end
     t = @elapsed out = completion_warmup_mcmc(rngs, lpdf; min_completed=3, n_draws=300,
-                                               progress=nothing, kw...)
+                                               progress=nothing, callback=count_restarts, kw...)
     res = out.results
     s = summarize(res)
     ndiv = sum(r.n_divergent_samples for r in res)
@@ -177,7 +185,8 @@ function fit_row(arm, seed)
              sum(r.total_evaluation_counter for r in res),
              join((@sprintf("%.3g", r.stepsize) for r in res), "/"),
              join((r.stepsize_halvings for r in res), "/"),
-             @sprintf("%.1f", t)], '\t')
+             join((@sprintf("%.3f", r.effective_target_acceptance_rate) for r in res), "/"),
+             restarts_after_halving[], @sprintf("%.1f", t)], '\t')
 end
 
 const ALL_ARMS = "default,halve,halve01,tar95,tar99,center,center_halve"

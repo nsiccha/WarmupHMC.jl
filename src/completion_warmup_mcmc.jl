@@ -55,11 +55,13 @@ _validate_max_admitted_divergent_fraction(f) = begin
     Float64(f)
 end
 
-# The step size dual averaging adapted, before any opt-in halving
-# (`divergence_tolerance`, `_halve_stepsize!`): what the stuck check compares. A
-# halving answers divergences, which the divergence check judges; it is not a
-# collapsed adaptation, and a chain that halved while its siblings did not must
-# not look stuck for it. `x` is a sampler state, a result or a checkpoint payload.
+# The step size before any opt-in halving (`divergence_tolerance`,
+# `_halve_stepsize!`): what the stuck check compares. A halving answers
+# divergences, which the divergence check judges; it is not a collapsed
+# adaptation, and a chain that halved while its siblings did not must not look
+# stuck for it. Exact until a restart re-adapts for the recorded effective
+# target acceptance; after one, the leapfrog-scaling approximation the halving
+# itself assumes. `x` is a sampler state, a result or a checkpoint payload.
 _adapted_stepsize(x) = ldexp(Float64(x.stepsize),
     hasproperty(x, :stepsize_halvings) ? x.stepsize_halvings : 0)
 

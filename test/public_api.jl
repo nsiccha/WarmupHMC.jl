@@ -110,6 +110,7 @@ const PUBLIC_RESULT_FIELDS = [
     :linear_metric_fallbacks,
     :stepsize,
     :stepsize_halvings,
+    :effective_target_acceptance_rate,
     :total_evaluation_counter,
     :sampling_evaluation_counter,
     :n_divergent_samples,

@@ -29,6 +29,22 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.16
+
+### Fixed
+
+- `IndexedReparametrization` rejects at construction an accessor (location or
+  log-scale argument) that is neither a `Real` constant nor callable, naming the
+  argument and the index; it used to fail only later, inside the centering or
+  its gradient (snag `built-an-indexed-3fed939c`). It complements 0.2.15's
+  callable-struct accessor fix.
+- Its error for pairs without one concrete type now names the first pair's
+  concrete rule type (the widened element type hid it) and the remedy: one
+  accessor type for every pair, such as closures built at one place or one
+  callable struct holding either a coordinate or a constant. The docstring
+  says what widens the type: constants in some pairs beside closures in
+  others, and closures written at different places in the source.
+
 ## 0.2.15
 
 ### Added

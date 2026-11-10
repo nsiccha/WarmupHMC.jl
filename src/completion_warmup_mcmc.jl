@@ -55,6 +55,14 @@ _validate_max_admitted_divergent_fraction(f) = begin
     Float64(f)
 end
 
+# The step size dual averaging adapted, before any opt-in halving
+# (`divergence_tolerance`, `_halve_stepsize!`): what the stuck check compares. A
+# halving answers divergences, which the divergence check judges; it is not a
+# collapsed adaptation, and a chain that halved while its siblings did not must
+# not look stuck for it. `x` is a sampler state, a result or a checkpoint payload.
+_adapted_stepsize(x) = ldexp(Float64(x.stepsize),
+    hasproperty(x, :stepsize_halvings) ? x.stepsize_halvings : 0)
+
 # The admission record of a slot that never reached `n_draws`.
 const _UNJUDGED = (; stuck_reason=nothing, stepsize=nothing, reference_stepsize=nothing,
     divergent_fraction=nothing)
@@ -70,7 +78,8 @@ mutable struct _CompletionState{C}
     results::Vector{Any}
     errors::Vector{Any}
     finished_at::Vector{Union{Nothing,Float64}}
-    # Each slot's step size at its latest checkpoint boundary, or `nothing` while it
+    # Each slot's adapted step size (`_adapted_stepsize`) at its latest checkpoint
+    # boundary, or `nothing` while it
     # keeps no draws there (still initializing, or its window just restarted).
     sampling_stepsizes::Vector{Union{Nothing,Float64}}
     # Each judged slot's admission record; `_UNJUDGED` until it reaches `n_draws`.
@@ -117,7 +126,7 @@ end
 # siblings', which may mean waiting for a sibling to start keeping draws.
 function _admit!(s::_CompletionState, i)
     r = s.results[i]
-    s.admissions[i] = (; stuck_reason=nothing, stepsize=Float64(r.stepsize),
+    s.admissions[i] = (; stuck_reason=nothing, stepsize=_adapted_stepsize(r),
         reference_stepsize=nothing,
         divergent_fraction=r.n_divergent_samples / size(r.posterior_position, 2))
     if s.admissions[i].divergent_fraction > s.admission.max_admitted_divergent_fraction
@@ -200,7 +209,7 @@ function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing
                 s.results[i] = result
                 s.finished_at[i] = now
                 s.sampling_stepsizes[i] = size(result.posterior_position, 2) > 0 ?
-                    Float64(result.stepsize) : nothing
+                    _adapted_stepsize(result) : nothing
                 # Quorum requests a stop at the next checkpoint; it never closes
                 # admission. A full result from the final round is still judged.
                 complete ? _admit!(s, i) : (s.statuses[i] = :stopped)
@@ -298,7 +307,7 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
     for (i, result) in initial_results
         s.results[i] = result
         s.finished_at[i] = 0.0
-        s.sampling_stepsizes[i] = Float64(result.stepsize)
+        s.sampling_stepsizes[i] = _adapted_stepsize(result)
     end
     foreach(i -> _admit!(s, i), sort!(collect(keys(initial_results))))
     _settle_admissions!(s, 0.0)
@@ -428,7 +437,9 @@ reaches `n_draws` counts toward `min_completed` only if
 
 - at most `max_admitted_divergent_fraction` of its retained draws diverged, and
 - its step size is at least `1/stuck_stepsize_ratio` of the median latest step
-  size of its siblings that are keeping draws at that point.
+  size of its siblings that are keeping draws at that point. Both are the step
+  sizes adaptation chose, before any opt-in halving (`divergence_tolerance`): a
+  halving answers divergences, which the first check judges.
 
 Otherwise its status is `:stuck`: it is omitted from `results` and does not
 count, so the quorum waits for chains that pass. While no sibling keeps draws
@@ -473,7 +484,8 @@ thresholds, requested/started/completed/failed/stuck/omitted identities, all
 chain dispositions and captured errors, quorum and stop-request times (seconds
 since worker scheduling begins), and retained draw/divergence counts. Each
 `completion.chains[i]` of a chain that reached `n_draws` also records its
-`stepsize`, `divergent_fraction`, the `reference_stepsize` it was compared with
+adapted `stepsize` (before any halving; the result's own `stepsize` is the one
+it sampled with), `divergent_fraction`, the `reference_stepsize` it was compared with
 (`nothing` when it was not compared: no sibling ever kept draws, the step-size
 check is off, or the divergence check already left it out), and, for a stuck
 chain, `stuck_reason` (`:divergence` or `:stepsize`). A failed chain's `n_samples` is `nothing` because it
@@ -583,7 +595,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
                 user_stop = _fire_callback(callback, state, stage)
                 # Published before the stop query: it can settle a sibling that
                 # waits for a step size to be compared with, and so the quorum.
-                _report_boundary!(control, state.stepsize,
+                _report_boundary!(control, _adapted_stepsize(state),
                     size(state.recording_lpdf.posterior_position, 2))
                 control() || user_stop
             end
@@ -607,7 +619,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
                     complete || error("Complete checkpoint did not restore as a complete chain.")
                     initial_results[i] = result
                 elseif retained > 0
-                    initial_stepsizes[i] = payload.stepsize
+                    initial_stepsizes[i] = _adapted_stepsize(payload)
                 end
             end
         end

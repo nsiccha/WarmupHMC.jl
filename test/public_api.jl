@@ -109,6 +109,7 @@ const PUBLIC_RESULT_FIELDS = [
     :linear_metric_fallback,
     :linear_metric_fallbacks,
     :stepsize,
+    :stepsize_halvings,
     :total_evaluation_counter,
     :sampling_evaluation_counter,
     :n_divergent_samples,
@@ -162,7 +163,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     :n_draws, :n_evaluations, :recording_target,
     # NUTS / step-size adaptation
     :stepsize_adaptation_limit, :target_acceptance_rate, :max_tree_depth,
-    :variance_cond_target, :max_divergent_fraction,
+    :variance_cond_target, :max_divergent_fraction, :divergence_tolerance,
     # linear adaptation
     :linear_restart_source, :linear_trajectory_weighting, :linear_metric_fallback,
     :max_reflections,

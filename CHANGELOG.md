@@ -29,6 +29,27 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.15
+
+### Added
+
+- Opt-in step-size halving for targets that keep diverging at the adapted step
+  size, such as the regularised horseshoe: `divergence_tolerance` on
+  `adaptive_warmup_mcmc` (and so on `completion_warmup_mcmc`). When more than
+  that fraction of the draws of the window that reaches `n_draws` diverged, the
+  step size is halved and the draws are resampled from where the chain is,
+  without re-adapting; at most three times per run, kept across restarts and
+  resumes. Default `1.0` (off): runs that do not opt in are unchanged.
+  The result and the checkpoint carry the new `stepsize_halvings` count.
+  `completion_warmup_mcmc`'s stuck-chain check compares step sizes before any
+  halving. `bench/horseshoe_divergences.jl` is the reproduction.
+
+### Fixed
+
+- A `Reparametrization` location or log-scale given as a callable struct is
+  called on the parameter vector like a `Function`. It used to be taken for a
+  constant and failed later inside `reparam` with a `MethodError`.
+
 ## 0.2.14
 
 ### Added

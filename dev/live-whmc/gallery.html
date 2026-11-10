@@ -6862,6 +6862,14 @@ function htmxoSortState(target) {
 }
 .htmxo-sortable-table tbody tr[id^="row-"][onclick] > td { cursor: pointer; }
 .htmxo-sortable-table tbody tr[id^="detail-"] > td { padding: 0; border: none; }
+/* Column alignment (`ColumnSpec(label; align)`): a number cell sits at the
+   right of its column, and a column's `data-htmxo-align`, on its header and
+   cells, wins over that. Unlayered, as Pico's `td, th { text-align: start }`
+   is; the header's sort button follows its <th> (`text-align: inherit`). */
+td[data-htmxo-number] { text-align: right; }
+:is(th, td)[data-htmxo-align="left"] { text-align: left; }
+:is(th, td)[data-htmxo-align="center"] { text-align: center; }
+:is(th, td)[data-htmxo-align="right"] { text-align: right; }
 /* Hover linking (`link=`): the rows holding the hovered item are tinted and
    outlined; a shown row that holds it in a collapsed group gets a dashed
    outline, labelled on its top edge by the first cell's note. Neither moves

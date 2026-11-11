@@ -7,7 +7,7 @@ target interface, draw orientation, and interpretation of diagnostics before
 using a model whose posterior is unknown. This example examines one recorded
 run, not a comparison of sampling algorithms or a claim about difficult posterior
 geometry. The fit is cached as a small summary; the code receipt below binds that
-summary to the target, random seed, and sampler source.
+summary to the target and random seed, and records the sampler source.
 
 ## Target and run
 
@@ -20,9 +20,10 @@ the [reparametrization guide](../guides/reparametrization.md) explains how to ad
 a map while keeping the model and sampler coordinate conventions explicit.
 
 The following program is the exact source executed for the cached fit. The
-documentation build checks its hash and the package source hash before showing
-its saved output. Sampling is deliberately excluded from the build and CI;
-the remaining calculations and figure construction execute at build time.
+documentation build checks its hash before showing its saved output, and the
+receipt records the package source that ran it. Sampling is deliberately
+excluded from the build and CI; the remaining calculations and figure
+construction execute at build time.
 
 ```@eval
 using WarmupHMC
@@ -162,8 +163,9 @@ draws, RNG state, or checkpoint payload.
 ::: details Reproduce
 
 Run these commands from the repository root after installing the docs
-dependencies. Regenerate only when the example or sampler source changes;
-CI reads the committed summary and checks its receipt.
+dependencies. Regenerate when the example program changes, which the build
+enforces, or to record a run of newer sampler source. CI reads the committed
+summary and checks its program hash.
 
 ```sh
 julia --project=docs bench/docs/run.jl
@@ -172,9 +174,10 @@ julia --project=docs docs/make.jl
 
 ```@example gaussian
 receipt = cache["receipt"]
-ManualCache.table(["Receipt field", "Value"],
-    [[key, receipt[key]] for key in
-     ["created_utc", "julia", "warmuphmc", "base_revision", "program_sha256", "source_sha256", "command"]])
+ManualCache.table(["Receipt field", "Value"], vcat(
+    [[key, key == "command" ? "`" * receipt[key] * "`" : receipt[key]] for key in
+     ["created_utc", "julia", "warmuphmc", "base_revision", "program_sha256", "source_sha256", "command"]],
+    [["source matches this build", ManualCache.source_current(cache) ? "yes" : "no"]]))
 ```
 
 The [cache generator README](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/bench/docs/README.md)
@@ -183,5 +186,7 @@ historical benchmark regeneration belong in the
 [research README](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/bench/README.md).
 The base revision identifies the checkout at cache generation; the source hash
 identifies the package files that actually executed, including uncommitted edits.
+The last row compares that hash with the package source this page was built
+from; "no" means the sampler changed after the recorded run.
 
 :::

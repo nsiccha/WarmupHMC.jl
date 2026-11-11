@@ -118,7 +118,7 @@ repeated runs.
 ```@eval
 using WarmupHMC, AlgebraOfVega, Markdown, JSON
 values = JSON.parsefile(joinpath(pkgdir(WarmupHMC), "docs/build/changing-target.json"))
-locations, positions = values["locations"], values["positions"]
+locations, positions = Float64.(values["locations"]), Float64.(values["positions"])
 plot_data = (
     transition=repeat(collect(eachindex(locations)), 2),
     value=vcat(locations, positions),

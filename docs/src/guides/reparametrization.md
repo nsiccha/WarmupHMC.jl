@@ -35,6 +35,30 @@ the source position supplied to the accessor; do not assume another pair has
 already transformed a coordinate in place. Use floating-point centering values
 when their source endpoints will be adapted.
 
+## Accessor types
+
+All pairs must share one concrete rule type. A callable struct can represent
+either a coordinate lookup or a constant without mixing closure types:
+
+```@example coordinates
+struct Coordinate
+    index::Int
+    value::Float64
+end
+(c::Coordinate)(x) = c.index == 0 ? c.value : x[c.index]
+locations = [Coordinate(3, 0.0), Coordinate(0, 0.5)]
+maps = IndexedReparametrization([
+    i => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(0.0),
+        locations[i], Coordinate(0, log(2.0))) for i in 1:2
+])
+(; concrete_rules=isconcretetype(eltype(maps.pairs)),
+   locations=[c([0.0, 0.0, 1.5]) for c in locations])
+```
+
+The output checks both the retained type and the two accessor behaviours. Keep
+the pair order and accessor meanings unchanged when rebuilding a checkpoint's
+target.
+
 ## Derivatives
 
 A sampling wrapper needs an AD backend in its third constructor argument:
@@ -61,5 +85,5 @@ The default candidate rule can be replaced with a `CandidateScoringPlan` or a
 checkpoint contracts; their complete interfaces belong in the
 [transformation reference](../reference/transformations.md).
 
-The [Gaussian calibration example](../examples/gaussian.md) explains why its
-target needs no nonlinear map and checks the returned model coordinates.
+The [Gaussian calibration example](../examples/gaussian.md) evaluates a
+transformed density and checks its coordinate map and Jacobian.

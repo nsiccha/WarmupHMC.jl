@@ -20,7 +20,6 @@ export default defineConfig({
   cleanUrls: true,
   outDir: 'REPLACE_ME_DOCUMENTER_VITEPRESS', // This is required for MarkdownVitepress to work correctly...
   head: [
-    ['link', { rel: 'icon', href: 'REPLACE_ME_DOCUMENTER_VITEPRESS_FAVICON' }],
     ['script', {src: 'https://cdn.jsdelivr.net/npm/vega@5'}],
     ['script', {src: 'https://cdn.jsdelivr.net/npm/vega-lite@5'}],
     ['script', {src: 'https://cdn.jsdelivr.net/npm/vega-embed@6'}],
@@ -48,7 +47,6 @@ export default defineConfig({
   },
   themeConfig: {
     outline: [2, 3],
-    logo: 'REPLACE_ME_DOCUMENTER_VITEPRESS',
     search: {
       provider: 'local',
       options: {

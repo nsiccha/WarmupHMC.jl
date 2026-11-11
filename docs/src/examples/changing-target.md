@@ -124,7 +124,8 @@ plot_data = (
 figure = data(plot_data) * mapping(:transition => "Transition (count)",
     :value => "Position (dimensionless)"; color=:series => "Sequence") *
     visual(Lines) * config(width=420, height=240,
-        scales=scales(Color=(; palette=["#2a78d6", "#eb6834"])))
+        scales=scales(Color=(; categories=["Target location", "Saved position"],
+            palette=["#2a78d6", "#eb6834"])))
 Markdown.MD(Markdown.Code("vega-lite", AlgebraOfVega.to_json(figure))) # hide
 ```
 

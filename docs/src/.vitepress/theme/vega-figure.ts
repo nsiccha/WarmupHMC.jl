@@ -58,13 +58,14 @@ function vegaConfig(dark: boolean) {
 
 const isDark = () => document.documentElement.classList.contains('dark')
 
-// Every ```vega-lite block on the page. VitePress puts the info string in the
-// wrapper's class; the `[class*=]` form tolerates the other classes it adds
-// (vp-adaptive-theme, and a fallback-highlight class when Shiki does not know
-// the language, which it does not know for vega-lite).
+// @eval emits a VitePress fence; @example's Markdown result emits a plain
+// <pre><code class="language-vega-lite">. Both carry the same JSON.
 const blocks = () =>
   Array.from(
-    document.querySelectorAll<HTMLElement>('div[class*="language-vega-lite"]'))
+    document.querySelectorAll<HTMLElement>(
+      'div[class*="language-vega-lite"] code, pre > code.language-vega-lite'))
+    .map(code => code.closest<HTMLElement>('div[class*="language-vega-lite"]')
+      || code.parentElement!)
 
 function renderOne(wrapper: HTMLElement) {
   const code = wrapper.querySelector('code')

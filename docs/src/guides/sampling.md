@@ -34,7 +34,8 @@ controls.
 Request retained draws with `n_draws`. Warm-up may restart and discard an earlier
 sampling epoch; the returned positions belong to the retained epoch. Treat the
 requested count as a floor, and inspect the actual matrix shape. Set
-`progress=nothing` in batch scripts. The random number generator is explicit,
+`progress=nothing` in batch scripts and `monitor_ess=true` when the run should
+compute ESS without a progress display. The random number generator is explicit,
 which allows independent seeds and avoids reliance on the process-global RNG.
 
 ## Independent chains

@@ -74,38 +74,12 @@ of the wrapper's cost was the backend rather than the method. Note the backend
 package must be loaded for the ADTypes object to work at all, which is why both
 are `using`ed above.
 
-# Why `function_annotation = Enzyme.Const`, and not the bare `AutoEnzyme()`
+The Enzyme branch retains `function_annotation = Enzyme.Const` to reproduce
+this driver's historical configuration. Current package use accepts a bare
+`AutoEnzyme()`; see `docs/src/guides/reparametrization.md`. A result from this
+driver must state the backend configuration actually measured. Historical
+benchmark dumps and their prose timings are no longer part of the manual.
 
-**Continuity, not necessity.** Every checked-in Enzyme artifact was measured
-with `Const`, and changing the backend re-stales all of them at once. Whether to
-switch is an open question (todo `1h9w2kl`), and this function is where the
-switch would go.
-
-Until `1a395ce` ("make a bare AutoEnzyme() work at both AD sites"), a bare
-`AutoEnzyme()` raised `EnzymeMutabilityException: Function argument passed to
-autodiff cannot be proven readonly`, because both AD sites handed Enzyme a
-callable carrying mutable data. `Const` was the workaround. Since that commit,
-the bare backend works, and `docs/src/reparametrization.md` (the note "If you
-are carrying `function_annotation` or `mode`, drop them") reports `Const` as a
-~1.7× pessimization: 0.627 vs 0.385 µs/gradient on the 11-d funnel. That figure
-is prose only; no checked-in artifact backs it yet.
-
-So the Enzyme numbers in `RESULTS.md` describe `AutoEnzyme(; function_annotation
-= Enzyme.Const)`, the configuration those docs tell users to drop. They are
-not the recommended configuration's cost.
-
-Pre-`1a395ce` measurement, kept because it is why `Duplicated` is never the
-answer (funnel, 2000 gradients):
-
-| backend | ns/gradient |
-|---|---|
-| `AutoForwardDiff()` | 931 |
-| `AutoEnzyme(; function_annotation = Enzyme.Const)` | 545 |
-| `AutoEnzyme(; function_annotation = Enzyme.Duplicated)` | 4786 |
-
-All three agreed to 3.3e-16. **Enzyme's own error message suggested
-`Duplicated`**, which was 5.1× slower than ForwardDiff: it allocates and
-propagates a shadow copy of the callable on every call.
 """
 function bench_ad_backend()
     name = lowercase(get(ENV, "WHMC_BENCH_AD", "enzyme"))

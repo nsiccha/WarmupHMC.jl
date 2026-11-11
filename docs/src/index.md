@@ -16,7 +16,7 @@ ManualCache.program("gaussian")
 ```
 
 ```@example start
-using WarmupHMC
+using WarmupHMC # hide
 include(joinpath(pkgdir(WarmupHMC), "docs/cache.jl")) # hide
 Tuple(ManualCache.load_summary()["shape"]) # hide
 ```

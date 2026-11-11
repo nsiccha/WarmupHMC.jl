@@ -370,79 +370,30 @@ reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi
 """
     IndexedReparametrization(pairs)
 
-The container [`ReparametrizedProblem`](@ref) takes: a vector of
-`idx => Reparametrization(...)` pairs. Coordinates not listed pass through
-unchanged, and the log-Jacobians of the listed ones are summed.
+A vector of `index => Reparametrization(...)` pairs for a
+[`ReparametrizedProblem`](@ref). Each index identifies one scalar coordinate in
+the unconstrained position vector. Unlisted coordinates pass through unchanged;
+the wrapper sums the maps' log-Jacobians. An empty vector applies no map and does
+not infer a model's hierarchy.
 
-`idx` is a single, RAW index into the unconstrained parameter vector — one pair
-per scalar coordinate, not per model parameter. Mapping "the 8 group effects" or
-"`sigma`" onto integer positions is the caller's job, and it is the part that
-actually costs effort in practice; `web/src/posteriordb_reparametrizations.jl`
-in this repo does it for a handful of PosteriorDB models and is worth copying
-from.
+Warm-up replaces each pair's source centering in place. Independent adaptive
+chains need independent problem state; the vector-of-RNGs overload copies a
+shared problem, whereas a caller-supplied vector of problems is used as given.
+The cooperative sampler shares a reparametrization across its chains and refits
+it from pooled evidence.
 
-An empty `IndexedReparametrization` is a no-op. That is the default for every
-problem the sampler does not recognise, so an empty one silently samples exactly
-as if there were no reparametrization at all.
+Build the pairs deterministically in the same order and with the same length
+when resuming. Checkpoint controls are restored positionally, so a matching
+model dimension does not establish that a reordered map is compatible. During
+inversion, a transformed coordinate used by another map's location or log-scale
+accessor must precede that dependent map.
 
-See [Reparametrization](@ref) for an executed construction example.
-
-# Mutation, ordering and checkpoints
-
-`pairs` is mutated IN PLACE by warm-up: at every restarting window each entry is
-replaced by one carrying the newly fitted `source` centering. Two consequences:
-
-* **One reparametrized problem per chain.** Every multi-chain sampler gives chain
-  `i` its own `deepcopy` of the `lpdf` you pass, so no two chains ever write the
-  same `IndexedReparametrization` and the object you built is not mutated. (Of the
-  two, `cooperative_warmup_mcmc` shares one reparametrization across its chains
-  and refits it from their pooled evidence.) `adaptive_warmup_mcmc`'s
-  `lpdfs::AbstractArray` method is used exactly as given, so
-  `adaptive_warmup_mcmc(rngs, [make_problem() for _ in rngs])` is the explicit
-  spelling of the default and `fill(lpdf, length(rngs))` is how you deliberately
-  opt back into sharing one.
-* **The order of `pairs` is load-bearing across a checkpoint/resume.** A
-  checkpoint stores only the fitted `source` centerings, as a bare positional
-  list; on resume they are zipped back onto the freshly supplied problem's
-  `pairs` *by position*, and the stored indices are not consulted. If the
-  rebuilt problem enumerates its coordinates in a different order — a
-  `Dict`-driven build, a data-dependent sort — every centering silently lands on
-  the wrong coordinate. A different *length* is not caught gracefully either: it
-  throws `DimensionMismatch`, or, when the overlap collapses to one entry,
-  silently overwrites every pair with that one. Build `pairs` deterministically,
-  in the same order and with the same length, on both sides of a resume.
-  Order also defines accessor dependencies during inversion: if one transformed
-  coordinate is read by another block's `loc` or `log_scale`, put the provider
-  first so its source coordinate is recovered before the dependent block.
-* **The vector element type must retain every accessor's concrete type.** Julia
-  widens a vector that mixes constants and differently typed closures, and AD
-  then fails late inside warm-up. Construction rejects that shape immediately
-  with an `ArgumentError`. Two things widen it:
-  - one pair with a constant where another has a closure (a block with a fixed,
-    known location next to blocks that read it off the vector);
-  - closures written at different places in the source, even with identical
-    bodies: each `x -> x[9]` you write is its own type. Closures built at ONE
-    place, as by a comprehension `[i => Reparametrization(..., x -> x[loc[i]],
-    x -> x[ls[i]]) for i in idxs]`, share a type.
-
-  For heterogeneous blocks, give every pair one accessor type, for example a
-  struct holding either a coordinate or a constant:
-  ```julia
-  struct Coordinate          # need not subtype Function from WarmupHMC 0.2.15
-      i::Int                 # 0 means "use `value`"
-      value::Float64
-  end
-  (c::Coordinate)(x) = c.i == 0 ? c.value : x[c.i]
-  pairs = [
-      [i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(0.0),
-                              Coordinate(9, 0.0), Coordinate(10, 0.0)) for i in 1:8];
-      [i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(0.0),
-                              Coordinate(0, 0.5), Coordinate(0, log(2.0))) for i in 11:13]
-  ]
-  ```
-* **Every accessor argument must be a `Real` or callable.** Construction checks
-  the first pair (all pairs share one type) and throws an `ArgumentError`
-  naming the argument otherwise.
+The vector must retain a concrete rule type. Mixing constants and differently
+typed closures across pairs can widen that type and is rejected at construction.
+Closures created at one source location, for example in a comprehension, share a
+type. For heterogeneous blocks, one callable struct can represent either a
+coordinate lookup or a constant; the [Reparametrization](@ref) guide executes
+that construction. Every accessor argument must be a `Real` or callable.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P

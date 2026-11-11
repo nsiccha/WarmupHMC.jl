@@ -32,9 +32,9 @@
     "transformation": "pathfinder"
   },
   "receipt": {
-    "base_revision": "3b5eaddaef2b14f2a5cad4ede3656c11011dd357",
+    "base_revision": "a47b38ffb29a34e47e35b730931438a7eff7401c",
     "command": "julia --project=docs bench/docs/run.jl",
-    "created_utc": "2026-11-11T00:03:36.442",
+    "created_utc": "2026-11-11T00:11:34.243",
     "dependencies": {
       "DynamicHMC": "3.6.2",
       "LogDensityProblems": "2.2.1",
@@ -42,8 +42,8 @@
       "Pathfinder": "0.10.9"
     },
     "julia": "1.10.12",
-    "program_sha256": "125dbf9a54771c32dc5bea911691b6d7ccfd3be8f67c5d957305fd48e4940b12",
-    "source_sha256": "7f740f75874629b5378f63821aacf045f660c404ba7afb89a010a72d7d4d18f5",
+    "program_sha256": "6b47affcbe0342884ed5261256cbde960443da48d26f90f990c03800bfc5b62f",
+    "source_sha256": "41395c49a8439e7f2ae7588158220016deaf1eeb3c368e0114a586f4b3e973d7",
     "warmuphmc": "0.2.16"
   },
   "shape": [

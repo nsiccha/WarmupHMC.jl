@@ -31,7 +31,7 @@ ManualCache.program("gaussian")
 ```
 
 ```@example gaussian
-using WarmupHMC
+using WarmupHMC # hide
 include(joinpath(pkgdir(WarmupHMC), "docs/cache.jl")) # hide
 target_source = first(split(read(joinpath(pkgdir(WarmupHMC), "bench/docs/gaussian.jl"), String), "\nresult =")) # hide
 include_string(@__MODULE__, target_source) # hide
@@ -58,8 +58,7 @@ rule = Reparametrization(PartiallyCentered(1.0), PartiallyCentered(0.0), 0.0, lo
 wrapped = ReparametrizedProblem(IndexedReparametrization([1 => rule]), Gaussian())
 x = [0.3, -0.4]
 y = [2x[1], x[2]]
-isapprox(LogDensityProblems.logdensity(wrapped, x),
-    log(2.0) + LogDensityProblems.logdensity(Gaussian(), y))
+isapprox(LDP.logdensity(wrapped, x), log(2.0) + LDP.logdensity(Gaussian(), y))
 ```
 
 The sampled run above uses the original Gaussian directly. The view demonstrates
@@ -103,7 +102,8 @@ figure = data(points) * mapping(:mean => "Mean (dimensionless)",
     :sd => "Standard deviation (dimensionless)"; color=:series => "Summary") *
     visual(Scatter; markersize=120) *
     config(width=380, height=240,
-        scales=scales(Color=(; palette=["#2a78d6", "#eb6834", "#eb6834"])))
+        scales=scales(Color=(; categories=points.series,
+            palette=["#2a78d6", "#eb6834", "#eb6834"])))
 Markdown.MD(Markdown.Code("vega-lite", AlgebraOfVega.to_json(figure)))
 ```
 

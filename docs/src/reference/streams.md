@@ -1,5 +1,8 @@
 # Streams and transitions
 
+The signatures below use placeholder arguments and are not standalone programs.
+The [changing-target example](../examples/changing-target.md) executes the fixed-kernel interface.
+
 ## Persistent streams
 
 ```@docs

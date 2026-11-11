@@ -16,6 +16,19 @@ refer to that version's tree.
 - Document the current reparametrization and checkpoint contracts, add an
   installation helper, and remove the internal API catalogue.
 
+## 0.2.18
+
+### Added
+
+- `WarmupHMC.rescore_warmup_checkpoint(lpdf, payload; rtol=1e-10)` returns an
+  independent adaptive checkpoint with the live evaluation and all retained
+  pointwise gradients refreshed under componentwise tolerance checks. It
+  preserves random streams and accumulated adaptation history, restores saved
+  reparametrization controls privately, and carries an audit through later
+  checkpoints. Ordinary resume is unchanged. This supports explicit
+  tolerance-checked continuation after a CPU change, without promising exact
+  cross-CPU trajectories or detecting every change of model or data.
+
 ## 0.2.17
 
 ### Fixed

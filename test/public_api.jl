@@ -32,8 +32,9 @@
 #
 # Covered: the exported names below, the FIELD SET of the NamedTuple returned by
 # `adaptive_warmup_mcmc`, and the keywords it accepts. Not covered: everything
-# under `WarmupHMC.` that is not exported (`docs/src/reference/compatibility.md` defines the
-# same boundary), the element types and array types of those fields, and the numeric
+# under `WarmupHMC.` that is not exported (the documented public exception,
+# `rescore_warmup_checkpoint`, is tested in `checkpoint_rescore.jl`), the element
+# types and array types of those fields, and the numeric
 # values themselves — those are sampler behaviour, not API.
 
 # ---------------------------------------------------------------------------

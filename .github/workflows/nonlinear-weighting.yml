@@ -1,58 +1,7 @@
-# Nonlinear trajectory-weighting benchmark.
-#
-# WHAT IT DOES, AND WHAT IT DELIBERATELY DOES NOT
-#
-# Two jobs, with different natures:
-#
-#   `derive` — DETERMINISTIC, and a real gate. It runs the derivation over the
-#     rows already committed to the repo. Pure arithmetic over a fixed file, so
-#     it is legitimately allowed to fail the build: if it goes red, either the
-#     derivation broke or the artifact did.
-#
-#   `smoke`  — NOISY, and NOT a gate on numbers. It re-runs the measurement
-#     driver in a tiny configuration and uploads its raw rows as an artifact.
-#     It fails only when a run actually fails — never because a policy came out
-#     behind. A benchmark that goes red on an unfavourable result teaches
-#     everyone to stop reading it, and these rows are noisy by nature: the
-#     hosted runner is shared, unpinned in CPU model, and nothing here asserts
-#     byte-identity with the committed rows.
-#
-# So CI proves the driver, the schema and the artifact upload still work. THE
-# NUMBERS WORTH QUOTING DO NOT COME FROM HERE. They come from a deliberate
-# quiet-host run with its SHA and config recorded in the artifact — see
-# `README.md` and the `config` block of `results/nonlinear_weighting/rows.json`.
-#
-# The one non-obvious assertion is in `smoke`: it runs the derivation over the
-# FRESHLY GENERATED rows as well. That asserts nothing about the values, but it
-# does catch the failure this pair is most exposed to — the driver's schema and
-# the derivation's expectations drifting apart, which no amount of re-deriving
-# the committed rows can detect.
-#
-# THE INSTANTIATE STEP IS SHARED with `test.yml`'s `linear-evidence` job — same
-# clone, same branch pin, same develop list. KEEP THE TWO IN STEP; two workflows
-# resolving one environment differently is a difference that shows up as an
-# unreproducible benchmark, not as a red build.
-#
-# ONE CLONE, AND NO `secrets.PAT_TOKEN`
-#
-#   * `Treebars` is UNREGISTERED, so no resolve can find it: `[sources]` is
-#     honoured from Julia 1.11 only, and no `Manifest.toml` is committed
-#     anywhere in this repo (they are all gitignored). Hence the explicit clone
-#     and `Pkg.develop`.
-#   * `--branch main` is not decoration: `main` is Treebars' integration branch
-#     (Treebars decision 09eterf) and carries both `round2`, which
-#     `src/progress.jl` extends AT LOAD TIME, and `interrupt_requested`, which
-#     every WarmupHMC sampler calls. `dev` diverged and lacks the latter;
-#     `perf/step5-typed-slots` is frozen. A stale branch fails before a single
-#     line of this benchmark runs, so it is invisible until it bites. `test.yml`
-#     and the shared docs install script carry the same pin.
-#   * This job needs NO PAT. `bench/research/Project.toml` used to declare
-#     `HTMX`, `HTMXObjects` and `DynamicObjects` — inherited from the canonical
-#     resolve, never imported by any file under `bench/research/` — and one of
-#     them (`HTMXObjects`) is a PRIVATE repo. They were pruned from the
-#     environment, which removes a private-token dependency from this benchmark
-#     entirely rather than making a measurement job depend on a secret. App
-#     rendering lives in `web/`, which is a different environment.
+# Generate a small nonlinear-weighting benchmark, derive its tables, and upload
+# the fresh rows. CI checks execution and schema compatibility, not performance
+# thresholds. Research results are generated locally and are not committed;
+# see bench/research/README.md for reproduction.
 
 name: Nonlinear weighting benchmark
 
@@ -67,7 +16,6 @@ on:
       - '.github/workflows/nonlinear-weighting.yml'
       - 'bench/research/common.jl'
       - 'bench/research/Project.toml'
-      - 'bench/research/results/nonlinear_weighting/**'
       - 'src/**'
   pull_request:
     paths:
@@ -75,7 +23,6 @@ on:
       - '.github/workflows/nonlinear-weighting.yml'
       - 'bench/research/common.jl'
       - 'bench/research/Project.toml'
-      - 'bench/research/results/nonlinear_weighting/**'
       - 'src/**'
 
 permissions:
@@ -87,36 +34,6 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
-  # The committed artifact still derives. Seconds, no unregistered dependency,
-  # no sampler — `nonlinear_weighting.jl` is definitions-only and depends on
-  # JSON plus three stdlibs, which is exactly what lets this job be this cheap.
-  derive:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-      - name: Derive every table and the conclusion from the committed rows
-        run: |
-          julia -e '
-            using Pkg; Pkg.activate(; temp = true); Pkg.add("JSON")
-            include("bench/research/nonlinear_weighting.jl")
-            doc = nw_load(); rows = doc["rows"]
-            isempty(rows) && error("no rows in the artifact")
-            for f in (nw_aggregate_table, nw_paired_table,
-                      nw_paired_median_table, nw_discrimination_table)
-                println(f(rows))
-            end
-            println(nw_conclusion(rows))
-            # The config block is what makes the numbers attributable. A row set
-            # that has lost it is not a result, so treat that as a failure.
-            for k in ("warmuphmc_sha", "seeds", "targets", "resolved_sampler_defaults")
-                haskey(doc["config"], k) || error("config is missing `$k`")
-            end
-          '
-
-  # Re-measure a tiny slice. NOISE IS EXPECTED HERE — see the header.
   smoke:
     runs-on: ubuntu-latest
     steps:
@@ -126,9 +43,8 @@ jobs:
           version: '1'
       - uses: julia-actions/cache@v2
       - name: Instantiate the benchmark environment
-        # SHARED with `test.yml`'s `linear-evidence` job — keep in step. The
-        # branch pin and the absence of a PAT are explained in the header.
-        # Batched into one `Pkg.develop` so the resolver sees both paths at once.
+        # Keep the environment aligned with test.yml's linear-evidence job.
+        # Treebars main supplies the progress API used by the sampler.
         run: |
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           julia --project=bench/research -e 'using Pkg; Pkg.develop([
@@ -161,9 +77,7 @@ jobs:
             println(nw_conclusion(rows))
           '
       - name: Upload the raw rows
-        # RAW ROWS, not a pass/fail verdict — the point of this job. Anyone
-        # comparing a CI run with the committed study downloads this and derives
-        # from it themselves.
+        # Retain the fresh rows for inspection and local derivation.
         if: always()
         uses: actions/upload-artifact@v4
         with:

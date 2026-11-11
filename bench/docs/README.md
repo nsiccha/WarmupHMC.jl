@@ -13,14 +13,18 @@ julia --project=docs docs/make.jl
 ```
 
 The receipt hashes the exact displayed programs and the package's `Project.toml`,
-`src/`, and `ext/` files. The build refuses a mismatched cache. It also records
+`src/`, and `ext/` files. The program hash is the cache key: the build refuses a
+cache whose programs changed. The source hash is provenance: the example page
+reports whether it still matches the source being built, and a sampler commit
+alone does not stop the manual from building. The receipt also records
 Julia and selected dependency versions, the base Git revision, UTC time, and the
 regeneration command. The content hash identifies the executed source even when
 the base revision precedes a documentation commit. The cached program is shown
 with its saved output; it is not rerun in CI. Plot construction and all derived
 tables run in the documentation build.
 
-Run regeneration only when source or example inputs change. Inspect the output
+Regenerate when the example programs change, or to record a run of newer
+sampler source. Inspect the output
 before committing the small JSON summary. This is a local cache contract pending
 the shared documentation fit adapter; it does not claim reproducibility across
 unrecorded dependency changes.

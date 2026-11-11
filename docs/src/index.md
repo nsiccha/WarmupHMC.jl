@@ -22,7 +22,7 @@ Tuple(ManualCache.load_summary()["shape"]) # hide
 ```
 
 The result has one coordinate per row and one draw per column. This program's
-output is cached with a checked source receipt; the build does not repeat the
+output is cached with a checked receipt; the build does not repeat the
 fit. [Gaussian calibration](examples/gaussian.md) shows its moments, diagnostics,
 figure, and reproduction commands.
 

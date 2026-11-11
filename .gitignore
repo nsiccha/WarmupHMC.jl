@@ -14,17 +14,10 @@ getopt
 cache
 tmp
 Manifest.toml
-# The deployed app's environments commit their pinned Manifests (pin-deps.sh).
-!web/Manifest.toml
-!web/app/Manifest.toml
 CLAUDE.md
 
 # Auto-generated HTMXObjects recording outputs — not committed to main
 docs/src/public/live-*/
-
-# (Formerly auto-installed by HTMXObjects.vitepress_theme_install during
-# make.jl. Now committed in-tree because HTMXObjects.jl is private and
-# CI has no PAT_TOKEN to clone it. Re-sync manually when needed.)
 
 # Local byte-identity golden baseline (regenerated via `julia test/golden_awm.jl capture`)
 *.jls
@@ -47,3 +40,9 @@ _freeze/
 *.tgz
 *.jls.gz
 *.csv.gz
+
+# Regenerable research outputs and local documentation environments.
+/bench/research/results/
+/docs/Manifest.toml
+/docs/node_modules/
+/docs/build/

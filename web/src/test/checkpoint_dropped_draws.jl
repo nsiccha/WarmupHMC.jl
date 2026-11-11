@@ -63,7 +63,7 @@
         end
 
         @testset "the keys are ADDITIVE — schema version does not move" begin
-            # Bruno (and any other consumer) errors hard when a payload's
+            # A downstream consumer errors when a payload's
             # `schema_version` exceeds its own constant, so an additive key must not
             # bump it. Consumers read the new keys with `get(payload, key, default)`.
             @test all(p -> p.schema_version == checkpoint_schema_version(), payloads)

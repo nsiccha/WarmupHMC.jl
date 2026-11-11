@@ -618,7 +618,7 @@ kernel hyperparameters are taken from the call. `n_draws` is a FLOOR — resumin
 with a larger value extends the file (new columns zeroed) and keeps sampling; a
 value at or below what is already written returns the existing draws.
 `overwrite=true` discards an existing run and starts fresh. A crash inside the
-very first transition (before draw 1) leaves an unresumable file that simply
+very first transition (before draw 1) leaves an unresumable file that
 restarts from the caller's seed — no draw is ever lost.
 
 The start position, or on resume the last stored draw, is evaluated under the
@@ -757,7 +757,7 @@ stream_mcmc(payload::NamedTuple, lpdf; path, n_draws::Integer,
         n_draws, max_tree_depth, durable, progress, description)
 end
 
-# Checkpoint kernel, EXPLICIT start position. Bruno's case: take the hyperparameters
+# Checkpoint kernel, EXPLICIT start position. Take the hyperparameters
 # (scale/stepsize) FROM the checkpoint, but start each chain from a supplied point
 # (e.g. an equidistant warm-up draw) instead of the checkpoint's single saved
 # position. `rng=nothing` inherits the checkpoint's rng; pass one per chain to fork

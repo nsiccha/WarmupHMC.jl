@@ -1,14 +1,6 @@
 # Cooperative multi-chain warm-up: the chains adapt together.
 #
-# This is the user's original `CooperativeIterativeSampler` (archived at
-# `7be3f39^:src/cooperative_warmup_mcmc.jl`) merged with Bruno's cut sampler
-# (BrunoStan `cooperative_chains`, Bruno `73c5dc06`), per the user's direction of
-# 2026-10-21 22:52 and design decisions `0m327rr` / `0m8p12j`. It replaces the
-# July scheduler around independent adaptive chains, whose 4000-evaluation window
-# cap and geometry-stall parking returned no usable chain on ODLPlaus' AP2 (snag
-# `cooperative-pool-272534b8`).
-#
-# From the original:
+# Metric adaptation:
 #   * every leapfrog state of every chain feeds running position and gradient
 #     moments, from which the Nutpie diagonal scale
 #     `(var(position) / var(gradient))^(1/4)` follows;
@@ -20,12 +12,12 @@
 #     `adaptive_warmup_mcmc` uses for the same statistic, because √2 restarted on
 #     estimate noise alone (snag `cooperative-warm-96ff19ae`);
 #   * no chain is ever parked or abandoned.
-# From Bruno's sampler:
+# Step-size adaptation and pooling:
 #   * the step size: a per-chain fit of κ in acceptance ≈ 2Φ(-κε²), with the pooled
 #     log κ as prior and a backoff on failed transitions;
 #   * the kernel weight between a chain and a pool, on the RMS standardized
 #     distance between their means.
-# From the user's notes on `0m327rr`:
+# Pool structure:
 #   * pooling goes through soft CLUSTERS, so it costs O(chains × clusters × d),
 #     linear in the number of chains and in the dimension. Once the chains have
 #     mixed there is one cluster: the original's single shared estimate;
@@ -130,10 +122,10 @@ _moment_variances(m::CoopMoments) =
     m.weight >= 2 ? m.position_m2 ./ m.weight : fill(NaN, length(m.position_m2))
 
 # =============================================================================
-# Step size: acceptance ≈ (1 - π)·2Φ(-κε²) (Bruno's model, with a failure floor)
+# Step size: acceptance ≈ (1 - π)·2Φ(-κε²) (acceptance model with a failure floor)
 # =============================================================================
 #
-# Bruno's model `2Φ(-κε²)` explains every rejection by the step size. A target
+# The model `2Φ(-κε²)` explains every rejection by the step size. A target
 # whose trajectories leave its support (or hit another step-size-independent
 # failure) rejects at ANY step size, and that model then shrinks ε without bound:
 # on a standard normal truncated at its mode it fell from adaptive's 0.28 to 0.001,
@@ -333,11 +325,9 @@ end
 # warm-up pairs separate κ from the failure floor.
 #
 # A chain still in step-size warm-up has no fixed step size to judge, so it
-# restarts on metric disagreement alone (gain 1). The original instead gave it an
-# infinite gain, restarting every chain whose step-size adaptation had not
-# finished. That throws away a long warm-up at every early batch end: on ODLPlaus
-# AP2, 50 warm-up transitions of ~300 leapfrog steps need ~15k evaluations, more
-# than any of the first four batches holds.
+# restarts on metric disagreement alone (gain 1). An infinite gain here would
+# restart a chain before its step-size adaptation can finish whenever adaptation
+# takes more evaluations than an early batch contains.
 _stepsize_gain(chain::CoopChain, cfg) = begin
     chain.status === :warming && return 1.0
     chain.sampling_start < length(chain.acceptances) || return 1.0
@@ -422,7 +412,7 @@ _chain_location(chain::CoopChain) =
     chain.moments.weight > 0 ? chain.moments.position_mean : chain.position_and_gradient.q
 
 # Per-coordinate spread that standardizes distances: the root mean over chains of
-# each chain's own position variance (Bruno's choice), falling back to the
+# each chain's own position variance (per-chain estimate), falling back to the
 # metric's scale for a chain without states yet.
 _cluster_spread(chains) = begin
     total = zeros(first(chains).dimension)
@@ -1039,7 +1029,7 @@ exists) is refused; `overwrite=true` discards the directory's run.
 
 Returns `(; results, stop_reason, n_used, joint_ess, n_pooled, n_batches,
 total_evaluation_counter, elapsed)`. `results[i]` is chain `i`'s
-[`chain_result`](@ref), its draws in the model frame. `joint_ess` is the pooled
+`chain_result`, its draws in the model frame. `joint_ess` is the pooled
 ESS over the `n_pooled` chains with the most draws (at least `min(2, n_chains)`).
 """
 cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;

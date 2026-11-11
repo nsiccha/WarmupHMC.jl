@@ -31,7 +31,7 @@ end
 
 A target whose log density AND gradient are `NaN` everywhere — the exact shape a
 consumer's error handler produces when it catches the model's own exception and
-returns a number instead of rethrowing (Bruno's `BridgeStanProblem` does this
+returns a number instead of rethrowing (a wrapped target may do this
 around BridgeStan). Used to pin the initialization error contract.
 """
 struct NaNProblem

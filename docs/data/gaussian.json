@@ -1,0 +1,53 @@
+{
+  "checkpoint": {
+    "before": 200,
+    "after": 400,
+    "prefix_preserved": true
+  },
+  "coordinates": [
+    {
+      "coordinate": 1,
+      "ess": 838.4150525041114,
+      "mean": -0.04061759130089304,
+      "mean_mcse": 0.03508879243790431,
+      "q05": -1.7329396144210218,
+      "q95": 1.6682811845212242,
+      "sd": 1.016009937755181
+    },
+    {
+      "coordinate": 2,
+      "ess": 671.7771091299185,
+      "mean": -0.00465748699119702,
+      "mean_mcse": 0.038601169689333546,
+      "q05": -1.6275098336562894,
+      "q95": 1.68270817846434,
+      "sd": 1.000490721557373
+    }
+  ],
+  "diagnostics": {
+    "divergent_draws": 0,
+    "run_gradient_evaluations": 3978,
+    "sampling_gradient_evaluations": 3760,
+    "stepsize": 0.8359035499831646,
+    "transformation": "pathfinder"
+  },
+  "receipt": {
+    "base_revision": "3b5eaddaef2b14f2a5cad4ede3656c11011dd357",
+    "command": "julia --project=docs bench/docs/run.jl",
+    "created_utc": "2026-11-11T00:03:36.442",
+    "dependencies": {
+      "DynamicHMC": "3.6.2",
+      "LogDensityProblems": "2.2.1",
+      "MCMCDiagnosticTools": "0.3.20",
+      "Pathfinder": "0.10.9"
+    },
+    "julia": "1.10.12",
+    "program_sha256": "125dbf9a54771c32dc5bea911691b6d7ccfd3be8f67c5d957305fd48e4940b12",
+    "source_sha256": "7f740f75874629b5378f63821aacf045f660c404ba7afb89a010a72d7d4d18f5",
+    "warmuphmc": "0.2.16"
+  },
+  "shape": [
+    2,
+    1000
+  ]
+}

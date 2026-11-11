@@ -14,7 +14,7 @@
 #
 # WHAT IT PROTECTS
 # ----------------
-# `docs/benchmark/results/*.json` is the single source for the evidence tables.
+# `bench/research/results/*.json` is the single source for the evidence tables.
 # The app and docs both project the shared semantic value; the app also records
 # its interactive routes for the static gallery. A driver that writes a shape
 # the renderer cannot parse would therefore break both consumers. This asserts
@@ -32,7 +32,7 @@ check(name, cond) = cond ? println("  ok    $name") :
                            (println("  FAIL  $name"); push!(failures, name))
 
 keys = WarmupHMCWeb.benchmark_keys()
-println("Found $(length(keys)) results file(s) under docs/benchmark/results/")
+println("Found $(length(keys)) results file(s) under bench/research/results/")
 check("at least one results file is checked in", !isempty(keys))
 
 # --- Every file parses, and parses into something renderable ---

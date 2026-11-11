@@ -6,7 +6,7 @@
 #
 # The README says "Results should come in faster than with 'standard' methods,
 # and should often be better." Until this file, nothing in the repository
-# measured that. The benchmark corpus under `docs/benchmark/` is thorough and
+# measured that. The benchmark corpus under `bench/research/` is thorough and
 # says so itself, in its own § *What this does not measure*: "One sampler.
 # Single-chain `adaptive_warmup_mcmc` only." It compares parametrizations and AD
 # backends — never WarmupHMC against another sampler.
@@ -73,7 +73,7 @@ BLAS.set_num_threads(1)   # required for run-to-run reproducibility at a fixed s
 # `constrained`, `git_provenance`, `env_dir`, `nanmin`/`nanmed`. Reused rather
 # than reimplemented so ESS means the same thing in both benchmarks — see the
 # note in `bench/Project.toml` about the coupling this creates.
-include(joinpath(@__DIR__, "..", "docs", "benchmark", "common.jl"))
+include(joinpath(@__DIR__, "..", "bench", "research", "common.jl"))
 
 import AdvancedHMC
 using JSON, Dates
@@ -84,14 +84,14 @@ const N_DRAWS  = parse(Int, get(ENV, "WHMC_CMP_DRAWS",  "1000"))
 # `bench/Project.toml`) but the RESULTS go where every other measured artifact
 # goes. `docs/src/evidence.md` states, as a property of this repository, that
 # "every measurement cited anywhere in this documentation comes from a JSON file
-# under docs/benchmark/results/", and `docs/evidence.jl` renders that directory
+# under bench/research/results/", and `bench/evidence.jl` renders that directory
 # at build time. Writing somewhere else would make that sentence false the moment
 # a docs page cited this benchmark — and it would do so silently, because the
 # appendix walks a directory and cannot miss a file it was never shown.
 # Landing here instead means this artifact gets an appendix section, and the
-# currency gate in `docs/benchmark/artifact_currency.jl` picks it up, for free:
+# currency gate in `bench/research/artifact_currency.jl` picks it up, for free:
 # both work off `git ls-files` over that directory, neither has a list to update.
-const OUT_DIR  = env_dir("WHMC_CMP_OUT", normpath(joinpath(@__DIR__, "..", "docs", "benchmark", "results")))
+const OUT_DIR  = env_dir("WHMC_CMP_OUT", normpath(joinpath(@__DIR__, "..", "bench", "research", "results")))
 const FUNNEL_K = parse(Int, get(ENV, "WHMC_CMP_FUNNEL_K", "9"))
 
 # REPEATS EXIST BECAUSE ONE OF THE TWO RATE COLUMNS DOES NOT REPRODUCE.
@@ -104,7 +104,7 @@ const FUNNEL_K = parse(Int, get(ENV, "WHMC_CMP_FUNNEL_K", "9"))
 #                                           `ess_min_per_grad` is exact.
 #   `wall_s`                                median relative spread 20–25% run to
 #                                           run, worst pair 98% (measured over
-#                                           four runs on `strato2`, 2026-07-28).
+#                                           four runs on a Linux fleet host, 2026-07-28).
 #
 # The consequence is not academic. `comparison_verdict`'s 10% tie band is
 # NARROWER THAN THAT NOISE, so the wall-clock verdict genuinely moves: the same
@@ -294,7 +294,7 @@ end
 # ---------------------------------------------------------------------------
 
 # NaN is not valid JSON, and a failed arm produces plenty of it. Same convention
-# and same four lines as `docs/benchmark/run_reparam_benchmark.jl:133` — copied
+# and same four lines as `bench/research/run_reparam_benchmark.jl:133` — copied
 # rather than shared because that file is a driver, so including it would run the
 # reparametrization benchmark as a side effect of writing a file.
 jsonsafe(x::AbstractFloat) = isfinite(x) ? x : nothing
@@ -313,7 +313,7 @@ out = joinpath(OUT_DIR, "sampler_comparison.json")
 # --porcelain --untracked-files=no -- <out>` prints nothing before the `open`
 # and ` M <out>` from inside it.
 #
-# It fails in the loudest possible wrong direction. `docs/tables.jl:provenance`
+# It fails in the loudest possible wrong direction. `bench/tables.jl:provenance`
 # renders a dirty flag as "**Recorded from a worktree with uncommitted
 # changes**, so the revision named above does not describe the code that ran —
 # and no revision does", which is a strong and false claim about a measurement
@@ -323,7 +323,7 @@ out = joinpath(OUT_DIR, "sampler_comparison.json")
 # new, and shows up later looking like a real problem with the tree.
 const PROV = git_provenance()
 # Provenance goes INSIDE `config`, merged, not beside it under its own key.
-# `docs/tables.jl:provenance` reads `config` first and falls back to the top
+# `bench/tables.jl:provenance` reads `config` first and falls back to the top
 # level; a `"provenance"` key is neither, so the caption rendered "an
 # **unrecorded** WarmupHMC revision" while the SHA sat in the file two lines
 # away. The one shape that cannot go wrong is a single flat object — there is
@@ -333,7 +333,7 @@ const PROV = git_provenance()
 # `blas_threads` is READ BACK, not asserted. Line 70 sets it to 1, so writing a
 # literal `1` here would agree with reality today and keep agreeing after
 # someone deletes that line — an assertion that cannot go red is the thing the
-# rest of this corpus is built to avoid. Every harness under `docs/benchmark/`
+# rest of this corpus is built to avoid. Every harness under `bench/research/`
 # calls `BLAS.get_num_threads()` for the same reason.
 open(out, "w") do io
     JSON.print(io, jsonsafe(Dict(

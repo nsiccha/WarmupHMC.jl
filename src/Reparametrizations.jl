@@ -68,9 +68,7 @@ while looking like a successful restore.
 
 See [`ReparametrizedProblem`](@ref) for the wrapper this attaches to, and
 [`candidate_scoring_losses`](@ref) for the criterion and the supported ways to
-inspect its loss curve. See also
-[Adaptive centering at fixed `c`](@ref) for a measured comparison of a
-strict-online scoring proxy against an exact-score reference.
+inspect its loss curve.
 """
 struct CandidateScoringPlan{P,S,Y}
     prepare::P
@@ -154,182 +152,26 @@ _synchronize_scoring!(plan::WindowSelectionPlan, ir) =
 """
     ReparametrizedProblem(reparametrizer, problem, ad_backend=nothing; scoring_plan=nothing)
 
-Wrap a `LogDensityProblems`-compatible `problem` in a nonlinear reparametrization
-that warm-up is allowed to ADAPT.
+Wrap a LogDensityProblems target with a coordinate map from sampler coordinates
+(source) to the model's coordinates (target). The transformed density includes
+the map's log-Jacobian. Supply an [`IndexedReparametrization`](@ref), or a custom
+reparametrizer controlled by a [`WindowSelectionPlan`](@ref).
 
-`reparametrizer` is an [`IndexedReparametrization`](@ref), or another
-reparametrizer that a [`WindowSelectionPlan`](@ref) adapts. The sampler works in
-its *source* coordinates; `logdensity` maps a source-coordinate position `x` into
-the coordinates `problem` is written in and adds the log-Jacobian:
+The inner target supplies its own gradient. `ad_backend` differentiates the map
+and Jacobian through DifferentiationInterface; load the implementing AD package
+as well. For Enzyme, load Enzyme and pass `AutoEnzyme()`. The two-argument
+constructor supports log-density evaluation but does not provide a sampling
+gradient. An empty indexed map is the identity and has no controls to adapt.
 
-```julia
-ljac, y = reparametrizer(x)
-logdensity(rp, x) == ljac + logdensity(problem, y)
-```
+`scoring_plan` accepts a [`CandidateScoringPlan`](@ref) or
+[`WindowSelectionPlan`](@ref). The default uses WarmupHMC's candidate rule.
+A custom plan is not serialized; reconstruct the same strategy when resuming a
+checkpoint. Its presence is checked during restoration.
 
-`dimension` and `capabilities` are forwarded to `problem` unchanged.
-
-!!! warning "Nothing happens unless you build the reparametrization yourself"
-    An empty [`IndexedReparametrization`](@ref) is a no-op — and an empty one is
-    exactly what every other problem reports, since
-    `WarmupHMC.reparametrizer(::Any) = IndexedReparametrization([])`. So
-    `nonlinear_adapt=true` (the default on every sampler) changes nothing at all
-    on a plain log-density problem. There is no automatic detection of
-    hierarchical structure: you supply the coordinate indices and the
-    location/log-scale accessors, or nothing is reparametrized.
-
-# Gradients
-
-`logdensity_and_gradient` differentiates only through the reparametrization and
-reuses `problem`'s own gradient, so an inner problem with a native gradient (a
-BridgeStan model, say) keeps providing the expensive part. Writing
-`L(x) = ljac(x) + ld(y(x))`,
-
-```
-∂L/∂x = ∂ljac/∂x + (∂y/∂x)' * ∂ld/∂y
-```
-
-is obtained by AD-ing the scalar `x -> ljac(x) + dot(g_y, y(x))` with `g_y` held
-fixed at the inner gradient — one call to the inner problem plus one AD pass over
-the transform, per gradient evaluation. The transform is therefore on the
-gradient hot path, and the accessor closures in each
-[`Reparametrization`](@ref) run under AD.
-
-`ad_backend` is a DifferentiationInterface.jl backend. DifferentiationInterface
-is a hard dependency of WarmupHMC, so the *interface* is always there, but a
-backend object only works once you load the AD package behind it — `AutoEnzyme`
-needs `using Enzyme`. Constructing the backend object alone is not enough.
-
-Enzyme is the backend this package is developed and measured against, and a
-bare `AutoEnzyme()` is the right spelling: it has the least to configure.
-`docs/benchmark/results/annotation_sweep.json` measures the annotated spellings
-at the same cost within run-to-run noise.
-
-!!! note "`function_annotation` is accepted but is no longer needed"
-    Earlier revisions **required** `AutoEnzyme(; function_annotation =
-    Enzyme.Const)` here, and said so emphatically. That requirement is gone.
-
-    The cause was on this side, not Enzyme's. Both AD sites used to hand Enzyme a
-    callable that carried mutable data — the gradient path built its objective as
-    a closure over the freshly allocated inner gradient `g_y`, and the halo
-    transport built a struct with an `Array` field. Enzyme differentiates the
-    callable itself, so neither could be proven read-only:
-
-        EnzymeMutabilityException: Function argument passed to autodiff cannot be proven readonly
-
-    `function_annotation = Enzyme.Const` silenced that by marking the callable
-    inactive. But `function_annotation` is a property of the **whole backend**, so
-    an annotation needed by those two sites was charged to every gradient.
-
-    Both sites now pass their non-differentiated operands as
-    DifferentiationInterface `Constant` contexts to a top-level function, so
-    nothing mutable rides on the callable. `Const` still works and is still
-    correct. It is simply unnecessary now, because the annotation it applies has
-    nothing left to fix. If you are carrying it from an older version, drop it.
-
-    Enzyme's error text used to suggest `function_annotation =
-    Enzyme.Duplicated`. That hint diagnosed the problem and was never the fix: it
-    allocates and propagates a shadow copy on every call.
-
-!!! warning "This docstring deliberately carries no benchmark figures"
-    It used to, and they went stale three times: a point estimate no aggregation
-    reproduced, then a range that spanned nothing in the repository, then a range
-    correctly derived from every checked-in source that a re-measurement
-    invalidated within minutes. Each fix addressed how the number was *chosen*;
-    none addressed the cause, which is that a docstring is a string evaluated at
-    package load and so cannot read the results JSON the way the manual's tables
-    do. It is the one surface here with no build-time seam, so any figure typed
-    into it is dated silently by the next regeneration and nothing in the build
-    can tell.
-
-    For current numbers read [What the backend costs, measured](@ref); those
-    tables are generated from `docs/benchmark/results/` at build time, so they
-    move when the data moves.
-
-    What is stable enough to state here, and why:
-
-      * **The wrapper costs a small multiple of the wrapped model's own
-        gradient**, and the multiple is a property of the transform, not of the
-        backend. Closing it further needs an analytic adjoint for the
-        reparametrization, not backend tuning.
-      * **The boxing confound is fixed.** The larger targets — `seeds`,
-        `radon_partially_pooled`, `radon_variable_intercept` — were once measured
-        against specs whose accessor closures captured a `Core.Box` (fixed in
-        `e9bcfd0`; see `_index_getter` in
-        `web/src/posteriordb_reparametrizations.jl`). Boxing was perfectly
-        correlated with the apparent ranking — five for five — so those rows
-        measured the defect, not the backend. The probe now reports no boxed spec
-        at all.
-      * **Sampling is unaffected by how a gradient is computed.** ESS per 1000
-        gradients, gradient counts, the fitted `c` and stuck-adaptation counts do
-        not move; the backend sets the cost of a gradient, not how many are
-        needed.
-      * **DifferentiationInterface re-prepares on every call**, and reusing a prep
-        object measured neutral-to-worse — a wash whose sign flips with dimension,
-        against a fixed per-call cost to reach the cache. That conclusion has
-        replicated; the share of the call it represents has not, so it is not
-        quoted here.
-
-A backend is required in practice, and omitting it fails *late*: the
-two-argument constructor `ReparametrizedProblem(r, p)` stores `nothing`, which
-is not a backend, so `logdensity` keeps working on that object and the first
-`logdensity_and_gradient` call `MethodError`s inside `value_and_gradient`.
-Construction itself never complains.
-
-# Candidate scoring
-
-`scoring_plan` attaches a [`CandidateScoringPlan`](@ref), which replaces how a
-candidate reparametrization is scored during warm-up. The default is `nothing`
-and takes the original path — not an equivalent one, the same one — so attaching
-no plan cannot move a result.
-
-A plan supplies `prepare`, `score` and `synchronize!`. `prepare(ir, position,
-gradient)` runs once per online evidence observation and returns a transient
-frame; `score(frame, pair_number, idx, value, candidate)` returns `(ljac,
-position, gradient)`, or `nothing` to fall through to the existing direct
-scoring. `synchronize!(ir)` runs during construction (inside the inner
-constructor, before the problem itself exists), after a winner is committed, and
-after a checkpoint restore — before anything transports or evaluates the
-reparametrization.
-
-The score is a **fixed-frame proxy**: the frame is held fixed while a candidate
-is evaluated, so it does not model every coordinate moving at once. That is a
-deliberate approximation, not an oversight, and it is the reason a plan is opt-in
-rather than the default.
-
-!!! warning "A plan does not survive a checkpoint — re-attach it on restore"
-    A plan is three functions, and checkpoint payloads deliberately exclude the
-    supplied log-density problem, so the plan is not serialized with them. What a
-    checkpoint records is *that* a non-default plan was in force. Restore then
-    fails loudly if that marker and the supplied plan disagree in either
-    direction, rather than falling back to the default. The failure is deliberate:
-    a resumed run that quietly scored differently from the run it resumed would
-    diverge with nothing in the output saying so.
-
-# Example
-
-```julia
-using WarmupHMC, DifferentiationInterface, Enzyme
-
-# Coordinates 2:11 are the group effects; their location is fixed at 0 and their
-# log-scale is half of coordinate 1 (Neal's funnel, `xᵢ ~ Normal(0, exp(v/2))`).
-ir = IndexedReparametrization([
-    i => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0),
-                           0., x -> x[1] / 2)
-    for i in 2:11
-])
-rp = ReparametrizedProblem(ir, my_problem,
-                           AutoEnzyme(; function_annotation = Enzyme.Const))
-result = adaptive_warmup_mcmc(rng, rp)
-```
-
-Returned draws are in the wrapped problem's own parametrization: warm-up applies
-the transform to `posterior_position` before returning. This holds under
-`nonlinear_adapt=false` too — that flag gates whether the centering is *fitted*,
-never which frame the result is reported in, since the sampler works in the
-reparametrizer's source frame either way.
-
-See [Nonlinear reparametrization](@ref) for a runnable end-to-end version.
+Adaptive and cooperative sampling return `posterior_position` in the inner
+model's coordinates, including when `nonlinear_adapt=false`. Do not transform
+those returned positions again. Other working arrays retain sampler coordinates.
+See [Reparametrization](@ref) for construction and coordinate conventions.
 """
 struct ReparametrizedProblem{R,P,B,S}
     reparametrizer::R
@@ -441,7 +283,7 @@ _reparam_gradient(backend, reparametrizer, x, g_y) =
 # this one site taxed every gradient. Passing the operands as `Constant` contexts
 # instead leaves nothing mutable on the callable, so a bare `AutoEnzyme()` works.
 # What the three spellings cost is measured in
-# `docs/benchmark/results/annotation_sweep.json` (5 rounds, backend order
+# `bench/research/results/annotation_sweep.json` (5 rounds, backend order
 # rotated); figures are deliberately not copied here. A single funnel
 # measurement once put `Const` at ~1.7x bare; the rotated sweep did not
 # replicate it. `Const` stays accepted and is still correct.
@@ -511,13 +353,7 @@ into the same pairs vector. By default, each restarting warm-up window scores
 remains fixed. See [`CandidateScoringPlan`](@ref) and [`WindowSelectionPlan`](@ref)
 for custom scoring and selection.
 
-# Example
-```julia
-# Eight schools: the group effects have their location at coordinate 9 and their
-# log-scale at coordinate 10. This is the rule for ONE group effect — see
-# `IndexedReparametrization` for attaching it to coordinates 1:8.
-Reparametrization(PartiallyCentered(1.0), PartiallyCentered(1.0), x -> x[9], x -> x[10])
-```
+See [Reparametrization](@ref) for an executed construction example.
 """
 struct Reparametrization{T,S,A}
     target::T
@@ -549,17 +385,7 @@ An empty `IndexedReparametrization` is a no-op. That is the default for every
 problem the sampler does not recognise, so an empty one silently samples exactly
 as if there were no reparametrization at all.
 
-# Example
-```julia
-# Eight schools: coordinates 1:8 are the group effects, sharing a location at
-# coordinate 9 and a log-scale at coordinate 10.
-ir = IndexedReparametrization(
-    1:8 .=> Ref(Reparametrization(
-        PartiallyCentered(1.0), PartiallyCentered(1.0),
-        x -> x[9], x -> x[10]
-    ))
-)
-```
+See [Reparametrization](@ref) for an executed construction example.
 
 # Mutation, ordering and checkpoints
 

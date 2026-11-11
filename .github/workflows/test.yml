@@ -171,16 +171,16 @@ jobs:
         # `round2` and `interrupt_requested`. `dev` diverged; `perf/step5-typed-slots`
         # is frozen. See the instantiate step above.
         #
-        # No PAT: `docs/benchmark/Project.toml` no longer declares `HTMX`,
+        # No PAT: `bench/research/Project.toml` no longer declares `HTMX`,
         # `HTMXObjects` or `DynamicObjects`. They were inherited from the
-        # canonical resolve and imported by no file under `docs/benchmark/`, and
+        # canonical resolve and imported by no file under `bench/research/`, and
         # one of them is private — pruning them removed a private-token
         # dependency from this job rather than leaving a measurement gated on a
         # secret. SHARED with `.github/workflows/nonlinear-weighting.yml`; keep
         # the two in step.
         run: |
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
-          julia --project=docs/benchmark -e 'using Pkg; Pkg.develop([
+          julia --project=bench/research -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
           ]); Pkg.instantiate()'
@@ -189,15 +189,15 @@ jobs:
           # resolved paths, so restore the tracked project before the driver
           # records provenance; otherwise this job makes its own
           # `.worktree_dirty == false` assertion impossible.
-          git restore --source=HEAD -- docs/benchmark/Project.toml
-          git diff --exit-code -- docs/benchmark/Project.toml
+          git restore --source=HEAD -- bench/research/Project.toml
+          git diff --exit-code -- bench/research/Project.toml
       - name: Run the linear evidence smoke
         env:
           WHMC_LINEAR_BENCH_SEEDS: '2'
           WHMC_LINEAR_BENCH_DRAWS: '250'
           WHMC_LINEAR_BENCH_EVALS: '250'
           WHMC_LINEAR_BENCH_TARGETS: diag_gaussian,diag_fallback_probe,correlated_gaussian
-        run: julia --project=docs/benchmark docs/benchmark/run_linear_restart_benchmark.jl
+        run: julia --project=bench/research bench/research/run_linear_restart_benchmark.jl
       - name: Check qualitative controls
         run: |
           jq -e '
@@ -208,8 +208,8 @@ jobs:
             all(.runs[]; .ok == true and .divergences == 0) and
             any(.runs[]; .target == "correlated_gaussian" and .adaptive_reflections > 0) and
             any(.runs[]; .target == "diag_fallback_probe" and .arm != "halo_unit" and .linear_metric_fallbacks > 0)
-          ' docs/benchmark/results/linear_restart.json
+          ' bench/research/results/linear_restart.json
       - uses: actions/upload-artifact@v4
         with:
           name: linear-restart-evidence-smoke
-          path: docs/benchmark/results/linear_restart.json
+          path: bench/research/results/linear_restart.json

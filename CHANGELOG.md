@@ -1,33 +1,20 @@
 # Changelog
 
-Notable changes to WarmupHMC.jl. Format loosely follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
-[semantic versioning](https://semver.org) as scoped by
-[What semver covers](https://nsiccha.github.io/WarmupHMC.jl/dev/api#What-semver-covers).
+Notable changes to WarmupHMC.jl. The public compatibility boundary is in
+[Compatibility](https://nsiccha.github.io/WarmupHMC.jl/dev/reference/compatibility).
+Released entries describe the version that shipped; historical paths below
+refer to that version's tree.
 
-<!--
-WHAT THIS FILE MAY AND MAY NOT CONTAIN.
+## Unreleased
 
-A changelog is a census in prose, and this repository treats those as defects
-unless something can contradict them. Two rules keep this one honest:
+### Documentation
 
-1. A RELEASED section is immutable. It describes what shipped under that
-   version number and is never edited afterwards, so it cannot go stale — the
-   version number is the thing it is a census of, and that never changes again.
-   The Unreleased section is the only one that drifts, and it drifts for at most
-   one release.
-
-2. DO NOT RE-STATE THE API CONTRACT HERE. The exported surface, the accepted
-   keywords and the returned field names are pinned by `test/public_api.jl` and
-   stated in `docs/src/api.md`. A second copy in this file would be a copy that
-   nothing checks, and the failure mode is specific: it would keep reading as a
-   complete answer while silently describing an older surface. Name what CHANGED
-   in a release; point at the pinned contract for what IS.
-
-Numbers quoted here must come from a checked-in artifact under
-`docs/benchmark/results/` and name the page that renders them — same rule as
-`docs/src/evidence.md` states for the documentation.
--->
+- Reorganize the manual into Start, Guides, Examples, and Reference. Add a
+  source-checked Gaussian summary and build-generated calibration figure.
+- Move research generators under `bench/`, remove committed research dumps and
+  the evidence catalogue, and remove the broken dashboard embed.
+- Document the current reparametrization and checkpoint contracts, add an
+  installation helper, and remove the internal API catalogue.
 
 ## 0.2.16
 

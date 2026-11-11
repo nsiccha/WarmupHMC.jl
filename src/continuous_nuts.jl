@@ -93,10 +93,12 @@ covariance. The start position and the diagonal of
 the initializer's covariance give the first metric; DynamicHMC's initial
 step-size search gives the first step size. A Pathfinder start is a point at
 which `lpdf` is finite: a draw a bounded support excludes is redrawn from the
-fit, and failing that an L-BFGS iterate stands in (see
-[`adaptive_warmup_mcmc`](@ref)'s `init`). Construction evaluates `lpdf` for
-Pathfinder, for the start (once per draw tried) and for that search, nothing
-else.
+fit, and failing that an L-BFGS iterate stands in. A fit far wider than the
+target (a collapsed variance beside normal ones) gives neither the start nor
+the metric: Pathfinder runs again on the target rescaled by a diagonal from its
+L-BFGS trajectory (see [`adaptive_warmup_mcmc`](@ref)'s `init`). Construction
+evaluates `lpdf` for Pathfinder (twice for such a fit), for the start (once per
+draw tried) and for that search, nothing else.
 
 `half_life` is the memory of the metric evidence, in transitions: the leapfrog
 states of a transition `half_life` transitions ago weigh half as much as the

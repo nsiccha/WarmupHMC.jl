@@ -58,14 +58,10 @@ function vegaConfig(dark: boolean) {
 
 const isDark = () => document.documentElement.classList.contains('dark')
 
-// @eval emits a VitePress fence; @example's Markdown result emits a plain
-// <pre><code class="language-vega-lite">. Both carry the same JSON.
+// Figure blocks arrive as VitePress fences from build-executed @eval blocks.
 const blocks = () =>
   Array.from(
-    document.querySelectorAll<HTMLElement>(
-      'div[class*="language-vega-lite"] code, pre > code.language-vega-lite'))
-    .map(code => code.closest<HTMLElement>('div[class*="language-vega-lite"]')
-      || code.parentElement!)
+    document.querySelectorAll<HTMLElement>('div[class*="language-vega-lite"]'))
 
 function renderOne(wrapper: HTMLElement) {
   const code = wrapper.querySelector('code')

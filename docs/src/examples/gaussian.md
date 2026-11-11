@@ -77,7 +77,7 @@ it is not evidence that all modes of an unknown target have been explored.
 rows = cache["coordinates"]
 ManualCache.table(
     ["Coordinate", "Mean", "SD", "Mean MCSE", "ESS (draws)"],
-    [[r["coordinate"], round(r["mean"]; digits=4), round(r["sd"]; digits=4),
+    [Any[Int(r["coordinate"]), round(r["mean"]; digits=4), round(r["sd"]; digits=4),
       round(r["mean_mcse"]; digits=4), round(r["ess"]; digits=1)] for r in rows])
 ```
 
@@ -100,8 +100,9 @@ points = (
 )
 figure = data(points) * mapping(:mean => "Mean (dimensionless)",
     :sd => "Standard deviation (dimensionless)"; color=:series => "Summary") *
-    visual(Scatter; markersize=120) *
-    config(width=380, height=240,
+    visual(Scatter; markersize=10) *
+    config(width=380, height=240, font_scale=1.3,
+        axis=(; limits=((-0.06, 0.02), (0.995, 1.025))),
         scales=scales(Color=(; categories=points.series,
             palette=["#2a78d6", "#eb6834", "#eb6834"])))
 Markdown.MD(Markdown.Code("vega-lite", AlgebraOfVega.to_json(figure)))
@@ -180,7 +181,7 @@ The [cache generator README](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/be
 describes the hash inputs and saved dependency versions. Broader experiments and
 historical benchmark regeneration belong in the
 [research README](https://github.com/nsiccha/WarmupHMC.jl/blob/dev/bench/README.md).
-The base revision identifies the checkout before documentation edits; the
-source hash identifies the package files that actually executed.
+The base revision identifies the checkout at cache generation; the source hash
+identifies the package files that actually executed, including uncommitted edits.
 
 :::

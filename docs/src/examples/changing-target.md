@@ -66,6 +66,8 @@ function follow_targets(locations)
     (; positions, divergences, stepsizes)
 end
 trajectory = follow_targets(locations)
+using JSON # hide
+write(joinpath(pkgdir(WarmupHMC), "docs/build/changing-target.json"), JSON.json((; locations, trajectory.positions))) # hide
 (; transitions=length(trajectory.positions),
    unchanged_step_size=all(==(0.2), trajectory.stepsizes),
    divergent_transitions=count(trajectory.divergences))
@@ -91,7 +93,7 @@ inspected without inferring values from the plot.
 ```@example moving
 include(joinpath(pkgdir(WarmupHMC), "docs/cache.jl")) # hide
 ManualCache.table(["Transition", "Target location", "Saved position", "Divergent"],
-    [[i, round(locations[i]; digits=3), round(trajectory.positions[i]; digits=3),
+    [Any[i, round(locations[i]; digits=3), round(trajectory.positions[i]; digits=3),
       trajectory.divergences[i]] for i in eachindex(locations)])
 ```
 
@@ -113,20 +115,22 @@ leapfrog states. The vertical separation describes the realized trajectory for
 this seed and these settings. It is not a tracking-error estimate averaged over
 repeated runs.
 
-```@example moving
-using AlgebraOfVega, Markdown
+```@eval
+using WarmupHMC, AlgebraOfVega, Markdown, JSON
+values = JSON.parsefile(joinpath(pkgdir(WarmupHMC), "docs/build/changing-target.json"))
+locations, positions = values["locations"], values["positions"]
 plot_data = (
     transition=repeat(collect(eachindex(locations)), 2),
-    value=vcat(locations, trajectory.positions),
+    value=vcat(locations, positions),
     series=vcat(fill("Target location", length(locations)),
                 fill("Saved position", length(locations))),
 )
 figure = data(plot_data) * mapping(:transition => "Transition (count)",
     :value => "Position (dimensionless)"; color=:series => "Sequence") *
-    visual(Lines) * config(width=420, height=240,
+    visual(Lines) * config(width=420, height=240, font_scale=1.3,
         scales=scales(Color=(; categories=["Target location", "Saved position"],
             palette=["#2a78d6", "#eb6834"])))
-Markdown.MD(Markdown.Code("vega-lite", AlgebraOfVega.to_json(figure))) # hide
+Markdown.MD(Markdown.Code("vega-lite", AlgebraOfVega.to_json(figure)))
 ```
 
 Blue shows the supplied target location; orange shows the saved position.

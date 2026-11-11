@@ -869,6 +869,8 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     # `n_divergent_samples` as of that reset, so the dropped draws' divergence
     # rate is recoverable (the live counter is zeroed with them).
     dropped_n_divergent_samples::Int
+    # Explicit target re-scoring is separate from sampler evaluation counters.
+    rescored::Vector{NamedTuple}
 end
 
 function _fit_transformed_observation!(adaptation, position_memory, gradient_memory, scale,
@@ -1235,6 +1237,7 @@ init_state(
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples, 0, 0, stepsize_adaptation.δ, false, 0.0,
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
+        NamedTuple[],
     )
     _initial_chain_progress!(progress, current_transition_counter, state)
     state
@@ -1596,6 +1599,7 @@ checkpoint_payload(state::AWMState) = (;
     state.retained_acceptance_sum,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
+    state.rescored,
     reparam_sources=reparam_sources(state.lpdf),
     custom_candidate_scoring=_has_custom_candidate_scoring(state.lpdf),
 )
@@ -2167,6 +2171,7 @@ restore_state(p, lpdf, progress;
         get(p, :dropped_posterior_position, Matrix{Float64}(undef, p.dimension, 0)),
         get(p, :dropped_posterior_gradient, Matrix{Float64}(undef, p.dimension, 0)),
         get(p, :dropped_n_divergent_samples, 0),
+        get(p, :rescored, NamedTuple[]),
     )
 end
 

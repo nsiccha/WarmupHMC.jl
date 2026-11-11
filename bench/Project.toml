@@ -1,17 +1,17 @@
 # Environment for the cross-sampler comparison (`bench/sampler_comparison.jl`).
 #
-# WHY THIS IS NOT `docs/benchmark/Project.toml`
+# WHY THIS IS NOT `bench/research/Project.toml`
 #
 # This benchmark needs `AdvancedHMC` — a large dependency that pulls its own
 # sampler stack — which that environment does not carry. No `Manifest.toml` is
 # tracked in this repository (`docs/.gitignore` and the root one both ignore
-# them), so every consumer of `docs/benchmark/` re-resolves it from its
+# them), so every consumer of `bench/research/` re-resolves it from its
 # `Project.toml`; widening that file therefore moves the environment under the
-# checked-in results in `docs/benchmark/results/` for everyone, for the sake of
+# locally generated results in `bench/research/results/` for everyone, for the sake of
 # a script that does not measure the thing those results are about. A separate
 # environment costs one more `Pkg.instantiate` and buys that isolation.
 #
-# It does reuse `docs/benchmark/common.jl` (targets, `stan_problem`,
+# It does reuse `bench/research/common.jl` (targets, `stan_problem`,
 # `ess_per_coordinate`, `constrained`, `git_provenance`) rather than forking it,
 # so both benchmarks measure ESS the same way. That is a real coupling: a new
 # `using` in that file must be added to the deps below or this environment stops

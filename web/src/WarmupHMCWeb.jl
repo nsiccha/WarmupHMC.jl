@@ -20,7 +20,7 @@ if @isdefined(IS_TESTING)
 end
 
 include("posteriordb_reparametrizations.jl")
-include(joinpath(@__DIR__, "..", "..", "docs", "benchmark", "evidence_semantics.jl"))
+include(joinpath(@__DIR__, "..", "..", "bench", "research", "evidence_semantics.jl"))
 const BenchmarkEvidence = WarmupHMCBenchmarkEvidence
 
 
@@ -28,13 +28,12 @@ const BenchmarkEvidence = WarmupHMCBenchmarkEvidence
 # Benchmark evidence — one JSON, one renderer, two presentations
 # ============================================================
 #
-# The benchmark drivers under `docs/benchmark/` write JSON into
-# `docs/benchmark/results/`. That file is the SINGLE durable source. This app
-# and the docs both project the shared semantic value defined in
-# `docs/benchmark/evidence_semantics.jl`; no evidence table is retyped.
+# The benchmark drivers under `bench/research/` write JSON into
+# `bench/research/results/`. This app projects the shared semantic value defined
+# in `bench/research/evidence_semantics.jl`; no evidence table is retyped.
 #
 # Adding evidence is therefore a one-file act: drop a JSON in, and it
-# appears in the app and in the docs with no change here. Everything below
+# appears in the app with no change here. Everything below
 # is deliberately schema-agnostic for that reason — see `benchmark_load`.
 
 benchmark_results_dir() = BenchmarkEvidence.results_dir()
@@ -80,7 +79,7 @@ and the documentation render the same value rather than two implementations of
 the same table.
 
 This is what makes the docs independent of the static-HTML recorder. A semantic
-node carries peer HTML, Markdown and plain-text projections; `docs/evidence.jl`
+node carries peer HTML, Markdown and plain-text projections; `bench/evidence.jl`
 asks the same semantic tree for Markdown at build time. The docs get real
 markdown tables — searchable, diffable, and styled by VitePress — instead of an
 `htmxo-embed` div loading a recorded fragment through a Vite proxy.
@@ -114,7 +113,7 @@ new driver needs no change here. That is the point: this renderer must not becom
 a second place where a result's schema is written down.
 
 The object rule is what lets a harness keep its metadata under `config` (the
-shape `provenance` in `docs/tables.jl` prefers, since one copy of
+shape `provenance` in `bench/tables.jl` prefers, since one copy of
 `warmuphmc_sha` cannot disagree with a duplicate of itself) render identically to
 the older flat shape, instead of collapsing into one mashed `k=v k=v` cell with
 the SHA unreachable. The nested entry wins a name collision, matching
@@ -575,13 +574,13 @@ const APPDATA = WhmcAppData()
         ),
     )
 
-    # GET `/benchmarks` — index of the evidence under `docs/benchmark/results/`.
+    # GET `/benchmarks` — index of the evidence under `bench/research/results/`.
     # Enumerated from disk per request (not cached), so a driver run mid-session
     # shows up without restarting the app.
     #
     # The body is a semantic value, not hand-built markup: the same
     # `benchmark_index_semantic` call backs the generated documentation page
-    # (`docs/evidence.jl`), so the app and the docs cannot show
+    # (`bench/evidence.jl`), so the app and the docs cannot show
     # different evidence. Only the breadcrumb — genuine app chrome, meaningless
     # in a docs page — is added here. `link` is what differs between the two
     # media, so it is a parameter rather than a branch inside the builder.
@@ -619,7 +618,7 @@ const APPDATA = WhmcAppData()
             # hand-typed URL can outlive the file it names, and an empty state
             # says which file is missing where a 404 says only "no".
             isfile(json_path) ? benchmark_semantic(key) :
-                SemanticUnavailable("No results file `$(key)` under docs/benchmark/results/."),
+                SemanticUnavailable("No results file `$(key)` under bench/research/results/."),
         )
     end
 

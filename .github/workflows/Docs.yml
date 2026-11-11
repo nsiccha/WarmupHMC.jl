@@ -31,8 +31,6 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Install dependencies
         run: bash .github/scripts/install-docs-deps.sh
-      - name: Record WarmupHMCWeb for the docs
-        run: julia --project=web docs/record_gallery.jl
       - name: Build and deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

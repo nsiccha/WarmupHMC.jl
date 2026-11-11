@@ -29,6 +29,29 @@ Numbers quoted here must come from a checked-in artifact under
 `docs/src/evidence.md` states for the documentation.
 -->
 
+## 0.2.17
+
+### Fixed
+
+- A Pathfinder start on a target with a collapsed scale (a random-effect
+  variance near zero beside normal ones, as a SAEM conditional has when Ω
+  collapses) no longer starts the chain far out with a useless metric.
+  Pathfinder drops every L-BFGS curvature pair above 1e12, so its fit there is
+  an identity covariance up to 1e12 times too wide; its draw was finite, so it
+  was the start, at log densities around -1e23 from an init at -0.4, and the
+  fit's scale was the first metric, so the step size fell to about 1e-9 and the
+  chain never returned (snag `warmuphmc-contin-51744bcf`, reporter
+  NLMEEstimation: 13 of 24 subjects' `ContinuousNUTSState` chains on Bruno's
+  joint TGI model). A fit is now unusable when its covariance is far wider than
+  a curvature its own L-BFGS trajectory measured, or when the target at its
+  draw lies far below what the fit predicts; neither its draw nor its scale is
+  then used. Pathfinder runs again from the same start on the target rescaled
+  by a diagonal estimated from that trajectory, and the chain starts from that
+  run's draw with its metric (an `@info`), or, if that run is unusable too, at
+  the first run's fit iterate with the diagonal as its metric (a warning). Every
+  sampler that initializes through Pathfinder is affected the same way. A run
+  whose fit passes both checks is unchanged, draw for draw.
+
 ## 0.2.16
 
 ### Fixed

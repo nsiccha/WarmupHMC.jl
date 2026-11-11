@@ -214,14 +214,18 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
             @info "Initialization: $why; Pathfinder ran from the start plus a Gaussian jitter " *
                 "instead, and the chain starts from that run's draw with its metric." maxlog=1
         end
-        initialize_mcmc(lpdf, result; kwargs...)
+        initialize_mcmc(lpdf, result; progress=pprogress, maxiters, kwargs...)
     end
-initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, kwargs...) = begin
+initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, progress=nothing, maxiters=100, kwargs...) = begin
     isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
     # The start is a point at which the target is finite: the draw, a redraw, or
     # an L-BFGS iterate (`_finite_pathfinder_start`). `rng` is the stream
     # Pathfinder drew on, so a redraw continues it as a second draw would have.
+    # A finite draw the fit cannot have produced means the fit is unusable, and
+    # Pathfinder runs again on a rescaled target (`_rescaled_pathfinder_start`).
     position_and_gradient = _finite_pathfinder_start(lpdf, init, rng)
+    isnothing(position_and_gradient) &&
+        return _rescaled_pathfinder_start(lpdf, init; rng, progress, maxiters, kwargs...)
     position = position_and_gradient.q
     dimension = length(position)
     squared_scale = init.fit_distribution.Σ
@@ -458,6 +462,102 @@ function _evaluate_if_finite(lpdf, q)
     isfinite(pg.ℓq) ? pg : nothing
 end
 
+# ── A fit that is far too wide: the draw is finite but implausible ──────────
+#
+# Finite is not enough. Pathfinder keeps an L-BFGS curvature pair (s, y) only
+# when `s'y > 1e-12 |y|²` (`Pathfinder.lbfgs_inverse_hessians`), i.e. when the
+# curvature along `s` is below 1e12. A target with a scale below about 1e-6 (a
+# collapsed random-effect variance beside normal ones, as NLMEEstimation's SAEM
+# conditionals have when Ω collapses) has every pair that moves that coordinate
+# rejected, and L-BFGS, starting from an identity inverse Hessian, stalls after
+# one step on such an ill-conditioned target. The fit is then the identity
+# covariance, 1e6 to 1e12 times too wide, and Pathfinder reports success
+# because its ELBO is finite (snag `warmuphmc-contin-51744bcf`, reporter
+# NLMEEstimation: a 2-d Gaussian with scales 1e-12 and 0.5 started every
+# chain at a log density of -1e23 to -3e24 from a caller's init at -0.425, 13 of
+# 24 SAEM subjects on Bruno's joint TGI model never recovered). The draw is
+# finite, so it used to be the start, and the fit's scale the first metric.
+#
+# Two checks find such a fit; neither evaluates the target again nor draws a
+# random number, and a fit either one rejects is not used at all, neither its
+# draw nor its scale (`_rescaled_pathfinder_start`).
+#
+# * The curvature the trajectory measured. For a curvature pair (s, y) of the
+#   L-BFGS trajectory, `s'y` is the variance of the target along `y` when the
+#   target is Gaussian, and `y'Σy` the fit's; a correct fit makes them equal.
+#   Over the pairs up to the fit's iterate with `s'y > 0`, the largest ratio
+#   `y'Σy / s'y` stayed at or below 6.4e3 on the healthy targets below (40
+#   random starts each), and was 1 on the bounded-support fits of snag
+#   `pathfinder-draw-c1e43cb7`; a pair Pathfinder dropped for its curvature
+#   makes it exceed 1e12 times the fit's variance along `y`, and the
+#   collapsed-variance fits put it at 1e14 to 1e24. Above
+#   `_DROPPED_CURVATURE_RATIO` the fit is unusable. This check needs no draw, so
+#   it also covers a fit so wide that none of its draws is finite (the
+#   log-density overflows), where the fit's scale would otherwise stand in at an
+#   L-BFGS iterate.
+# * The draw. Between the iterate the fit was made at, x, and a draw θ, the fit
+#   q predicts the target's log density to change by `log q(θ) - log q(x)`; the
+#   target actually changes by `ℓ(θ) - ℓ(x)` (both values are already known: ℓ(θ)
+#   from the evaluation that checks the draw is finite, ℓ(x) from Pathfinder's
+#   trace). Their difference is the importance log-weight of θ relative to x,
+#   zero for a fit that matches the target up to its normalization. Over 14
+#   healthy targets (Gaussian with scales e^±3 and correlated, Neal's funnel,
+#   Student-t with ν = 1.5 and 3, banana, Poisson and logistic regression
+#   conditionals; d = 2 to 100) and 40 random starts each, it never fell below
+#   -24 nats (funnel, d = 50); the collapsed-variance fits above put it at -1e18
+#   to -1e24. A draw more than `_implausible_drop(d)` nats below is refused. The
+#   reference is the fit's own iterate, never the best one: on a funnel L-BFGS
+#   climbs the neck, and a sound draw then lies up to 1.9e3 nats below the best
+#   iterate.
+
+"""
+Largest `y'Σy / s'y` over the L-BFGS curvature pairs up to the fit's iterate at
+which Pathfinder's fit still counts as usable (`_fit_drops_curvature`).
+"""
+const _DROPPED_CURVATURE_RATIO = 1e8
+
+"""
+    _fit_drops_curvature(result)
+
+Whether Pathfinder's fit is far wider than the curvature its own L-BFGS
+trajectory measured: some pair `(s, y)` up to the fit's iterate with `s'y > 0`
+has `y'Σy > _DROPPED_CURVATURE_RATIO * s'y`, with `Σ` the fit's covariance.
+"""
+function _fit_drops_curvature(result)
+    points, gradients = result.optim_trace.points, result.optim_trace.gradients
+    Σ = result.fit_distribution.Σ
+    for l in 1:result.fit_iteration
+        s = points[l + 1] - points[l]
+        y = gradients[l] - gradients[l + 1]
+        sy = dot(s, y)
+        sy > 0 && dot(y, Σ * y) > _DROPPED_CURVATURE_RATIO * sy && return true
+    end
+    false
+end
+
+"""
+    _implausible_drop(dimension)
+
+How many nats the target may fall below what Pathfinder's fit predicts at a
+draw (`_fit_log_weight_change`) before the fit counts as unusable: `10 (d + 10)`.
+"""
+_implausible_drop(dimension) = 10 * (dimension + 10)
+
+"""
+    _fit_log_weight_change(result, θ, ℓθ)
+
+The importance log-weight of `θ` (log density `ℓθ`) under Pathfinder's fit,
+relative to the iterate the fit was made at: `(ℓθ - ℓ(x)) - (log q(θ) - log q(x))`.
+Zero for a fit equal to the target up to normalization; far below zero where the
+fit is far too wide.
+"""
+function _fit_log_weight_change(result, θ, ℓθ)
+    k = result.fit_iteration + 1
+    q = result.fit_distribution
+    x = result.optim_trace.points[k]
+    (ℓθ - result.optim_trace.log_densities[k]) - (logpdf(q, θ) - logpdf(q, x))
+end
+
 """
     _finite_pathfinder_start(lpdf, result, rng)
 
@@ -466,13 +566,21 @@ draw when the target is finite there; else the first of up to
 `_PATHFINDER_REDRAWS` fresh draws from `result.fit_distribution` on `rng` at
 which it is; else the first L-BFGS iterate at which it is, the one the fit was
 made at and then the rest from the trajectory's end backwards, with a warning.
+`nothing` when the fit is unusable, and the caller recovers
+(`_rescaled_pathfinder_start`): when it is far wider than the curvature its
+trajectory measured (`_fit_drops_curvature`), or when its first finite draw is
+implausible under it (more than `_implausible_drop` nats below what the fit
+predicts).
 """
 function _finite_pathfinder_start(lpdf, result, rng)
+    _fit_drops_curvature(result) && return nothing
+    usable(pg) = _fit_log_weight_change(result, pg.q, pg.ℓq) >=
+        -_implausible_drop(length(pg.q))
     pg = _evaluate_if_finite(lpdf, collect(Float64, result.draws[:, 1]))
-    isnothing(pg) || return pg
+    isnothing(pg) || return usable(pg) ? pg : nothing
     for _ in 1:_PATHFINDER_REDRAWS
         pg = _evaluate_if_finite(lpdf, collect(Float64, rand(rng, result.fit_distribution)))
-        isnothing(pg) || return pg
+        isnothing(pg) || return usable(pg) ? pg : nothing
     end
     points = result.optim_trace.points
     # `fit_distributions[i]` is Pathfinder's fit at `points[i]`; `points[1]` is the start.
@@ -492,6 +600,124 @@ function _finite_pathfinder_start(lpdf, result, rng)
         not one of the $(length(points)) L-BFGS iterates, which the optimizer evaluated as
         finite: the target answers differently now from when it ran.
         """)
+end
+
+# ── Recovering from an unusable fit ─────────────────────────────────────────
+#
+# What the failed run still knows is its L-BFGS trajectory: positions and
+# gradients, as a NUTS trajectory's leaves are. Their per-coordinate Nutpie
+# ratio `(var(position) / var(gradient))^(1/4)` (the estimate
+# `ContinuousNUTSState` adapts with) is exact for a Gaussian along every
+# coordinate the optimizer moved: on the collapsed-variance targets above it
+# gave 1e-12 for a 1e-12 scale from a single L-BFGS step. A coordinate it never
+# moved gets Nutpie's start-point estimate `1/sqrt|∂ℓ/∂x|` at the trajectory's
+# first point, and 1 where that gradient component is zero or not finite.
+# Pathfinder then runs again from the same start, on the target in coordinates
+# divided by that diagonal, where its scales are of order one; its fit is
+# mapped back (a low-rank-plus-diagonal covariance stays one), and its draw,
+# checked like any other, is the start. If that run is unusable too, the chain
+# starts at the first run's fit iterate with the diagonal as its metric.
+# Measured from a finite init on four collapsed-variance targets (the
+# reporter's Gaussian, a 20-d Gaussian with scales 1e-10 and e^±2, a Poisson
+# GLMM conditional with random-effect scales 1e-12, 0.5 and 1, and a logistic
+# regression with prior scale 1e-12 on one of 5 coefficients; 4 seeds, 200
+# `continuous_nuts_step`s): every rescaled run was usable, its draw lay between
+# 13 nats below and 11 above the init's log density, and the chains took 2.5–6
+# gradient evaluations per transition with step sizes 0.77–1.4 and the target's
+# marginal SDs. Before, three of the four started at log densities of -2e18 to
+# -9e23 and diverged on 8–78 % of their transitions with step sizes of 2e-10
+# to 6e-9; the Poisson fit's draws all overflowed, so it started at an L-BFGS
+# iterate with the fit's unit metric and took 890–960 evaluations per
+# transition with marginal SDs 7–29× too small. Refusing the draw alone and
+# keeping the fit's scale took 700–1,023 evaluations per transition, with
+# marginal SDs 3–80× too small after 200 transitions, on all four.
+
+"""
+    _DiagonallyScaled(lpdf, scale)
+
+`lpdf` in the coordinates `u = x ./ scale`: log density `ℓ(scale .* u)` and
+gradient `scale .* ∇ℓ(scale .* u)` (the constant log-Jacobian is dropped).
+"""
+struct _DiagonallyScaled{P}
+    lpdf::P
+    scale::Vector{Float64}
+end
+LogDensityProblems.capabilities(::Type{<:_DiagonallyScaled}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::_DiagonallyScaled) = length(p.scale)
+LogDensityProblems.logdensity(p::_DiagonallyScaled, u) = LogDensityProblems.logdensity(p.lpdf, p.scale .* u)
+function LogDensityProblems.logdensity_and_gradient(p::_DiagonallyScaled, u)
+    ℓ, g = LogDensityProblems.logdensity_and_gradient(p.lpdf, p.scale .* u)
+    (ℓ, p.scale .* g)
+end
+
+"""
+    _trajectory_scale(result)
+
+A diagonal scale from Pathfinder's L-BFGS trajectory: per coordinate the Nutpie
+ratio `(var(position) / var(gradient))^(1/4)` over its iterates where that is
+finite and positive, else `1/sqrt|g|` with `g` the gradient at the
+trajectory's first point, else 1.
+"""
+function _trajectory_scale(result)
+    points, gradients = result.optim_trace.points, result.optim_trace.gradients
+    first_gradient = first(gradients)
+    map(eachindex(first_gradient)) do i
+        s = (var(p[i] for p in points) / var(g[i] for g in gradients))^(1 / 4)
+        isfinite(s) && s > 0 && return s
+        g = abs(first_gradient[i])
+        isfinite(g) && g > 0 ? 1 / sqrt(g) : 1.0
+    end
+end
+
+"`squared_scale` of the coordinates `x ./ scale`, as a squared scale of `x`."
+_unscale_squared_scale(squared_scale::Pathfinder.WoodburyPDMat, scale) = begin
+    S = Diagonal(scale)
+    Pathfinder.WoodburyPDMat(S * squared_scale.A * S, S * squared_scale.B, squared_scale.D)
+end
+_unscale_squared_scale(squared_scale::AbstractMatrix, scale) =
+    Diagonal(scale) * squared_scale * Diagonal(scale)
+
+"""
+    _rescaled_pathfinder_start(lpdf, result; rng, progress, maxiters, kwargs...)
+
+The initialization for a Pathfinder `result` whose fit is unusable
+(`_finite_pathfinder_start` returned `nothing`): Pathfinder from the same start
+on `lpdf` rescaled by `_trajectory_scale(result)`, its draw and its covariance
+mapped back; failing that, `result`'s fit iterate with that diagonal as metric.
+"""
+function _rescaled_pathfinder_start(lpdf, result; rng, progress, maxiters, kwargs...)
+    scale = _trajectory_scale(result)
+    scaled = _DiagonallyScaled(lpdf, scale)
+    start = collect(Float64, first(result.optim_trace.points))
+    why = "Pathfinder's fit is unusable: its covariance is far wider than the target, " *
+        "either along a curvature its L-BFGS trajectory measured or at its draw, where the " *
+        "log density lies more than $(_implausible_drop(length(scale))) nats below what the " *
+        "fit predicts (typical of a target whose scales span more than Pathfinder's fit " *
+        "accepts, such as a collapsed variance)"
+    rescaled = with_progress(progress, maxiters; description="Pathfinder (rescaled)", transient=true) do pprogress
+        _pathfinder_or_refit(scaled; rng, init=start ./ scale,
+            callback=pathfinder_callback(pprogress), maxiters, kwargs...)
+    end
+    if !isempty(rescaled.elbo_estimates)
+        draw = _finite_pathfinder_start(scaled, rescaled, rng)
+        if !isnothing(draw)
+            position = scale .* draw.q
+            position_and_gradient = _evaluate_if_finite(lpdf, position)
+            if !isnothing(position_and_gradient)
+                @info "Initialization: $why; Pathfinder ran again on the target rescaled by a " *
+                    "diagonal estimated from its L-BFGS trajectory, and the chain starts from " *
+                    "that run's draw with its metric." maxlog=1
+                squared_scale = _unscale_squared_scale(rescaled.fit_distribution.Σ, scale)
+                return initialize_mcmc(lpdf, (; position, position_and_gradient,
+                    scale=_initial_pathfinder_scale(squared_scale, length(scale)), squared_scale))
+            end
+        end
+    end
+    iterate = collect(Float64, result.optim_trace.points[result.fit_iteration + 1])
+    @warn "Initialization: $why, and Pathfinder on the target rescaled by a diagonal " *
+        "estimated from its L-BFGS trajectory gave no usable fit either. The chain starts at " *
+        "L-BFGS iterate $(result.fit_iteration) with that diagonal as its metric."
+    initialize_mcmc(lpdf, (; position=iterate, squared_scale=abs2.(scale)))
 end
 
 # ── Windowed adaptive warm-up: explicit state object + stage functions ──────
@@ -2052,6 +2278,18 @@ times, and failing that by the L-BFGS iterate the fit was made at (then the
 other iterates, from the trajectory's end back to the start), with a warning.
 The fit's covariance gives the initial metric either way, and a run whose first
 draw is finite is unchanged.
+
+Finite is not enough on a target whose scales span more than Pathfinder's fit
+accepts, such as a collapsed variance beside normal ones: Pathfinder drops the
+L-BFGS curvature pairs above 1e12, and its fit is then far too wide. Such a fit
+is unusable, neither its draw nor its scale is used: when its covariance is far
+wider than a curvature its own L-BFGS trajectory measured, or when the log
+density at its draw lies more than `10 (d + 10)` nats below what the fit
+predicts. Pathfinder then runs again from the same start on the target
+rescaled by a diagonal estimated from that trajectory, and the chain starts
+from that run's draw with its metric; if that run is unusable too, the chain
+starts at the first run's fit iterate with that diagonal as its metric, with a
+warning. A run whose fit passes both checks is unchanged.
 
 When Pathfinder's inverse-Hessian fit is not positive definite (a
 `PosDefException`, typically from L-BFGS stalling on a kink of the log density,

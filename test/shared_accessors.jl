@@ -1,7 +1,8 @@
 @testitem "Shared accessor work is evaluated once per run of pairs" setup=[WarmupHMCSharedFixtures] begin
     using Test, WarmupHMC
     using Random, LinearAlgebra
-    using LogDensityProblems, OnlineStatsBase
+    using LogDensityProblems
+    const OnlineStatsBase = WarmupHMC.OnlineStatsBase  # not a test dependency of its own
     using DifferentiationInterface, Enzyme
 
 # Snag use-the-public-i-0660224b: an accessor shared by N pairs (one mean, one

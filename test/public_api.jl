@@ -69,6 +69,7 @@ const PUBLIC_EXPORTS = [
     :PartiallyCentered,
     :Reparametrization,
     :ReparametrizedProblem,
+    :SharedAccessor,            # shared location work (snag use-the-public-i-0660224b)
 ]
 
 @testset "exported surface is exactly the committed one" begin

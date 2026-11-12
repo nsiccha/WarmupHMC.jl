@@ -15,6 +15,8 @@ refer to that version's tree.
   the evidence catalogue, and remove the broken dashboard embed.
 - Document the current reparametrization and checkpoint contracts, add an
   installation helper, and remove the internal API catalogue.
+- Note that registered Enzyme rejects a shared accessor that can return a
+  constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
 ## 0.2.19
 

@@ -258,12 +258,14 @@ The gradient in `x` of `_reparam_objective(x, reparametrizer, g_y)`, i.e. of
 
 This method differentiates the whole transform in one pass. With a reverse-mode
 `AutoEnzyme` backend and an [`IndexedReparametrization`](@ref), the Enzyme
-extension differentiates it pair by pair instead, in reverse pair order. The
-result agrees to rounding: a coordinate that several pairs read may sum their
-contributions in a different order. In one pass Enzyme allocates for every accessor
-call (about 770 bytes per pair on a correlated random-effect block, snag
-`find-reparametri-e2a5b2a7`); pair by pair it allocates only the result and one
-working vector.
+extension differentiates it pair by pair instead, in reverse pair order, and a
+run of pairs that share accessor work (see [`SharedAccessor`](@ref)) in one call.
+The result agrees to rounding: a coordinate that several pairs read may sum their
+contributions in a different order. The pair loop before runs allocated for every
+accessor call in one pass (about 770 bytes per pair on a correlated random-effect
+block, snag `find-reparametri-e2a5b2a7`); the run-wise map allocates a few working
+vectors in one pass on that block, and pair by pair Enzyme allocates only the
+result and one working vector, plus the derivative of each run's shared values.
 """
 _reparam_gradient(backend, reparametrizer, x, g_y) =
     last(value_and_gradient(_reparam_objective, backend, x,
@@ -368,6 +370,103 @@ reparam(r::Reparametrization, xi, x) = reparam(r.target, reparam_rargs(r, xi, x)
 reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi, gi, x)...)
 
 """
+    SharedAccessor(f, index)
+
+A location or log-scale accessor that reads element `index` of `f(x)`:
+`SharedAccessor(f, i)(x) == f(x)[i]`. Use it when many coordinates take their
+location or log-scale from one computation, such as a vector of locations a
+model computes in one pass, so that the computation runs once per vector instead
+of once per coordinate.
+
+Within an [`IndexedReparametrization`](@ref), consecutive pairs in increasing
+index order share an accessor position when their accessors there read the same
+`f` (`===`), and WarmupHMC evaluates `f` once for all of them, on every path:
+the map and its inverse, the gradient, the transport of retained states to new
+centerings, and centering selection. A plain accessor that is the same object in
+consecutive pairs, such as one rule reused for every pair of a block, is shared
+in the same way without this wrapper. Each accessor position is evaluated once
+per such run of pairs, so a location and a log-scale read from one `f` evaluate
+it twice; give them separate functions to avoid that.
+
+The shared value is computed where its run of pairs starts, so `f` must not read
+the coordinates of the pairs in its own run. The inverse map already requires
+this of any accessor (see [`IndexedReparametrization`](@ref)).
+
+Called on its own, a `SharedAccessor` computes `f(x)` in full, so code that
+calls accessors directly, such as a [`CandidateScoringPlan`](@ref), keeps
+working unchanged.
+"""
+struct SharedAccessor{F,I}
+    f::F
+    index::I
+end
+(a::SharedAccessor)(x) = a.f(x)[a.index]
+
+# --- Runs of pairs that share accessor work ---------------------------------------
+#
+# Every path that walks the pairs evaluates their accessors once per RUN: a maximal
+# sequence of consecutive pairs, in strictly increasing index order, whose accessors
+# agree position by position on what they compute (`_share_key`). Accessors applied
+# to the whole vector once per pair cost O(N) each, so N pairs sharing one O(N)
+# location made every map, gradient, transport and selection O(N^2) (snag
+# `use-the-public-i-0660224b`).
+#
+# The run's shared values ("frames") are evaluated at its first pair. The forward
+# map reads the entry vector there, as every pair did before. The inverse reads the
+# vector as recovered up to that pair; the inverse's dependency order already
+# requires every coordinate an accessor reads to be recovered by then, and a run's
+# own coordinates are never read by its shared accessors, so each pair sees the
+# value it saw when it evaluated the accessor itself. A run of one pair is exactly
+# the old per-pair evaluation. Increasing indices keep each coordinate in a run
+# once, so the seed and pool updates of a run can be made together.
+_share_key(a) = a
+_share_key(a::SharedAccessor) = a.f
+_frame(a, x) = maybecall(a, x)
+_frame(a::SharedAccessor, x) = a.f(x)
+_read_frame(a, frame) = frame
+_read_frame(a::SharedAccessor, frame) = frame[a.index]
+
+_keys_match(a::NTuple{N,Any}, b::NTuple{N,Any}) where {N} =
+    all(map((p, q) -> _share_key(p) === _share_key(q), a, b))
+_keys_match(a, b) = false
+_shares_work(a::Reparametrization, b::Reparametrization) = _keys_match(a.args, b.args)
+_shares_work(a, b) = false
+_index_follows(a::Integer, b::Integer) = a < b
+_index_follows(a, b) = false
+# Whether `next` continues the run that `previous` belongs to.
+_continues_run(previous::Pair, next::Pair) =
+    _index_follows(first(previous), first(next)) && _shares_work(last(previous), last(next))
+# The last pair of the run starting at `i`, and the first of the run ending at `j`.
+function _run_end(pairs, i, stop=lastindex(pairs))
+    j = i
+    while j < stop && _continues_run(pairs[j], pairs[j + 1])
+        j += 1
+    end
+    j
+end
+function _run_start(pairs, j, start=firstindex(pairs))
+    i = j
+    while i > start && _continues_run(pairs[i - 1], pairs[i])
+        i -= 1
+    end
+    i
+end
+
+# A rule's shared values at `x`, and the rule evaluated from them. A pair value
+# that is not a `Reparametrization` keeps reading the vector itself.
+_pair_frames(value::Reparametrization, x) = map(a -> _frame(a, x), value.args)
+_pair_frames(value, x) = x
+_framed_rargs((;source, args)::Reparametrization, xi, frames) =
+    (source, xi, map(_read_frame, args, frames)...)
+_framed_rargs((;source, args)::Reparametrization, xi, gi, frames) =
+    (source, xi, gi, map(_read_frame, args, frames)...)
+_framed_rargs(value, xi, gi, x) = reparam_rargs(value, xi, gi, x)
+_reparam_framed(r::Reparametrization, xi, frames) = reparam(r.target, _framed_rargs(r, xi, frames)...)
+_reparam_framed(r::Reparametrization, xi, gi, frames) = reparam(r.target, _framed_rargs(r, xi, gi, frames)...)
+_reparam_framed(value, xi, x) = reparam(value, xi, x)
+_reparam_framed(value, xi, gi, x) = reparam(value, xi, gi, x)
+
+"""
     IndexedReparametrization(pairs)
 
 A vector of `index => Reparametrization(...)` pairs for a
@@ -394,6 +493,13 @@ Closures created at one source location, for example in a comprehension, share a
 type. For heterogeneous blocks, one callable struct can represent either a
 coordinate lookup or a constant; the [Reparametrization](@ref) guide executes
 that construction. Every accessor argument must be a `Real` or callable.
+
+Accessors are evaluated once per run of pairs that share them, not once per
+pair: consecutive pairs, in increasing index order, whose location (or
+log-scale) is the same accessor object, or a [`SharedAccessor`](@ref) over the
+same function, evaluate it once for the whole run on every path. A location
+that many coordinates share therefore costs one evaluation per vector. Order the
+pairs of such a block consecutively to benefit.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P
@@ -430,9 +536,16 @@ function _check_accessors(idx, value::Reparametrization)
 end
 with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) = begin
     ljac = 0.
-    for (idx, value) in pairs
-        tmp, y[idx] = reparam(value, x[idx], x)
-        ljac += tmp
+    i = firstindex(pairs)
+    while i <= lastindex(pairs)
+        j = _run_end(pairs, i)
+        frames = _pair_frames(last(pairs[i]), x)
+        for k in i:j
+            idx, value = pairs[k]
+            tmp, y[idx] = _reparam_framed(value, x[idx], frames)
+            ljac += tmp
+        end
+        i = j + 1
     end
     ljac, y
 end
@@ -456,10 +569,20 @@ function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
                                            target::AbstractVector)
     source .= target
     ljac = zero(eltype(target))
-    for (idx, value) in ir.pairs
-        ljac_i, source_i = reparam(inverse(value), target[idx], source)
-        source[idx] = source_i
-        ljac += ljac_i
+    pairs = ir.pairs
+    i = firstindex(pairs)
+    while i <= lastindex(pairs)
+        j = _run_end(pairs, i)
+        # Read where the run starts: everything its shared accessors read is
+        # recovered by then, and none of the run's own coordinates is read.
+        frames = _pair_frames(last(pairs[i]), source)
+        for k in i:j
+            idx, value = pairs[k]
+            ljac_i, source_i = _reparam_framed(inverse(value), target[idx], frames)
+            source[idx] = source_i
+            ljac += ljac_i
+        end
+        i = j + 1
     end
     ljac, source
 end
@@ -667,24 +790,60 @@ OnlineReparametrizer(source::PartiallyCentered, xg...;
 
 # --- Batch optimization ---
 
-optimize!((;pairs)::IndexedReparametrization, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
+optimize!(ir::IndexedReparametrization, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
+    _select_on_pool!(ir.pairs, k -> OnlineReparametrizer(last(ir.pairs[k]), xg...; kwargs...),
+                     xg, loss_kwargs)
+    IndexedReparametrization(ir.pairs)
+end
+
+# The pool search: score every candidate centering of each pair on the pool
+# columns, choose the pair's new centering, and move that coordinate of every
+# column into it, pair after pair in order, so a later pair's accessors read the
+# coordinates earlier pairs have moved. A run of pairs sharing accessor work
+# (`_run_end`) is scored and moved together, reading its shared values once per
+# column: its shared accessors read none of its own coordinates, and each pair
+# reads and moves only its own, so a pair's observations and its move are
+# exactly what the pair-by-pair order gives. `accumulator_for(k)` is pair `k`'s
+# candidate accumulator.
+function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
     excluded = Pair{Any,Bool}[]
-    pairs .= Base.broadcasted(pairs) do (idx, value)
-        or = OnlineReparametrizer(value, xg...; kwargs...)
-        for xgi in zip(eachcol.(xg)...)
-            OnlineStatsBase.fit!(or, reparam_rargs(value, getindex.(xgi, idx)..., first(xgi))...)
+    columns = zip(eachcol.(xg)...)
+    i = firstindex(pairs)
+    while i <= lastindex(pairs)
+        j = _run_end(pairs, i)
+        run = i:j
+        old = [last(pairs[k]) for k in run]
+        accumulators = [accumulator_for(k) for k in run]
+        for xgi in columns
+            frames = _pair_frames(first(old), first(xgi))
+            for (n, k) in enumerate(run)
+                OnlineStatsBase.fit!(accumulators[n], _framed_rargs(
+                    old[n], getindex.(xgi, first(pairs[k]))..., frames)...)
+            end
         end
-        OnlineStatsBase.nobs(or) > 2 || return idx => value
-        new_source = _minimizing_source!(excluded, or, idx, value.source; loss_kwargs...)
-        new_value = Reparametrization(value.target, new_source, value.args...)
-        trans = Reparametrization(new_value.source, value.source, value.args...)
-        for xgi in zip(eachcol.(xg)...)
-            setindex!.(xgi, reparam(trans, getindex.(xgi, idx)..., first(xgi))[2:end], idx)
+        moved = falses(length(run))
+        for (n, k) in enumerate(run)
+            OnlineStatsBase.nobs(accumulators[n]) > 2 || continue
+            idx, value = first(pairs[k]), old[n]
+            new_source = _minimizing_source!(excluded, accumulators[n], idx, value.source; loss_kwargs...)
+            pairs[k] = idx => Reparametrization(value.target, new_source, value.args...)
+            moved[n] = true
         end
-        idx => new_value
+        if any(moved)
+            for xgi in columns
+                frames = _pair_frames(first(old), first(xgi))
+                for (n, k) in enumerate(run)
+                    moved[n] || continue
+                    idx, value = pairs[k]
+                    trans = Reparametrization(value.source, old[n].source, value.args...)
+                    setindex!.(xgi, _reparam_framed(trans, getindex.(xgi, idx)..., frames)[2:end], idx)
+                end
+            end
+        end
+        i = j + 1
     end
     _warn_excluded_candidates(excluded)
-    IndexedReparametrization(pairs)
+    pairs
 end
 
 # --- Online fitting for IndexedReparametrization ---
@@ -699,15 +858,25 @@ function _fit_candidate_scoring!(::DirectCandidateScoring,
                                  position::AbstractVector,
                                  gradient::AbstractVector;
                                  weight::Real=1, count::Bool=true)
-    for ((idx, value), (stored_idx, or)) in zip(ir.pairs, ors.pairs)
-        idx == stored_idx || throw(ArgumentError(
-            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
-        ))
-        OnlineStatsBase.fit!(
-            or,
-            reparam_rargs(value, position[idx], gradient[idx], position)...;
-            weight, count,
-        )
+    pairs = ir.pairs
+    stop = min(lastindex(pairs), lastindex(ors.pairs))
+    i = firstindex(pairs)
+    while i <= stop
+        j = _run_end(pairs, i, stop)
+        frames = _pair_frames(last(pairs[i]), position)
+        for k in i:j
+            idx, value = pairs[k]
+            stored_idx, or = ors.pairs[k]
+            idx == stored_idx || throw(ArgumentError(
+                "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+            ))
+            OnlineStatsBase.fit!(
+                or,
+                _framed_rargs(value, position[idx], gradient[idx], frames)...;
+                weight, count,
+            )
+        end
+        i = j + 1
     end
     ir
 end
@@ -719,21 +888,34 @@ function _fit_candidate_scoring!(plan::CandidateScoringPlan,
                                  gradient::AbstractVector;
                                  weight::Real=1, count::Bool=true)
     frame = plan.prepare(ir, position, gradient)
-    for (pair_number, ((idx, value), (stored_idx, or))) in
-        enumerate(zip(ir.pairs, ors.pairs))
-        idx == stored_idx || throw(ArgumentError(
-            "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
-        ))
-        for (candidate, accumulator) in or.pairs
-            observation = plan.score(frame, pair_number, idx, value, candidate)
-            if isnothing(observation)
-                observation = reparam(
-                    candidate,
-                    reparam_rargs(value, position[idx], gradient[idx], position)...,
-                )
+    pairs = ir.pairs
+    stop = min(lastindex(pairs), lastindex(ors.pairs))
+    i = firstindex(pairs)
+    while i <= stop
+        j = _run_end(pairs, i, stop)
+        # The direct scorer's shared values, computed only if the plan declines a
+        # candidate of this run, and then once for the whole run.
+        shared = nothing
+        for k in i:j
+            pair_number = k - firstindex(pairs) + 1
+            idx, value = pairs[k]
+            stored_idx, or = ors.pairs[k]
+            idx == stored_idx || throw(ArgumentError(
+                "nonlinear accumulator index $stored_idx does not match reparametrizer index $idx",
+            ))
+            for (candidate, accumulator) in or.pairs
+                observation = plan.score(frame, pair_number, idx, value, candidate)
+                if isnothing(observation)
+                    isnothing(shared) && (shared = _pair_frames(value, position))
+                    observation = reparam(
+                        candidate,
+                        _framed_rargs(value, position[idx], gradient[idx], shared)...,
+                    )
+                end
+                OnlineStatsBase.fit!(accumulator, observation; weight, count)
             end
-            OnlineStatsBase.fit!(accumulator, observation; weight, count)
         end
+        i = j + 1
     end
     ir
 end
@@ -1041,21 +1223,9 @@ end
 
 reset!(recorder::NonlinearRecorder) = (reset!(recorder.online); recorder)
 OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
-    excluded = Pair{Any,Bool}[]
-    ir.pairs .= Base.broadcasted(ir.pairs, ors.pairs) do (idx, value), (_, or)
-        for xgi in zip(eachcol.(xg)...)
-            OnlineStatsBase.fit!(or, reparam_rargs(value, getindex.(xgi, idx)..., first(xgi))...)
-        end
-        OnlineStatsBase.nobs(or) > 2 || return idx => value
-        new_source = _minimizing_source!(excluded, or, idx, value.source; loss_kwargs...)
-        new_value = Reparametrization(value.target, new_source, value.args...)
-        trans = Reparametrization(new_value.source, value.source, value.args...)
-        for xgi in zip(eachcol.(xg)...)
-            setindex!.(xgi, reparam(trans, getindex.(xgi, idx)..., first(xgi))[2:end], idx)
-        end
-        idx => new_value
-    end
-    _warn_excluded_candidates(excluded)
+    length(ors.pairs) == length(ir.pairs) || throw(DimensionMismatch(
+        "$(length(ors.pairs)) candidate accumulators for $(length(ir.pairs)) reparametrization pairs"))
+    _select_on_pool!(ir.pairs, k -> last(ors.pairs[k]), xg, loss_kwargs)
     ir
 end
 

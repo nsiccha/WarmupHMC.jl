@@ -16,6 +16,19 @@ refer to that version's tree.
 - Document the current reparametrization and checkpoint contracts, add an
   installation helper, and remove the internal API catalogue.
 
+## 0.2.19
+
+### Added
+
+- `SharedAccessor(f, i)`, an accessor reading element `i` of `f(x)`.
+  Consecutive pairs of an `IndexedReparametrization`, in increasing index
+  order, whose accessors are the same object or read the same `f` now evaluate
+  it once per vector instead of once per pair: in the map and its inverse, the
+  gradient (generic and Enzyme), the transport of retained states and centering
+  selection. A location shared by N coordinates costs O(N) per evaluation
+  instead of O(N²); results equal the pair-by-pair evaluation, derivatives to
+  rounding (snag `use-the-public-i-0660224b`).
+
 ## 0.2.18
 
 ### Added

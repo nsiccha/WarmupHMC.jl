@@ -205,11 +205,27 @@ end
     ir, n = correlated_block(4, 500, rng)
     x = 0.3 .* randn(rng, n); g = randn(rng, n)
     pairwise() = WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g)
+    old_objective(x, ir, g) = begin
+        ljac = 0.0
+        y = copy(x)
+        for (idx, value) in ir.pairs
+            t, y[idx] = WarmupHMC.reparam(value, x[idx], x)
+            ljac += t
+        end
+        ljac + dot(g, y)
+    end
+    old_one_pass() = last(value_and_gradient(old_objective, AutoEnzyme(), x,
+                                             Constant(ir), Constant(g)))
+    @test agrees(old_one_pass(), one_pass(AutoEnzyme(), ir, x, g))
     pairwise(); one_pass(AutoEnzyme(), ir, x, g)
     # the gradient and the working seed, plus a constant
     @test @allocated(pairwise()) < 2 * 8n + 1024
-    # positive control: on the same block the one-pass method allocates per pair
-    @test @allocated(one_pass(AutoEnzyme(), ir, x, g)) > 4 * (2 * 8n + 1024)
+    # positive control: on the same block, the pair loop as it was before runs of
+    # shared accessors (snag use-the-public-i-0660224b), every pair applying its
+    # accessors itself, allocates per pair in one pass
+    old_one_pass(); @test @allocated(old_one_pass()) > 4 * (2 * 8n + 1024)
+    # the run-wise map allocates a few working vectors in one pass, not per pair
+    @test @allocated(one_pass(AutoEnzyme(), ir, x, g)) < 4 * 8n + 1024
     # and the sampler's gradient goes through the pairwise method: beyond it, only
     # the forward map and the inner problem's few vectors
     rp = WarmupHMC.ReparametrizedProblem(ir, DiagGaussian(zeros(n), ones(n)), AutoEnzyme())

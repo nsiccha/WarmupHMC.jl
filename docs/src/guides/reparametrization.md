@@ -59,6 +59,30 @@ The output checks both the retained type and the two accessor behaviours. Keep
 the pair order and accessor meanings unchanged when rebuilding a checkpoint's
 target.
 
+## Shared locations
+
+Many coordinates often take their location or log-scale from one computation:
+a mean, or a vector of locations a model computes in one pass. Reuse one
+accessor object across their pairs, or read element `i` of one function with
+`SharedAccessor(f, i)`. Consecutive pairs in increasing index order that share
+an accessor this way evaluate it once per vector: in the map and its inverse,
+the gradient, the transport of retained states and centering selection. A block
+of N coordinates then costs O(N) per evaluation rather than O(N²). The shared
+function must not read the coordinates of its own block.
+
+```@example coordinates
+cell_locations(x) = x[1] .+ 0.5 .* x[2:4]   # three locations from one evaluation
+cells = IndexedReparametrization([
+    4 + i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(1.0),
+        SharedAccessor(cell_locations, i), 0.0) for i in 1:3
+])
+x = collect(1.0:7.0)
+(; locations=cell_locations(x), sampler=x[5:7], model=last(cells(x))[5:7])
+```
+
+The sampler coordinates are centred and the model's are not, so each model
+coordinate is its sampler coordinate minus its location.
+
 ## Derivatives
 
 A sampling wrapper needs an AD backend in its third constructor argument:

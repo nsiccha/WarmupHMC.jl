@@ -83,6 +83,13 @@ x = collect(1.0:7.0)
 The sampler coordinates are centred and the model's are not, so each model
 coordinate is its sampler coordinate minus its location.
 
+Registered Enzyme releases, through at least 0.13.219, reject one shape of
+shared accessor in static Reverse mode with `EnzymeRuntimeActivityError`: one
+that can return a constant it stores, such as the `Coordinate` struct above when
+consecutive pairs share it. Accessors that only read the position, as in the
+example above, are not affected. The limitation is tracked upstream as
+[EnzymeAD/Enzyme.jl#4045](https://github.com/EnzymeAD/Enzyme.jl/issues/4045).
+
 ## Derivatives
 
 A sampling wrapper needs an AD backend in its third constructor argument:

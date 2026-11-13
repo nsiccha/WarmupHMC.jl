@@ -4,6 +4,24 @@ const _COMPLETION_SELECTION_WARNING = "Chains were selected by runtime completio
     "Runtime can depend on the sampled states; retaining faster chains can bias inference. " *
     "R-hat, ESS and divergence checks on retained draws cannot rule out this selection bias."
 
+# The caveat is a claim about an outcome: it applies when the retained chains are
+# the ones that finished first, that is when some slot was cut short of `n_draws`
+# (by the quorum, a callback or an interrupt) or never started while at least one
+# chain was kept. A stuck or failed slot is a health verdict, not a race, and is
+# reported in its own fields. Without such a slot the retained draws are exactly
+# what all-chain sampling returns for the same seeds.
+_runtime_selected(statuses) = any(==(:completed), statuses) &&
+    any(st -> st in (:stopped, :not_started), statuses)
+
+# Warn iff the outcome records the caveat. A terminal record written before the
+# caveat depended on the outcome carries the text unconditionally, so reopening
+# it still warns.
+function _warn_runtime_selection(completion)
+    text = get(completion, :selection_warning, "")
+    isempty(text) || @warn text
+    nothing
+end
+
 "An unmet completion quorum. `outcome` contains the settled results and every chain's disposition."
 struct CompletionQuorumError{T} <: Exception
     outcome::T
@@ -351,7 +369,7 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
         omitted_chain_indices=omitted, chains, quorum_met, stop_reason=reason,
         quorum_at_seconds=s.quorum_at, stop_requested_at_seconds=s.quorum_at,
         elapsed_seconds=_completion_elapsed(s), n_samples, n_divergent_samples,
-        selection_warning=_COMPLETION_SELECTION_WARNING)
+        selection_warning=_runtime_selected(s.statuses) ? _COMPLETION_SELECTION_WARNING : "")
     (; results, completion)
 end
 
@@ -498,9 +516,18 @@ never silently reported as a successful fit.
 
 **Inferential limitation:** selecting faster chains can bias inference when
 runtime depends on sampled states or modes. R-hat, bulk/tail ESS and divergence
-checks describe only the returned draws and cannot rule out that bias. Report
-the policy and all omissions; do not describe the requested count as completed.
-Use all-chain sampling when this selection is unacceptable.
+checks describe only the returned draws and cannot rule out that bias. The call
+`@warn`s this caveat after the chains settle, and records it in
+`completion.selection_warning`, when the retained chains are such a selection:
+at least one chain was kept and some other slot was stopped short of `n_draws`
+(by the quorum, a callback or an interrupt) or never started. Otherwise
+`selection_warning` is `""` and nothing is printed: with
+`min_completed = length(rngs)`, or when every chain finished anyway, the returned
+draws are those of all-chain sampling. Chains left out as stuck or failed do not
+make a selection; they are named in `stuck_chain_indices` and
+`failed_chain_indices`. Report the policy and all omissions; do not describe the
+requested count as completed. Use all-chain sampling when this selection is
+unacceptable.
 
 Checkpoint files remain ordinary adaptive source-frame state under original
 `chain_<i>` directories. `resume=true` requires the same ordered RNG/density
@@ -509,7 +536,9 @@ checkpointed initializes from the supplied RNG. Re-pass original sampler
 settings. For an interrupted run, already-complete checkpoints are judged
 deterministically before workers launch, against every slot's latest
 checkpointed step size; no incomplete worker starts if the admitted ones already
-meet quorum. A successful terminal run reopens its **recorded outcome**:
+meet quorum. A successful terminal run reopens its **recorded outcome**, and
+warns iff its recorded `selection_warning` is non-empty (always, for runs
+recorded before the caveat followed the outcome):
 it never samples or admits omitted chains, and changing `n_draws`,
 `min_completed`, the admission thresholds or the slot count is rejected. A run
 recorded before the admission checks existed reopens as recorded, whatever
@@ -521,7 +550,8 @@ finish-current-round policy. Extend individual adaptive
 checkpoints separately when a different production target is required.
 `completion_manifest.jls` binds
 the original slot count; each invocation writes its own `run_manifest.json`
-and, after all workers settle, `run_summary.json` under
+(whose `selection_warning` carries the caveat when `min_completed` is below the
+slot count, `""` otherwise) and, after all workers settle, `run_summary.json` under
 `completion_attempts/attempt_<n>/`. The returned `completion.attempt_directory`
 identifies that invocation. `completion_terminal.jls` stores the successful
 outcome, including returned draws, atomically before the summary is published.
@@ -569,7 +599,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         # publication, without reopening the selection decision.
         isfile(joinpath(c.attempt_directory, "run_summary.json")) ||
             _write_completion_summary(c.attempt_directory, c)
-        @warn _COMPLETION_SELECTION_WARNING
+        _warn_runtime_selection(c)
         return saved.outcome
     end
     # Copies are made serially, before any worker can mutate its density.
@@ -583,9 +613,10 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             "stuck_stepsize_ratio" => admission.stuck_stepsize_ratio,
             "max_admitted_divergent_fraction" => admission.max_admitted_divergent_fraction,
             "n_draws" => n_draws, "resume" => resume,
-            "selection_warning" => _COMPLETION_SELECTION_WARNING])
+            # Written before any chain runs, so it states the policy: only a
+            # quorum below the slot count can leave a chain out by runtime.
+            "selection_warning" => min_completed < n ? _COMPLETION_SELECTION_WARNING : ""])
     end
-    @warn _COMPLETION_SELECTION_WARNING
     # One quorum parent over the whole batch, as multi-chain adaptive: the
     # counter fills at `min_completed`, each chain hangs its ordinary adaptive
     # subtree under it labelled by ORIGINAL slot index.
@@ -635,6 +666,8 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         _atomic_serialize(terminal_path, (; schema_version=2, n_draws, outcome))
     end
     _write_completion_summary(attempt_directory, outcome.completion)
+    # Only now is it known whether the retained chains are a runtime selection.
+    _warn_runtime_selection(outcome.completion)
     outcome.completion.quorum_met || throw(CompletionQuorumError(outcome))
     outcome
 end

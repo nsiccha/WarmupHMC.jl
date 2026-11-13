@@ -18,6 +18,22 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.2.20
+
+### Changed
+
+- `completion_warmup_mcmc` warns about runtime selection only when its outcome
+  is one: at least one chain was kept and another was stopped short of
+  `n_draws` (by the quorum, a callback or an interrupt) or never started. The
+  warning now prints after the chains settle, not before sampling, and
+  `completion.selection_warning` and `run_summary.json` hold `""` otherwise.
+  With `min_completed = length(rngs)`, or when every chain finished, nothing is
+  printed. Stuck and failed chains do not count as a selection.
+  `run_manifest.json`, written before sampling, carries the text only when
+  `min_completed` is below the slot count. Reopening a finished run warns iff
+  its recorded field is non-empty, so runs recorded before this version still
+  warn (snag `completion-warni-282737a4`).
+
 ## 0.2.19
 
 ### Added

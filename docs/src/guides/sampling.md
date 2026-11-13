@@ -50,7 +50,10 @@ shared between concurrently running chains.
 [`completion_warmup_mcmc`](@ref) adds a completion policy to independent chains.
 These are different sampling policies, not interchangeable ways to display a
 progress bar. In particular, an early completion rule can select chains by
-runtime; assess that selection when runtime depends on posterior location.
+runtime; assess that selection when runtime depends on posterior location. The
+completion sampler warns, and records the caveat in
+`completion.selection_warning`, only when its returned chains are such a
+selection. Requiring every chain, the default `min_completed`, never selects.
 
 ## Returned coordinates
 

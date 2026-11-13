@@ -255,6 +255,22 @@ end
 Own(kind::Symbol, n, i) = Own(findfirst(==(kind), KINDS), n, i)
 (a::Own)(x) = Graph(a.kind, a.n)(x)[a.i]
 
+# A frame of endpoint arrays read with a two-part selector, the shape RKPPL's
+# joint graph kernel returns (co-report on the snag): family 1 is block A's
+# locations, family 2 its log-scale.
+struct EndpointFrame
+    values::Vector{Vector{Float64}}
+end
+Base.getindex(f::EndpointFrame, i::CartesianIndex{2}) = f.values[i[1]][i[2]]
+struct Endpoints <: Function
+    n::Int
+end
+function (f::Endpoints)(x)
+    tick!(4)    # counted as :joint
+    e = _energy(f.n, x)
+    EndpointFrame([e .+ _offsets(f.n), [e / 2]])
+end
+
 const PC = PartiallyCentered
 rule(t, s, location, log_scale) = Reparametrization(PC(t), PC(s), location, log_scale)
 S(kind, n, i) = SharedAccessor(Graph(kind, n), i)
@@ -265,6 +281,10 @@ same_function(n; t=0.0, s=0.7) =
 # Locations and log-scale from one joint computation.
 joint(n; t=0.0, s=0.7) = IndexedReparametrization(
     [n + i => rule(t, s, S(:joint, n, i), S(:joint, n, n + 1)) for i in 1:n])
+# The same from a frame of endpoint arrays and `CartesianIndex` selectors.
+framed(n; t=0.0, s=0.7) = IndexedReparametrization([n + i => rule(t, s,
+    SharedAccessor(Endpoints(n), CartesianIndex(1, i)),
+    SharedAccessor(Endpoints(n), CartesianIndex(2, 1))) for i in 1:n])
 # Two blocks, different locations, one log-scale. Block B's locations read block
 # A's coordinates, the dependency the inverse allows.
 two_blocks(n; t=0.0, s=0.7, tb=t, sb=s) = IndexedReparametrization([
@@ -309,7 +329,7 @@ function operation_counts(build, d, n; kwargs...)
 end
 
 @testset "a location and a log-scale computed by one function evaluate it once" begin
-    for (build, tag) in ((same_function, :energy), (joint, :joint))
+    for (build, tag) in ((same_function, :energy), (joint, :joint), (framed, :joint))
         counts = [operation_counts(build, 2n, n) for n in (8, 64)]
         @test counts[1] == counts[2]
         c = counts[1]
@@ -329,6 +349,19 @@ end
           WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
     @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), joint(n), x, x),
                  one_pass(separate, x, x))
+    @test framed(n)(x) == separate(x)
+    @test WarmupHMC._inverse_with_logabsdet_jacobian(framed(n), x) ==
+          WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
+    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), framed(n), x, x),
+                 one_pass(separate, x, x))
+    P, G = randn(Xoshiro(8), 2n, 6), randn(Xoshiro(9), 2n, 6)
+    Pa, Ga = transport(framed(n; s=0.9), framed(n; s=0.2), 2n, P, G)
+    Pb, Gb = transport(IndexedReparametrization([n + i => rule(0.0, 0.9, S(:loc_a, n, i),
+                           S(:log_scale, n, 1)) for i in 1:n]),
+                       IndexedReparametrization([n + i => rule(0.0, 0.2, S(:loc_a, n, i),
+                           S(:log_scale, n, 1)) for i in 1:n]), 2n, P, G)
+    @test Pa == Pb
+    @test agrees(Ga, Gb)
 end
 
 @testset "blocks that read their endpoints from one function evaluate it once" begin

@@ -18,6 +18,28 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.2.21
+
+### Changed
+
+- A location and a log-scale that read one function (the same accessor object,
+  or `SharedAccessor`s over one `f`) evaluate it once per run of pairs instead
+  of once each, on every path: the map and its inverse, the gradient (generic
+  and Enzyme), the transport of retained states and centering selection. One
+  function returning `[locations; log_scale]` can therefore serve the pairs of
+  one block, or of several blocks, with one evaluation per vector (snag
+  `centering-evalua-54d5e611`).
+- A pair whose source and target centerings are equal maps its coordinate
+  exactly to itself with a zero log-Jacobian and evaluates neither accessor on
+  the map, its inverse, the gradient or the transport. Before, it evaluated both
+  and matched the identity to rounding, and a non-finite location or log-scale
+  made its coordinate `NaN`. Every pair built with equal ends starts this way,
+  so for the same seed, draws of a reparametrized run differ from 0.2.20 by
+  that rounding. A pool coordinate whose selected centering equals its current
+  one is no longer moved through the identity either. Maps, inverses and
+  selection of pairs that are not identities are bit for bit unchanged, and
+  their gradients and transport are unchanged within rounding.
+
 ## 0.2.20
 
 ### Changed

@@ -184,3 +184,258 @@ end
     @test all(isfinite, result.posterior_position)
 end
 end
+
+@testitem "Accessor work is reused across positions and runs, and skipped by identity pairs" setup=[WarmupHMCSharedFixtures] begin
+    using Test, WarmupHMC
+    using Random, LinearAlgebra
+    using LogDensityProblems
+    const OnlineStatsBase = WarmupHMC.OnlineStatsBase  # not a test dependency of its own
+    using DifferentiationInterface, Enzyme
+
+# Snag centering-evalua-54d5e611 (RKPPL's adaptive centring audit): each accessor
+# position was evaluated on its own, so a location and log-scale computed by one
+# function ran it twice per run, and a pair whose source and target centering are
+# equal still evaluated both. Coordinates 1:n are the hyperparameters; block A is
+# n+1:2n and block B 2n+1:3n.
+
+# What a computation is, and how often it ran.
+const KINDS = (:energy, :loc_a, :loc_b, :joint, :log_scale, :joint_ab)
+const CALLS = zeros(Int, length(KINDS))
+tick!(kind) = (CALLS[kind] += 1; nothing)
+Enzyme.EnzymeRules.inactive(::typeof(tick!), args...) = nothing
+function counted(f)
+    fill!(CALLS, 0)
+    f()
+    copy(CALLS)
+end
+calls(c, tag) = c[findfirst(==(tag), KINDS)]
+none(c) = all(iszero, c)
+
+# One function type for every location and log-scale computation, so the pairs of
+# both blocks share one concrete type. `kind` picks what it computes:
+#   :energy    [sum(abs2, x[1:n]) / n]
+#   :loc_a     block A's locations, energy .+ offsets (a length-n vector)
+#   :loc_b     block B's locations, read from block A's coordinates
+#   :joint     [energy .+ offsets; energy / 2], locations and log-scale at once
+#   :log_scale [energy / 2]
+#   :joint_ab  [energy .+ offsets; 2energy .+ offsets; energy / 2], both blocks'
+#              locations and their log-scale at once
+struct Graph <: Function
+    kind::Int
+    n::Int
+end
+Graph(kind::Symbol, n) = Graph(findfirst(==(kind), KINDS), n)
+_energy(n, x) = sum(abs2, view(x, 1:n)) / n
+_offsets(n) = [-0.3 + 0.7 * (i - 1) / (n - 1) for i in 1:n]
+function (g::Graph)(x)
+    tick!(g.kind)
+    n = g.n
+    e = _energy(n, x)
+    if g.kind == 1
+        [e]
+    elseif g.kind == 2
+        e .+ _offsets(n)
+    elseif g.kind == 3
+        0.5 .* x[n+1:2n] .+ 0.1
+    elseif g.kind == 4
+        vcat(e .+ _offsets(n), [e / 2])
+    elseif g.kind == 5
+        [e / 2]
+    else
+        vcat(e .+ _offsets(n), 2e .+ _offsets(n), [e / 2])
+    end
+end
+# The same quantities read by an accessor of their own per pair: the pair-by-pair
+# evaluation the shared ones must reproduce.
+struct Own <: Function
+    kind::Int
+    n::Int
+    i::Int
+end
+Own(kind::Symbol, n, i) = Own(findfirst(==(kind), KINDS), n, i)
+(a::Own)(x) = Graph(a.kind, a.n)(x)[a.i]
+
+const PC = PartiallyCentered
+rule(t, s, location, log_scale) = Reparametrization(PC(t), PC(s), location, log_scale)
+S(kind, n, i) = SharedAccessor(Graph(kind, n), i)
+
+# A location and a log-scale computed by one function.
+same_function(n; t=0.0, s=0.7) =
+    IndexedReparametrization([n + i => rule(t, s, S(:energy, n, 1), S(:energy, n, 1)) for i in 1:n])
+# Locations and log-scale from one joint computation.
+joint(n; t=0.0, s=0.7) = IndexedReparametrization(
+    [n + i => rule(t, s, S(:joint, n, i), S(:joint, n, n + 1)) for i in 1:n])
+# Two blocks, different locations, one log-scale. Block B's locations read block
+# A's coordinates, the dependency the inverse allows.
+two_blocks(n; t=0.0, s=0.7, tb=t, sb=s) = IndexedReparametrization([
+    [n + i => rule(t, s, S(:loc_a, n, i), S(:log_scale, n, 1)) for i in 1:n];
+    [2n + i => rule(tb, sb, S(:loc_b, n, i), S(:log_scale, n, 1)) for i in 1:n]])
+# Both blocks' endpoints from one joint computation: one run over both blocks.
+joint_blocks(n; t=0.0, s=0.7) = IndexedReparametrization([
+    [n + i => rule(t, s, S(:joint_ab, n, i), S(:joint_ab, n, 2n + 1)) for i in 1:n];
+    [2n + i => rule(t, s, S(:joint_ab, n, n + i), S(:joint_ab, n, 2n + 1)) for i in 1:n]])
+own_blocks(n; t=0.0, s=0.7, tb=t, sb=s) = IndexedReparametrization([
+    [n + i => rule(t, s, Own(:loc_a, n, i), Own(:log_scale, n, 1)) for i in 1:n];
+    [2n + i => rule(tb, sb, Own(:loc_b, n, i), Own(:log_scale, n, 1)) for i in 1:n]])
+
+struct StdNormal
+    d::Int
+end
+LogDensityProblems.dimension(p::StdNormal) = p.d
+LogDensityProblems.capabilities(::Type{StdNormal}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity(::StdNormal, y) = -dot(y, y) / 2
+LogDensityProblems.logdensity_and_gradient(::StdNormal, y) = (-dot(y, y) / 2, -y)
+problem(ir, d) = ReparametrizedProblem(ir, StdNormal(d), AutoEnzyme())
+one_pass(ir, x, g) = invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any},
+                            AutoEnzyme(), ir, x, g)
+agrees(a, b) = isapprox(a, b; rtol=1e-12)
+function transport(ir_old, ir_new, d, P, G)
+    P2, G2 = copy(P), copy(G)
+    WarmupHMC._jointly_transport_halo!(problem(ir_new, d), ir_old, P, G, P2, G2)
+    P2, G2
+end
+
+function operation_counts(build, d, n; kwargs...)
+    rng = Xoshiro(n)
+    x, g = randn(rng, d), randn(rng, d)
+    P, G = randn(rng, d, 5), randn(rng, d, 5)
+    ir = build(n; kwargs...)
+    ors = WarmupHMC.OnlineReparametrizer(ir; accumulator=WarmupHMC.WeightedReparametrizationLoss)
+    (; forward = counted(() -> ir(x)),
+       inverse = counted(() -> WarmupHMC._inverse_with_logabsdet_jacobian(ir, x)),
+       gradient = counted(() -> LogDensityProblems.logdensity_and_gradient(problem(ir, d), x)),
+       scoring = counted(() -> OnlineStatsBase.fit!(ir, ors, x, g)),
+       transport = counted(() -> transport(build(n; kwargs...), build(n; s=0.2), d, P, G)))
+end
+
+@testset "a location and a log-scale computed by one function evaluate it once" begin
+    for (build, tag) in ((same_function, :energy), (joint, :joint))
+        counts = [operation_counts(build, 2n, n) for n in (8, 64)]
+        @test counts[1] == counts[2]
+        c = counts[1]
+        @test calls(c.forward, tag) == 1
+        @test calls(c.inverse, tag) == 1
+        @test calls(c.scoring, tag) == 1
+        @test calls(c.gradient, tag) <= 2
+        @test calls(c.transport, tag) <= 6 * 5 + 2
+    end
+    # The joint frame gives the same map as separate location and log-scale functions.
+    n = 9
+    x = randn(Xoshiro(4), 2n)
+    separate = IndexedReparametrization(
+        [n + i => rule(0.0, 0.7, S(:loc_a, n, i), S(:log_scale, n, 1)) for i in 1:n])
+    @test joint(n)(x) == separate(x)
+    @test WarmupHMC._inverse_with_logabsdet_jacobian(joint(n), x) ==
+          WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
+    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), joint(n), x, x),
+                 one_pass(separate, x, x))
+end
+
+@testset "blocks that read their endpoints from one function evaluate it once" begin
+    counts = [operation_counts(joint_blocks, 3n, n) for n in (8, 64)]
+    @test counts[1] == counts[2]
+    c = counts[1]
+    @test WarmupHMC._run_end(joint_blocks(8).pairs, 1) == 16
+    for op in (:forward, :inverse, :scoring)
+        @test calls(getproperty(c, op), :joint_ab) == 1
+    end
+    @test calls(c.gradient, :joint_ab) <= 2
+    @test calls(c.transport, :joint_ab) <= 6 * 5 + 2
+    # With a function per block, a log-scale the blocks share is evaluated once
+    # per run, so once per block.
+    c = operation_counts(two_blocks, 3 * 8, 8)
+    for op in (:forward, :inverse, :scoring)
+        @test calls(getproperty(c, op), :log_scale) == 2
+        @test calls(getproperty(c, op), :loc_a) == 1
+        @test calls(getproperty(c, op), :loc_b) == 1
+    end
+    # The joint map is the map of the separate functions.
+    n = 8
+    x = randn(Xoshiro(7), 3n)
+    separate = IndexedReparametrization([
+        [n + i => rule(0.0, 0.7, Own(:loc_a, n, i), Own(:log_scale, n, 1)) for i in 1:n];
+        [2n + i => rule(0.0, 0.7, Own(:joint_ab, n, n + i), Own(:log_scale, n, 1)) for i in 1:n]])
+    @test joint_blocks(n)(x) == separate(x)
+    @test WarmupHMC._inverse_with_logabsdet_jacobian(joint_blocks(n), x) ==
+          WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
+    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), joint_blocks(n), x, x),
+                 one_pass(separate, x, x))
+end
+
+@testset "blocks that share a log-scale reproduce the pair-by-pair evaluation" begin
+    n = 7
+    d = 3n
+    rng = Xoshiro(5)
+    x, g = randn(rng, d), randn(rng, d)
+    for (t, s, tb, sb) in ((0.0, 1.0, 0.0, 1.0), (1.0, 0.3, 0.2, 0.9), (0.4, 0.4, 0.0, 0.6),
+                           (0.0, 0.6, 0.5, 0.5))
+        a, b = two_blocks(n; t, s, tb, sb), own_blocks(n; t, s, tb, sb)
+        @test a(x) == b(x)
+        @test WarmupHMC._inverse_with_logabsdet_jacobian(a, x) ==
+              WarmupHMC._inverse_with_logabsdet_jacobian(b, x)
+        _, y = a(x)
+        @test last(WarmupHMC._inverse_with_logabsdet_jacobian(a, y)) ≈ x
+        ga = WarmupHMC._reparam_gradient(AutoEnzyme(), a, x, g)
+        @test agrees(ga, WarmupHMC._reparam_gradient(AutoEnzyme(), b, x, g))
+        @test agrees(ga, one_pass(b, x, g))
+        @test agrees(one_pass(a, x, g), one_pass(b, x, g))
+    end
+    P, G = randn(rng, d, 6), randn(rng, d, 6)
+    for (old, new) in (((; s=0.9, sb=0.8), (; s=0.1, sb=0.3)),
+                       ((; s=0.0, sb=0.0), (; s=0.1, sb=0.0)),   # old identity
+                       ((; s=0.9, sb=0.0), (; s=0.0, sb=0.4)))
+        Pa, Ga = transport(two_blocks(n; old...), two_blocks(n; new...), d, P, G)
+        Pb, Gb = transport(own_blocks(n; old...), own_blocks(n; new...), d, P, G)
+        @test Pa == Pb
+        @test agrees(Ga, Gb)
+    end
+    # Selection: the same scores, the same centerings, the same moved pool.
+    P, G = randn(rng, d, 40), randn(rng, d, 40)
+    @test candidate_scoring_losses(problem(two_blocks(n; s=0.5), d), P, G) ==
+          candidate_scoring_losses(problem(own_blocks(n; s=0.5), d), P, G)
+    a, b = two_blocks(n; s=0.5), own_blocks(n; s=0.5)
+    Pa, Ga, Pb, Gb = copy(P), copy(G), copy(P), copy(G)
+    WarmupHMC.optimize!(a, Pa, Ga)
+    WarmupHMC.optimize!(b, Pb, Gb)
+    @test [last(p).source for p in a.pairs] == [last(p).source for p in b.pairs]
+    @test (Pa, Ga) == (Pb, Gb)
+end
+
+@testset "identity pairs evaluate no accessor and map exactly to themselves" begin
+    n = 8
+    d = 3n
+    rng = Xoshiro(6)
+    x, g = randn(rng, d), randn(rng, d)
+    ir = two_blocks(n; t=0.7, s=0.7)
+    ors = WarmupHMC.OnlineReparametrizer(ir; accumulator=WarmupHMC.WeightedReparametrizationLoss)
+    @test none(counted(() -> ir(x)))
+    @test none(counted(() -> WarmupHMC._inverse_with_logabsdet_jacobian(ir, x)))
+    @test none(counted(() -> LogDensityProblems.logdensity_and_gradient(problem(ir, d), x)))
+    # Selection still scores candidates away from the identity, once per run.
+    @test calls(counted(() -> OnlineStatsBase.fit!(ir, ors, x, g)), :log_scale) == 2
+    @test ir(x) == (0.0, x)
+    @test WarmupHMC._inverse_with_logabsdet_jacobian(ir, x) == (0.0, x)
+    # The gradient of the identity map is the seed.
+    @test WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g) == g
+    @test agrees(one_pass(ir, x, g), g)
+    # The formula the identity replaces agrees to rounding.
+    value = last(ir.pairs[1])
+    loc, log_scale = value.args[1](x), value.args[2](x)
+    ljac, y = WarmupHMC.reparam(PC(0.7), PC(0.7), x[n + 1], loc, log_scale)
+    @test ljac == 0 && y ≈ x[n + 1]
+    # One block at the identity: only the other block evaluates its accessors.
+    mixed = two_blocks(n; t=0.7, s=0.7, tb=0.0, sb=0.6)
+    c = counted(() -> mixed(x))
+    @test calls(c, :loc_a) == 0 && calls(c, :loc_b) == 1 && calls(c, :log_scale) == 1
+    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), mixed, x, g),
+                 one_pass(own_blocks(n; t=0.7, s=0.7, tb=0.0, sb=0.6), x, g))
+end
+
+@testset "adaptive warm-up samples through blocks that share a log-scale" begin
+    n = 4
+    rp = problem(two_blocks(n; t=0.0, s=0.0), 3n)
+    result = adaptive_warmup_mcmc(Xoshiro(3), rp; n_draws=100, n_evaluations=200,
+                                  init=(; position=zeros(3n), squared_scale=ones(3n)))
+    @test all(isfinite, result.posterior_position)
+end
+end

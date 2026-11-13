@@ -83,6 +83,30 @@ x = collect(1.0:7.0)
 The sampler coordinates are centred and the model's are not, so each model
 coordinate is its sampler coordinate minus its location.
 
+A location and a log-scale that read one function share its evaluation, so a
+model can compute both in one pass. Read the locations with
+`SharedAccessor(f, i)` and the log-scale with `SharedAccessor(f, n + 1)`, for an
+`f(x)` that returns `[locations; log_scale]`:
+
+```@example coordinates
+endpoints(x) = [x[1] .+ 0.5 .* x[2:4]; x[1] / 2]   # locations and log-scale at once
+joint = IndexedReparametrization([
+    4 + i => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(1.0),
+        SharedAccessor(endpoints, i), SharedAccessor(endpoints, 4)) for i in 1:3
+])
+(; endpoints=endpoints(x), model=last(joint(x))[5:7])
+```
+
+Each model coordinate is now its sampler coordinate minus its location, scaled
+by `exp(-0.5)`. Several blocks whose pairs all read one such function form one
+run and evaluate it once; blocks that read a function each evaluate work they
+share, such as a common log-scale, once per block.
+
+A pair whose source and target centerings are equal, as every pair built with
+equal ends is until warm-up moves it, maps its coordinate to itself and
+evaluates neither accessor on the map, its inverse, the gradient or the
+transport. Centering selection still evaluates them for its candidates.
+
 Registered Enzyme releases, through at least 0.13.219, reject one shape of
 shared accessor in static Reverse mode with `EnzymeRuntimeActivityError`: one
 that can return a constant it stores, such as the `Coordinate` struct above when

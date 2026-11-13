@@ -29,9 +29,13 @@ module WarmupHMCEnzymeExt
 # evaluated and differentiated once rather than once per pair (snag
 # `use-the-public-i-0660224b`). A run's indices increase, so each of its pairs
 # takes its own coordinate's seed. A run of one pair is the pair-by-pair call.
+# A pair whose source and target centerings are equal is the identity on its
+# coordinate: it takes no call, its derivative is its seed, and a run of such
+# pairs evaluates no accessor (snag `centering-evalua-54d5e611`).
 
 using WarmupHMC, Enzyme
-using WarmupHMC: IndexedReparametrization, reparam, _pair_frames, _reparam_framed, _run_start
+using WarmupHMC: IndexedReparametrization, reparam, _reparam_framed, _run_start,
+    _is_identity, _any_moved, _first_moved, _share_pattern, _patterned_frames
 using DifferentiationInterface: AutoEnzyme
 
 # One pair's share of `_reparam_objective`: its log-Jacobian plus `seed` times
@@ -43,8 +47,8 @@ end
 
 # A run's share: pairs `i:j` from one evaluation of their shared values, each
 # seeded by its coordinate's entry of `seed`.
-_run_objective(pairs, i, j, seed, x) = begin
-    frames = _pair_frames(last(pairs[i]), x)
+_run_objective(pairs, i, j, seed, x, pattern) = begin
+    frames = _patterned_frames(last(pairs[i]), x, pattern)
     total = zero(eltype(x))
     for k in i:j
         idx, value = pairs[k]
@@ -53,6 +57,29 @@ _run_objective(pairs, i, j, seed, x) = begin
     end
     total
 end
+# The same for a run that holds identity pairs, which it leaves out. Runs without
+# them keep the objective above, with no branch per pair for the reverse pass.
+_moved_run_objective(pairs, i, j, seed, x, pattern) = begin
+    frames = _patterned_frames(last(pairs[_first_moved(pairs, i, j)]), x, pattern)
+    total = zero(eltype(x))
+    for k in i:j
+        idx, value = pairs[k]
+        _is_identity(value) && continue
+        ljac, y = _reparam_framed(value, x[idx], frames)
+        total += ljac + seed[idx] * y
+    end
+    total
+end
+_has_identity(pairs, i, j) = any(k -> _is_identity(last(pairs[k])), i:j)
+# Which accessor positions of a run share a frame, as a type (see
+# `WarmupHMC._frames_by`): a pattern of all zeros has one type per rule type, so
+# a run whose positions share nothing dispatches statically.
+_pattern(pairs, i) = (p = _share_pattern(last(pairs[i])); all(iszero, p) ? Val(map(zero, p)) : Val(p))
+
+_autodiff_run(mode, objective, pairs, i, j, seed, x, gradient, pattern) =
+    Enzyme.autodiff(mode, objective, Enzyme.Active, Enzyme.Const(pairs),
+                    Enzyme.Const(i), Enzyme.Const(j), Enzyme.Const(seed),
+                    Enzyme.Duplicated(x, gradient), Enzyme.Const(pattern))
 
 _reverse_mode(::AutoEnzyme{Nothing}) = Enzyme.Reverse
 _reverse_mode(backend::AutoEnzyme{<:Enzyme.ReverseMode}) = backend.mode
@@ -64,19 +91,22 @@ function _accumulate_pairs!(gradient, seed, mode, pairs, x)
     j = lastindex(pairs)
     while j >= firstindex(pairs)
         i = _run_start(pairs, j)
-        if i == j
+        if !_any_moved(pairs, i, j)
+        elseif i == j
             idx, value = pairs[j]
             s = seed[idx]
             seed[idx] = 0
             Enzyme.autodiff(mode, _pair_objective, Enzyme.Active, Enzyme.Const(value),
                             Enzyme.Const(idx), Enzyme.Const(s), Enzyme.Duplicated(x, gradient))
         else
-            Enzyme.autodiff(mode, _run_objective, Enzyme.Active, Enzyme.Const(pairs),
-                            Enzyme.Const(i), Enzyme.Const(j), Enzyme.Const(seed),
-                            Enzyme.Duplicated(x, gradient))
-            for k in i:j
-                seed[first(pairs[k])] = 0
-            end
+            objective = _has_identity(pairs, i, j) ? _moved_run_objective : _run_objective
+            _autodiff_run(mode, objective, pairs, i, j, seed, x, gradient, _pattern(pairs, i))
+        end
+        # An identity pair writes its own coordinate: its derivative is its seed.
+        for k in i:j
+            idx, value = pairs[k]
+            _is_identity(value) && (gradient[idx] += seed[idx])
+            seed[idx] = 0
         end
         j = i - 1
     end
@@ -101,7 +131,8 @@ end
 # pairs in order on one vector, so an accessor reads the coordinates earlier
 # pairs have recovered and the target values of the rest. Replaying it backwards
 # restores that state: before differentiating pair `i`, its coordinate is set
-# back to its target value. That needs each index to occur once.
+# back to its target value. That needs each index to occur once. An identity pair
+# recovers its target value, so its seed passes to `m` unchanged.
 
 # One inverse pair's share: its log-Jacobian plus `seed` times the coordinate it
 # recovers.
@@ -113,8 +144,8 @@ end
 # A run's share of the inverse: pairs `i:j` recovered from one evaluation of their
 # shared values at the run's starting `source`, each seeded by its coordinate's
 # entry of `seed`.
-_inverse_run_objective(pairs, i, j, seed, target, source) = begin
-    frames = _pair_frames(last(pairs[i]), source)
+_inverse_run_objective(pairs, i, j, seed, target, source, pattern) = begin
+    frames = _patterned_frames(last(pairs[i]), source, pattern)
     total = zero(eltype(source))
     for k in i:j
         idx, value = pairs[k]
@@ -123,6 +154,23 @@ _inverse_run_objective(pairs, i, j, seed, target, source) = begin
     end
     total
 end
+# The same for a run that holds identity pairs, which it leaves out.
+_inverse_moved_run_objective(pairs, i, j, seed, target, source, pattern) = begin
+    frames = _patterned_frames(last(pairs[_first_moved(pairs, i, j)]), source, pattern)
+    total = zero(eltype(source))
+    for k in i:j
+        idx, value = pairs[k]
+        _is_identity(value) && continue
+        ljac, s = _reparam_framed(WarmupHMC.inverse(value), target[idx], frames)
+        total += ljac + seed[idx] * s
+    end
+    total
+end
+
+_autodiff_inverse_run(mode, objective, pairs, i, j, sd, m, dm, s, ds, pattern) =
+    Enzyme.autodiff(mode, objective, Enzyme.Active, Enzyme.Const(pairs),
+                    Enzyme.Const(i), Enzyme.Const(j), Enzyme.Const(sd),
+                    Enzyme.Duplicated(m, dm), Enzyme.Duplicated(s, ds), Enzyme.Const(pattern))
 
 function _transport_gradient!(g_new, m, s, dm, ds, sd, mode, new_ir, old_ir, x, g_old)
     WarmupHMC._with_logabsdet_jacobian_into!(m, new_ir, x)
@@ -133,7 +181,8 @@ function _transport_gradient!(g_new, m, s, dm, ds, sd, mode, new_ir, old_ir, x, 
     j = lastindex(pairs)
     while j >= firstindex(pairs)
         i = _run_start(pairs, j)
-        if i == j
+        if !_any_moved(pairs, i, j)
+        elseif i == j
             idx, value = pairs[j]
             s[idx] = m[idx]
             seed = ds[idx]
@@ -145,14 +194,23 @@ function _transport_gradient!(g_new, m, s, dm, ds, sd, mode, new_ir, old_ir, x, 
             # Back to the state where the run starts; its seeds move out of `ds`,
             # which accumulates the run's own derivative in `source`.
             for k in i:j
-                idx = first(pairs[k])
+                idx, value = pairs[k]
                 s[idx] = m[idx]
+                _is_identity(value) && continue
                 sd[idx] = ds[idx]
                 ds[idx] = 0
             end
-            Enzyme.autodiff(mode, _inverse_run_objective, Enzyme.Active, Enzyme.Const(pairs),
-                            Enzyme.Const(i), Enzyme.Const(j), Enzyme.Const(sd),
-                            Enzyme.Duplicated(m, dm), Enzyme.Duplicated(s, ds))
+            objective = _has_identity(pairs, i, j) ? _inverse_moved_run_objective :
+                                                     _inverse_run_objective
+            _autodiff_inverse_run(mode, objective, pairs, i, j, sd, m, dm, s, ds,
+                                  _pattern(pairs, i))
+        end
+        # An identity pair's coordinate is its target value.
+        for k in i:j
+            idx, value = pairs[k]
+            _is_identity(value) || continue
+            dm[idx] += ds[idx]
+            ds[idx] = 0
         end
         j = i - 1
     end

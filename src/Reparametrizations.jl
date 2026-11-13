@@ -258,8 +258,9 @@ The gradient in `x` of `_reparam_objective(x, reparametrizer, g_y)`, i.e. of
 
 This method differentiates the whole transform in one pass. With a reverse-mode
 `AutoEnzyme` backend and an [`IndexedReparametrization`](@ref), the Enzyme
-extension differentiates it pair by pair instead, in reverse pair order, and a
-run of pairs that share accessor work (see [`SharedAccessor`](@ref)) in one call.
+extension differentiates it pair by pair instead, in reverse pair order, and
+a run of pairs that share accessor work (see [`SharedAccessor`](@ref)) in one
+call. Pairs whose source and target centerings are equal take no call.
 The result agrees to rounding: a coordinate that several pairs read may sum their
 contributions in a different order. The pair loop before runs allocated for every
 accessor call in one pass (about 770 bytes per pair on a correlated random-effect
@@ -364,8 +365,10 @@ struct Reparametrization{T,S,A}
     Reparametrization(target, source, args...) = new{typeof(target), typeof(source), typeof(args)}(target, source, args)
 end
 InverseFunctions.inverse((;target, source, args)::Reparametrization) = Reparametrization(source, target, args...)
-reparam_rargs((;source, args)::Reparametrization, xi, x) = (source, xi, map(Base.Fix2(maybecall, x), args)...)
-reparam_rargs((;source, args)::Reparametrization, xi, gi, x) = (source, xi, gi, map(Base.Fix2(maybecall, x), args)...)
+# The rule's arguments at `x`: an accessor computation that the location and the
+# log-scale share is evaluated once (`_pair_frames`, below).
+reparam_rargs(r::Reparametrization, xi, x) = _framed_rargs(r, xi, _pair_frames(r, x))
+reparam_rargs(r::Reparametrization, xi, gi, x) = _framed_rargs(r, xi, gi, _pair_frames(r, x))
 reparam(r::Reparametrization, xi, x) = reparam(r.target, reparam_rargs(r, xi, x)...)
 reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi, gi, x)...)
 
@@ -379,14 +382,19 @@ model computes in one pass, so that the computation runs once per vector instead
 of once per coordinate.
 
 Within an [`IndexedReparametrization`](@ref), consecutive pairs in increasing
-index order share an accessor position when their accessors there read the same
-`f` (`===`), and WarmupHMC evaluates `f` once for all of them, on every path:
-the map and its inverse, the gradient, the transport of retained states to new
-centerings, and centering selection. A plain accessor that is the same object in
-consecutive pairs, such as one rule reused for every pair of a block, is shared
-in the same way without this wrapper. Each accessor position is evaluated once
-per such run of pairs, so a location and a log-scale read from one `f` evaluate
-it twice; give them separate functions to avoid that.
+index order whose accessors read the same `f` (`===`) form a run, and WarmupHMC
+evaluates `f` once for all of them, on every path: the map and its inverse, the
+gradient, the transport of retained states to new centerings, and centering
+selection. A plain accessor that is the same object in consecutive pairs, such
+as one rule reused for every pair of a block, is shared in the same way without
+this wrapper. A location and a log-scale that read one `f` share its evaluation,
+so one joint computation can serve both: an `f(x)` that
+returns `[locations; log_scale]`, read with `SharedAccessor(f, i)` and
+`SharedAccessor(f, n + 1)`. `index` is anything `f(x)` can be indexed with, so
+`f` may instead return a frame of endpoint arrays read with
+`CartesianIndex(family, element)`. Several blocks whose pairs all read one such `f`
+form one run, so work they share, such as a common log-scale, also runs once;
+with a function per block it runs once per block.
 
 The shared value is computed where its run of pairs starts, so `f` must not read
 the coordinates of the pairs in its own run. The inverse map already requires
@@ -452,10 +460,78 @@ function _run_start(pairs, j, start=firstindex(pairs))
     i
 end
 
+# --- One evaluation per accessor computation within a rule ------------------------
+#
+# A location and a log-scale that compute the same thing (the same accessor, or
+# `SharedAccessor`s over one `f`) share one frame, so a joint computation of both,
+# such as an `f(x)` returning `[locations; log_scales]`, runs once per run of
+# pairs (snag `centering-evalua-54d5e611`). Pairs of several blocks that read their
+# endpoints from one such function form one run, so the function runs once for all
+# of them. Positions whose share keys have different types are told apart at
+# compile time.
+_same_work(a, b) = a === b
+@inline _find_frame(a, x, ::Tuple{}, ::Tuple{}) = _frame(a, x)
+@inline _find_frame(a, x, ref::Tuple, frames::Tuple) =
+    _same_work(_share_key(a), _share_key(first(ref))) ? first(frames) :
+    _find_frame(a, x, Base.tail(ref), Base.tail(frames))
+# The frames of `args` at `x`, each one taken from an earlier position of `args`
+# that computes the same thing, and evaluated otherwise.
+@inline _collect_frames(::Tuple{}, x, ref::Tuple, frames::Tuple) = ()
+@inline function _collect_frames(args::Tuple, x, ref::Tuple, frames::Tuple)
+    a = first(args)
+    frame = _find_frame(a, x, ref, frames)
+    (frame, _collect_frames(Base.tail(args), x, (a, ref...), (frame, frames...))...)
+end
+
 # A rule's shared values at `x`, and the rule evaluated from them. A pair value
 # that is not a `Reparametrization` keeps reading the vector itself.
-_pair_frames(value::Reparametrization, x) = map(a -> _frame(a, x), value.args)
+@inline _pair_frames(value::Reparametrization, x) = _collect_frames(value.args, x, (), ())
 _pair_frames(value, x) = x
+
+# The same frames from a sharing pattern decided beforehand: position `p` reuses
+# the frame of position `P[p]`, or evaluates its own where that is 0. Under
+# Enzyme, the runtime comparison of `_collect_frames` costs the reverse pass about
+# a tenth of a gradient on a run of 4,096 pairs (positions whose keys share a
+# type, as RKPPL's do), so the Enzyme extension decides the pattern outside the
+# differentiated objective and passes it as a type.
+_share_pattern(value::Reparametrization) = _share_pattern(value.args)
+_share_pattern(value) = ()
+_share_pattern(args::Tuple) = ntuple(length(args)) do p
+    for q in 1:p-1
+        _same_work(_share_key(args[q]), _share_key(args[p])) && return q
+    end
+    0
+end
+@generated function _frames_by(args::Tuple, x, ::Val{P}) where {P}
+    names = [Symbol(:frame, p) for p in eachindex(P)]
+    assignments = [:($(names[p]) = $(P[p] == 0 ? :(_frame(args[$p], x)) : names[P[p]]))
+                   for p in eachindex(P)]
+    :(begin $(assignments...); ($(names...),) end)
+end
+_patterned_frames(value::Reparametrization, x, pattern::Val) = _frames_by(value.args, x, pattern)
+_patterned_frames(value, x, pattern::Val) = x
+
+# --- Identity pairs ---------------------------------------------------------------
+#
+# A pair whose source and target centerings are equal maps its coordinate to
+# itself with a zero log-Jacobian, whatever its location and log-scale, so it
+# evaluates no accessor on the map, the inverse, the gradient or the transport,
+# and a run of such pairs evaluates no frames. Scoring still evaluates them: its
+# candidates differ from the source.
+_is_identity(value::Reparametrization) = _same_centering(value.target, value.source)
+_is_identity(value) = false
+_same_centering(target::PartiallyCentered, source::PartiallyCentered) = target.c == source.c
+_same_centering(target, source) = false
+_any_moved(pairs, i, j) = any(k -> !_is_identity(last(pairs[k])), i:j)
+# The first pair in `i:j` that is not an identity, or `j + 1`.
+function _first_moved(pairs, i, j)
+    k = i
+    while k <= j && _is_identity(last(pairs[k]))
+        k += 1
+    end
+    k
+end
+
 _framed_rargs((;source, args)::Reparametrization, xi, frames) =
     (source, xi, map(_read_frame, args, frames)...)
 _framed_rargs((;source, args)::Reparametrization, xi, gi, frames) =
@@ -495,11 +571,17 @@ coordinate lookup or a constant; the [Reparametrization](@ref) guide executes
 that construction. Every accessor argument must be a `Real` or callable.
 
 Accessors are evaluated once per run of pairs that share them, not once per
-pair: consecutive pairs, in increasing index order, whose location (or
-log-scale) is the same accessor object, or a [`SharedAccessor`](@ref) over the
-same function, evaluate it once for the whole run on every path. A location
-that many coordinates share therefore costs one evaluation per vector. Order the
-pairs of such a block consecutively to benefit.
+pair: consecutive pairs, in increasing index order, whose location and
+log-scale are the same accessor objects, or [`SharedAccessor`](@ref)s over the
+same functions, evaluate them once for the whole run on every path. A location
+that many coordinates share therefore costs one evaluation per vector, and a
+location and a log-scale that compute the same thing are evaluated once. Order
+the pairs of such a block consecutively to benefit.
+
+A pair whose source and target centerings are equal maps its coordinate exactly
+to itself with a zero log-Jacobian, and evaluates neither accessor on the map,
+its inverse, the gradient or the transport; centering selection still evaluates
+them for its candidates.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P
@@ -539,15 +621,36 @@ with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, 
     i = firstindex(pairs)
     while i <= lastindex(pairs)
         j = _run_end(pairs, i)
-        frames = _pair_frames(last(pairs[i]), x)
-        for k in i:j
-            idx, value = pairs[k]
-            tmp, y[idx] = _reparam_framed(value, x[idx], frames)
-            ljac += tmp
+        k = _first_moved(pairs, i, j)
+        if k <= j
+            ljac = _forward_run!(ljac, y, pairs, x, i, j, _pair_frames(last(pairs[k]), x))
+        else
+            _copy_identities!(y, pairs, x, i, j)
         end
         i = j + 1
     end
     ljac, y
+end
+function _copy_identities!(y, pairs, x, i, j)
+    for k in i:j
+        idx = first(pairs[k])
+        y[idx] = x[idx]
+    end
+    y
+end
+# One running sum over all pairs, in pair order, as before identity pairs were
+# skipped: the log-Jacobian of a map without them is bit for bit the same.
+@inline function _forward_run!(ljac, y, pairs, x, i, j, frames)
+    for k in i:j
+        idx, value = pairs[k]
+        if _is_identity(value)
+            y[idx] = x[idx]
+        else
+            tmp, y[idx] = _reparam_framed(value, x[idx], frames)
+            ljac += tmp
+        end
+    end
+    ljac
 end
 
 struct InverseIndexedReparametrization{I} <: AbstractReparametrization
@@ -573,18 +676,31 @@ function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
     i = firstindex(pairs)
     while i <= lastindex(pairs)
         j = _run_end(pairs, i)
+        k = _first_moved(pairs, i, j)
         # Read where the run starts: everything its shared accessors read is
         # recovered by then, and none of the run's own coordinates is read.
-        frames = _pair_frames(last(pairs[i]), source)
-        for k in i:j
-            idx, value = pairs[k]
-            ljac_i, source_i = _reparam_framed(inverse(value), target[idx], frames)
-            source[idx] = source_i
-            ljac += ljac_i
+        if k <= j
+            ljac = _inverse_run!(ljac, source, pairs, target, i, j,
+                                 _pair_frames(last(pairs[k]), source))
+        else
+            _copy_identities!(source, pairs, target, i, j)
         end
         i = j + 1
     end
     ljac, source
+end
+@inline function _inverse_run!(ljac, source, pairs, target, i, j, frames)
+    for k in i:j
+        idx, value = pairs[k]
+        if _is_identity(value)
+            source[idx] = target[idx]
+        else
+            ljac_i, source_i = _reparam_framed(inverse(value), target[idx], frames)
+            source[idx] = source_i
+            ljac += ljac_i
+        end
+    end
+    ljac
 end
 _inverse_with_logabsdet_jacobian!(source::AbstractVector,
                                   ir::AbstractReparametrization,
@@ -827,7 +943,8 @@ function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
             idx, value = first(pairs[k]), old[n]
             new_source = _minimizing_source!(excluded, accumulators[n], idx, value.source; loss_kwargs...)
             pairs[k] = idx => Reparametrization(value.target, new_source, value.args...)
-            moved[n] = true
+            # Keeping its centering leaves the coordinate exactly where it is.
+            moved[n] = !_same_centering(new_source, value.source)
         end
         if any(moved)
             for xgi in columns

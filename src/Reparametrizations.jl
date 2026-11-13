@@ -390,7 +390,9 @@ as one rule reused for every pair of a block, is shared in the same way without
 this wrapper. A location and a log-scale that read one `f` share its evaluation
 (from WarmupHMC 0.2.21), so one joint computation can serve both: an `f(x)` that
 returns `[locations; log_scale]`, read with `SharedAccessor(f, i)` and
-`SharedAccessor(f, n + 1)`. Several blocks whose pairs all read one such `f`
+`SharedAccessor(f, n + 1)`. `index` is anything `f(x)` can be indexed with, so
+`f` may instead return a frame of endpoint arrays read with
+`CartesianIndex(family, element)`. Several blocks whose pairs all read one such `f`
 form one run, so work they share, such as a common log-scale, also runs once;
 with a function per block it runs once per block.
 

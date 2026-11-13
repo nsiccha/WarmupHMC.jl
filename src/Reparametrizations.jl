@@ -387,8 +387,8 @@ evaluates `f` once for all of them, on every path: the map and its inverse, the
 gradient, the transport of retained states to new centerings, and centering
 selection. A plain accessor that is the same object in consecutive pairs, such
 as one rule reused for every pair of a block, is shared in the same way without
-this wrapper. A location and a log-scale that read one `f` share its evaluation
-(from WarmupHMC 0.2.21), so one joint computation can serve both: an `f(x)` that
+this wrapper. A location and a log-scale that read one `f` share its evaluation,
+so one joint computation can serve both: an `f(x)` that
 returns `[locations; log_scale]`, read with `SharedAccessor(f, i)` and
 `SharedAccessor(f, n + 1)`. `index` is anything `f(x)` can be indexed with, so
 `f` may instead return a frame of endpoint arrays read with
@@ -580,8 +580,8 @@ the pairs of such a block consecutively to benefit.
 
 A pair whose source and target centerings are equal maps its coordinate exactly
 to itself with a zero log-Jacobian, and evaluates neither accessor on the map,
-its inverse, the gradient or the transport (from WarmupHMC 0.2.21); centering
-selection still evaluates them for its candidates.
+its inverse, the gradient or the transport; centering selection still evaluates
+them for its candidates.
 """
 struct IndexedReparametrization{P} <: AbstractReparametrization
     pairs::P

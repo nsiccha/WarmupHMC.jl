@@ -5,6 +5,7 @@
     using Pkg, TOML
     using Distributions
     using DifferentiationInterface, Enzyme
+    using JSON
 
 # Focused invocation from the package root (test environment instantiates per
 # .github/workflows/test.yml; `@run_package_tests` from `-e` mis-discovers, so
@@ -14,6 +15,15 @@
 
 _completion_fixture(i; n=5) = (; posterior_position=fill(Float64(i), 2, n),
     n_divergent_samples=i % 2, stepsize=1.0)
+
+# How often `f()` logs the runtime-selection caveat, and what `f()` returned.
+# Other warnings (an initializer's retry, say) are not counted.
+function _selection_warnings(f)
+    logs, value = Test.collect_test_logs(f; min_level=Base.CoreLogging.Warn)
+    count(l -> l.message == WarmupHMC._COMPLETION_SELECTION_WARNING, logs), value
+end
+
+_run_json(path) = JSON.parsefile(path)
 
 struct CompletionBimodal end
 LogDensityProblems.dimension(::CompletionBimodal) = 1
@@ -354,7 +364,10 @@ end
     p = DiagGaussian([0.5, -1.0], [1.0, 1.5])
     cfg = (; n_draws=600, progress=nothing)
     baseline = adaptive_warmup_mcmc([Xoshiro(i) for i in 1:3], p; cfg..., parallel=false)
-    out = completion_warmup_mcmc([Xoshiro(i) for i in 1:3], p; cfg...)
+    # Every chain is required, so none can be selected by runtime: no caveat.
+    n_warned, out = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(i) for i in 1:3], p; cfg...))
+    @test n_warned == 0
+    @test out.completion.selection_warning == ""
     @test out.completion.stop_reason === :all_completed
     @test out.completion.completed_chain_indices == collect(1:3)
     @test out.completion.n_samples == 1800
@@ -403,6 +416,75 @@ end
     @test occursin("bias inference", selected.completion.selection_warning)
 end
 
+@testset "the selection caveat follows the outcome" begin
+    # Snag completion-warni-282737a4: the caveat says chains WERE selected, so it
+    # is recorded only when a kept chain stands beside one that was cut short or
+    # never started. Every slot below enters its round before any returns, so
+    # none is `:not_started` unless the test makes it so. `plan[i]` is `:full`
+    # (reaches `n_draws`), `:short` (stopped at once, as by a callback), `:late`
+    # (stopped at the boundary after the quorum) or `:fail`.
+    function rendezvous(plan; min_completed, admission=WarmupHMC._ADMIT_EVERY_FULL_CHAIN)
+        n = length(plan)
+        entered = Channel{Int}(n)
+        release = Channel{Nothing}(n)
+        batch = Threads.@spawn WarmupHMC._completion_batch(n; min_completed, admission) do i, stop
+            put!(entered, i)
+            take!(release)
+            plan[i] === :fail && error("controlled chain $i failure")
+            plan[i] === :full && return _completion_fixture(i), true
+            if plan[i] === :late
+                while !stop()
+                    yield()
+                end
+            end
+            _completion_fixture(i; n=2), false
+        end
+        foreach(_ -> take!(entered), 1:n)
+        foreach(_ -> put!(release, nothing), 1:n)
+        fetch(batch)
+    end
+    caveat = WarmupHMC._COMPLETION_SELECTION_WARNING
+
+    # Every chain required, every chain kept: the reporter's case.
+    out = rendezvous([:full, :full, :full]; min_completed=3)
+    @test out.completion.stop_reason === :all_completed
+    @test out.completion.selection_warning == ""
+    # A quorum below the slot count that kept every chain anyway returns exactly
+    # the draws of all-chain sampling, so it claims no selection either.
+    out = rendezvous([:full, :full, :full]; min_completed=2)
+    @test out.completion.stop_reason === :all_completed
+    @test out.completion.selection_warning == ""
+    # A chain the quorum cut short: the kept ones finished first.
+    out = rendezvous([:full, :late, :full]; min_completed=2)
+    @test out.completion.stop_reason === :quorum_reached
+    @test out.completion.chains[2].status === :stopped
+    @test out.completion.selection_warning == caveat
+    # A callback or an interrupt cutting a chain short selects just the same.
+    out = rendezvous([:full, :short]; min_completed=1)
+    @test out.completion.chains[2].status === :stopped
+    @test out.completion.selection_warning == caveat
+    # A slot that never started, because the resume pre-pass already met quorum.
+    out = WarmupHMC._completion_batch((i, stop) -> error("slot $i must not start"), 2;
+        min_completed=1, initial_results=Dict{Int,Any}(1 => _completion_fixture(1)))
+    @test out.completion.chains[2].status === :not_started
+    @test out.completion.selection_warning == caveat
+    # Stuck and failed chains are health verdicts, named in their own fields.
+    # The odd fixtures are 20% divergent, above this 10% threshold.
+    out = rendezvous([:full, :full, :full, :full, :fail]; min_completed=2,
+        admission=WarmupHMC._CompletionAdmission(Inf, 0.1))
+    @test out.completion.stuck_chain_indices == [1, 3]
+    @test out.completion.failed_chain_indices == [5]
+    @test out.completion.stop_reason === :quorum_reached
+    @test out.completion.selection_warning == ""
+    # Nothing kept, nothing selected: the quorum error carries no caveat.
+    out = rendezvous([:short, :short]; min_completed=2)
+    @test !out.completion.quorum_met
+    @test out.completion.selection_warning == ""
+    # The warning prints iff the outcome records the caveat.
+    @test_logs (:warn, caveat) WarmupHMC._warn_runtime_selection((; selection_warning=caveat))
+    @test_logs WarmupHMC._warn_runtime_selection((; selection_warning=""))
+end
+
 @testset "safe checkpoints and immutable terminal selection" begin
     p = DiagGaussian([0.5, -1.0], [1.0, 1.5])
     mktempdir() do dir
@@ -418,6 +500,12 @@ end
         @test err.outcome.completion.n_samples == 0
         @test all(c -> c.status === :stopped, err.outcome.completion.chains)
         @test isfile(joinpath(err.outcome.completion.attempt_directory, "run_summary.json"))
+        # Every chain was required and none was kept: no caveat in any record.
+        @test err.outcome.completion.selection_warning == ""
+        @test _run_json(joinpath(err.outcome.completion.attempt_directory,
+            "run_manifest.json"))["selection_warning"] == ""
+        @test _run_json(joinpath(err.outcome.completion.attempt_directory,
+            "run_summary.json"))["selection_warning"] == ""
         @test !isfile(joinpath(dir, "completion_terminal.jls"))
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(7), Xoshiro(8)], p;
             n_draws=40, checkpoint_dir=dir)
@@ -440,12 +528,21 @@ end
         ordinary = adaptive_warmup_mcmc(Xoshiro(999), p;
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_2"), resume=true)
         unchecked = (; stuck_stepsize_ratio=Inf)
-        out = completion_warmup_mcmc([Xoshiro(999), Xoshiro(999)], p;
-            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...)
+        n_warned, out = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(999), Xoshiro(999)], p;
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...))
         @test out.completion.completed_chain_indices == [2]
         @test out.completion.omitted_chain_indices == [1]
         @test out.results[1].posterior_position == ordinary.posterior_position
         @test out.completion.chains[1].status === :not_started
+        # Chain 2 is kept and chain 1 never started: a runtime selection, warned
+        # once, after the chains settled, and recorded in every run record.
+        caveat = WarmupHMC._COMPLETION_SELECTION_WARNING
+        @test n_warned == 1
+        @test out.completion.selection_warning == caveat
+        @test _run_json(joinpath(out.completion.attempt_directory,
+            "run_manifest.json"))["selection_warning"] == caveat
+        @test _run_json(joinpath(out.completion.attempt_directory,
+            "run_summary.json"))["selection_warning"] == caveat
         @test out.completion.schema_version == 3
         @test out.completion.stop_policy === :finish_current_round
         cp1 = read(joinpath(dir, "chain_1", "cp_latest.jls"))
@@ -462,9 +559,10 @@ end
         adaptive_warmup_mcmc(Xoshiro(999), p;
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_1"), resume=true)
         @test read(joinpath(dir, "chain_1", "cp_latest.jls")) != cp1
-        again = completion_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
+        n_warned, again = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(11), Xoshiro(12)], p;
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...,
-            callback=(s, stage) -> error("Terminal reopen must never run a callback"))
+            callback=(s, stage) -> error("Terminal reopen must never run a callback")))
+        @test n_warned == 1
         @test again.completion == out.completion
         @test again.results[1].posterior_position == out.results[1].posterior_position
         @test again.results[1].chain_index == 2
@@ -506,19 +604,30 @@ end
         rm(summary)
         # It predates the admission checks, so it reopens whatever thresholds
         # are passed: its recorded selection was made without them.
-        old = completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
+        n_warned, old = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true,
-            callback=(s, stage) -> error("Legacy terminal reopen must not sample"))
+            callback=(s, stage) -> error("Legacy terminal reopen must not sample")))
+        # Its recorded caveat is reopened, and warned, as recorded.
+        @test n_warned == 1
         @test old.completion == legacy.completion
         @test getproperty.(old.results, :chain_index) == [2]
         @test old.results[1].posterior_position == out.results[1].posterior_position
         @test occursin("\"grace_seconds\":3.0", read(summary, String))
         @test !occursin("chain_stuck_reasons", read(summary, String))
         # Explicit overwrite starts a new run and clears the old selection.
-        fresh = completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
-            n_draws=40, checkpoint_dir=dir, overwrite=true)
+        n_warned, fresh = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
+            n_draws=40, checkpoint_dir=dir, overwrite=true))
         @test fresh.completion.completed_chain_indices == [1, 2]
         @test fresh.completion.n_samples == 80
+        # Every chain required and kept: no caveat, and none on reopening it.
+        @test n_warned == 0
+        @test fresh.completion.selection_warning == ""
+        @test _run_json(joinpath(fresh.completion.attempt_directory,
+            "run_manifest.json"))["selection_warning"] == ""
+        n_warned, reopened = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
+            n_draws=40, checkpoint_dir=dir, resume=true))
+        @test n_warned == 0
+        @test reopened.completion == fresh.completion
     end
 end
 

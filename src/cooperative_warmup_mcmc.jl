@@ -680,6 +680,16 @@ end
 
 _min_pooled_chains(run::CoopRun) = min(2, run.cfg.n_chains)
 
+# The stop must diagnose the same coordinates as chain_result, without applying
+# its terminal, in-place transform to the live chain's retained history.
+function _model_chain_draws(chain::CoopChain)
+    draws = chain_draws(chain)
+    has_reparametrization(reparametrizer(chain.lpdf)) || return draws
+    model_draws = copy(draws)
+    reparametrize!(chain.lpdf, model_draws)
+    model_draws
+end
+
 # Per-chain monitored ESS and the stop decision, at a round barrier. The stop
 # reason is recorded HERE, where the decision is made.
 _check_stop!(run::CoopRun) = begin
@@ -694,8 +704,13 @@ _check_stop!(run::CoopRun) = begin
         holding = [c for c in run.chains if c.status !== :warming && c.n_samples > 10]
         proxy = sum(c -> _min_ess(c.ess), holding; init=0.0)
         if proxy >= cfg.target_ess && length(holding) >= _min_pooled_chains(run)
-            run.last_pooled_ess = first(_best_pooled_ess(map(chain_draws, holding), _min_pooled_chains(run)))
-            run.last_pooled_ess >= cfg.target_ess && (reason = :target_ess)
+            # A subset can supply the requested ESS, but cannot vouch for a
+            # different chain or for a transient outside its common tail.
+            draws = map(_model_chain_draws, run.chains)
+            run.last_pooled_ess = first(_best_pooled_ess(draws, _min_pooled_chains(run)))
+            if run.last_pooled_ess >= cfg.target_ess && _retained_rhat(draws) < cfg.rhat_threshold
+                reason = :target_ess
+            end
         end
     end
     isnothing(reason) && all(c -> c.status === :done, run.chains) && (reason = :n_draws)
@@ -907,6 +922,7 @@ _write_coop_manifest(dir::AbstractString, run::CoopRun) = _write_json(
         # The stopping criteria in force; JSON has no Inf, so an unset bound is null.
         "n_draws" => run.cfg.n_draws == typemax(Int) ? nothing : run.cfg.n_draws,
         "target_ess" => run.cfg.target_ess,
+        "rhat_threshold" => run.cfg.rhat_threshold,
         "n_evaluations_budget" => run.cfg.n_evaluations_budget == typemax(Int) ? nothing : run.cfg.n_evaluations_budget,
         "time_budget" => run.cfg.time_budget,
         "n_evaluations" => run.cfg.n_evaluations,
@@ -980,7 +996,8 @@ end
 
 """
     cooperative_warmup_mcmc(rng, lpdf; n_chains=4, n_cores=n_chains, target_ess=Inf,
-        n_evaluations_budget=typemax(Int), time_budget=Inf, n_draws=typemax(Int), kwargs...)
+        rhat_threshold=1.01, n_evaluations_budget=typemax(Int), time_budget=Inf,
+        n_draws=typemax(Int), kwargs...)
 
 Cooperative multi-chain NUTS warm-up and sampling on one target: `n_chains`
 chains adapt TOGETHER and keep sampling until a stopping bound is met.
@@ -1000,8 +1017,16 @@ abandoned.
 
 * `rng` seeds every chain: chain i's stream is drawn from it when chain i is
   created, so one seed reproduces the run at any thread count.
-* Stops when the pooled ESS of at least `min(2, n_chains)` chains reaches
-  `target_ess`, `n_evaluations_budget` gradient evaluations are spent,
+* Stops on `target_ess` when the pooled ESS of at least `min(2, n_chains)`
+  chains reaches it AND the maximum rank-normalized split R-hat over every
+  retained history is below `rhat_threshold` (default 1.01, finite and > 1). Both checks use
+  the returned model frame. R-hat uses all draws, even with unequal history
+  lengths: split-chain variances and means have equal weight, and odd histories
+  retain their middle draw. The maximum includes both ordinary rank-normalized
+  values and ranks of absolute deviations from the pooled median (folding).
+  Every nonempty chain needs more than 10 draws;
+  empty chains do not contribute. This diagnostic cannot detect an unvisited mode.
+* Also stops when `n_evaluations_budget` gradient evaluations are spent,
   `time_budget` seconds pass, every chain holds `n_draws` draws, or
   `Treebars.request_interrupt!` is called on `progress`, all checked at round
   barriers (a budget or an interrupt also stops a round early). At least one
@@ -1036,6 +1061,7 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     n_chains::Integer=4,
     n_cores::Integer=n_chains,
     target_ess=Inf,
+    rhat_threshold=1.01,
     n_evaluations_budget=typemax(Int),
     time_budget=Inf,
     n_draws=typemax(Int),
@@ -1064,6 +1090,8 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
     guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))
+    isfinite(rhat_threshold) && rhat_threshold > 1 || throw(ArgumentError(
+        "cooperative_warmup_mcmc needs a finite rhat_threshold > 1, got $rhat_threshold."))
     isfinite(target_ess) || n_evaluations_budget != typemax(Int) || isfinite(time_budget) || n_draws != typemax(Int) ||
         throw(ArgumentError("cooperative_warmup_mcmc needs at least one finite stopping bound " *
             "(target_ess, n_evaluations_budget, time_budget or n_draws)."))
@@ -1082,7 +1110,8 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
         "cooperative_warmup_mcmc cannot yet adapt a reparametrization scored by a `CandidateScoringPlan` " *
         "(its evidence is per chain and is not pooled). Pass `nonlinear_adapt=false` to sample under the " *
         "centering you supplied, or use `adaptive_warmup_mcmc`."))
-    cfg = (; n_chains, n_cores=max(1, n_cores), target_ess=Float64(target_ess), n_evaluations_budget,
+    cfg = (; n_chains, n_cores=max(1, n_cores), target_ess=Float64(target_ess),
+        rhat_threshold=Float64(rhat_threshold), n_evaluations_budget,
         time_budget=Float64(time_budget), n_draws, n_evaluations, stepsize_adaptation_limit,
         target_acceptance_rate, algorithm=DynamicHMC.NUTS(; max_depth=max_tree_depth),
         restart_threshold, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,

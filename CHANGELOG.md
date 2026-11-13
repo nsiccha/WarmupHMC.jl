@@ -18,6 +18,18 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.2.22
+
+### Fixed
+
+- Cooperative `target_ess` success now also requires agreement over every
+  nonempty chain's full retained history, using rank-normalized split R-hat
+  below `rhat_threshold` (default 1.01). Unequal histories keep every draw and
+  give each split chain equal weight. Short or non-finite histories cannot
+  establish agreement. Both ESS and R-hat are checked in the returned model
+  frame. The ESS subset selection, restart rule and other stop reasons are
+  unchanged. The run manifest records the R-hat bound.
+
 ## 0.2.21
 
 ### Changed

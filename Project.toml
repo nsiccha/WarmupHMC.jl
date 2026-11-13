@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.2.21"
+version = "0.2.22"
 
 [deps]
 CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
@@ -24,6 +24,7 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 ReparametrizableDistributions = "7d03e222-df96-4b80-bcdc-d089be88b5f2"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 TSVD = "9449cd9e-2762-5aa3-a617-5413e99d722e"
 Treebars = "e1e568c4-3a56-40a4-95fa-9b9c6c16fccb"
 
@@ -55,6 +56,7 @@ Random = "1.10"
 ReparametrizableDistributions = "0.3"
 Serialization = "1.10"
 Statistics = "1.10"
+StatsBase = "0.34"
 TSVD = "0.4"
 Treebars = "0.1"
 # NOT "1.9". That bound was not merely untested — it was UNSATISFIABLE: nine of the

@@ -12,6 +12,7 @@ using LogDensityProblems,
     InverseFunctions,
     Treebars
 import DynamicHMC,
+    StatsBase,
     JSON,
     OnlineStatsBase,
     Random,
@@ -45,6 +46,7 @@ include("run_files.jl")
 include("adaptive_warmup_mcmc.jl")
 include("weighted_scale.jl")
 include("checkpoint_rescore.jl")
+include("retained_rhat.jl")
 include("cooperative_warmup_mcmc.jl")
 include("completion_warmup_mcmc.jl")
 include("interruptible_mcmc.jl")

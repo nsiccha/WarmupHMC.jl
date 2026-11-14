@@ -824,32 +824,14 @@ with_logabsdet_jacobian!(source::AbstractVector,
 
 # --- Online reparametrization loss tracking ---
 
-struct OnlineReparametrizationLoss{L<:OnlineStatsBase.Mean,C<:OnlineStatsBase.CovMatrix}
-    ljac::L
-    cov::C
-end
-OnlineStatsBase.nobs((;ljac)::OnlineReparametrizationLoss) = OnlineStatsBase.nobs(ljac)
-OnlineReparametrizationLoss(::AbstractMatrix) = OnlineReparametrizationLoss()
-OnlineReparametrizationLoss(::AbstractMatrix, ::AbstractMatrix) = OnlineReparametrizationLoss()
-OnlineReparametrizationLoss() = OnlineReparametrizationLoss(
-    OnlineStatsBase.Mean(), OnlineStatsBase.CovMatrix(),
-)
-function OnlineStatsBase.fit!(loss::OnlineReparametrizationLoss, obs;
-                              weight::Real=1, count::Bool=true)
-    weight == 1 && count || throw(ArgumentError(
-        "weighted updates require WeightedReparametrizationLoss",
-    ))
-    map(OnlineStatsBase.fit!, (loss.ljac, loss.cov), (obs[1], [obs[2], obs[3]]))
-end
-reparametrization_loss((;ljac, cov)::OnlineReparametrizationLoss; w1=0, w2=1-w1) = (
-    w1 * (-mean(ljac) + .5 * log(Statistics.cov(cov)[1, 1])) +
-    w2 * Statistics.cor(cov)[1, 2]
-)
-scale_estimate(loss::OnlineReparametrizationLoss) = begin
-    c = Statistics.cov(loss.cov)
-    (c[1, 1] / c[2, 2])^.25
-end
-
+# Every scoring path accumulates a candidate's observations with centred
+# (Welford) moments. The `:linear_pool` search used OnlineStatsBase's raw
+# moments, E[x x'] - E[x] E[x]', which cancel to a tiny NEGATIVE variance for a
+# candidate whose positions do not move (the committed frame of a chain stuck
+# in a funnel neck); `log` and `sqrt` of it threw a `DomainError` that ended the
+# sampler call (snag `nested-centering-3858d508`). Centred moments cannot go
+# negative: such a candidate's variance is zero or tiny, and a zero one gives a
+# nonfinite loss, which selection excludes.
 mutable struct WeightedReparametrizationLoss
     weight::Float64
     weight2::Float64
@@ -983,7 +965,7 @@ end
 reparametrization_candidates(::PartiallyCentered; n=11) = Iterators.map(PartiallyCentered, range(0, 1, n))
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
 OnlineReparametrizer(source::PartiallyCentered, xg...;
-                     accumulator=OnlineReparametrizationLoss, kwargs...) = OnlineReparametrizer([
+                     accumulator=WeightedReparametrizationLoss, kwargs...) = OnlineReparametrizer([
     target => accumulator(xg...)
     for target in reparametrization_candidates(source; kwargs...)
 ])

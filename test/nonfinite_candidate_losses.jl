@@ -127,6 +127,35 @@ nc_plan() = WarmupHMC.CandidateScoringPlan(
     @test [value.source.c for (_, value) in ir.pairs] == expected
 end
 
+@testset "positions that do not move never end the pool search" begin
+    # Snag nested-centering-3858d508: a chain stuck in a funnel neck hands the
+    # `:linear_pool` search positions that barely move in the committed frame.
+    # It scored them with OnlineStatsBase's raw moments, E[x x'] - E[x] E[x]',
+    # which cancel to a NEGATIVE variance for these 50 positions (-2.8e-17
+    # against a true 1.2e-20), and `log`/`sqrt` of it threw a DomainError that
+    # ended the sampler call.
+    stuck = 0.3 .+ 1e-10 .* randn(Xoshiro(1), 50)
+    # Coordinate 2 is centred (committed c = 1), so its c = 1 candidate sees
+    # exactly the stuck positions; its log-scale x[1] moves, so every other
+    # candidate's positions move.
+    rng = Xoshiro(2)
+    X = vcat(randn(rng, 1, 50), stuck')
+    G = vcat(randn(rng, 1, 50), -stuck')
+    ir = WarmupHMC.IndexedReparametrization([2 => WarmupHMC.Reparametrization(
+        WarmupHMC.PartiallyCentered(0.0), WarmupHMC.PartiallyCentered(1.0), 0.0, x -> x[1])])
+    WarmupHMC.optimize!(ir, copy(X), copy(G))
+    @test last(ir.pairs[1]).source.c in range(0, 1, 11)
+    # The search scores as the streaming scorer and `candidate_scoring_losses`
+    # do, with centred moments: the stuck candidate's variance is the true tiny
+    # positive one, so every loss is finite.
+    rows = WarmupHMC.candidate_scoring_losses(WarmupHMC.ReparametrizedProblem(
+        WarmupHMC.IndexedReparametrization([2 => WarmupHMC.Reparametrization(
+            WarmupHMC.PartiallyCentered(0.0), WarmupHMC.PartiallyCentered(1.0), 0.0, x -> x[1])]),
+        DiagGaussian(zeros(2), ones(2))), X, G)
+    @test all(r -> isfinite(r.loss), rows)
+    @test last(ir.pairs[1]).source.c == rows[argmin([r.loss for r in rows])].candidate
+end
+
 @testset "a restarting window never commits a nonfinite candidate" begin
     ir = nc_ir()
     rp = WarmupHMC.ReparametrizedProblem(ir, DiagGaussian(zeros(4), ones(4)),

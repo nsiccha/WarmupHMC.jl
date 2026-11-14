@@ -28,6 +28,17 @@ refer to that version's tree.
   is now copied into a `Vector` first. Its gradient is the gradient at that
   `Vector`, bit for bit, and is a `Vector`. The samplers pass `Vector`s and are
   unchanged (snag `reparametrized-g-af31aa45`).
+- The default centering selection (`nonlinear_evidence = :linear_pool`) could
+  end the sampler call with a `DomainError` from `log`. It scored the retained
+  pool with OnlineStatsBase's raw moments, whose position variance cancels to a
+  tiny negative number for a candidate whose positions do not move, as in the
+  committed frame of a chain stuck in a funnel neck (measured on a two-level
+  nested hierarchy whose group scale's posterior reaches 0.03). The pool search
+  now scores with the same centred moments as the streaming scorer and
+  `candidate_scoring_losses`, which cannot go negative, and a nonpositive
+  variance gives a nonfinite loss, which selection excludes. Elsewhere the two
+  agree up to rounding: on 12 chains of that model that did not hit the error,
+  selections and draws were identical (snag `nested-centering-3858d508`).
 
 ### Documentation
 

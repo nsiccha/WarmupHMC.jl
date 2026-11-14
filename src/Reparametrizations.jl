@@ -415,15 +415,16 @@ Given the location and the log-scale, the map is affine in the coordinate, so an
 [`IndexedReparametrization`](@ref) stays triangular: the log-Jacobian is
 `ℓ (target.c - c(ℓ))`, and the gradient differentiates through `c(ℓ)`.
 
-Warm-up selects it. At a restarting window, a pair whose log-scale is a
-callable and varies over the retained pool also scores eleven midpoints spanning
-the pool's log-scales, `range(m - 2s - 2, m + 2s + 2, 11)` with `m` and `s` the
-mean and standard deviation of the pair's log-scale over the pool, beside the
-eleven constant centerings, by the same criterion; see
-[`PartiallyCentered`](@ref). A constant wins ties. An `IndexedReparametrization`
-whose pairs read a callable log-scale stores its sources as
-`Union{PartiallyCentered{T},ScaleCentered{T}}` for this; a pair can also be built
-with a `ScaleCentered` source directly.
+[`adaptive_warmup_mcmc`](@ref)`(rng, lpdf; scale_centering = true)` selects it;
+default warm-up never does. There, at a restarting window, a pair whose
+log-scale is a callable and varies over the retained pool scores eleven
+midpoints spanning the pool's log-scales, `range(m - 2s - 2, m + 2s + 2, 11)`
+with `m` and `s` the mean and standard deviation of the pair's log-scale over
+the pool, by the default criterion (see [`PartiallyCentered`](@ref)), in place
+of the eleven constant centerings; the midpoints at either end are a constant
+`c ≈ 0` or `c ≈ 1` over the pool. A pair whose log-scale does not vary over the
+pool scores the constants. A pair can also be built with a `ScaleCentered`
+source directly, as a fixed centering.
 """
 struct ScaleCentered{T<:Real}
     midpoint::T
@@ -690,7 +691,7 @@ them for its candidates.
 struct IndexedReparametrization{P,C} <: AbstractReparametrization
     pairs::P
     chains::C
-    function IndexedReparametrization(pairs, chains::C) where {C}
+    function IndexedReparametrization(pairs::P, chains::C) where {P,C}
         isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
             "IndexedReparametrization pairs must have a concrete element type; " *
             "avoid mixing constants and differently typed accessor closures in one vector " *
@@ -703,20 +704,20 @@ struct IndexedReparametrization{P,C} <: AbstractReparametrization
         ))
         isempty(pairs) || _check_accessors(first(pairs))
         _check_chains(pairs, chains)
-        pairs = _widen_sources(pairs)
-        new{typeof(pairs),C}(pairs, chains)
+        new{P,C}(pairs, chains)
     end
 end
 IndexedReparametrization(pairs; chains=()) = IndexedReparametrization(pairs, chains)
 
-# Pairs with a `PartiallyCentered` source and a callable log-scale can be moved to
-# a `ScaleCentered` source by centering selection, so their vector is rebuilt
-# with a source field that holds either: `Union{PartiallyCentered{F},
-# ScaleCentered{F}}`, still a concrete rule type. Constant sources map exactly as
-# before; only gradients can differ by rounding, in the order Enzyme sums a
-# shared log-scale's terms. A constant log-scale cannot vary, so its pairs keep
-# their vector. The rebuilt vector is the one adaptation updates in place:
-# read results off `ir.pairs`.
+# `scale_centering = true` (`_scale_centered_warmup_mcmc`) samples a copy of the
+# caller's reparametrization whose pairs can take a `ScaleCentered` source. Pairs
+# with a `PartiallyCentered` source and a callable log-scale are rebuilt with a
+# source field that holds either, `Union{PartiallyCentered{F},ScaleCentered{F}}`,
+# still a concrete rule type; a constant log-scale cannot vary, so its pairs keep
+# their vector. Only that copy is widened: a default fit's vector, and so its
+# map, gradients and draws, are untouched.
+_scale_centering_reparametrizer(ir::IndexedReparametrization) =
+    IndexedReparametrization(_widen_sources(copy(ir.pairs)); chains=_snapshot_chains(ir.chains))
 _widen_sources(pairs) = pairs
 function _widen_sources(pairs::AbstractVector{Pair{I,Reparametrization{T,S,A}}}) where
         {I,T,F,S<:PartiallyCentered{F},A<:Tuple{Any,Any}}
@@ -1016,18 +1017,14 @@ reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); 
 _mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
 _mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
 
-# A row names a constant candidate by its `candidate` centering and a
-# `ScaleCentered` one by its `midpoint`; the other field is `nothing` (not
-# applicable, unlike a `missing` loss, which is not yet available).
-_candidate_c(candidate::PartiallyCentered) = candidate.c
-_candidate_c(::ScaleCentered) = nothing
-_candidate_midpoint(::PartiallyCentered) = nothing
-_candidate_midpoint(candidate::ScaleCentered) = candidate.midpoint
+# A row's `candidate` is a constant candidate's `c`, or a `ScaleCentered`
+# candidate itself (only a pair that admits one scores those).
+_candidate_value(candidate::PartiallyCentered) = candidate.c
+_candidate_value(candidate::ScaleCentered) = candidate
 function _candidate_scoring_loss_row(pair_number, index, candidate, accumulator, groups)
     (; pair_number,
        index,
-       candidate=_candidate_c(candidate),
-       midpoint=_candidate_midpoint(candidate),
+       candidate=_candidate_value(candidate),
        loss=groups > 2 ? reparametrization_loss(accumulator) : missing,
        groups,
        effective_n=iszero(accumulator.weight2) ? missing : effective_n(accumulator))
@@ -1044,11 +1041,13 @@ function _candidate_scoring_losses((;pairs)::OnlineReparametrizer)
     ]
 end
 
-# EXPERIMENT (snag nested-centering-3858d508, not reviewed): where the caller
-# placed `ScaleCentered` midpoints on a pool (`scale_grid`, `_scale_grid`), the
-# candidates are those midpoints only, without the constant grid. Otherwise the
-# constant grid, plus a `ScaleCentered` source itself, so evidence that places
-# no grid (the streaming modes) can keep it.
+# Where the pool search placed `ScaleCentered` midpoints (`scale_grid`, only for
+# a pair that admits one, `_scale_grids`), the candidates are those midpoints
+# only. Mixed with the constants, online selection kept a constant for the pairs
+# that needed the scale dependence; the grid's end midpoints are the constant
+# endpoints over the pool (snag nested-centering-3858d508). Otherwise the
+# constant grid, plus a `ScaleCentered` source itself, so a pool that places no
+# grid can keep it.
 function reparametrization_candidates(source::_AnyCentering; n=11, scale_grid=())
     isempty(scale_grid) || return ScaleCentered.(scale_grid)
     constants = PartiallyCentered.(range(0, 1, n))
@@ -1429,7 +1428,9 @@ _mark_nonlinear_group!(::WindowSelectionPlan, online) = nothing
 Return one row per reparametrized coordinate and candidate, with fields
 `pair_number`, `index`, `candidate`, `loss`, `groups`, and `effective_n`.
 `candidate` is the candidate partial-centering value on the fixed
-`0.0:0.1:1.0` grid. `loss` is `missing` until more than two evidence groups
+`0.0:0.1:1.0` grid; for a pair built with a [`ScaleCentered`](@ref)-admitting
+source it can instead be a `ScaleCentered` midpoint candidate, as the
+`scale_centering = true` warm-up scores it. `loss` is `missing` until more than two evidence groups
 have accumulated, matching the sampler's selection threshold.
 
 For finite, nondegenerate observations, the default candidate objective is

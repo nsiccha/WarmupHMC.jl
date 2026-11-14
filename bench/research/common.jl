@@ -393,7 +393,13 @@ with_source(spec, c) = IndexedReparametrization([
     p.first => Reparametrization(p.second.target, PartiallyCentered(c), p.second.args...)
     for p in spec.pairs])
 
-source_cs(spec) = [Float64(p.second.source.c) for p in spec.pairs]
+# A `ScaleCentered` source (WarmupHMC >= 0.4) has no single centering: it reads
+# `NaN` here, and `source_midpoints` records its midpoint (`NaN` for a constant).
+source_c(s::PartiallyCentered) = Float64(s.c)
+source_c(s) = NaN
+source_midpoint(s) = hasproperty(s, :midpoint) ? Float64(s.midpoint) : NaN
+source_cs(spec) = [source_c(p.second.source) for p in spec.pairs]
+source_midpoints(spec) = [source_midpoint(p.second.source) for p in spec.pairs]
 target_cs(spec) = [Float64(p.second.target.c) for p in spec.pairs]
 
 """The centering endpoint opposite the model's own."""
@@ -531,6 +537,7 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
      ess_min_per_s = ess_min / wall,
      ess_min_per_grad = ess_min / max(res.total_evaluation_counter, 1),
      c_before, c_after = isnothing(spec) ? Float64[] : source_cs(spec),
+     midpoints_after = isnothing(spec) ? Float64[] : source_midpoints(spec),
      con_names, con_mean, con_sd, ess_con, n_con_kept = n_con)
 end
 

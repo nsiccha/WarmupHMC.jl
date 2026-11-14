@@ -1044,17 +1044,15 @@ function _candidate_scoring_losses((;pairs)::OnlineReparametrizer)
     ]
 end
 
-# The constant grid, then the `ScaleCentered` midpoints `scale_grid` (empty
-# unless the caller placed them on a pool, `_scale_grid`). Constants come first,
-# so a tie keeps a constant. A `ScaleCentered` source with no grid stays a
-# candidate itself, so evidence that places no grid (the streaming modes) can
-# keep it.
+# EXPERIMENT (snag nested-centering-3858d508, not reviewed): where the caller
+# placed `ScaleCentered` midpoints on a pool (`scale_grid`, `_scale_grid`), the
+# candidates are those midpoints only, without the constant grid. Otherwise the
+# constant grid, plus a `ScaleCentered` source itself, so evidence that places
+# no grid (the streaming modes) can keep it.
 function reparametrization_candidates(source::_AnyCentering; n=11, scale_grid=())
+    isempty(scale_grid) || return ScaleCentered.(scale_grid)
     constants = PartiallyCentered.(range(0, 1, n))
-    scales = isempty(scale_grid) ?
-        (source isa ScaleCentered ? [source] : ScaleCentered{Float64}[]) :
-        ScaleCentered.(scale_grid)
-    isempty(scales) ? constants : Union{eltype(constants),eltype(scales)}[constants; scales]
+    source isa ScaleCentered ? Union{eltype(constants),typeof(source)}[constants; source] : constants
 end
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
 OnlineReparametrizer(source::_AnyCentering, xg...;

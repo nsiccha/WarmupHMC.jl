@@ -75,34 +75,6 @@ without assuming that the pairs which read it keep their meaning. An
 levels; a joint endpoint function for several levels splits them with the
 `stage` of a `SharedAccessor`, below.
 
-## Scale-dependent centering
-
-Selection picks one constant centering per pair. When the pair's scale, such
-as a group scale with few groups, ranges over orders of magnitude in the
-posterior, no constant fits it everywhere: any `c > 0` keeps a funnel neck where
-the scale is small. [`ScaleCentered`](@ref)`(midpoint)` centres a pair by
-`c(ℓ) = τ² / (τ² + exp(2 midpoint))` at its log-scale `ℓ = log τ` instead, so it
-is centred where the scale is large and non-centred where it is small.
-
-Default warm-up does not select it. Opt in per call:
-
-```julia
-result = adaptive_warmup_mcmc(rng, ReparametrizedProblem(ir, model, AutoEnzyme());
-                              scale_centering = true)
-result.selected_centering   # index => source for every pair: what pass 2 sampled in
-```
-
-This runs two passes. Pass 1 is an adaptive run in which each pair whose
-log-scale is read from a callable scores `ScaleCentered` midpoints placed on its
-pool's log-scales. Pass 2 starts afresh with the frame pass 1 ended on held
-fixed and returns its draws. The second pass exists because selection only sees
-the states it has: online selection alone left some chains stuck in a scale's
-neck, while the frames it selected sampled cleanly from a fresh start. The cost
-is a second warm-up, counted in `total_evaluation_counter`. The problem you pass
-is not mutated. Checkpoints, `callback`, `resume`, other evidence modes and the
-cooperative and completion samplers do not take it; the
-[`adaptive_warmup_mcmc`](@ref) docstring lists the limits.
-
 ## Accessor types
 
 All pairs must share one concrete rule type. A callable struct can represent

@@ -29,7 +29,7 @@ using DifferentiationInterface: value_and_gradient, value_and_gradient!,
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
-    SharedAccessor,
+    SharedAccessor, MarkovChain,
     CandidateScoringPlan, candidate_scoring_losses, WindowSelectionPlan,
     stream_mcmc, open_stream, close_stream, FixedKernelNUTSState, fixed_kernel_nuts_step,
     ContinuousNUTSState, continuous_nuts_step, reposition!,
@@ -42,6 +42,7 @@ include("moment_scale.jl")
 include("NUTSLeafWeights.jl")
 include("WrappedLogDensityProblems.jl")
 include("Reparametrizations.jl")
+include("MarkovChains.jl")
 include("concurrent_gradients.jl")
 include("run_files.jl")
 include("adaptive_warmup_mcmc.jl")

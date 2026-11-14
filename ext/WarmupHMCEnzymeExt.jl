@@ -47,9 +47,18 @@ module WarmupHMCEnzymeExt
 # read sums their contributions can differ, which the one-pass code leaves to
 # the compiler.
 
+#
+# A Markov chain (`WarmupHMC.MarkovChain`) is differentiated in one `autodiff`
+# call per chain: one reverse sweep over its states, whose tape holds a few
+# numbers per state. Its accessors are evaluated once per chain. The map writes
+# the chains before the pairs, so their reverse comes after the pairs' sweep and
+# takes whatever `ybar` holds at their states, before the rest of `ybar` goes to
+# the gradient. Their accessors read coordinates nothing transforms.
+
 using WarmupHMC, Enzyme
 using WarmupHMC: IndexedReparametrization, reparam, _reparam_framed, _run_start,
-    _is_identity, _first_moved, _share_pattern, _patterned_frames
+    _is_identity, _first_moved, _share_pattern, _patterned_frames,
+    _chain_frames, _chain_step, _chain_unstep, _each_chain
 using DifferentiationInterface: AutoEnzyme
 
 # One pair's share of `_reparam_objective`: its log-Jacobian plus `seed` times
@@ -108,8 +117,10 @@ WarmupHMC._unsafe_concurrent_gradients(::AutoEnzyme) =
     "This Enzyme ($(pkgversion(Enzyme)), loaded from $(pkgdir(Enzyme))) lacks the " *
     "concurrent-GC repair: `Enzyme.Compiler.RestoreSafepointEffectsPass` is not defined."
 
-# Add into `gradient` the gradient in `x` of `ljac(x) + dot(ybar, y(x))`, where
-# `y` is `y(x)`, read and never written. `ybar` is consumed and `sd` holds the
+# Add into `gradient` the pairs' terms of the gradient in `x` of
+# `ljac(x) + dot(ybar, y(x))`, where `y` is `y(x)`, read and never written. `ybar`
+# is consumed at the pairs' coordinates, and what their frames read is added to it;
+# the caller passes the rest on (the chains', then `copy(x)`'s). `sd` holds the
 # seeds of a run while it is differentiated. One bookkeeping pass per run, and
 # none at all for a run of one pair, keeps the sweep's cost that of the one-pass
 # sweep it replays.
@@ -149,7 +160,7 @@ function _accumulate_pairs!(gradient, ybar, sd, y, mode, pairs, x)
         end
         j = i - 1
     end
-    gradient .+= ybar
+    gradient
 end
 
 function WarmupHMC._reparam_gradient(backend::AutoEnzyme, ir::IndexedReparametrization,
@@ -160,6 +171,79 @@ function WarmupHMC._reparam_gradient(backend::AutoEnzyme, ir::IndexedReparametri
     gradient = zero(x)
     ybar = copyto!(similar(x), g_y)
     _accumulate_pairs!(gradient, ybar, similar(x), y, mode, ir.pairs, x)
+    _accumulate_chains!(gradient, ybar, mode, ir.chains, x)
+    gradient .+= ybar
+end
+
+# --- Markov chains -----------------------------------------------------------------
+
+# One chain's share of `_reparam_objective`: its log-Jacobian plus each state's
+# seed times its model value.
+_chain_objective(chain, seed, x) = begin
+    frames = _chain_frames(chain, x)
+    total = zero(eltype(x))
+    previous = zero(eltype(x))
+    for (t, idx) in enumerate(chain.states)
+        log_step, yt = _chain_step(chain.phi[t], chain.c[t], frames, t, previous, x[idx])
+        total += log_step + seed[idx] * yt
+        previous = yt
+    end
+    total
+end
+
+# Accumulate into `gradient` the chains' terms of the gradient of
+# `ljac(x) + dot(seed, y(x))`, consuming `seed` at their states.
+_accumulate_chains!(gradient, seed, mode, chains, x) =
+    (_each_chain(chain -> _accumulate_chain!(gradient, seed, mode, chain, x), chains); gradient)
+function _accumulate_chain!(gradient, seed, mode, chain, x)
+    if _is_identity(chain)
+        for idx in chain.states
+            gradient[idx] += seed[idx]
+        end
+    else
+        Enzyme.autodiff(mode, _chain_objective, Enzyme.Active, Enzyme.Const(chain),
+                        Enzyme.Const(seed), Enzyme.Duplicated(x, gradient))
+    end
+    for idx in chain.states
+        seed[idx] = 0
+    end
+    nothing
+end
+
+# One chain's share of the inverse: its log-Jacobian plus each state's seed times
+# its recovered source value. It reads only the model point `m`.
+_chain_inverse_objective(chain, seed, m) = begin
+    frames = _chain_frames(chain, m)
+    states = chain.states
+    total = zero(eltype(m))
+    for (t, idx) in enumerate(states)
+        previous = t == 1 ? zero(eltype(m)) : m[states[t - 1]]
+        ljac, st = _chain_unstep(chain.phi[t], chain.c[t], frames, t, previous, m[idx])
+        total += ljac + seed[idx] * st
+    end
+    total
+end
+
+# The inverse reads the chains' frames and previous states off the model point
+# `m`, as the pairs' runs, so their reverse needs no order with the pairs': each
+# takes its states' seeds from `ds`.
+_accumulate_inverse_chains!(dm, ds, sd, mode, chains, m) =
+    (_each_chain(chain -> _accumulate_inverse_chain!(dm, ds, sd, mode, chain, m), chains); dm)
+function _accumulate_inverse_chain!(dm, ds, sd, mode, chain, m)
+    if _is_identity(chain)
+        for idx in chain.states
+            dm[idx] += ds[idx]
+            ds[idx] = 0
+        end
+    else
+        for idx in chain.states
+            sd[idx] = ds[idx]
+            ds[idx] = 0
+        end
+        Enzyme.autodiff(mode, _chain_inverse_objective, Enzyme.Active,
+                        Enzyme.Const(chain), Enzyme.Const(sd), Enzyme.Duplicated(m, dm))
+    end
+    nothing
 end
 
 # --- window-end halo transport ---------------------------------------------------
@@ -251,9 +335,12 @@ function _transport_gradient!(g_new, m, dm, ds, sd, mode, new_ir, old_ir, x, g_o
         end
         j = i - 1
     end
+    _accumulate_inverse_chains!(dm, ds, sd, mode, old_ir.chains, m)
     dm .+= ds
     fill!(g_new, 0)
     _accumulate_pairs!(g_new, dm, sd, m, mode, new_ir.pairs, x)
+    _accumulate_chains!(g_new, dm, mode, new_ir.chains, x)
+    g_new .+= dm
 end
 
 function WarmupHMC._transport_gradient_method(backend::AutoEnzyme,

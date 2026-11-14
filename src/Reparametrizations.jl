@@ -572,13 +572,20 @@ _reparam_framed(value, xi, x) = reparam(value, xi, x)
 _reparam_framed(value, xi, gi, x) = reparam(value, xi, gi, x)
 
 """
-    IndexedReparametrization(pairs)
+    IndexedReparametrization(pairs; chains = ())
 
 A vector of `index => Reparametrization(...)` pairs for a
 [`ReparametrizedProblem`](@ref). Each index identifies one scalar coordinate in
 the unconstrained position vector. Unlisted coordinates pass through unchanged;
 the wrapper sums the maps' log-Jacobians. An empty vector applies no map and does
 not infer a model's hierarchy.
+
+`chains` adds latent Markov chains, a vector or tuple of [`MarkovChain`](@ref)s,
+whose states warm-up centres per time step. A coordinate is a state of at most
+one chain and takes no pair then. Pair accessors should not read chain states:
+the map evaluates the chains before the pairs, but centering selection reads
+chain states at their sampler coordinates. A vector of chains needs a concrete element type; chains
+of different accessor types go in a tuple.
 
 Warm-up replaces each pair's source centering in place. Independent adaptive
 chains need independent problem state; the vector-of-RNGs overload copies a
@@ -622,9 +629,10 @@ to itself with a zero log-Jacobian, and evaluates neither accessor on the map,
 its inverse, the gradient or the transport; centering selection still evaluates
 them for its candidates.
 """
-struct IndexedReparametrization{P} <: AbstractReparametrization
+struct IndexedReparametrization{P,C} <: AbstractReparametrization
     pairs::P
-    function IndexedReparametrization(pairs::P) where {P}
+    chains::C
+    function IndexedReparametrization(pairs::P, chains::C) where {P,C}
         isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
             "IndexedReparametrization pairs must have a concrete element type; " *
             "avoid mixing constants and differently typed accessor closures in one vector " *
@@ -636,9 +644,11 @@ struct IndexedReparametrization{P} <: AbstractReparametrization
             "index or a constant; see the IndexedReparametrization docstring.",
         ))
         isempty(pairs) || _check_accessors(first(pairs))
-        new{P}(pairs)
+        _check_chains(pairs, chains)
+        new{P,C}(pairs, chains)
     end
 end
+IndexedReparametrization(pairs; chains=()) = IndexedReparametrization(pairs, chains)
 
 # The element type is concrete, so every pair's accessors share the first pair's
 # types, and whether a value is callable depends only on its type.
@@ -655,8 +665,16 @@ function _check_accessors(idx, value::Reparametrization)
     end
     nothing
 end
-with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) =
-    _forward!(y, pairs, x)
+# Chains first: a chain's states then hold their model values when the pairs'
+# runs read their frames off `y`, as on the inverse and the gradient, which read
+# the model point. Without chains this is `_forward!` alone, bit for bit.
+function with_logabsdet_jacobian!(y::AbstractVector, (;pairs, chains)::IndexedReparametrization,
+                                  x::AbstractVector)
+    isempty(chains) && return _forward!(y, pairs, x)
+    chain_ljac = _chains_forward!(0., y, chains, x)
+    ljac, y = _forward!(y, pairs, x)
+    chain_ljac + ljac, y
+end
 # `y` holds `x` on entry, as every caller arranges (`copy(x)`, `copyto!(y, x)`).
 # Each run reads its frames off `y` where it starts: the runs before it are
 # mapped there, and every other coordinate still holds its sampler value.
@@ -717,6 +735,9 @@ function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
     Base.mightalias(source, target) && (target = copy(target))
     source .= target
     ljac = zero(eltype(target))
+    # The chains read only the target point too, so they need no order with the
+    # pairs.
+    ljac = _chains_inverse!(ljac, source, ir.chains, target)
     pairs = ir.pairs
     i = firstindex(pairs)
     while i <= lastindex(pairs)
@@ -760,16 +781,36 @@ _with_logabsdet_jacobian_into!(y, t, x) = with_logabsdet_jacobian!(copyto!(y, x)
 # `IndexedReparametrization` keeps its historical representation (a vector of
 # `idx => PartiallyCentered` sources). Other reparametrizers define their own
 # serializable controls; see `WindowSelectionPlan`.
-has_reparametrization(ir::IndexedReparametrization) = !isempty(ir.pairs)
+has_reparametrization(ir::IndexedReparametrization) = !isempty(ir.pairs) || !isempty(ir.chains)
 has_reparametrization(::AbstractReparametrization) = true
-reparam_controls(ir::IndexedReparametrization) =
+# With chains, the controls are `(; pairs, chains)`: the pairs' vector as without
+# them, and each chain's `(; phi, c)`. Without chains they stay the pairs' vector,
+# so such checkpoints are unchanged.
+reparam_controls(ir::IndexedReparametrization) = isempty(ir.chains) ?
+    _pair_controls(ir) : (; pairs=_pair_controls(ir), chains=map(_chain_controls, collect(ir.chains)))
+_pair_controls(ir::IndexedReparametrization) =
     [idx => value.source for (idx, value) in ir.pairs]
-restore_reparam_controls!(ir::IndexedReparametrization, controls) =
-    (isempty(controls) || (ir.pairs .= _reparam_pairs_with_sources(ir, controls)); ir)
+function restore_reparam_controls!(ir::IndexedReparametrization, controls)
+    isempty(ir.chains) || throw(ArgumentError(
+        "these controls were recorded without the $(length(ir.chains)) chain(s) this " *
+        "IndexedReparametrization has; build it exactly as the run was given it"))
+    isempty(controls) || (ir.pairs .= _reparam_pairs_with_sources(ir, controls))
+    ir
+end
+function restore_reparam_controls!(ir::IndexedReparametrization, controls::NamedTuple)
+    length(ir.chains) == length(controls.chains) || throw(ArgumentError(
+        "the controls record $(length(controls.chains)) chain(s), this " *
+        "IndexedReparametrization has $(length(ir.chains)); build it exactly as the " *
+        "run was given it"))
+    foreach(_restore_chain_controls!, ir.chains, controls.chains, eachindex(controls.chains))
+    isempty(controls.pairs) || (ir.pairs .= _reparam_pairs_with_sources(ir, controls.pairs))
+    ir
+end
 snapshot_reparametrization(ir::IndexedReparametrization) =
-    IndexedReparametrization(copy(ir.pairs))
+    IndexedReparametrization(copy(ir.pairs); chains=_snapshot_chains(ir.chains))
 snapshot_reparametrization(ir::AbstractReparametrization) = deepcopy(ir)
-_restore_reparametrization!(ir::IndexedReparametrization, old) = (ir.pairs .= old.pairs; ir)
+_restore_reparametrization!(ir::IndexedReparametrization, old) =
+    (ir.pairs .= old.pairs; _restore_chains!(ir.chains, old.chains); ir)
 _restore_reparametrization!(ir::AbstractReparametrization, old) =
     restore_reparam_controls!(ir, reparam_controls(old))
 
@@ -950,9 +991,12 @@ OnlineReparametrizer(source::PartiallyCentered, xg...;
 # --- Batch optimization ---
 
 optimize!(ir::IndexedReparametrization, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
+    # Chains first, in the inverse map's order: a pair that reads a chain's state
+    # then scores it in the chain's new frame.
+    _select_chains_on_pool!(ir.chains, xg...; loss_kwargs...)
     _select_on_pool!(ir.pairs, k -> OnlineReparametrizer(last(ir.pairs[k]), xg...; kwargs...),
                      xg, loss_kwargs)
-    IndexedReparametrization(ir.pairs)
+    IndexedReparametrization(ir.pairs, ir.chains)
 end
 
 # The pool search: score every candidate centering of each pair on the pool
@@ -1147,12 +1191,16 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
         "unknown nonlinear trajectory weighting $trajectory_weighting; expected one of " *
         join(NONLINEAR_TRAJECTORY_WEIGHTINGS, ", "),
     ))
+    plan = candidate_scoring_plan(lpdf)
+    # Chains keep a leaf sample only where the evidence streams in.
+    streaming = mode !== :linear_pool || _uses_online_candidate_scoring(plan)
     NonlinearRecorder(
         mode,
         trajectory_weighting,
         good_leaf_threshold,
-        _nonlinear_accumulator(candidate_scoring_plan(lpdf), reparametrizer(lpdf),
-                               LogDensityProblems.dimension(lpdf), capacity),
+        _nonlinear_accumulator(plan, reparametrizer(lpdf),
+                               LogDensityProblems.dimension(lpdf), capacity;
+                               chain_capacity=streaming ? capacity : 0),
     )
 end
 
@@ -1197,13 +1245,18 @@ _sample_evidence(sample::WeightedLeafSample) = sample.total > 0 ?
     (sample.position, sample.gradient) :
     (sample.position[:, 1:0], sample.gradient[:, 1:0])
 
-_nonlinear_accumulator(::WindowSelectionPlan, ir, dimension, capacity) =
+_nonlinear_accumulator(::WindowSelectionPlan, ir, dimension, capacity; chain_capacity=capacity) =
     WeightedLeafSample(dimension, capacity)
 # A fixed (`nonlinear_adapt=false`) custom reparametrizer records nothing;
 # adapting one without a selection plan is refused by
-# `_check_nonlinear_adaptable` before sampling starts.
-_nonlinear_accumulator(plan, ir, dimension, capacity) = ir isa IndexedReparametrization ?
-    OnlineReparametrizer(ir; accumulator=WeightedReparametrizationLoss) : nothing
+# `_check_nonlinear_adaptable` before sampling starts. Chains add a leaf sample
+# (`ChainEvidence`).
+_nonlinear_accumulator(plan, ir, dimension, capacity; chain_capacity=capacity) =
+    ir isa IndexedReparametrization ? _with_chain_evidence(
+        OnlineReparametrizer(ir; accumulator=WeightedReparametrizationLoss),
+        ir, dimension, chain_capacity) : nothing
+_with_chain_evidence(online, ir, dimension, capacity) = isempty(ir.chains) ? online :
+    ChainEvidence(online, WeightedLeafSample(dimension, capacity))
 
 # Fail before sampling rather than at the first restarting window, which a run
 # may never reach.
@@ -1276,6 +1329,15 @@ same scorer and criterion, but it is the recorded warm-up curve only if the
 caller supplies the exact online leaf stream, weights, and group boundaries.
 Ordinary saved halo or posterior matrices do not contain those boundaries, so
 their curves are retrospective diagnostics.
+
+For an [`IndexedReparametrization`](@ref) with chains, the matrix method appends
+one row per [`MarkovChain`](@ref) state and candidate centering, with fields
+`chain_number`, `state_number` (the time step), `index`, `phi` (the regression
+coefficient the candidates are scored at), `candidate`, `loss`, `groups` and
+`effective_n`, computed from the supplied columns as a restarting window selects
+them. The payload method returns the pairs' rows only: a chain's candidates
+depend on the coefficient fitted at the window's end, which the payload cannot
+evaluate without the chain.
 """
 candidate_scoring_losses(recorder::NonlinearRecorder) =
     _candidate_scoring_losses(recorder.online)
@@ -1329,7 +1391,9 @@ function candidate_scoring_losses(lpdf,
             )
         end
     end
-    _candidate_scoring_losses(online)
+    rows = _candidate_scoring_losses(online)
+    isempty(ir.chains) ? rows :
+        vcat(rows, _chain_candidate_scoring_losses(ir.chains, positions, gradients, weights))
 end
 
 _uses_online_candidate_scoring(::DirectCandidateScoring) = false
@@ -1610,7 +1674,7 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     ir = reparametrizer(lpdf)
     has_reparametrization(ir) || return position_and_gradient
     _require_indexed(ir)
-    old_ir = IndexedReparametrization(copy(ir.pairs))
+    old_ir = snapshot_reparametrization(ir)
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, halo_position, halo_gradient)
@@ -1633,7 +1697,7 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     ir = reparametrizer(lpdf)
     has_reparametrization(ir) || return position_and_gradient
     _require_indexed(ir)
-    old_ir = IndexedReparametrization(copy(ir.pairs))
+    old_ir = snapshot_reparametrization(ir)
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, recorder.online)

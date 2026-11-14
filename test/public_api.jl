@@ -70,6 +70,7 @@ const PUBLIC_EXPORTS = [
     :Reparametrization,
     :ReparametrizedProblem,
     :SharedAccessor,            # shared location work (snag use-the-public-i-0660224b)
+    :MarkovChain,               # per-time-step centring of latent walks (snag random-walk-bloc-fc175e21)
 ]
 
 @testset "exported surface is exactly the committed one" begin

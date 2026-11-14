@@ -1879,6 +1879,9 @@ _back_transform_reparametrizer(payload, lpdf, n_rows) = begin
         restore_reparam_controls!(out, sources)
         return out
     end
+    # With chains, the controls are `(; pairs, chains)` (`reparam_controls`).
+    chain_sources = sources isa NamedTuple ? sources.chains : ()
+    sources = sources isa NamedTuple ? sources.pairs : sources
     length(ir.pairs) == length(sources) || throw(ArgumentError("""
     the supplied log density's reparametrization cannot be the one that wrote this
     checkpoint: it reparametrizes $(length(ir.pairs)) coordinate(s), the checkpoint
@@ -1894,6 +1897,19 @@ _back_transform_reparametrizer(payload, lpdf, n_rows) = begin
       supplied:   $(first.(ir.pairs))
       checkpoint: $(first.(sources))
     """))
+    length(ir.chains) == length(chain_sources) || throw(ArgumentError("""
+    the supplied log density's reparametrization cannot be the one that wrote this
+    checkpoint: it has $(length(ir.chains)) Markov chain(s), the checkpoint recorded
+    $(length(chain_sources)).
+
+    Build the log density exactly as the run was given it — same reparametrization
+    spec, same chains.
+    """))
+    if !isempty(ir.chains)
+        out = snapshot_reparametrization(ir)
+        restore_reparam_controls!(out, payload.reparam_sources)
+        return out
+    end
     isempty(sources) && return nothing
     # Through a copy of the live pairs, so the element type — and therefore the
     # `IndexedReparametrization` concreteness check — is exactly the one the

@@ -26,6 +26,7 @@ Markdown.parse(string(@doc WarmupHMC.PartiallyCentered))
 WarmupHMC.Reparametrization
 WarmupHMC.SharedAccessor
 WarmupHMC.IndexedReparametrization
+WarmupHMC.MarkovChain
 WarmupHMC.ReparametrizedProblem
 ```
 

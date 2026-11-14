@@ -177,6 +177,46 @@ consecutive pairs share it. Accessors that only read the position, as in the
 example above, are not affected. The limitation is tracked upstream as
 [EnzymeAD/Enzyme.jl#4045](https://github.com/EnzymeAD/Enzyme.jl/issues/4045).
 
+## Markov chains
+
+A latent random walk, AR(1) series or discretely observed Ornstein–Uhlenbeck
+process has no single good frame. Centred, it mixes badly through unobserved
+stretches. Non-centred, its step size falls with the series' length where
+observations pin its slow modes.
+`MarkovChain(states; log_scale, coefficient, drift, initial)` lets warm-up choose
+per time step.
+
+The model is written in the states `w_t`. State `t`'s location `m_t` is
+`initial` for the first state and `coefficient * w[t-1] + drift` for every later
+one, with the previous state read in the model's frame. The sampler coordinate
+is `(w_t - phi_t * m_t) * exp((c_t - 1) * log_scale)`, and the controls start at
+`(phi_t, c_t) = (0, 1)`, the model as written. At every restarting window,
+`phi_t` is refitted by regressing `w_t` on `m_t`, and `c_t` is chosen on the
+centering grid with gradients taken in the frame of the new `phi`. A stretch
+without observations then moves towards the innovation, `(1, 0)`. Passed as
+starting controls, `(1, 0)` maps standardized innovations to a random walk:
+
+```@example coordinates
+walk = MarkovChain(1:3; log_scale = x -> x[4], phi = 1.0, c = 0.0)
+innovations = IndexedReparametrization([]; chains = [walk])
+z = [0.5, -1.0, 2.0, log(0.5)]
+(; states = last(innovations(z))[1:3], walk = 0.5 .* cumsum(z[1:3]))
+```
+
+Chains go into `IndexedReparametrization(pairs; chains = [...])` and take part
+in everything pairs do: the adaptive and cooperative samplers,
+`nonlinear_adapt=false`, checkpoints and `WarmupHMC.back_transform`. The map,
+its inverse and its gradient are one pass over each chain. `log_scale`, `coefficient` and `drift` can return one value per
+state, for an AR(1) series with a stationary first state or an
+Ornstein–Uhlenbeck process on an irregular time grid. They, and `initial`, may
+read only coordinates that no chain or pair transforms. A pair's accessor should
+not read a chain's states either: centering selection would see their sampler
+coordinates, whose meaning changes when the chain adapts.
+
+With a streaming `nonlinear_evidence` mode, or a `CandidateScoringPlan`, each
+chain is selected on a sample of `recording_target` leaves per window, which
+takes the memory of the retained pool.
+
 ## Derivatives
 
 A sampling wrapper needs an AD backend in its third constructor argument:

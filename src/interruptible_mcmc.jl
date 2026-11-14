@@ -828,6 +828,8 @@ stream_mcmc(payload::NamedTuple, lpdf, positions::AbstractVector{<:AbstractVecto
     length(chain_rngs) == n_chains || throw(DimensionMismatch(
         "got $(length(chain_rngs)) rngs for $n_chains chains"))
     lpdfs = _stream_lpdfs(lpdf, n_chains)
+    _refuse_unsafe_concurrent_gradients(:stream_mcmc, lpdfs,
+        parallel ? _concurrent_chains(n_chains, n_chains) : 1)
     _stream_multichain(n_chains; path, parallel, progress, description, blas_threads) do i, prog, chain_path, chain_desc
         stream_mcmc(payload, lpdfs[i], positions[i]; path=chain_path, n_draws, rng=chain_rngs[i],
             max_tree_depth, overwrite, durable, progress=prog, description=chain_desc, blas_threads)
@@ -848,6 +850,8 @@ stream_mcmc(rngs::AbstractVector, lpdf, positions::AbstractVector{<:AbstractVect
     length(rngs) == n_chains || throw(DimensionMismatch(
         "got $(length(rngs)) rngs for $n_chains chains"))
     lpdfs = _stream_lpdfs(lpdf, n_chains)
+    _refuse_unsafe_concurrent_gradients(:stream_mcmc, lpdfs,
+        parallel ? _concurrent_chains(n_chains, n_chains) : 1)
     _stream_multichain(n_chains; path, parallel, progress, description, blas_threads) do i, prog, chain_path, chain_desc
         stream_mcmc(rngs[i], lpdfs[i], positions[i]; path=chain_path, n_draws, metric, stepsize,
             max_tree_depth, overwrite, durable, progress=prog, description=chain_desc, blas_threads)

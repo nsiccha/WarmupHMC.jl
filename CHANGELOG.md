@@ -18,6 +18,22 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.2.23
+
+### Fixed
+
+- Samplers that would run chains at once refuse, with an `ArgumentError`
+  before any work, a `ReparametrizedProblem` whose map WarmupHMC differentiates
+  with an Enzyme that lacks the concurrent-GC repair (registered releases).
+  Such gradients are not memory-safe while another thread allocates, so these
+  runs crashed the process or, on Julia 1.12, could return wrong gradients.
+  This covers multi-chain `adaptive_warmup_mcmc` and `resume_warmup_mcmc` with
+  `parallel=true`, `completion_warmup_mcmc`, `cooperative_warmup_mcmc` with
+  `n_cores > 1`, and multi-chain `stream_mcmc`, on more than one thread. The
+  repair is on the `dogfood` branch of
+  [nsiccha/Enzyme.jl](https://github.com/nsiccha/Enzyme.jl/tree/dogfood) from
+  `72d5d25`. Plain densities and empty maps are unaffected.
+
 ## 0.2.22
 
 ### Fixed

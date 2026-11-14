@@ -174,6 +174,31 @@ end
     @test gradient ≈ fd_gradient(q -> LogDensityProblems.logdensity(rp, q), x) rtol = 1e-6
 end
 
+# Snag reparametrized-g-af31aa45: a column view of a pool took the one-pass path,
+# whose Enzyme shadow of a SubArray is a zeroed copy of the whole pool, so every
+# gradient over eachcol(P) cost the size of P and returned that copy.
+@testset "a gradient at a column view is the gradient at the column" begin
+    ir = first(last(cases[3]))
+    inner = DiagGaussian(randn(rng, d), rand(rng, d) .+ 0.5)
+    rp = WarmupHMC.ReparametrizedProblem(ir, inner, AutoEnzyme())
+    P = 0.5 .* randn(rng, d, 2000)
+    P0 = copy(P)
+    for c in (view(P, :, 1), view(P, :, 2000), view(P, d:-1:1, 7), first(eachcol(P)))
+        value, gradient = LogDensityProblems.logdensity_and_gradient(rp, c)
+        @test gradient isa Vector{Float64}
+        @test (value, gradient) == LogDensityProblems.logdensity_and_gradient(rp, collect(c))
+    end
+    @test P == P0
+    c = view(P, :, 3)
+    LogDensityProblems.logdensity_and_gradient(rp, c)
+    # the column's copy and the Vector path's few vectors, not the pool
+    @test @allocated(LogDensityProblems.logdensity_and_gradient(rp, c)) < 16 * 8d + 4096
+    # positive control: the one-pass path at the view copies the whole pool
+    g = randn(rng, d)
+    one_pass(AutoEnzyme(), ir, c, g)
+    @test @allocated(one_pass(AutoEnzyme(), ir, c, g)) > sizeof(P)
+end
+
 @testset "forward mode keeps the one-pass method" begin
     ir = first(last(cases[1]))
     x = 0.5 .* randn(rng, d); g = randn(rng, d)

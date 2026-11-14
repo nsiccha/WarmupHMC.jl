@@ -1465,30 +1465,78 @@ end
 # in every point of the linear-adaptation pool (e.g. HSGP scales underflow).
 # Treat the coordinate update as a transaction: an unusable transport must not
 # poison the metric, nor change the meaning of the preserved sampler state.
+# A rejection restores everything the update changed (the controls, the pool
+# and the current point), so the run continues exactly as if the selection had
+# kept the previous controls. Its warning names what was not finite: the pool,
+# or the current point's coordinates, log density or gradient.
 function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
                                position, gradient, position_and_gradient)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
                              position, gradient)
     ir = reparametrizer(lpdf)
-    if all(isfinite, position) && all(isfinite, gradient)
+    rejection = if !(all(isfinite, position) && all(isfinite, gradient))
+        _pool_rejection(ir, position, gradient)
+    else
         _, physical = old_ir(position_and_gradient.q)
         _, source = _inverse_with_logabsdet_jacobian(ir, physical)
-        if all(isfinite, source)
-            point = DynamicHMC.evaluate_ℓ(lpdf, source; strict=false)
-            if isfinite(point.ℓq) && all(isfinite, point.∇ℓq)
-                return point
-            end
+        if !all(isfinite, source)
+            _point_rejection("the chain's current point has nonfinite coordinates in the new frame",
+                             ir, source, findall(!isfinite, source))
+        else
+            # `DynamicHMC.evaluate_ℓ(lpdf, source; strict=false)`, without its
+            # replacement of a nonfinite log density by `-Inf`: the warning
+            # reports the value.
+            ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(lpdf, source)
+            isfinite(ℓq) && all(isfinite, ∇ℓq) &&
+                return DynamicHMC.EvaluatedLogDensity(source, ℓq, ∇ℓq)
+            isfinite(ℓq) ?
+                _point_rejection("the gradient at the chain's current point is not finite in the new coordinates",
+                                 ir, source, findall(!isfinite, ∇ℓq)) :
+                (; reason="the log density at the chain's current point is not finite in the new coordinates",
+                   fields=(; log_density=ℓq))
         end
     end
-    bad_positions = count(!isfinite, position)
-    bad_gradients = count(!isfinite, gradient)
     _restore_reparametrization!(ir, old_ir)
     _synchronize_scoring!(lpdf)
     position .= old_position
     gradient .= old_gradient
-    @warn "Rejected centering update: nonfinite coordinate transport; retaining previous coordinates" bad_positions bad_gradients
+    @warn "Rejected centering update: $(rejection.reason); keeping the previous coordinates, retained pool and current point" rejection.fields...
     position_and_gradient
 end
+
+# What a rejected centering update reports. Pool counts are of states (columns).
+# At most five coordinates are listed, each moved pair among them with the
+# location and log-scale its map reads there, evaluated as the map evaluates
+# them. An identity pair reads neither, so a nonfinite one shows only once
+# selection moves its pair.
+function _pool_rejection(ir, position, gradient)
+    bad_positions = vec(any(!isfinite, position; dims=1))
+    bad_gradients = vec(any(!isfinite, gradient; dims=1))
+    coordinates = findall(vec(any(!isfinite, position; dims=2) .| any(!isfinite, gradient; dims=2)))
+    column = position[:, findfirst(bad_positions .| bad_gradients)]
+    (; reason="moving the retained pool into the new coordinates gave nonfinite positions or gradients",
+       fields=(; pool_states=size(position, 2),
+                 nonfinite_pool_positions=count(bad_positions),
+                 nonfinite_pool_gradients=count(bad_gradients),
+                 _coordinate_fields(ir, column, coordinates)...))
+end
+_point_rejection(reason, ir, x, coordinates) =
+    (; reason, fields=_coordinate_fields(ir, x, coordinates))
+_coordinate_fields(ir, x, coordinates) = (;
+    nonfinite_coordinates=Tuple(first(coordinates, 5)),
+    n_nonfinite_coordinates=length(coordinates),
+    endpoints=_endpoints_at(ir, x, first(coordinates, 5)))
+function _endpoints_at(ir::IndexedReparametrization, x, coordinates)
+    endpoints = []   # untyped, so each pair prints as `idx => (location = …, …)`
+    for (idx, value) in ir.pairs
+        idx in coordinates && value isa Reparametrization && !_is_identity(value) || continue
+        push!(endpoints, idx => _named_endpoints(map(_read_frame, value.args, _pair_frames(value, x))))
+    end
+    Tuple(endpoints)
+end
+_endpoints_at(ir, x, coordinates) = nothing
+_named_endpoints((location, log_scale)::Tuple{Any,Any}) = (; location, log_scale)
+_named_endpoints(values) = values
 
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)

@@ -7,6 +7,19 @@ refer to that version's tree.
 
 ## Unreleased
 
+### Fixed
+
+- The warning for a rejected centering update counted only the transported
+  pool's nonfinite entries, so an update rejected because the chain's current
+  point was not finite in the new coordinates read `bad_positions = 0` and
+  `bad_gradients = 0`. It now names what was not finite: the retained pool
+  (with how many of its states have nonfinite positions or gradients), or the
+  current point's coordinates, log density or gradient. It lists up to five
+  such coordinates, each moved pair among them with the location and log-scale
+  its map reads there. The rejection itself is unchanged: the run continues
+  with the previous centering, pool and current point, exactly as if the
+  selection had kept them (snag `completion-warmu-b757327c`).
+
 ### Documentation
 
 - Reorganize the manual into Start, Guides, Examples, and Reference. Add a

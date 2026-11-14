@@ -380,7 +380,14 @@ struct Reparametrization{T,S,A}
     source::S
     args::A
     Reparametrization(target, source, args...) = new{typeof(target), typeof(source), typeof(args)}(target, source, args)
+    # A rule whose `source` field admits more than its current value's type, as
+    # in an `IndexedReparametrization` whose pairs can take a `ScaleCentered`
+    # source (`_widen_sources`).
+    Reparametrization{T,S,A}(target, source, args::A) where {T,S,A} = new{T,S,A}(target, source, args)
 end
+# Writing a rule into a vector of rules whose `source` field is wider converts it.
+Base.convert(::Type{Reparametrization{T,S,A}}, r::Reparametrization) where {T,S,A} =
+    Reparametrization{T,S,A}(r.target, r.source, r.args)
 InverseFunctions.inverse((;target, source, args)::Reparametrization) = Reparametrization(source, target, args...)
 # The rule's arguments at `x`: an accessor computation that the location and the
 # log-scale share is evaluated once (`_pair_frames`, below).
@@ -388,6 +395,56 @@ reparam_rargs(r::Reparametrization, xi, x) = _framed_rargs(r, xi, _pair_frames(r
 reparam_rargs(r::Reparametrization, xi, gi, x) = _framed_rargs(r, xi, gi, _pair_frames(r, x))
 reparam(r::Reparametrization, xi, x) = reparam(r.target, reparam_rargs(r, xi, x)...)
 reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi, gi, x)...)
+
+"""
+    ScaleCentered(midpoint)
+
+A partial centering whose degree follows the coordinate's own scale. Where the
+pair's log-scale is `ℓ`, it is [`PartiallyCentered`](@ref)`(c(ℓ))` with
+
+    c(ℓ) = 1 / (1 + exp(-2 (ℓ - midpoint))) = τ² / (τ² + exp(2 midpoint)),   τ = exp(ℓ),
+
+so the coordinate is centred where its scale is large compared with
+`exp(midpoint)` and non-centred where it is small. For a normal–normal level
+whose coordinate the data inform with variance s², `c(ℓ)` is the optimal partial
+centering at EVERY scale when `exp(midpoint) = s` (Papaspiliopoulos, Roberts and
+Sköld, 2007); a constant `PartiallyCentered(c)` is optimal at one scale only, so
+a scale whose posterior spans orders of magnitude keeps a funnel at one end.
+
+Given the location and the log-scale, the map is affine in the coordinate, so an
+[`IndexedReparametrization`](@ref) stays triangular: the log-Jacobian is
+`ℓ (target.c - c(ℓ))`, and the gradient differentiates through `c(ℓ)`.
+
+Warm-up selects it. At a restarting window, a pair whose log-scale is a
+callable and varies over the retained pool also scores eleven midpoints spanning
+the pool's log-scales, `range(m - 2s - 2, m + 2s + 2, 11)` with `m` and `s` the
+mean and standard deviation of the pair's log-scale over the pool, beside the
+eleven constant centerings, by the same criterion; see
+[`PartiallyCentered`](@ref). A constant wins ties. An `IndexedReparametrization`
+whose pairs read a callable log-scale stores its sources as
+`Union{PartiallyCentered{T},ScaleCentered{T}}` for this; a pair can also be built
+with a `ScaleCentered` source directly.
+"""
+struct ScaleCentered{T<:Real}
+    midpoint::T
+end
+const _AnyCentering = Union{PartiallyCentered,ScaleCentered}
+# The centering a pair's map applies where its log-scale is `log_scale`.
+_centering_at(c::PartiallyCentered, log_scale) = c
+_centering_at(c::ScaleCentered, log_scale) =
+    PartiallyCentered(logistic(2 * (log_scale - c.midpoint)))
+# The scalar map of ReparametrizableDistributions at the centerings in effect
+# there. It treats the location and log-scale as fixed, as for constant
+# centerings: dependence on other coordinates, here also through `c(ℓ)`, is the
+# AD pass's, never this formula's.
+reparam(target::ScaleCentered, source::_AnyCentering, x::Real, loc::Real, log_scale::Real) =
+    reparam(_centering_at(target, log_scale), _centering_at(source, log_scale), x, loc, log_scale)
+reparam(target::PartiallyCentered, source::ScaleCentered, x::Real, loc::Real, log_scale::Real) =
+    reparam(target, _centering_at(source, log_scale), x, loc, log_scale)
+reparam(target::ScaleCentered, source::_AnyCentering, x::Real, g::Real, loc::Real, log_scale::Real) =
+    reparam(_centering_at(target, log_scale), _centering_at(source, log_scale), x, g, loc, log_scale)
+reparam(target::PartiallyCentered, source::ScaleCentered, x::Real, g::Real, loc::Real, log_scale::Real) =
+    reparam(target, _centering_at(source, log_scale), x, g, loc, log_scale)
 
 """
     SharedAccessor(f, index, stage = 1)
@@ -551,6 +608,7 @@ _patterned_frames(value, x, pattern::Val) = x
 _is_identity(value::Reparametrization) = _same_centering(value.target, value.source)
 _is_identity(value) = false
 _same_centering(target::PartiallyCentered, source::PartiallyCentered) = target.c == source.c
+_same_centering(target::ScaleCentered, source::ScaleCentered) = target.midpoint == source.midpoint
 _same_centering(target, source) = false
 # The first pair in `i:j` that is not an identity, or `j + 1`.
 function _first_moved(pairs, i, j)
@@ -632,7 +690,7 @@ them for its candidates.
 struct IndexedReparametrization{P,C} <: AbstractReparametrization
     pairs::P
     chains::C
-    function IndexedReparametrization(pairs::P, chains::C) where {P,C}
+    function IndexedReparametrization(pairs, chains::C) where {C}
         isempty(pairs) || isconcretetype(fieldtype(eltype(pairs), 2)) || throw(ArgumentError(
             "IndexedReparametrization pairs must have a concrete element type; " *
             "avoid mixing constants and differently typed accessor closures in one vector " *
@@ -645,10 +703,26 @@ struct IndexedReparametrization{P,C} <: AbstractReparametrization
         ))
         isempty(pairs) || _check_accessors(first(pairs))
         _check_chains(pairs, chains)
-        new{P,C}(pairs, chains)
+        pairs = _widen_sources(pairs)
+        new{typeof(pairs),C}(pairs, chains)
     end
 end
 IndexedReparametrization(pairs; chains=()) = IndexedReparametrization(pairs, chains)
+
+# Pairs with a `PartiallyCentered` source and a callable log-scale can be moved to
+# a `ScaleCentered` source by centering selection, so their vector is rebuilt
+# with a source field that holds either: `Union{PartiallyCentered{F},
+# ScaleCentered{F}}`, still a concrete rule type. Constant sources map exactly as
+# before; only gradients can differ by rounding, in the order Enzyme sums a
+# shared log-scale's terms. A constant log-scale cannot vary, so its pairs keep
+# their vector. The rebuilt vector is the one adaptation updates in place:
+# read results off `ir.pairs`.
+_widen_sources(pairs) = pairs
+function _widen_sources(pairs::AbstractVector{Pair{I,Reparametrization{T,S,A}}}) where
+        {I,T,F,S<:PartiallyCentered{F},A<:Tuple{Any,Any}}
+    fieldtype(A, 2) <: Real && return pairs
+    convert(Vector{Pair{I,Reparametrization{T,Union{S,ScaleCentered{F}},A}}}, pairs)
+end
 
 # The element type is concrete, so every pair's accessors share the first pair's
 # types, and whether a value is callable depends only on its type.
@@ -942,10 +1016,18 @@ reset!((;pairs)::OnlineReparametrizer) = (foreach(p -> reset!(last(p)), pairs); 
 _mark_group!(loss::WeightedReparametrizationLoss) = (loss.groups += 1; loss)
 _mark_group!((;pairs)::OnlineReparametrizer) = foreach(p -> _mark_group!(last(p)), pairs)
 
+# A row names a constant candidate by its `candidate` centering and a
+# `ScaleCentered` one by its `midpoint`; the other field is `nothing` (not
+# applicable, unlike a `missing` loss, which is not yet available).
+_candidate_c(candidate::PartiallyCentered) = candidate.c
+_candidate_c(::ScaleCentered) = nothing
+_candidate_midpoint(::PartiallyCentered) = nothing
+_candidate_midpoint(candidate::ScaleCentered) = candidate.midpoint
 function _candidate_scoring_loss_row(pair_number, index, candidate, accumulator, groups)
     (; pair_number,
        index,
-       candidate=candidate.c,
+       candidate=_candidate_c(candidate),
+       midpoint=_candidate_midpoint(candidate),
        loss=groups > 2 ? reparametrization_loss(accumulator) : missing,
        groups,
        effective_n=iszero(accumulator.weight2) ? missing : effective_n(accumulator))
@@ -962,13 +1044,71 @@ function _candidate_scoring_losses((;pairs)::OnlineReparametrizer)
     ]
 end
 
-reparametrization_candidates(::PartiallyCentered; n=11) = Iterators.map(PartiallyCentered, range(0, 1, n))
+# The constant grid, then the `ScaleCentered` midpoints `scale_grid` (empty
+# unless the caller placed them on a pool, `_scale_grid`). Constants come first,
+# so a tie keeps a constant. A `ScaleCentered` source with no grid stays a
+# candidate itself, so evidence that places no grid (the streaming modes) can
+# keep it.
+function reparametrization_candidates(source::_AnyCentering; n=11, scale_grid=())
+    constants = PartiallyCentered.(range(0, 1, n))
+    scales = isempty(scale_grid) ?
+        (source isa ScaleCentered ? [source] : ScaleCentered{Float64}[]) :
+        ScaleCentered.(scale_grid)
+    isempty(scales) ? constants : Union{eltype(constants),eltype(scales)}[constants; scales]
+end
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
-OnlineReparametrizer(source::PartiallyCentered, xg...;
+OnlineReparametrizer(source::_AnyCentering, xg...;
                      accumulator=WeightedReparametrizationLoss, kwargs...) = OnlineReparametrizer([
     target => accumulator(xg...)
     for target in reparametrization_candidates(source; kwargs...)
 ])
+
+# --- Scale-dependent candidates ---
+#
+# A pair can take a `ScaleCentered` source when its vector was widened for it
+# (`_widen_sources`: a `PartiallyCentered` source and a callable log-scale). Its
+# midpoints are placed on the pool: eleven, evenly over the pair's log-scale mean
+# plus or minus two standard deviations and two more units, the range beyond
+# which `c(ℓ)` is within 0.02 of 0 or 1 at every log-scale the pool mostly
+# holds (and so is a constant centering already on the grid). A log-scale that
+# does not vary over the pool, or is not finite, places none.
+_admits_scale(value::Reparametrization) = typeintersect(fieldtype(typeof(value), :source), ScaleCentered) !== Union{}
+_admits_scale(value) = false
+_log_scale_at(value::Reparametrization, frames) = _read_frame(value.args[2], frames[2])
+mutable struct _LogScaleMoments
+    n::Int
+    mean::Float64
+    m2::Float64
+end
+_LogScaleMoments() = _LogScaleMoments(0, 0.0, 0.0)
+function _observe_log_scale!(m::_LogScaleMoments, l)
+    m.n += 1
+    delta = l - m.mean
+    m.mean += delta / m.n
+    m.m2 += delta * (l - m.mean)
+    m
+end
+function _scale_grid(m::_LogScaleMoments; n=11)
+    m.n > 1 || return Float64[]
+    s = sqrt(m.m2 / (m.n - 1))
+    isfinite(m.mean) && isfinite(s) && s > 0 || return Float64[]
+    collect(range(m.mean - 2s - 2, m.mean + 2s + 2, n))
+end
+# The midpoints for the pairs of run `i:j`, observed on `columns` the way the pool
+# search reads them: the run's frames off each column's partly mapped vector.
+function _scale_grids(pairs, run, columns)
+    old = [last(pairs[k]) for k in run]
+    eligible = map(_admits_scale, old)
+    any(eligible) || return [Float64[] for _ in run]
+    moments = [_LogScaleMoments() for _ in run]
+    for (yi, _) in columns
+        frames = _pair_frames(first(old), yi)
+        for n in eachindex(old)
+            eligible[n] && _observe_log_scale!(moments[n], _log_scale_at(old[n], frames))
+        end
+    end
+    [eligible[n] ? _scale_grid(moments[n]) : Float64[] for n in eachindex(old)]
+end
 
 # --- Batch optimization ---
 
@@ -976,7 +1116,8 @@ optimize!(ir::IndexedReparametrization, xg::AbstractMatrix...; loss_kwargs=(;), 
     # Chains first, in the inverse map's order: a pair that reads a chain's state
     # then scores it in the chain's new frame.
     _select_chains_on_pool!(ir.chains, xg...; loss_kwargs...)
-    _select_on_pool!(ir.pairs, k -> OnlineReparametrizer(last(ir.pairs[k]), xg...; kwargs...),
+    _select_on_pool!(ir.pairs,
+                     (k, scale_grid) -> OnlineReparametrizer(last(ir.pairs[k]), xg...; scale_grid, kwargs...),
                      xg, loss_kwargs)
     IndexedReparametrization(ir.pairs, ir.chains)
 end
@@ -991,9 +1132,11 @@ end
 # their own run. A run of pairs sharing accessor work (`_run_end`) is scored
 # and moved together, reading its shared values once per column: each pair
 # reads and moves only its own coordinate, so a pair's observations and its
-# move are exactly what the pair-by-pair order gives. `accumulator_for(k)` is
-# pair `k`'s candidate accumulator.
-function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
+# move are exactly what the pair-by-pair order gives. `accumulator_for(k, grid)`
+# is pair `k`'s candidate accumulator, with `grid` the `ScaleCentered` midpoints
+# placed on this pool (`_scale_grids`; empty where the pair takes none, and
+# never computed with `scale_grids = false`).
+function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs; scale_grids=true)
     excluded = Pair{Any,Bool}[]
     model = copy(first(xg))
     columns = zip(eachcol(model), zip(eachcol.(xg)...))
@@ -1002,7 +1145,8 @@ function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
         j = _run_end(pairs, i)
         run = i:j
         old = [last(pairs[k]) for k in run]
-        accumulators = [accumulator_for(k) for k in run]
+        grids = scale_grids ? _scale_grids(pairs, run, columns) : [Float64[] for _ in run]
+        accumulators = [accumulator_for(k, grids[n]) for (n, k) in enumerate(run)]
         for (yi, xgi) in columns
             frames = _pair_frames(first(old), yi)
             for (n, k) in enumerate(run)
@@ -1039,10 +1183,33 @@ end
 
 # --- Online fitting for IndexedReparametrization ---
 
-OnlineReparametrizer((;pairs)::IndexedReparametrization; kwargs...) = OnlineReparametrizer([
-    idx => OnlineReparametrizer(value; kwargs...)
-    for (idx, value) in pairs
+# `scale_grids`, when given, holds each pair's `ScaleCentered` midpoints.
+OnlineReparametrizer((;pairs)::IndexedReparametrization; scale_grids=nothing, kwargs...) = OnlineReparametrizer([
+    idx => OnlineReparametrizer(value; scale_grid=isnothing(scale_grids) ? () : scale_grids[k], kwargs...)
+    for (k, (idx, value)) in enumerate(pairs)
 ])
+# The midpoints the pool search would place for every pair on the columns of
+# `positions` (source frame), read the way the map reads them: each run's frames
+# off the column mapped through the runs before it.
+function _scale_grids_on(pairs, positions)
+    eligible = [_admits_scale(last(p)) for p in pairs]
+    any(eligible) || return [Float64[] for _ in pairs]
+    moments = [_LogScaleMoments() for _ in pairs]
+    for position in eachcol(positions)
+        mapped = collect(position)
+        i = firstindex(pairs)
+        while i <= lastindex(pairs)
+            j = _run_end(pairs, i)
+            frames = _pair_frames(last(pairs[i]), mapped)
+            for k in i:j
+                eligible[k] && _observe_log_scale!(moments[k], _log_scale_at(last(pairs[k]), frames))
+            end
+            j < lastindex(pairs) && _forward_run!(0.0, mapped, pairs, position, i, j, frames)
+            i = j + 1
+        end
+    end
+    [eligible[k] ? _scale_grid(moments[k]) : Float64[] for k in eachindex(pairs)]
+end
 function _fit_candidate_scoring!(::DirectCandidateScoring,
                                  ir::IndexedReparametrization,
                                  ors::OnlineReparametrizer,
@@ -1355,10 +1522,14 @@ function candidate_scoring_losses(lpdf,
     end
 
     ir = reparametrizer(lpdf)
+    plan = candidate_scoring_plan(lpdf)
+    # The direct scorer scores what the `:linear_pool` search scores on these
+    # columns, `ScaleCentered` midpoints included; a plan scores its own
+    # observations of the constant grid.
     online = OnlineReparametrizer(
         ir; accumulator=WeightedReparametrizationLoss,
+        scale_grids=plan isa DirectCandidateScoring ? _scale_grids_on(ir.pairs, positions) : nothing,
     )
-    plan = candidate_scoring_plan(lpdf)
     if isnothing(weights)
         for (position, gradient) in zip(eachcol(positions), eachcol(gradients))
             OnlineStatsBase.fit!(
@@ -1452,7 +1623,7 @@ reset!(recorder::NonlinearRecorder) = (reset!(recorder.online); recorder)
 OnlineStatsBase.fit!(ir::IndexedReparametrization, ors::OnlineReparametrizer, xg::AbstractMatrix...; loss_kwargs=(;), kwargs...) = begin
     length(ors.pairs) == length(ir.pairs) || throw(DimensionMismatch(
         "$(length(ors.pairs)) candidate accumulators for $(length(ir.pairs)) reparametrization pairs"))
-    _select_on_pool!(ir.pairs, k -> last(ors.pairs[k]), xg, loss_kwargs)
+    _select_on_pool!(ir.pairs, (k, _) -> last(ors.pairs[k]), xg, loss_kwargs; scale_grids=false)
     ir
 end
 

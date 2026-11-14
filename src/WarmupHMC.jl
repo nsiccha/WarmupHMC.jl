@@ -28,7 +28,7 @@ using DifferentiationInterface: value_and_gradient, value_and_gradient!,
     prepare_gradient, Constant, Cache
 
 export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
-    ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, Reparametrization,
+    ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, ScaleCentered, Reparametrization,
     SharedAccessor, MarkovChain,
     CandidateScoringPlan, candidate_scoring_losses, WindowSelectionPlan,
     stream_mcmc, open_stream, close_stream, FixedKernelNUTSState, fixed_kernel_nuts_step,

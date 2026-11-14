@@ -125,8 +125,8 @@ function rescore_warmup_checkpoint(lpdf, payload::NamedTuple; rtol=1e-10)
     _rescore_matrix!(audit, target, p.halo_position, p.halo_gradient,
         :halo_gradient, p.dimension)
     recorder = get(p, :nonlinear_recorder, nothing)
-    if !isnothing(recorder) && recorder.online isa WeightedLeafSample
-        sample = recorder.online
+    sample = isnothing(recorder) ? nothing : _leaf_sample(recorder.online)
+    if !isnothing(sample)
         isfinite(sample.total) && sample.total >= 0 || throw(ArgumentError(
             "checkpoint re-scoring: nonlinear leaf sample has invalid total weight"))
         if sample.total > 0

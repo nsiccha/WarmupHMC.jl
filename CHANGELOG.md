@@ -40,6 +40,30 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.3.1
+
+### Added
+
+- `MarkovChain(states; log_scale, coefficient, drift, initial)`, passed as
+  `IndexedReparametrization(pairs; chains = [...])`, centres a latent random
+  walk, AR(1) series or discretely observed Ornstein–Uhlenbeck process
+  adaptively per time step. State `t`'s sampler coordinate is
+  `(w_t - phi_t * m_t) * exp((c_t - 1) * log_scale_t)`, with `m_t` its location
+  given the previous state in the model's frame. At every restarting window,
+  `phi_t` is refitted by least-squares regression of `w_t` on `m_t`, and `c_t`
+  is chosen on the centering grid in the frame of the new `phi`. Neither fixed
+  frame suits a partially observed walk. The centred one mixes badly through
+  unobserved stretches. The non-centred one needs more gradient evaluations per
+  draw the longer the walk is observed. The chain's map, inverse and Enzyme
+  gradient are one pass over its states. Chains work with the adaptive and
+  cooperative samplers, `nonlinear_adapt=false`, checkpoints,
+  `WarmupHMC.back_transform` and the matrix form of `candidate_scoring_losses`
+  (snag `random-walk-bloc-fc175e21`).
+- An `IndexedReparametrization` with chains records its controls under
+  `reparam_sources` as `(; pairs, chains)`. Without chains they are the pairs'
+  vector, as before, and existing maps, gradients, selections and checkpoints
+  are unchanged.
+
 ## 0.3.0
 
 ### Changed

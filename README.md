@@ -28,8 +28,9 @@ Each group links to the reference page that documents it.
 - [Transformations](https://nsiccha.github.io/WarmupHMC.jl/dev/reference/transformations):
   `scale_data`, `scale_from_data`, `fit_gaussian_moments`, `PartiallyCentered`
   (re-exported from ReparametrizableDistributions), `Reparametrization`,
-  `SharedAccessor`, `IndexedReparametrization`, `ReparametrizedProblem`, `CandidateScoringPlan`,
-  `candidate_scoring_losses`, `WindowSelectionPlan`.
+  `SharedAccessor`, `IndexedReparametrization`, `MarkovChain`,
+  `ReparametrizedProblem`, `CandidateScoringPlan`, `candidate_scoring_losses`,
+  `WindowSelectionPlan`.
 
 Build instructions are in [docs/README.md](docs/README.md).
 Research scripts are described in [bench/README.md](bench/README.md).

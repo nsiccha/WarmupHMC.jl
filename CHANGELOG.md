@@ -19,6 +19,15 @@ refer to that version's tree.
   its map reads there. The rejection itself is unchanged: the run continues
   with the previous centering, pool and current point, exactly as if the
   selection had kept them (snag `completion-warmu-b757327c`).
+- `LogDensityProblems.logdensity_and_gradient` of a `ReparametrizedProblem` at a
+  position that is not a `Vector`, such as `view(P, :, j)` or a column of
+  `eachcol(P)`, differentiated the view itself. Enzyme's derivative of a view is
+  a zeroed copy of its whole parent, so each gradient cost time and memory in the
+  size of `P`, and the gradient it returned kept that copy: a loop over the
+  columns of a pool or a matrix of draws was quadratic in its size. The position
+  is now copied into a `Vector` first. Its gradient is the gradient at that
+  `Vector`, bit for bit, and is a `Vector`. The samplers pass `Vector`s and are
+  unchanged (snag `reparametrized-g-af31aa45`).
 
 ### Documentation
 

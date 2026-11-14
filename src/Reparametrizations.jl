@@ -159,9 +159,12 @@ reparametrizer controlled by a [`WindowSelectionPlan`](@ref).
 
 The inner target supplies its own gradient. `ad_backend` differentiates the map
 and Jacobian through DifferentiationInterface; load the implementing AD package
-as well. For Enzyme, load Enzyme and pass `AutoEnzyme()`. The two-argument
-constructor supports log-density evaluation but does not provide a sampling
-gradient. An empty indexed map is the identity and has no controls to adapt.
+as well. For Enzyme, load Enzyme and pass `AutoEnzyme()`. The gradient is taken
+at a `Vector`: a position of another vector type, such as a column view of a
+matrix of draws, is copied into one first, and its gradient is a `Vector`. The
+two-argument constructor supports log-density evaluation but does not provide a
+sampling gradient. An empty indexed map is the identity and has no controls to
+adapt.
 
 `scoring_plan` accepts a [`CandidateScoringPlan`](@ref) or
 [`WindowSelectionPlan`](@ref). The default uses WarmupHMC's candidate rule.
@@ -207,8 +210,18 @@ end
 LogDensityProblems.logdensity_and_gradient(p::ReparametrizedProblem, x::AbstractVector) = begin
     # Differentiate only through the reparametrization, not through the inner problem.
     # The inner problem (e.g. BridgeStan) provides its own gradients via FFI.
-    _logdensity_and_gradient_reparam(p, x)
+    _logdensity_and_gradient_reparam(p, _gradient_point(x))
 end
+# Differentiate at a plain `Vector`, as the halo transport does. At a view, such as
+# a column of a pool or of a matrix of draws, the AD pass would differentiate the
+# view itself: Enzyme's shadow of a `SubArray` is a view into a zeroed copy of its
+# whole parent, so every gradient cost time and memory in the size of the parent
+# and returned that copy (snag `reparametrized-g-af31aa45`); the Enzyme extension's
+# pairwise pass takes only a `Vector`. The objective reads only the position's
+# entries, so the gradient at the copy is the gradient at the view. The samplers
+# pass `Vector`s, which are not copied.
+_gradient_point(x::Vector) = x
+_gradient_point(x::AbstractVector) = collect(x)
 """
     WarmupHMC._logdensity_and_gradient_reparam(p::ReparametrizedProblem, x)
 

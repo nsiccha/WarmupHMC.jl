@@ -8,8 +8,8 @@ the direction and log-scale of a partial centering.
 `Reparametrization(target, source, location, log_scale)` maps source coordinates
 used by the sampler into target coordinates expected by the model.
 `PartiallyCentered(1.0)` is centered; `PartiallyCentered(0.0)` is non-centered.
-The location and log-scale can be constants or callables on the full source
-position vector. Pass the logarithm of the scale, not the scale itself.
+The location and log-scale can be constants or callables on the position
+vector. Pass the logarithm of the scale, not the scale itself.
 
 `IndexedReparametrization` attaches maps to coordinate indices.
 `ReparametrizedProblem` combines that map with a LogDensityProblems target. The
@@ -30,10 +30,50 @@ indexed = IndexedReparametrization([1 => transform])
 ```
 
 For a hierarchical model, replace the constants with accessors such as a
-function reading the location coordinate or the log-scale coordinate. Refer to
-the source position supplied to the accessor; do not assume another pair has
-already transformed a coordinate in place. Use floating-point centering values
-when their source endpoints will be adapted.
+function reading the location coordinate or the log-scale coordinate. Use
+floating-point centering values when their source endpoints will be adapted.
+
+## Nested hierarchies
+
+The pairs are applied in order. An accessor may read the coordinates no pair
+transforms and the coordinates of earlier pairs, and it reads an earlier pair's
+coordinate at its model value. So a level centred on another level lists its
+pairs after its parent's, and its location is written in the model's own terms.
+It must not read its own coordinate, a coordinate of its own run of shared
+pairs (see [Shared locations](#Shared-locations)), or a later pair's.
+
+Here a group effect `z_g` (coordinate 3) is centred on `mu` (coordinate 1) with
+log-scale `log_tau_g` (coordinate 2), and a unit effect (coordinate 4) is
+centred on its group's centred effect `mu + exp(log_tau_g) * z_g`, with a fixed
+log-scale. Both are non-centred in the model. Re-centering the group effect
+keeps the model point and leaves the unit's sampler coordinate where it is:
+
+```@example nested
+using WarmupHMC
+struct Endpoint   # one accessor type for both levels
+    kind::Symbol
+end
+(e::Endpoint)(x) = e.kind === :mu ? x[1] : e.kind === :log_tau ? x[2] :
+                   e.kind === :group_effect ? x[1] + exp(x[2]) * x[3] : 0.0
+nested(c_group, c_unit) = IndexedReparametrization([
+    3 => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(c_group),
+        Endpoint(:mu), Endpoint(:log_tau)),
+    4 => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(c_unit),
+        Endpoint(:group_effect), Endpoint(:fixed))])
+before, after = nested(0.7, 0.4), nested(0.2, 0.4)
+x = [0.3, -0.5, 1.1, 0.8]
+_, model = before(x)
+_, x_after = WarmupHMC._inverse_with_logabsdet_jacobian(after, model)
+(; model_point_kept=last(after(x_after)) ≈ model, unit_unchanged=x_after[4] ≈ x[4],
+   group_moved=x_after[3] - x[3])
+```
+
+Because each model coordinate depends on the sampler's through its own pair's
+centering only, centering selection scores each pair's candidates exactly,
+without assuming that the pairs which read it keep their meaning. An
+`IndexedReparametrization` therefore needs no special treatment for nested
+levels; a joint endpoint function for several levels splits them with the
+`stage` of a `SharedAccessor`, below.
 
 ## Accessor types
 
@@ -68,7 +108,8 @@ accessor object across their pairs, or read element `i` of one function with
 an accessor this way evaluate it once per vector: in the map and its inverse,
 the gradient, the transport of retained states and centering selection. A block
 of N coordinates then costs O(N) per evaluation rather than O(N²). The shared
-function must not read the coordinates of its own block.
+function must not read the coordinates of its own block; it reads earlier
+blocks' coordinates at their model values.
 
 ```@example coordinates
 cell_locations(x) = x[1] .+ 0.5 .* x[2:4]   # three locations from one evaluation
@@ -101,6 +142,28 @@ Each model coordinate is now its sampler coordinate minus its location, scaled
 by `exp(-0.5)`. Several blocks whose pairs all read one such function form one
 run and evaluate it once; blocks that read a function each evaluate work they
 share, such as a common log-scale, once per block.
+
+When one function computes the endpoints of a nested hierarchy, the child
+level's locations need the parent level's model values, so the two levels
+cannot share one evaluation. Give their `SharedAccessor`s a stage:
+`SharedAccessor(f, i, 1)` for the parent level and `SharedAccessor(f, i, 2)` for
+the level centred on it. The function then runs once per stage, the second
+time after the parent level is mapped:
+
+```@example coordinates
+levels(x) = [x[1]; x[1] + x[2]]   # the parent's location, then the child's
+staged = IndexedReparametrization([
+    2 => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(1.0),
+        SharedAccessor(levels, 1, 1), 0.0),
+    3 => Reparametrization(PartiallyCentered(0.0), PartiallyCentered(1.0),
+        SharedAccessor(levels, 2, 2), 0.0)])
+x = [1.0, 3.0, 7.0]
+_, model = staged(x)
+(; parent=model[2], child=model[3], child_location=x[1] + model[2])
+```
+
+The child is centred on `x[1]` plus the parent's model value, `2.0`, not its
+sampler value, `3.0`.
 
 A pair whose source and target centerings are equal, as every pair built with
 equal ends is until warm-up moves it, maps its coordinate to itself and

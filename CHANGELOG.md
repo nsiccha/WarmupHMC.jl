@@ -31,6 +31,34 @@ refer to that version's tree.
 - Note that registered Enzyme rejects a shared accessor that can return a
   constant it stores, tracked upstream as EnzymeAD/Enzyme.jl#4045.
 
+## 0.3.0
+
+### Changed
+
+- **Breaking:** within an `IndexedReparametrization`, a location or log-scale
+  accessor reads a coordinate that an earlier pair transforms at its model
+  (`target`) value, no longer at its sampler value. A level centred on another
+  level is then centred on its parent's model value. Re-centering the parent
+  keeps the meaning of the coordinates centred on it, so the window-end
+  transport leaves them in place. Centering selection also scores a parent's
+  candidates exactly; it assumed this before, and was wrong for a parent that
+  another pair reads. The order rule is unchanged: an accessor reads no
+  coordinate of its own pair, of its own run of shared pairs, or of a later
+  pair.
+- A map whose accessors read only coordinates that no pair transforms computes
+  the same map as before. Its Enzyme gradient sums the same terms in another
+  order, so the same seed can give draws that differ from 0.2.23 by rounding.
+- An accessor that imitated model-frame reads, by re-applying an earlier pair's
+  map to that pair's sampler coordinate, now applies the map twice. Read the
+  earlier pair's coordinate directly instead.
+
+### Added
+
+- `SharedAccessor(f, index, stage)`: an optional stage, 1 by default. Pairs
+  that read one function at different stages form separate runs, evaluated in
+  order. One joint endpoint function can then serve every level of a nested
+  hierarchy, and it is evaluated once per level.
+
 ## 0.2.23
 
 ### Fixed

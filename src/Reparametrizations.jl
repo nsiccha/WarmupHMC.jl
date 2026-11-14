@@ -247,28 +247,30 @@ The AD pass is [`_reparam_gradient`](@ref), which an extension may specialize.
 function _logdensity_and_gradient_reparam(p::ReparametrizedProblem, x::AbstractVector)
     ljac, y = p.reparametrizer(x)
     ld, g_y = LogDensityProblems.logdensity_and_gradient(p.problem, y)
-    ljac + ld, _reparam_gradient(p.ad_backend, p.reparametrizer, x, g_y)
+    ljac + ld, _reparam_gradient(p.ad_backend, p.reparametrizer, x, y, g_y)
 end
 
 """
-    WarmupHMC._reparam_gradient(backend, reparametrizer, x, g_y)
+    WarmupHMC._reparam_gradient(backend, reparametrizer, x, y, g_y)
 
 The gradient in `x` of `_reparam_objective(x, reparametrizer, g_y)`, i.e. of
-`ljac(x) + dot(g_y, y(x))`.
+`ljac(x) + dot(g_y, y(x))`. `y` is `reparametrizer`'s image of `x`, which the
+caller has already computed; it is read, never written.
 
-This method differentiates the whole transform in one pass. With a reverse-mode
-`AutoEnzyme` backend and an [`IndexedReparametrization`](@ref), the Enzyme
-extension differentiates it pair by pair instead, in reverse pair order, and
-a run of pairs that share accessor work (see [`SharedAccessor`](@ref)) in one
-call. Pairs whose source and target centerings are equal take no call.
-The result agrees to rounding: a coordinate that several pairs read may sum their
-contributions in a different order. The pair loop before runs allocated for every
-accessor call in one pass (about 770 bytes per pair on a correlated random-effect
-block, snag `find-reparametri-e2a5b2a7`); the run-wise map allocates a few working
-vectors in one pass on that block, and pair by pair Enzyme allocates only the
-result and one working vector, plus the derivative of each run's shared values.
+This method differentiates the whole transform in one pass and ignores `y`.
+With a reverse-mode `AutoEnzyme` backend and an
+[`IndexedReparametrization`](@ref), the Enzyme extension differentiates it pair
+by pair instead, in reverse pair order, and a run of pairs that share accessor
+work (see [`SharedAccessor`](@ref)) in one call. Pairs whose source and target
+centerings are equal take no call. The result agrees to rounding: a coordinate
+that several pairs read may sum their contributions in a different order. The
+pair loop before runs allocated for every accessor call in one pass (about 770
+bytes per pair on a correlated random-effect block, snag
+`find-reparametri-e2a5b2a7`); the run-wise map allocates a few working vectors in
+one pass on that block, and pair by pair Enzyme allocates only the result and
+two working vectors, plus the derivative of each run's shared values.
 """
-_reparam_gradient(backend, reparametrizer, x, g_y) =
+_reparam_gradient(backend, reparametrizer, x, y, g_y) =
     last(value_and_gradient(_reparam_objective, backend, x,
                             Constant(reparametrizer), Constant(g_y)))
 
@@ -338,12 +340,14 @@ nor callable at construction. Mixing constants and callables within ONE rule is
 fine; across the pairs of one `IndexedReparametrization`, see its concrete-type
 requirement.
 
-The callables are applied to the sampler's SOURCE-coordinate vector as it was on
-entry: [`IndexedReparametrization`](@ref) writes its output into a copy, so no
-coordinate's rule ever observes another coordinate's transformed value. They also
-run under AD on every gradient evaluation (see [`ReparametrizedProblem`](@ref)),
-so keep them cheap and type-generic — index, arithmetic, `exp`/`log`, not
-`Float64`-annotated code or anything that mutates.
+Within an [`IndexedReparametrization`](@ref), the callables read a coordinate
+that an EARLIER pair transforms at its model (`target`) value, and every other
+coordinate at the sampler's value; see that docstring for the order rule. So a
+nested block's location such as `x -> x[mu] + exp(x[log_tau]) * x[parent]` is
+centred on the parent's model value, whatever centering the parent's own pair
+currently has. They also run under AD on every gradient evaluation (see
+[`ReparametrizedProblem`](@ref)), so keep them cheap and type-generic — index,
+arithmetic, `exp`/`log`, not `Float64`-annotated code or anything that mutates.
 
 `InverseFunctions.inverse` returns the same rule with `target` and `source`
 swapped.
@@ -373,7 +377,7 @@ reparam(r::Reparametrization, xi, x) = reparam(r.target, reparam_rargs(r, xi, x)
 reparam(r::Reparametrization, xi, gi, x) = reparam(r.target, reparam_rargs(r, xi, gi, x)...)
 
 """
-    SharedAccessor(f, index)
+    SharedAccessor(f, index, stage = 1)
 
 A location or log-scale accessor that reads element `index` of `f(x)`:
 `SharedAccessor(f, i)(x) == f(x)[i]`. Use it when many coordinates take their
@@ -382,13 +386,13 @@ model computes in one pass, so that the computation runs once per vector instead
 of once per coordinate.
 
 Within an [`IndexedReparametrization`](@ref), consecutive pairs in increasing
-index order whose accessors read the same `f` (`===`) form a run, and WarmupHMC
-evaluates `f` once for all of them, on every path: the map and its inverse, the
-gradient, the transport of retained states to new centerings, and centering
-selection. A plain accessor that is the same object in consecutive pairs, such
-as one rule reused for every pair of a block, is shared in the same way without
-this wrapper. A location and a log-scale that read one `f` share its evaluation,
-so one joint computation can serve both: an `f(x)` that
+index order whose accessors read the same `f` (`===`) at the same `stage` form a
+run, and WarmupHMC evaluates `f` once for all of them, on every path: the map and
+its inverse, the gradient, the transport of retained states to new centerings,
+and centering selection. A plain accessor that is the same object in consecutive
+pairs, such as one rule reused for every pair of a block, is shared in the same
+way without this wrapper. A location and a log-scale that read one `f` share its
+evaluation, so one joint computation can serve both: an `f(x)` that
 returns `[locations; log_scale]`, read with `SharedAccessor(f, i)` and
 `SharedAccessor(f, n + 1)`. `index` is anything `f(x)` can be indexed with, so
 `f` may instead return a frame of endpoint arrays read with
@@ -397,8 +401,15 @@ form one run, so work they share, such as a common log-scale, also runs once;
 with a function per block it runs once per block.
 
 The shared value is computed where its run of pairs starts, so `f` must not read
-the coordinates of the pairs in its own run. The inverse map already requires
-this of any accessor (see [`IndexedReparametrization`](@ref)).
+the coordinates of the pairs in its own run. It reads the coordinates of earlier
+runs at their model values (see [`IndexedReparametrization`](@ref)).
+
+`stage` splits one `f` into ordered runs for a nested hierarchy. Give the parent
+level's pairs stage 1 and the pairs centred on it stage 2: `f` is then evaluated
+once for each stage, the second time after the parent level has been mapped, so
+the child locations it computes read the parents' model values. Without stages,
+both levels would form one run, and the child locations would read coordinates
+of their own run.
 
 Called on its own, a `SharedAccessor` computes `f(x)` in full, so code that
 calls accessors directly, such as a [`CandidateScoringPlan`](@ref), keeps
@@ -407,7 +418,9 @@ working unchanged.
 struct SharedAccessor{F,I}
     f::F
     index::I
+    stage::Int
 end
+SharedAccessor(f, index) = SharedAccessor(f, index, 1)
 (a::SharedAccessor)(x) = a.f(x)[a.index]
 
 # --- Runs of pairs that share accessor work ---------------------------------------
@@ -419,16 +432,20 @@ end
 # location made every map, gradient, transport and selection O(N^2) (snag
 # `use-the-public-i-0660224b`).
 #
-# The run's shared values ("frames") are evaluated at its first pair. The forward
-# map reads the entry vector there, as every pair did before. The inverse reads the
-# vector as recovered up to that pair; the inverse's dependency order already
-# requires every coordinate an accessor reads to be recovered by then, and a run's
-# own coordinates are never read by its shared accessors, so each pair sees the
-# value it saw when it evaluated the accessor itself. A run of one pair is exactly
-# the old per-pair evaluation. Increasing indices keep each coordinate in a run
-# once, so the seed and pool updates of a run can be made together.
+# The run's shared values ("frames") are evaluated once per run, on the MODEL
+# frame as far as the runs before it: every coordinate an earlier run transforms
+# at its model value, every other one at the sampler's value. The forward map
+# reads its output vector where the run starts, which holds exactly that. The
+# inverse reads the model point itself, which agrees on everything a run may
+# read: earlier runs' model values and the coordinates no pair transforms. A
+# run's frames must not read its own coordinates or a later run's, where the two
+# differ. So every frame is a function of the model point alone, and centering
+# one block never moves the coordinates of a block centred on it (snag
+# `indexedreparamet-1e1f6ef7`). A run of one pair is the per-pair evaluation.
+# Increasing indices keep each coordinate in a run once, so the seed and pool
+# updates of a run can be made together.
 _share_key(a) = a
-_share_key(a::SharedAccessor) = a.f
+_share_key(a::SharedAccessor) = (a.f, a.stage)
 _frame(a, x) = maybecall(a, x)
 _frame(a::SharedAccessor, x) = a.f(x)
 _read_frame(a, frame) = frame
@@ -522,7 +539,6 @@ _is_identity(value::Reparametrization) = _same_centering(value.target, value.sou
 _is_identity(value) = false
 _same_centering(target::PartiallyCentered, source::PartiallyCentered) = target.c == source.c
 _same_centering(target, source) = false
-_any_moved(pairs, i, j) = any(k -> !_is_identity(last(pairs[k])), i:j)
 # The first pair in `i:j` that is not an identity, or `j + 1`.
 function _first_moved(pairs, i, j)
     k = i
@@ -559,9 +575,19 @@ it from pooled evidence.
 
 Build the pairs deterministically in the same order and with the same length
 when resuming. Checkpoint controls are restored positionally, so a matching
-model dimension does not establish that a reordered map is compatible. During
-inversion, a transformed coordinate used by another map's location or log-scale
-accessor must precede that dependent map.
+model dimension does not establish that a reordered map is compatible.
+
+The pairs are applied in order, and the order is the dependency order. A
+location or log-scale accessor may read any coordinate that no pair transforms,
+and the coordinate of any EARLIER pair, which it reads at that pair's model
+(`target`) value. It must not read the coordinate of its own pair, of a pair in
+its own run (see below), or of a later pair. So a nested hierarchy lists the
+parent level before the levels centred on it, and a child's location written
+in the model's own terms, such as `x -> x[mu] + exp(x[log_tau]) * x[parent]`,
+reads the parent's model value. The model point of every coordinate is then a
+function of the sampler's coordinates through each pair's own centering only:
+re-centering a parent does not change what a child's sampler coordinate means,
+and the per-coordinate candidate scoring stays exact.
 
 The vector must retain a concrete rule type. Mixing constants and differently
 typed closures across pairs can widen that type and is rejected at construction.
@@ -573,10 +599,10 @@ that construction. Every accessor argument must be a `Real` or callable.
 Accessors are evaluated once per run of pairs that share them, not once per
 pair: consecutive pairs, in increasing index order, whose location and
 log-scale are the same accessor objects, or [`SharedAccessor`](@ref)s over the
-same functions, evaluate them once for the whole run on every path. A location
-that many coordinates share therefore costs one evaluation per vector, and a
-location and a log-scale that compute the same thing are evaluated once. Order
-the pairs of such a block consecutively to benefit.
+same functions and stage, evaluate them once for the whole run on every path. A
+location that many coordinates share therefore costs one evaluation per vector,
+and a location and a log-scale that compute the same thing are evaluated once.
+Order the pairs of such a block consecutively to benefit.
 
 A pair whose source and target centerings are equal maps its coordinate exactly
 to itself with a zero log-Jacobian, and evaluates neither accessor on the map,
@@ -611,19 +637,26 @@ function _check_accessors(idx, value::Reparametrization)
             "IndexedReparametrization: argument $(j + 2) of the Reparametrization for " *
             "index $(idx) is a $(typeof(a)), which is neither a Real constant nor " *
             "callable. Each location/log-scale argument is a Real or a callable applied " *
-            "to the whole source-coordinate vector, such as `x -> x[9]`.",
+            "to the whole position vector, such as `x -> x[9]`.",
         ))
     end
     nothing
 end
-with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) = begin
+with_logabsdet_jacobian!(y::AbstractVector, (;pairs)::IndexedReparametrization, x::AbstractVector) =
+    _forward!(y, pairs, x)
+# `y` holds `x` on entry, as every caller arranges (`copy(x)`, `copyto!(y, x)`).
+# Each run reads its frames off `y` where it starts: the runs before it are
+# mapped there, and every other coordinate still holds its sampler value.
+# `start:stop` maps only those pairs, for a caller that walks the map in steps;
+# `start` must begin a run.
+function _forward!(y, pairs, x, start=firstindex(pairs), stop=lastindex(pairs))
     ljac = 0.
-    i = firstindex(pairs)
-    while i <= lastindex(pairs)
-        j = _run_end(pairs, i)
+    i = start
+    while i <= stop
+        j = _run_end(pairs, i, stop)
         k = _first_moved(pairs, i, j)
         if k <= j
-            ljac = _forward_run!(ljac, y, pairs, x, i, j, _pair_frames(last(pairs[k]), x))
+            ljac = _forward_run!(ljac, y, pairs, x, i, j, _pair_frames(last(pairs[k]), y))
         else
             _copy_identities!(y, pairs, x, i, j)
         end
@@ -660,16 +693,15 @@ InverseFunctions.inverse(ir::IndexedReparametrization) = InverseIndexedReparamet
 InverseFunctions.inverse(ir::InverseIndexedReparametrization) = ir.forward
 
 # Recover the source coordinates of an indexed transform from a point in its
-# target coordinates. Each accessor is evaluated on the source point being
-# reconstructed. That distinction is essential when a transformed coordinate
-# is itself another block's location or scale.
-#
-# `pairs` order is the dependency order: a block may read an earlier recovered
-# coordinate. This is the same deterministic, load-bearing order already used
-# by `optimize!` and checkpoint restoration.
+# target coordinates. Every run's frames are read off the target point itself:
+# a run reads earlier runs' coordinates at their model values, which is what
+# the target point holds, and the coordinates no pair transforms, which it
+# shares with the source. So no run waits on another's recovery.
 function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
                                            ir::IndexedReparametrization,
                                            target::AbstractVector)
+    # Recovering in place would overwrite the model values later runs read.
+    Base.mightalias(source, target) && (target = copy(target))
     source .= target
     ljac = zero(eltype(target))
     pairs = ir.pairs
@@ -677,11 +709,9 @@ function _inverse_with_logabsdet_jacobian!(source::AbstractVector,
     while i <= lastindex(pairs)
         j = _run_end(pairs, i)
         k = _first_moved(pairs, i, j)
-        # Read where the run starts: everything its shared accessors read is
-        # recovered by then, and none of the run's own coordinates is read.
         if k <= j
             ljac = _inverse_run!(ljac, source, pairs, target, i, j,
-                                 _pair_frames(last(pairs[k]), source))
+                                 _pair_frames(last(pairs[k]), target))
         else
             _copy_identities!(source, pairs, target, i, j)
         end
@@ -914,28 +944,33 @@ end
 
 # The pool search: score every candidate centering of each pair on the pool
 # columns, choose the pair's new centering, and move that coordinate of every
-# column into it, pair after pair in order, so a later pair's accessors read the
-# coordinates earlier pairs have moved. A run of pairs sharing accessor work
-# (`_run_end`) is scored and moved together, reading its shared values once per
-# column: its shared accessors read none of its own coordinates, and each pair
-# reads and moves only its own, so a pair's observations and its move are
-# exactly what the pair-by-pair order gives. `accumulator_for(k)` is pair `k`'s
-# candidate accumulator.
+# column into it, pair after pair in order. A run's frames are read off each
+# column's partly mapped vector, as in the map; once the run is scored, its
+# model values are written there for the runs after it. Moving a coordinate
+# keeps its model value, so the vector stays valid through the moves, and the
+# frames the move reads are those the scoring read: they read no coordinate of
+# their own run. A run of pairs sharing accessor work (`_run_end`) is scored
+# and moved together, reading its shared values once per column: each pair
+# reads and moves only its own coordinate, so a pair's observations and its
+# move are exactly what the pair-by-pair order gives. `accumulator_for(k)` is
+# pair `k`'s candidate accumulator.
 function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
     excluded = Pair{Any,Bool}[]
-    columns = zip(eachcol.(xg)...)
+    model = copy(first(xg))
+    columns = zip(eachcol(model), zip(eachcol.(xg)...))
     i = firstindex(pairs)
     while i <= lastindex(pairs)
         j = _run_end(pairs, i)
         run = i:j
         old = [last(pairs[k]) for k in run]
         accumulators = [accumulator_for(k) for k in run]
-        for xgi in columns
-            frames = _pair_frames(first(old), first(xgi))
+        for (yi, xgi) in columns
+            frames = _pair_frames(first(old), yi)
             for (n, k) in enumerate(run)
                 OnlineStatsBase.fit!(accumulators[n], _framed_rargs(
                     old[n], getindex.(xgi, first(pairs[k]))..., frames)...)
             end
+            j < lastindex(pairs) && _forward_run!(0.0, yi, pairs, first(xgi), i, j, frames)
         end
         moved = falses(length(run))
         for (n, k) in enumerate(run)
@@ -947,8 +982,8 @@ function _select_on_pool!(pairs, accumulator_for, xg, loss_kwargs)
             moved[n] = !_same_centering(new_source, value.source)
         end
         if any(moved)
-            for xgi in columns
-                frames = _pair_frames(first(old), first(xgi))
+            for (yi, xgi) in columns
+                frames = _pair_frames(first(old), yi)
                 for (n, k) in enumerate(run)
                     moved[n] || continue
                     idx, value = pairs[k]
@@ -977,10 +1012,13 @@ function _fit_candidate_scoring!(::DirectCandidateScoring,
                                  weight::Real=1, count::Bool=true)
     pairs = ir.pairs
     stop = min(lastindex(pairs), lastindex(ors.pairs))
+    # The map's own walk: each run's frames are read where the map reads them,
+    # and the run is then mapped, so the runs after it read its model values.
+    mapped = copy(position)
     i = firstindex(pairs)
     while i <= stop
         j = _run_end(pairs, i, stop)
-        frames = _pair_frames(last(pairs[i]), position)
+        frames = _pair_frames(last(pairs[i]), mapped)
         for k in i:j
             idx, value = pairs[k]
             stored_idx, or = ors.pairs[k]
@@ -993,6 +1031,7 @@ function _fit_candidate_scoring!(::DirectCandidateScoring,
                 weight, count,
             )
         end
+        j < stop && _forward_run!(0.0, mapped, pairs, position, i, j, frames)
         i = j + 1
     end
     ir
@@ -1007,6 +1046,9 @@ function _fit_candidate_scoring!(plan::CandidateScoringPlan,
     frame = plan.prepare(ir, position, gradient)
     pairs = ir.pairs
     stop = min(lastindex(pairs), lastindex(ors.pairs))
+    # The map's partly mapped vector, mapped through pair `mapped_to`, built only
+    # if the plan declines a candidate and only as far as the run that needs it.
+    mapped, mapped_to = nothing, firstindex(pairs) - 1
     i = firstindex(pairs)
     while i <= stop
         j = _run_end(pairs, i, stop)
@@ -1023,7 +1065,12 @@ function _fit_candidate_scoring!(plan::CandidateScoringPlan,
             for (candidate, accumulator) in or.pairs
                 observation = plan.score(frame, pair_number, idx, value, candidate)
                 if isnothing(observation)
-                    isnothing(shared) && (shared = _pair_frames(value, position))
+                    if isnothing(shared)
+                        isnothing(mapped) && (mapped = copy(position))
+                        _forward!(mapped, pairs, position, mapped_to + 1, i - 1)
+                        mapped_to = i - 1
+                        shared = _pair_frames(value, mapped)
+                    end
                     observation = reparam(
                         candidate,
                         _framed_rargs(value, position[idx], gradient[idx], shared)...,
@@ -1031,6 +1078,10 @@ function _fit_candidate_scoring!(plan::CandidateScoringPlan,
                 end
                 OnlineStatsBase.fit!(accumulator, observation; weight, count)
             end
+        end
+        if !isnothing(shared) && j < stop
+            _forward_run!(0.0, mapped, pairs, position, i, j, shared)
+            mapped_to = j
         end
         i = j + 1
     end
@@ -1528,9 +1579,13 @@ _coordinate_fields(ir, x, coordinates) = (;
     endpoints=_endpoints_at(ir, x, first(coordinates, 5)))
 function _endpoints_at(ir::IndexedReparametrization, x, coordinates)
     endpoints = []   # untyped, so each pair prints as `idx => (location = …, …)`
+    # The map reads every pair's endpoints with the pairs before it mapped, which
+    # the model point agrees with on everything they may read.
+    model = nothing
     for (idx, value) in ir.pairs
         idx in coordinates && value isa Reparametrization && !_is_identity(value) || continue
-        push!(endpoints, idx => _named_endpoints(map(_read_frame, value.args, _pair_frames(value, x))))
+        isnothing(model) && (model = last(ir(x)))
+        push!(endpoints, idx => _named_endpoints(map(_read_frame, value.args, _pair_frames(value, model))))
     end
     Tuple(endpoints)
 end

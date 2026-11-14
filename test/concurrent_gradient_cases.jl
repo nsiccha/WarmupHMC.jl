@@ -20,7 +20,7 @@ LogDensityProblems.logdensity_and_gradient(::Gaussian, x) = (-sum(abs2, x) / 2, 
 struct UnsafeBackend end
 struct GradientReached <: Exception end
 WH._unsafe_concurrent_gradients(::UnsafeBackend) = "The test backend is unsafe."
-WH._reparam_gradient(::UnsafeBackend, ir, x, g_y) = throw(GradientReached())
+WH._reparam_gradient(::UnsafeBackend, ir, x, y, g_y) = throw(GradientReached())
 
 const D = 3
 reparametrized(pairs) = ReparametrizedProblem(IndexedReparametrization(pairs), Gaussian(D), UnsafeBackend())

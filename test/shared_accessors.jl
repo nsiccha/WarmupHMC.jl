@@ -71,8 +71,10 @@ LogDensityProblems.logdensity(::StdNormal, y) = -dot(y, y) / 2
 LogDensityProblems.logdensity_and_gradient(::StdNormal, y) = (-dot(y, y) / 2, -y)
 problem(ir, n) = ReparametrizedProblem(ir, StdNormal(2n), AutoEnzyme())
 
-one_pass(ir, x, g) = invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any},
-                            AutoEnzyme(), ir, x, g)
+one_pass(ir, x, g) = invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any,Any},
+                            AutoEnzyme(), ir, x, nothing, g)
+# The extension's gradient, given the map's image of `x` as the sampler gives it.
+pairwise(ir, x, g) = WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, last(ir(x)), g)
 agrees(a, b) = isapprox(a, b; rtol=1e-12)
 
 function transport(ir_old, ir_new, n, P, G)
@@ -85,7 +87,9 @@ end
     a = SharedAccessor(Locations(3), 2)
     x = [1.0, 2.0, 4.0]
     @test a(x) == Locations(3)(x)[2]
-    @test WarmupHMC._share_key(a) === Locations(3)
+    # what a run shares: the function, at its stage
+    @test WarmupHMC._share_key(a) === (Locations(3), 1)
+    @test WarmupHMC._share_key(SharedAccessor(Locations(3), 2, 2)) === (Locations(3), 2)
 end
 
 @testset "run boundaries" begin
@@ -138,7 +142,7 @@ for (label, shared, own) in (("one shared mean", shared_mean, own_mean),
             ga = last(LogDensityProblems.logdensity_and_gradient(problem(a, n), x))
             gb = last(LogDensityProblems.logdensity_and_gradient(problem(b, n), x))
             @test agrees(ga, gb)
-            @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), a, x, g), one_pass(b, x, g))
+            @test agrees(pairwise(a, x, g), one_pass(b, x, g))
             @test agrees(one_pass(a, x, g), one_pass(b, x, g))
         end
 
@@ -306,8 +310,10 @@ LogDensityProblems.capabilities(::Type{StdNormal}) = LogDensityProblems.LogDensi
 LogDensityProblems.logdensity(::StdNormal, y) = -dot(y, y) / 2
 LogDensityProblems.logdensity_and_gradient(::StdNormal, y) = (-dot(y, y) / 2, -y)
 problem(ir, d) = ReparametrizedProblem(ir, StdNormal(d), AutoEnzyme())
-one_pass(ir, x, g) = invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any},
-                            AutoEnzyme(), ir, x, g)
+one_pass(ir, x, g) = invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any,Any},
+                            AutoEnzyme(), ir, x, nothing, g)
+# The extension's gradient, given the map's image of `x` as the sampler gives it.
+pairwise(ir, x, g) = WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, last(ir(x)), g)
 agrees(a, b) = isapprox(a, b; rtol=1e-12)
 function transport(ir_old, ir_new, d, P, G)
     P2, G2 = copy(P), copy(G)
@@ -347,12 +353,12 @@ end
     @test joint(n)(x) == separate(x)
     @test WarmupHMC._inverse_with_logabsdet_jacobian(joint(n), x) ==
           WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
-    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), joint(n), x, x),
+    @test agrees(pairwise(joint(n), x, x),
                  one_pass(separate, x, x))
     @test framed(n)(x) == separate(x)
     @test WarmupHMC._inverse_with_logabsdet_jacobian(framed(n), x) ==
           WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
-    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), framed(n), x, x),
+    @test agrees(pairwise(framed(n), x, x),
                  one_pass(separate, x, x))
     P, G = randn(Xoshiro(8), 2n, 6), randn(Xoshiro(9), 2n, 6)
     Pa, Ga = transport(framed(n; s=0.9), framed(n; s=0.2), 2n, P, G)
@@ -391,7 +397,7 @@ end
     @test joint_blocks(n)(x) == separate(x)
     @test WarmupHMC._inverse_with_logabsdet_jacobian(joint_blocks(n), x) ==
           WarmupHMC._inverse_with_logabsdet_jacobian(separate, x)
-    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), joint_blocks(n), x, x),
+    @test agrees(pairwise(joint_blocks(n), x, x),
                  one_pass(separate, x, x))
 end
 
@@ -408,8 +414,8 @@ end
               WarmupHMC._inverse_with_logabsdet_jacobian(b, x)
         _, y = a(x)
         @test last(WarmupHMC._inverse_with_logabsdet_jacobian(a, y)) ≈ x
-        ga = WarmupHMC._reparam_gradient(AutoEnzyme(), a, x, g)
-        @test agrees(ga, WarmupHMC._reparam_gradient(AutoEnzyme(), b, x, g))
+        ga = pairwise(a, x, g)
+        @test agrees(ga, pairwise(b, x, g))
         @test agrees(ga, one_pass(b, x, g))
         @test agrees(one_pass(a, x, g), one_pass(b, x, g))
     end
@@ -449,7 +455,7 @@ end
     @test ir(x) == (0.0, x)
     @test WarmupHMC._inverse_with_logabsdet_jacobian(ir, x) == (0.0, x)
     # The gradient of the identity map is the seed.
-    @test WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g) == g
+    @test pairwise(ir, x, g) == g
     @test agrees(one_pass(ir, x, g), g)
     # The formula the identity replaces agrees to rounding.
     value = last(ir.pairs[1])
@@ -460,7 +466,7 @@ end
     mixed = two_blocks(n; t=0.7, s=0.7, tb=0.0, sb=0.6)
     c = counted(() -> mixed(x))
     @test calls(c, :loc_a) == 0 && calls(c, :loc_b) == 1 && calls(c, :log_scale) == 1
-    @test agrees(WarmupHMC._reparam_gradient(AutoEnzyme(), mixed, x, g),
+    @test agrees(pairwise(mixed, x, g),
                  one_pass(own_blocks(n; t=0.7, s=0.7, tb=0.0, sb=0.6), x, g))
 end
 

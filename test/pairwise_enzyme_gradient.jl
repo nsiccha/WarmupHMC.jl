@@ -15,7 +15,9 @@ const PC = WarmupHMC.PartiallyCentered
 const Rep = WarmupHMC.Reparametrization
 const IR = WarmupHMC.IndexedReparametrization
 one_pass(backend, ir, x, g) =
-    invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any}, backend, ir, x, g)
+    invoke(WarmupHMC._reparam_gradient, Tuple{Any,Any,Any,Any,Any}, backend, ir, x, nothing, g)
+# The extension's gradient, given the map's image of `x` as the sampler gives it.
+pairwise_gradient(backend, ir, x, g) = WarmupHMC._reparam_gradient(backend, ir, x, last(ir(x)), g)
 agrees(a, b) = isapprox(a, b; rtol = 1e-12)
 
 # An accessor with a data-dependent loop.
@@ -156,7 +158,7 @@ backends = [
     for _ in 1:3
         x = 0.3 .* randn(rng, n)
         g = randn(rng, n)
-        @test agrees(WarmupHMC._reparam_gradient(backend, ir, x, g), one_pass(backend, ir, x, g))
+        @test agrees(pairwise_gradient(backend, ir, x, g), one_pass(backend, ir, x, g))
     end
 end
 
@@ -169,7 +171,7 @@ end
     ld, g_y = LogDensityProblems.logdensity_and_gradient(inner, y)
     value, gradient = LogDensityProblems.logdensity_and_gradient(rp, x)
     @test value == ljac + ld
-    @test gradient == WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g_y)
+    @test gradient == WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, y, g_y)
     @test agrees(gradient, one_pass(AutoEnzyme(), ir, x, g_y))
     @test gradient ≈ fd_gradient(q -> LogDensityProblems.logdensity(rp, q), x) rtol = 1e-6
 end
@@ -202,8 +204,8 @@ end
 @testset "forward mode keeps the one-pass method" begin
     ir = first(last(cases[1]))
     x = 0.5 .* randn(rng, d); g = randn(rng, d)
-    @test WarmupHMC._reparam_gradient(AutoEnzyme(; mode = Enzyme.Forward), ir, x, g) ≈
-          WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g)
+    @test pairwise_gradient(AutoEnzyme(; mode = Enzyme.Forward), ir, x, g) ≈
+          pairwise_gradient(AutoEnzyme(), ir, x, g)
 end
 
 with_sources(ir, c) = IR([idx => Rep(value.target, PC(c), value.args...) for (idx, value) in ir.pairs])
@@ -229,12 +231,14 @@ end
 @testset "allocation does not grow with the number of pairs" begin
     ir, n = correlated_block(4, 500, rng)
     x = 0.3 .* randn(rng, n); g = randn(rng, n)
-    pairwise() = WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, g)
+    model = last(ir(x))
+    pairwise() = WarmupHMC._reparam_gradient(AutoEnzyme(), ir, x, model, g)
+    # every pair reads its accessors off the partly mapped vector, as the map does
     old_objective(x, ir, g) = begin
         ljac = 0.0
         y = copy(x)
         for (idx, value) in ir.pairs
-            t, y[idx] = WarmupHMC.reparam(value, x[idx], x)
+            t, y[idx] = WarmupHMC.reparam(value, x[idx], y)
             ljac += t
         end
         ljac + dot(g, y)
@@ -243,12 +247,13 @@ end
                                              Constant(ir), Constant(g)))
     @test agrees(old_one_pass(), one_pass(AutoEnzyme(), ir, x, g))
     pairwise(); one_pass(AutoEnzyme(), ir, x, g)
-    # the gradient and the working seed, plus a constant
-    @test @allocated(pairwise()) < 2 * 8n + 1024
+    # the gradient and two working vectors (the model point's adjoint and the
+    # seeds), plus a constant
+    @test @allocated(pairwise()) < 3 * 8n + 1024
     # positive control: on the same block, the pair loop as it was before runs of
     # shared accessors (snag use-the-public-i-0660224b), every pair applying its
     # accessors itself, allocates per pair in one pass
-    old_one_pass(); @test @allocated(old_one_pass()) > 4 * (2 * 8n + 1024)
+    old_one_pass(); @test @allocated(old_one_pass()) > 4 * (3 * 8n + 1024)
     # the run-wise map allocates a few working vectors in one pass, not per pair
     @test @allocated(one_pass(AutoEnzyme(), ir, x, g)) < 4 * 8n + 1024
     # and the sampler's gradient goes through the pairwise method: beyond it, only

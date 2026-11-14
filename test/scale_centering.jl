@@ -1,4 +1,4 @@
-@testsetup module ScaleCenteringFixtures
+@testmodule ScaleCenteringFixtures begin
 # Snag nested-centering-3858d508: a centering that follows the coordinate's own
 # scale, `ScaleCentered`, selected only by the opt-in two-pass warm-up
 # `adaptive_warmup_mcmc(...; scale_centering = true)`.
@@ -78,7 +78,7 @@ end
 end
 
 @testitem "scale_centering = true: two passes, the caller's problem untouched" setup=[ScaleCenteringFixtures] begin
-    using Test, WarmupHMC, Random
+    using Test, WarmupHMC, Random, LogDensityProblems
     using DifferentiationInterface, Enzyme
     rp = ReparametrizedProblem(eight_schools_ir(), EightSchools(), AutoEnzyme())
     r = adaptive_warmup_mcmc(Xoshiro(3), rp; n_draws=100, scale_centering=true)
@@ -88,12 +88,24 @@ end
     @test r.total_evaluation_counter > r.first_pass.total_evaluation_counter
     @test r.sampling_evaluation_counter <= r.total_evaluation_counter - r.first_pass.total_evaluation_counter
     @test length(r.selected_centering) == 8
+    # A short run need not reach a restarting window, so whether it moved any
+    # pair is not pinned here; the selection itself is, below.
     @test all(p -> last(p) isa Union{PartiallyCentered,ScaleCentered}, r.selected_centering)
-    @test any(p -> last(p) isa ScaleCentered, r.selected_centering)
     # Not mutated: the caller's centerings are those it built.
     @test all(p -> last(p) == PartiallyCentered(0.0), WarmupHMC.reparam_sources(rp))
     # Draws are in the model's coordinates, as for every fit.
     @test all(isfinite, r.posterior_position)
+
+    # Pass 1's selection: on a pool whose log-scale varies, the widened copy
+    # scores midpoints only, so every pair ends `ScaleCentered`.
+    widened = WarmupHMC._scale_centering_problem(rp)
+    @test fieldtype(typeof(last(WarmupHMC.reparametrizer(widened).pairs[1])), :source) ===
+          Union{PartiallyCentered{Float64},ScaleCentered{Float64}}
+    positions = randn(Xoshiro(9), 10, 200)
+    gradients = reduce(hcat, [last(LogDensityProblems.logdensity_and_gradient(widened, p)) for p in eachcol(positions)])
+    WarmupHMC.optimize!(WarmupHMC.reparametrizer(widened), positions, gradients)
+    @test all(p -> last(p).source isa ScaleCentered, WarmupHMC.reparametrizer(widened).pairs)
+    @test all(p -> last(p) == PartiallyCentered(0.0), WarmupHMC.reparam_sources(rp))
 
     # The multi-chain method runs both passes per chain.
     rs = adaptive_warmup_mcmc([Xoshiro(4), Xoshiro(5)], rp; n_draws=50, parallel=false, scale_centering=true)

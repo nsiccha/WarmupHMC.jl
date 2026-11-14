@@ -85,6 +85,14 @@ _reverse_mode(::AutoEnzyme{Nothing}) = Enzyme.Reverse
 _reverse_mode(backend::AutoEnzyme{<:Enzyme.ReverseMode}) = backend.mode
 _reverse_mode(::AutoEnzyme) = nothing
 
+# Enzyme's own check of its concurrent-GC repair (`src/concurrent_gradients.jl`):
+# the pass that carries it exists from dogfood `72d5d25`. The defect is in how
+# Enzyme compiles a gradient, not in one mode, so every Enzyme backend asks.
+WarmupHMC._unsafe_concurrent_gradients(::AutoEnzyme) =
+    isdefined(Enzyme.Compiler, :RestoreSafepointEffectsPass) ? nothing :
+    "This Enzyme ($(pkgversion(Enzyme)), loaded from $(pkgdir(Enzyme))) lacks the " *
+    "concurrent-GC repair: `Enzyme.Compiler.RestoreSafepointEffectsPass` is not defined."
+
 # Accumulate into `gradient` the pairs' terms of the gradient of
 # `ljac(x) + dot(seed, y(x))`, consuming `seed` at the coordinates the pairs write.
 function _accumulate_pairs!(gradient, seed, mode, pairs, x)

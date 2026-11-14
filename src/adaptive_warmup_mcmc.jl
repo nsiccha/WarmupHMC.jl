@@ -2628,6 +2628,8 @@ resume_warmup_mcmc(lpdfs::AbstractArray, dir; checkpoint_name="cp_latest.jls",
     checkpoint_interval=nothing, stop_requested=nothing,
     blas_threads=_DEFAULT_BLAS_THREADS,
 ) = _with_blas_threads(blas_threads) do
+    _refuse_unsafe_concurrent_gradients(:resume_warmup_mcmc, lpdfs,
+        parallel ? _concurrent_chains(length(lpdfs), length(lpdfs)) : 1)
     with_progress(progress, length(lpdfs); description) do progress
         n_chains = length(lpdfs)
         rv = Vector{Any}(missing, n_chains)
@@ -2765,6 +2767,8 @@ adaptive_warmup_mcmc(rngs::AbstractArray, lpdf; kwargs...) =
 adaptive_warmup_mcmc(rngs::AbstractArray, lpdfs::AbstractArray; parallel=true, progress=nothing,
 monitor_ess=!isnothing(progress), description="MCMC", init=missing, checkpoint_dir=nothing,
 blas_threads=_DEFAULT_BLAS_THREADS, kwargs...) = _with_blas_threads(blas_threads) do
+    _refuse_unsafe_concurrent_gradients(:adaptive_warmup_mcmc, lpdfs,
+        parallel ? _concurrent_chains(length(rngs), length(rngs)) : 1)
     with_progress(progress, length(rngs); description) do progress
         n_chains = length(rngs)
         rv = Vector{Any}(missing, n_chains)

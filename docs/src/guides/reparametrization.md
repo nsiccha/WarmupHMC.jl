@@ -123,6 +123,16 @@ package implementing the chosen DifferentiationInterface backend as well as the
 interface itself. For Enzyme, load `Enzyme` and pass `AutoEnzyme()`; a function
 annotation is not required.
 
+Registered Enzyme releases compile gradients that are not memory-safe while
+another thread of the process allocates, which chains running at once do for
+one another. So multi-chain `adaptive_warmup_mcmc` and `resume_warmup_mcmc` with
+`parallel=true`, `completion_warmup_mcmc`, `cooperative_warmup_mcmc` with
+`n_cores > 1`, and multi-chain `stream_mcmc` refuse, on more than one thread and
+before any work, to run chains whose wrapper WarmupHMC differentiates with such
+an Enzyme. The repair is on the `dogfood` branch of
+[nsiccha/Enzyme.jl](https://github.com/nsiccha/Enzyme.jl/tree/dogfood) from
+`72d5d25`.
+
 The two-argument constructor can evaluate a transformed log density, but it
 does not supply a sampling gradient. An empty indexed map adapts no coordinates.
 `nonlinear_adapt=true` does not discover a hierarchy in a plain target: the

@@ -1088,6 +1088,8 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     kwargs...
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
+    _refuse_unsafe_concurrent_gradients(:cooperative_warmup_mcmc, (lpdf,),
+        _concurrent_chains(n_chains, n_cores))
     guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))
     isfinite(rhat_threshold) && rhat_threshold > 1 || throw(ArgumentError(

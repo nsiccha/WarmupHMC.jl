@@ -602,6 +602,8 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         _warn_runtime_selection(c)
         return saved.outcome
     end
+    # Every slot gets a task; the default thread pool runs them.
+    _refuse_unsafe_concurrent_gradients(:completion_warmup_mcmc, lpdfs, _concurrent_chains(n, n))
     # Copies are made serially, before any worker can mutate its density.
     densities = map(deepcopy, lpdfs)
     attempt_directory = _completion_directory(checkpoint_dir, n, resume, overwrite)

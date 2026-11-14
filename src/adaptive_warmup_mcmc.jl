@@ -2259,6 +2259,57 @@ If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
 is optimised at the end of every warm-up window, and posterior samples
 are transformed back to the original parametrization before returning.
 
+# Scale-dependent centering (`scale_centering = true`)
+
+Opt-in, for a hierarchy whose group scale's posterior spans orders of magnitude
+(few groups; an eight-schools-like funnel). One constant centering cannot fit
+both ends of such a scale: any `PartiallyCentered(c)` with `c > 0` keeps a funnel
+neck where the scale is small, and `c = 0` gives up efficiency where it is
+large. [`ScaleCentered`](@ref) lets the centering follow the sampled scale.
+
+With `scale_centering = true` the call runs two passes on a copy of `lpdf`
+whose pairs with a callable log-scale can take a `ScaleCentered` source:
+
+1. **Selection.** An ordinary adaptive run, except that at a restarting window
+   such a pair scores eleven `ScaleCentered` midpoints placed on the pool's
+   log-scales instead of the eleven constants (a pair whose log-scale does not
+   vary over the pool scores the constants). Its draws are discarded.
+2. **Sampling.** A fresh run from `init` with the frame pass 1 ended on held
+   fixed, as with `nonlinear_adapt = false`. Its draws are returned.
+
+Selection only scores the states it has, and a scale-dependent centering only
+differs from a constant at scales the pool has not visited, so online selection
+alone can leave a chain stuck where its pool was: in the measurement that
+motivated this, selection without the second pass left one chain of 16 in the
+child scale's neck on three of six datasets. The frames it selected, rerun from a
+fresh start, sampled cleanly (snag `nested-centering-3858d508`).
+
+It costs a second warm-up. On that two-level toy (16 chains, six datasets) it
+removed 90–100% of the default's divergent transitions (0.06–2.5% → 0–0.15%),
+at 30–40% lower bulk ESS per gradient where the default already worked and up to
+twice it where it did not.
+
+Requirements and limits:
+
+* `lpdf` is a [`ReparametrizedProblem`](@ref) over an
+  [`IndexedReparametrization`](@ref) with default candidate scoring, and at
+  least one pair reads its log-scale from a callable; otherwise the call throws.
+* `nonlinear_adapt = true` and `nonlinear_evidence = :linear_pool`.
+* Not with `callback`, `checkpoint_dir`, `checkpoint_interval`,
+  `stop_requested`, `resume` or `overwrite`, nor with a `PathfinderResult`
+  `init`. A vector or `NamedTuple` `init` is read in `lpdf`'s coordinates, as
+  always; pass 2 starts at the same model point in its own coordinates.
+* `lpdf` is not mutated: `reparam_sources(lpdf)` keeps the caller's centerings.
+  The frame pass 2 sampled in is returned as `selected_centering` (the
+  `reparam_controls` of the copy: `index => source` pairs, and the chains'
+  controls when it has any).
+* `total_evaluation_counter` is both passes' total; `sampling_evaluation_counter`
+  and everything else describe pass 2. `first_pass` holds pass 1's
+  `total_evaluation_counter`, `sampling_evaluation_counter` and
+  `n_divergent_samples`.
+* [`cooperative_warmup_mcmc`](@ref), [`completion_warmup_mcmc`](@ref) and
+  [`resume_warmup_mcmc`](@ref) do not take it.
+
 # `init` kwarg
 
 `init` controls per-chain initialization:
@@ -2352,6 +2403,9 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   `typemax(Int)` removes the bound.
 * `nonlinear_adapt=true` — whether to activate the reparametrization
   hooks (no-op when `lpdf` carries no reparametrization).
+* `scale_centering=false` — opt-in two-pass warm-up that can select a
+  centering following each pair's sampled scale; see "Scale-dependent
+  centering" above.
 * `nonlinear_evidence=:linear_pool` — evidence used to fit the nonlinear
   reparametrization. The default preserves the existing bounded halo fit.
   `:all_good_leaves` streams every noninitial leaf whose log Hamiltonian error
@@ -2477,7 +2531,13 @@ appended to the returned `posterior_position` (past
 `stepsize_adaptation_limit`, in the retained epoch): the exact gradient-cost
 denominator for min-ESS-per-evaluation over the draws the run keeps.
 """
-adaptive_warmup_mcmc(
+adaptive_warmup_mcmc(rng, lpdf; scale_centering::Bool=false, kwargs...) =
+    scale_centering ? _scale_centered_warmup_mcmc(rng, lpdf; kwargs...) :
+                      _adaptive_warmup_mcmc(rng, lpdf; kwargs...)
+
+# The single-chain sampler. `adaptive_warmup_mcmc` above is its public name; the
+# opt-in `scale_centering` path runs it twice (`_scale_centered_warmup_mcmc`).
+_adaptive_warmup_mcmc(
     rng, lpdf;
     # The number of posterior draws
     n_draws=1000,
@@ -2585,6 +2645,91 @@ adaptive_warmup_mcmc(
         _checkpoint_saved!(control)
         stop ? finalize_warmup!(state) : _run_adaptive_windows!(state, callback, checkpoint_dir, control)
     end
+end
+
+# --- Scale-dependent centering: two passes (`scale_centering = true`) ---
+#
+# Pass 1 selects on a copy of `lpdf` whose pairs can take a `ScaleCentered`
+# source (`_scale_centering_problem`); pass 2 samples that copy from a fresh
+# start with the frame pass 1 ended on held fixed. Why two passes: see
+# "Scale-dependent centering" in `adaptive_warmup_mcmc`'s docstring (snag
+# nested-centering-3858d508). The keywords captured here are the ones the two
+# passes cannot honour, or must set themselves; the rest go to both passes.
+function _scale_centered_warmup_mcmc(rng, lpdf;
+        init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
+        callback=nothing, checkpoint_dir=nothing, checkpoint_interval=nothing,
+        stop_requested=nothing, resume=false, overwrite=false, kwargs...)
+    nonlinear_adapt || throw(ArgumentError(
+        "`scale_centering = true` selects the centering during warm-up, so it cannot be " *
+        "combined with `nonlinear_adapt = false`"))
+    something(nonlinear_evidence, :linear_pool) === :linear_pool || throw(ArgumentError(
+        "`scale_centering = true` places its ScaleCentered candidates on the retained pool, " *
+        "so it needs `nonlinear_evidence = :linear_pool` (got `:$nonlinear_evidence`)"))
+    for (name, value) in (:callback => callback, :checkpoint_dir => checkpoint_dir,
+                          :checkpoint_interval => checkpoint_interval,
+                          :stop_requested => stop_requested)
+        isnothing(value) || throw(ArgumentError(
+            "`scale_centering = true` does not support `$name` yet: its two passes have " *
+            "no single sequence of boundaries to observe, stop at, or checkpoint"))
+    end
+    resume && throw(ArgumentError("`scale_centering = true` does not support `resume` yet"))
+    overwrite && throw(ArgumentError("`scale_centering = true` does not support `overwrite` yet"))
+    init isa PathfinderResult && throw(ArgumentError(
+        "`scale_centering = true` cannot start from a `PathfinderResult`: its draws are in " *
+        "the coordinates pass 1 starts in, not the ones pass 2 samples in. Pass a draw " *
+        "as a vector `init` instead"))
+    problem = _scale_centering_problem(lpdf)
+    initial = snapshot_reparametrization(reparametrizer(problem))
+    first_pass = _adaptive_warmup_mcmc(rng, problem; kwargs...,
+        init=deepcopy(init), nonlinear_adapt=true, nonlinear_evidence=:linear_pool)
+    selected = reparametrizer(problem)
+    second_pass = _adaptive_warmup_mcmc(rng, problem; kwargs...,
+        init=_scale_centering_init(init, initial, selected),
+        nonlinear_adapt=false, nonlinear_evidence=:linear_pool)
+    merge(second_pass, (;
+        total_evaluation_counter=first_pass.total_evaluation_counter +
+                                 second_pass.total_evaluation_counter,
+        selected_centering=reparam_controls(selected),
+        first_pass=(; total_evaluation_counter=first_pass.total_evaluation_counter,
+                      sampling_evaluation_counter=first_pass.sampling_evaluation_counter,
+                      n_divergent_samples=first_pass.n_divergent_samples),
+    ))
+end
+
+_scale_centering_problem(lpdf) = throw(ArgumentError(
+    "`scale_centering = true` needs a ReparametrizedProblem whose IndexedReparametrization " *
+    "has a pair with a callable log-scale; got a $(nameof(typeof(lpdf)))"))
+function _scale_centering_problem(p::ReparametrizedProblem)
+    ir = p.reparametrizer
+    ir isa IndexedReparametrization || throw(ArgumentError(
+        "`scale_centering = true` needs an IndexedReparametrization; this problem has a " *
+        "$(nameof(typeof(ir)))"))
+    p.scoring_plan isa DirectCandidateScoring || throw(ArgumentError(
+        "`scale_centering = true` scores ScaleCentered candidates with the default " *
+        "candidate scoring; this problem has a $(nameof(typeof(p.scoring_plan))), which " *
+        "scores the constant centerings only"))
+    widened = _scale_centering_reparametrizer(ir)
+    any(pair -> _admits_scale(last(pair)), widened.pairs) || throw(ArgumentError(
+        "`scale_centering = true` found no pair whose centering could follow a sampled " *
+        "scale: every pair's log-scale is a constant. Only a pair that reads its " *
+        "log-scale from a callable (a closure, a callable struct, a `SharedAccessor`) has one"))
+    ReparametrizedProblem(widened, p.problem, p.ad_backend, p.scoring_plan)
+end
+
+# Pass 2's `init`. A random start is drawn in pass 2's own coordinates. A given
+# position is in `lpdf`'s coordinates (pass 1's starting frame); pass 2 starts at
+# the same model point, in the frame pass 1 selected.
+_scale_centering_init(init, initial_ir, selected_ir) = deepcopy(init)
+_scale_centering_init(init::AbstractVector, initial_ir, selected_ir) =
+    _scale_centering_position(init, initial_ir, selected_ir)
+_scale_centering_init(init::NamedTuple, initial_ir, selected_ir) =
+    haskey(init, :position) ?
+        merge(init, (; position=_scale_centering_position(init.position, initial_ir, selected_ir))) :
+        deepcopy(init)
+function _scale_centering_position(position, initial_ir, selected_ir)
+    _, model = initial_ir(collect(Float64, position))
+    _, source = _inverse_with_logabsdet_jacobian(selected_ir, model)
+    source
 end
 
 """

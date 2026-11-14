@@ -65,6 +65,8 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :linear_metric_fallback, :max_reflections,
         :checkpoint_dir, :checkpoint_interval, :stop_requested,
         :resume, :overwrite, :pathfinder_kw, :blas_threads,
+        # declared by the public method, which consumes it (`_scale_centered_warmup_mcmc`)
+        :scale_centering,
         # NB: `parallel` is deliberately absent — see `_MULTICHAIN_ONLY_KWARGS`.
     ),
     # `resume_warmup_mcmc` is deprecated in favour of `resume=true` on the sampler
@@ -90,9 +92,12 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     ),
 )
 
+# Completion runs each chain through `adaptive_warmup_mcmc` with its own
+# `callback` and checkpoints, which the two-pass `scale_centering` cannot take,
+# so that keyword is refused here by name instead of failing inside a chain.
 _SAMPLER_KWARGS[:completion_warmup_mcmc] = (
     :min_completed, :stuck_stepsize_ratio, :max_admitted_divergent_fraction,
-    _SAMPLER_KWARGS[:adaptive_warmup_mcmc]...,
+    filter(!=(:scale_centering), _SAMPLER_KWARGS[:adaptive_warmup_mcmc])...,
 )
 
 """

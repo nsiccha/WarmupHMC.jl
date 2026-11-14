@@ -23,6 +23,7 @@ Markdown.parse(string(@doc WarmupHMC.PartiallyCentered))
 ```
 
 ```@docs
+WarmupHMC.ScaleCentered
 WarmupHMC.Reparametrization
 WarmupHMC.SharedAccessor
 WarmupHMC.IndexedReparametrization

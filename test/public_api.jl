@@ -67,6 +67,7 @@ const PUBLIC_EXPORTS = [
     :WindowSelectionPlan,
     :IndexedReparametrization,
     :PartiallyCentered,
+    :ScaleCentered,             # opt-in scale-dependent centering (snag nested-centering-3858d508)
     :Reparametrization,
     :ReparametrizedProblem,
     :SharedAccessor,            # shared location work (snag use-the-public-i-0660224b)
@@ -173,7 +174,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     :max_reflections,
     # nonlinear adaptation
     :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
-    :nonlinear_good_leaf_threshold,
+    :nonlinear_good_leaf_threshold, :scale_centering,
     # starting point, reporting, observation
     :init, :progress, :description, :monitor_ess, :callback,
     # checkpointing

@@ -145,6 +145,16 @@ coordinate convention of the returned draws: `posterior_position` is in the
 wrapped model's frame for either setting. The other retained working arrays
 are described in [Sampling](sampling.md).
 
+At a restarting window, a change of centering moves the retained states and
+the chain's current point into the new coordinates. If any of them is not
+finite there, the change is rolled back, and the run continues exactly as if
+the selection had kept the previous centering. In `adaptive_warmup_mcmc` the
+warning names what was not finite: the retained states, or the current point's
+coordinates, log density or gradient, with up to five coordinates and the
+location and log-scale their maps read there. A pair with equal centerings
+reads neither, so a location or log-scale that is not finite at the current
+point shows only once selection moves its pair.
+
 The default candidate rule can be replaced with a `CandidateScoringPlan` or a
 `WindowSelectionPlan`. These advanced callbacks have different evidence and
 checkpoint contracts; their complete interfaces belong in the

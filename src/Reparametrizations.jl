@@ -1579,9 +1579,13 @@ _coordinate_fields(ir, x, coordinates) = (;
     endpoints=_endpoints_at(ir, x, first(coordinates, 5)))
 function _endpoints_at(ir::IndexedReparametrization, x, coordinates)
     endpoints = []   # untyped, so each pair prints as `idx => (location = …, …)`
+    # The map reads every pair's endpoints with the pairs before it mapped, which
+    # the model point agrees with on everything they may read.
+    model = nothing
     for (idx, value) in ir.pairs
         idx in coordinates && value isa Reparametrization && !_is_identity(value) || continue
-        push!(endpoints, idx => _named_endpoints(map(_read_frame, value.args, _pair_frames(value, x))))
+        isnothing(model) && (model = last(ir(x)))
+        push!(endpoints, idx => _named_endpoints(map(_read_frame, value.args, _pair_frames(value, model))))
     end
     Tuple(endpoints)
 end

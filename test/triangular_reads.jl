@@ -132,6 +132,16 @@ centerings = ((0.7, 0.4), (0.0, 1.0), (1.0, 0.0), (0.3, 0.9), (0.5, 0.5))
     end
 end
 
+@testset "a rejected update reports the endpoints the map read" begin
+    # snag completion-warmu-b757327c's warning lists a moved pair's location and
+    # log-scale as the map evaluates them: B's location at A's model value
+    x = randn(rng, D)
+    ir = nested(0.7, 0.4)
+    _, y = ir(x)
+    endpoints = WarmupHMC._endpoints_at(ir, x, [iB(1)])
+    @test endpoints == (iB(1) => (location=model_location_B(x, y[iA(GROUP[1])]), log_scale=x[LTU]),)
+end
+
 @testset "gradient: pairwise Enzyme, one pass, finite differences" begin
     for (cA, cB) in centerings
         ir = nested(cA, cB)

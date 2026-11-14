@@ -484,7 +484,7 @@ back in. Every arm's draws are already in the model's own frame, so this functio
 applies no transform of its own — see the `nonlinear_adapt` note in the header.
 """
 function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
-                 n_draws::Int, model = nothing)
+                 n_draws::Int, model = nothing, scale_centering::Bool = false)
     rng = Xoshiro(seed)
     lpdf = isnothing(spec) ? problem :
            ReparametrizedProblem(spec, problem, AD_BACKEND)
@@ -492,8 +492,12 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
 
     local res, wall
     try
-        wall = @elapsed res = adaptive_warmup_mcmc(rng, lpdf; n_draws = n_draws,
-                                                   nonlinear_adapt = adapt)
+        # `scale_centering` (WarmupHMC >= 0.3.2) passed only when set, so the
+        # default arms run on an older WarmupHMC too.
+        wall = @elapsed res = scale_centering ?
+            adaptive_warmup_mcmc(rng, lpdf; n_draws = n_draws, nonlinear_adapt = adapt,
+                                 scale_centering = true) :
+            adaptive_warmup_mcmc(rng, lpdf; n_draws = n_draws, nonlinear_adapt = adapt)
     catch err
         return (; arm, seed, ok = false, error = sprint(showerror, err),
                 n_draws_actual = 0, wall_s = NaN, grad_evals = 0, n_divergent = 0,
@@ -536,8 +540,15 @@ function run_arm(; arm::String, problem, spec, adapt::Bool, seed::Int,
      ess_min, ess_median = ess_med, ess_con_min, ess_con_median = ess_con_med,
      ess_min_per_s = ess_min / wall,
      ess_min_per_grad = ess_min / max(res.total_evaluation_counter, 1),
-     c_before, c_after = isnothing(spec) ? Float64[] : source_cs(spec),
-     midpoints_after = isnothing(spec) ? Float64[] : source_midpoints(spec),
+     # A `scale_centering` run leaves `spec` as given and returns the frame it
+     # sampled in; its `total_evaluation_counter` counts both passes.
+     c_before,
+     c_after = isnothing(spec) ? Float64[] :
+               haskey(res, :selected_centering) ? [source_c(last(p)) for p in res.selected_centering] :
+               source_cs(spec),
+     midpoints_after = isnothing(spec) ? Float64[] :
+               haskey(res, :selected_centering) ? [source_midpoint(last(p)) for p in res.selected_centering] :
+               source_midpoints(spec),
      con_names, con_mean, con_sd, ess_con, n_con_kept = n_con)
 end
 

@@ -6,6 +6,7 @@
 #   WHMC_BENCH_SEEDS=4        number of pinned seeds per (target, arm)
 #   WHMC_BENCH_DRAWS=1000     n_draws floor per run
 #   WHMC_BENCH_TARGETS=...    comma-separated posteriordb names, or "funnel"
+#   WHMC_BENCH_ARMS=...       comma-separated arm names (default: every arm)
 #   WHMC_BENCH_OUT=...        output directory (default bench/research/results)
 #
 # Writes `results/runs.json` (one object per run) and `results/gradient_overhead.json`,
@@ -25,6 +26,13 @@ const WARMUP_DRAWS = 50   # discarded; only there so the timed runs are not JIT-
 const SELECTED = let raw = get(ENV, "WHMC_BENCH_TARGETS", "")
     isempty(raw) ? nothing : Set(strip.(split(raw, ",")))
 end
+const SELECTED_ARMS = let raw = get(ENV, "WHMC_BENCH_ARMS", "")
+    isempty(raw) ? nothing : Set(strip.(split(raw, ",")))
+end
+selected_arms(arms) = isnothing(SELECTED_ARMS) ? arms : filter(a -> first(a) in SELECTED_ARMS, arms)
+# `adaptive_scale` is the opt-in two-pass `scale_centering = true` (WarmupHMC 0.3.2,
+# snag nested-centering-3858d508): its grad_evals count both passes.
+scale_centering_arm(arm) = arm == "adaptive_scale"
 
 mkpath(OUT_DIR)
 
@@ -55,19 +63,21 @@ for tgt in TARGETS
         ("fixed_centered",    () -> with_source(spec0, c_native),  false),
         ("fixed_noncentered", () -> with_source(spec0, c_other),   false),
         ("adaptive",          () -> with_source(spec0, c_native),  true),
-    ]
+        ("adaptive_scale",    () -> with_source(spec0, c_native),  true),
+    ] |> selected_arms
 
     # Per-target JIT warm-up: the location/scale closures are distinct types per
     # posterior family, so each target specializes the wrapped gradient path
     # afresh. Without this the first timed run of each arm is compile-bound.
     for (arm, mkspec, adapt) in arms
         run_arm(; arm, problem = prob, spec = mkspec(), adapt,
-                seed = 999, n_draws = WARMUP_DRAWS, model = nothing)
+                seed = 999, n_draws = WARMUP_DRAWS, model = nothing,
+                scale_centering = scale_centering_arm(arm))
     end
 
     for (arm, mkspec, adapt) in arms, seed in 1:N_SEEDS
         r = run_arm(; arm, problem = prob, spec = mkspec(), adapt, seed,
-                    n_draws = N_DRAWS, model)
+                    n_draws = N_DRAWS, model, scale_centering = scale_centering_arm(arm))
         record!(r; target = tgt.name, model_of_record = tgt.name,
                 dim, c_native, c_other, note = tgt.note, synthetic = false)
         @info "  " arm seed r.ess_min r.grad_evals round(r.wall_s; digits=2) r.n_divergent
@@ -80,7 +90,7 @@ for tgt in TARGETS
     # posteriordb's separately hand-written noncentered model, sampled plain.
     # Different unconstrained frame, so only its constrained-space ESS is
     # comparable with the rows above.
-    if !isnothing(tgt.sibling)
+    if !isnothing(tgt.sibling) && (isnothing(SELECTED_ARMS) || "sibling_plain" in SELECTED_ARMS)
         sprob, _, _ = stan_problem(tgt.sibling)
         run_arm(; arm = "sibling_plain", problem = sprob, spec = nothing, adapt = true,
                 seed = 999, n_draws = WARMUP_DRAWS, model = nothing)
@@ -107,13 +117,16 @@ if isnothing(SELECTED) || "funnel" in SELECTED
         ("fixed_centered",    () -> fspec(1.0), false),
         ("fixed_noncentered", () -> fspec(0.0), false),
         ("adaptive",          () -> fspec(1.0), true),
-    ]
+        ("adaptive_scale",    () -> fspec(1.0), true),
+    ] |> selected_arms
     for (arm, mkspec, adapt) in farms
         run_arm(; arm, problem = f, spec = mkspec(), adapt, seed = 999,
-                n_draws = WARMUP_DRAWS, model = nothing)
+                n_draws = WARMUP_DRAWS, model = nothing,
+                scale_centering = scale_centering_arm(arm))
     end
     for (arm, mkspec, adapt) in farms, seed in 1:N_SEEDS
-        r = run_arm(; arm, problem = f, spec = mkspec(), adapt, seed, n_draws = N_DRAWS)
+        r = run_arm(; arm, problem = f, spec = mkspec(), adapt, seed, n_draws = N_DRAWS,
+                    scale_centering = scale_centering_arm(arm))
         record!(r; target = "funnel", model_of_record = "funnel(K=9)",
                 dim = LogDensityProblems.dimension(f), c_native = 1.0, c_other = 0.0,
                 note = "synthetic Neal funnel, v~N(0,3), theta_i~N(0,exp(v/2))",
@@ -165,7 +178,7 @@ open(joinpath(OUT_DIR, "gradient_overhead.json"), "w") do io
     JSON.print(io, jsonsafe(merge(PROVENANCE, Dict("overheads" => overheads))), 2)
 end
 
-const ARM_ORDER = ["plain", "fixed_centered", "adaptive", "fixed_noncentered", "sibling_plain"]
+const ARM_ORDER = ["plain", "fixed_centered", "adaptive", "adaptive_scale", "fixed_noncentered", "sibling_plain"]
 
 agg(rs, k) = begin
     v = [r[k] for r in rs if r[:ok] && isfinite(r[k])]

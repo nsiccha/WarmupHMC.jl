@@ -5,7 +5,27 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
-## Unreleased
+## 0.3.2
+
+### Added
+
+- `adaptive_warmup_mcmc(rng, lpdf; scale_centering = true)`, an opt-in
+  two-pass warm-up for hierarchies whose group scale spans orders of magnitude
+  in the posterior, where one constant centering keeps a funnel neck at one end.
+  A new exported centering source, `ScaleCentered(midpoint)`, follows the
+  pair's sampled scale: `c(ℓ) = τ² / (τ² + exp(2 midpoint))` at log-scale
+  `ℓ = log τ`. Pass 1 selects it for every pair whose log-scale is read from a
+  callable, on a copy of `lpdf`; pass 2 samples from a fresh start with that
+  frame held fixed. The problem passed in is not mutated. The result adds
+  `selected_centering` and `first_pass`, and its `total_evaluation_counter`
+  counts both passes. On the snag's two-level toy (16 chains × 6 datasets) it
+  had 0–0.13% divergent transitions against the default's 0.06–2.5%, at
+  between 0.3 and 1.7 times the default's bulk ESS per gradient. Default fits
+  are unchanged: on that toy they reproduce 0.3.1's divergence counts and ESS
+  exactly. Not supported
+  with checkpoints, `callback`, `resume` or the streaming evidence modes, and
+  refused by `completion_warmup_mcmc`, `cooperative_warmup_mcmc` and
+  `resume_warmup_mcmc` (snag `nested-centering-3858d508`).
 
 ### Fixed
 

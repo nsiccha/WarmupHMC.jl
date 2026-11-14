@@ -415,16 +415,17 @@ Given the location and the log-scale, the map is affine in the coordinate, so an
 [`IndexedReparametrization`](@ref) stays triangular: the log-Jacobian is
 `ℓ (target.c - c(ℓ))`, and the gradient differentiates through `c(ℓ)`.
 
-[`adaptive_warmup_mcmc`](@ref)`(rng, lpdf; scale_centering = true)` selects it;
-default warm-up never does. There, at a restarting window, a pair whose
-log-scale is a callable and varies over the retained pool scores eleven
+[`adaptive_warmup_mcmc`](@ref)`(rng, lpdf; scale_centering = true)` selects it
+for every pair whose log-scale is read from a callable; default warm-up selects
+it only for a pair built with a `ScaleCentered` source. At a restarting window,
+such a pair, if its log-scale varies over the retained pool, scores eleven
 midpoints spanning the pool's log-scales, `range(m - 2s - 2, m + 2s + 2, 11)`
 with `m` and `s` the mean and standard deviation of the pair's log-scale over
 the pool, by the default criterion (see [`PartiallyCentered`](@ref)), in place
 of the eleven constant centerings; the midpoints at either end are a constant
-`c ≈ 0` or `c ≈ 1` over the pool. A pair whose log-scale does not vary over the
-pool scores the constants. A pair can also be built with a `ScaleCentered`
-source directly, as a fixed centering.
+`c ≈ 0` or `c ≈ 1` over the pool. Otherwise a `ScaleCentered` source is kept
+and a constant one scores the constants. With `nonlinear_adapt = false` a
+`ScaleCentered` source is a fixed centering like any other.
 """
 struct ScaleCentered{T<:Real}
     midpoint::T
@@ -1045,13 +1046,13 @@ end
 # a pair that admits one, `_scale_grids`), the candidates are those midpoints
 # only. Mixed with the constants, online selection kept a constant for the pairs
 # that needed the scale dependence; the grid's end midpoints are the constant
-# endpoints over the pool (snag nested-centering-3858d508). Otherwise the
-# constant grid, plus a `ScaleCentered` source itself, so a pool that places no
-# grid can keep it.
+# endpoints over the pool (snag nested-centering-3858d508). Otherwise a
+# `ScaleCentered` source keeps itself (a pair built with one may hold no
+# constant), and a constant source scores the constant grid.
 function reparametrization_candidates(source::_AnyCentering; n=11, scale_grid=())
     isempty(scale_grid) || return ScaleCentered.(scale_grid)
-    constants = PartiallyCentered.(range(0, 1, n))
-    source isa ScaleCentered ? Union{eltype(constants),typeof(source)}[constants; source] : constants
+    source isa ScaleCentered && return [source]
+    PartiallyCentered.(range(0, 1, n))
 end
 OnlineReparametrizer((;source)::Reparametrization, xg...; kwargs...) = OnlineReparametrizer(source, xg...; kwargs...)
 OnlineReparametrizer(source::_AnyCentering, xg...;

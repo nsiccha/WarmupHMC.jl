@@ -92,13 +92,13 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     ),
 )
 
-# Completion runs each chain through `adaptive_warmup_mcmc` with its own
-# `callback` and checkpoints, which the two-pass `scale_centering` cannot take,
-# so that keyword is refused here by name instead of failing inside a chain.
+# Completion forwards every adaptive single-chain keyword to each chain,
+# `scale_centering` included (each chain then runs both passes; snag
+# adaptive-two-lev-635adfff).
 _SAMPLER_KWARGS[:completion_warmup_mcmc] = (
     :min_completed, :stuck_stepsize_ratio, :max_admitted_divergent_fraction,
     :max_admitted_log_mass_gap,
-    filter(!=(:scale_centering), _SAMPLER_KWARGS[:adaptive_warmup_mcmc])...,
+    _SAMPLER_KWARGS[:adaptive_warmup_mcmc]...,
 )
 
 """

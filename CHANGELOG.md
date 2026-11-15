@@ -5,6 +5,42 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.4
+
+### Added
+
+- `completion_warmup_mcmc` takes `scale_centering = true` (snag
+  `adaptive-two-lev-635adfff`). Each chain runs the two passes of
+  `adaptive_warmup_mcmc(...; scale_centering = true)`: pass 1 selects its
+  centering, pass 2 samples that frame from a fresh start, and each result
+  carries `selected_centering` and `first_pass`. The quorum can stop a chain at
+  a boundary of either pass; one stopped in pass 1 runs no pass 2 and is
+  `:stopped`. The admission checks judge pass 2 only. The two passes' limits
+  (no `checkpoint_dir`, `resume`, `overwrite`, `checkpoint_interval`,
+  `PathfinderResult` `init`, `nonlinear_adapt = false` or streaming evidence)
+  are refused before any chain starts. Before, completion refused the keyword,
+  and a consumer had to switch to multi-chain `adaptive_warmup_mcmc` and keep
+  every chain.
+- `adaptive_warmup_mcmc(...; scale_centering = true)` takes `callback` and
+  `stop_requested`, which reach both passes. At pass 1's boundaries the
+  callback's `stage` is `:first_pass_init` or `:first_pass_window`; at pass 2's
+  it is `:init` or `:window`. A stop during pass 1 (a literal `true` from the
+  callback, the predicate, or a Treebars interrupt) runs no pass 2: the call
+  returns pass 1's draws so far.
+
+### Documentation
+
+- The reparametrization guide says that selection scores each pair on its own
+  and cannot see the funnel neck a constant centering leaves at small scales,
+  so adding a level's pairs is not guaranteed to sample at least as well as
+  leaving the level in the model's frame. Measured on a three-level toy (3
+  groups of 3 units, 72 four-chain runs over two data regimes): adding the
+  group level's pairs to the unit level's raised the runs with max R-hat above
+  1.02 from 2 to 9 (in 5, one chain held at small group scales) and the
+  divergent transitions from 1,698 to 5,312; with `scale_centering = true` it
+  had 1 such run and 292 divergent transitions, at about half the bulk ESS per
+  total gradient (the second warm-up), the same per sampling gradient.
+
 ## 0.3.3
 
 ### Added

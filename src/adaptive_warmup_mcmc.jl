@@ -2399,10 +2399,16 @@ Requirements and limits:
   [`IndexedReparametrization`](@ref) with default candidate scoring, and at
   least one pair reads its log-scale from a callable; otherwise the call throws.
 * `nonlinear_adapt = true` and `nonlinear_evidence = :linear_pool`.
-* Not with `callback`, `checkpoint_dir`, `checkpoint_interval`,
-  `stop_requested`, `resume` or `overwrite`, nor with a `PathfinderResult`
-  `init`. A vector or `NamedTuple` `init` is read in `lpdf`'s coordinates, as
-  always; pass 2 starts at the same model point in its own coordinates.
+* Not with `checkpoint_dir`, `checkpoint_interval`, `resume` or `overwrite`,
+  nor with a `PathfinderResult` `init`. A vector or `NamedTuple` `init` is read
+  in `lpdf`'s coordinates, as always; pass 2 starts at the same model point in
+  its own coordinates.
+* `callback(state, stage)` and `stop_requested` reach both passes. At pass 1's
+  boundaries the callback's `stage` is `:first_pass_init` or
+  `:first_pass_window`; at pass 2's it is `:init` or `:window`, as for a
+  single-pass run. Stopped during pass 1 (a literal `true` from the callback,
+  the predicate, or a Treebars interrupt), the call runs no pass 2 and returns
+  pass 1's draws so far, fewer than `n_draws`.
 * `lpdf` is not mutated: `reparam_sources(lpdf)` keeps the caller's centerings.
   The frame pass 2 sampled in is returned as `selected_centering` (the
   `reparam_controls` of the copy: `index => source` pairs, and the chains'
@@ -2411,8 +2417,10 @@ Requirements and limits:
   and everything else describe pass 2. `first_pass` holds pass 1's
   `total_evaluation_counter`, `sampling_evaluation_counter` and
   `n_divergent_samples`.
-* [`cooperative_warmup_mcmc`](@ref), [`completion_warmup_mcmc`](@ref) and
-  [`resume_warmup_mcmc`](@ref) do not take it.
+* [`completion_warmup_mcmc`](@ref) takes it and runs both passes per chain;
+  its quorum and admission checks judge pass 2's draws.
+  [`cooperative_warmup_mcmc`](@ref) and [`resume_warmup_mcmc`](@ref) do not
+  take it.
 
 # `init` kwarg
 
@@ -2767,22 +2775,64 @@ end
 # "Scale-dependent centering" in `adaptive_warmup_mcmc`'s docstring (snag
 # nested-centering-3858d508). The keywords captured here are the ones the two
 # passes cannot honour, or must set themselves; the rest go to both passes.
+#
+# `callback` and `stop_requested` reach both passes (snag
+# adaptive-two-lev-635adfff, so that `completion_warmup_mcmc`'s quorum can stop
+# a chain in either). The callback sees pass 1's boundaries as
+# `_first_pass_stage(stage)`, pass 2's as the usual `:init` and `:window`. A
+# pass 1 stopped short of `n_draws` (callback, predicate or Treebars interrupt)
+# runs no pass 2: the call returns pass 1's draws so far.
 function _scale_centered_warmup_mcmc(rng, lpdf;
-        init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
+        n_draws=1000, init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
         callback=nothing, checkpoint_dir=nothing, checkpoint_interval=nothing,
         stop_requested=nothing, resume=false, overwrite=false, kwargs...)
+    _check_scale_centering(; init, nonlinear_adapt, nonlinear_evidence, checkpoint_dir,
+                           checkpoint_interval, resume, overwrite)
+    problem = _scale_centering_problem(lpdf)
+    initial = snapshot_reparametrization(reparametrizer(problem))
+    first_callback = isnothing(callback) ? nothing :
+        (state, stage) -> callback(state, _first_pass_stage(stage))
+    first_pass = _adaptive_warmup_mcmc(rng, problem; kwargs..., n_draws,
+        callback=first_callback, stop_requested,
+        init=deepcopy(init), nonlinear_adapt=true, nonlinear_evidence=:linear_pool)
+    selected = reparametrizer(problem)
+    first_summary = (; total_evaluation_counter=first_pass.total_evaluation_counter,
+                       sampling_evaluation_counter=first_pass.sampling_evaluation_counter,
+                       n_divergent_samples=first_pass.n_divergent_samples)
+    size(first_pass.posterior_position, 2) < n_draws && return merge(first_pass, (;
+        selected_centering=reparam_controls(selected), first_pass=first_summary))
+    second_pass = _adaptive_warmup_mcmc(rng, problem; kwargs..., n_draws,
+        callback, stop_requested,
+        init=_scale_centering_init(init, initial, selected),
+        nonlinear_adapt=false, nonlinear_evidence=:linear_pool)
+    merge(second_pass, (;
+        total_evaluation_counter=first_pass.total_evaluation_counter +
+                                 second_pass.total_evaluation_counter,
+        selected_centering=reparam_controls(selected),
+        first_pass=first_summary,
+    ))
+end
+
+# The stages a `scale_centering = true` callback sees at pass 1's boundaries.
+_first_pass_stage(stage::Symbol) =
+    stage === :init ? :first_pass_init : stage === :window ? :first_pass_window : stage
+_is_first_pass_stage(stage) = stage === :first_pass_init || stage === :first_pass_window
+
+# What `scale_centering = true` cannot honour, refused before any work. Shared
+# with `completion_warmup_mcmc`, which checks it before starting a chain.
+function _check_scale_centering(; init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
+        checkpoint_dir=nothing, checkpoint_interval=nothing, resume=false, overwrite=false)
     nonlinear_adapt || throw(ArgumentError(
         "`scale_centering = true` selects the centering during warm-up, so it cannot be " *
         "combined with `nonlinear_adapt = false`"))
     something(nonlinear_evidence, :linear_pool) === :linear_pool || throw(ArgumentError(
         "`scale_centering = true` places its ScaleCentered candidates on the retained pool, " *
         "so it needs `nonlinear_evidence = :linear_pool` (got `:$nonlinear_evidence`)"))
-    for (name, value) in (:callback => callback, :checkpoint_dir => checkpoint_dir,
-                          :checkpoint_interval => checkpoint_interval,
-                          :stop_requested => stop_requested)
+    for (name, value) in (:checkpoint_dir => checkpoint_dir,
+                          :checkpoint_interval => checkpoint_interval)
         isnothing(value) || throw(ArgumentError(
-            "`scale_centering = true` does not support `$name` yet: its two passes have " *
-            "no single sequence of boundaries to observe, stop at, or checkpoint"))
+            "`scale_centering = true` does not support `$name` yet: its two passes are " *
+            "two runs, and no checkpoint of either resumes the whole call"))
     end
     resume && throw(ArgumentError("`scale_centering = true` does not support `resume` yet"))
     overwrite && throw(ArgumentError("`scale_centering = true` does not support `overwrite` yet"))
@@ -2790,22 +2840,7 @@ function _scale_centered_warmup_mcmc(rng, lpdf;
         "`scale_centering = true` cannot start from a `PathfinderResult`: its draws are in " *
         "the coordinates pass 1 starts in, not the ones pass 2 samples in. Pass a draw " *
         "as a vector `init` instead"))
-    problem = _scale_centering_problem(lpdf)
-    initial = snapshot_reparametrization(reparametrizer(problem))
-    first_pass = _adaptive_warmup_mcmc(rng, problem; kwargs...,
-        init=deepcopy(init), nonlinear_adapt=true, nonlinear_evidence=:linear_pool)
-    selected = reparametrizer(problem)
-    second_pass = _adaptive_warmup_mcmc(rng, problem; kwargs...,
-        init=_scale_centering_init(init, initial, selected),
-        nonlinear_adapt=false, nonlinear_evidence=:linear_pool)
-    merge(second_pass, (;
-        total_evaluation_counter=first_pass.total_evaluation_counter +
-                                 second_pass.total_evaluation_counter,
-        selected_centering=reparam_controls(selected),
-        first_pass=(; total_evaluation_counter=first_pass.total_evaluation_counter,
-                      sampling_evaluation_counter=first_pass.sampling_evaluation_counter,
-                      n_divergent_samples=first_pass.n_divergent_samples),
-    ))
+    nothing
 end
 
 _scale_centering_problem(lpdf) = throw(ArgumentError(

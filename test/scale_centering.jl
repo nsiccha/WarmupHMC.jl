@@ -144,9 +144,9 @@ end
     run(; kw...) = adaptive_warmup_mcmc(Xoshiro(7), rp(); n_draws=20, scale_centering=true, kw...)
     @test_throws ArgumentError run(nonlinear_adapt=false)
     @test_throws ArgumentError run(nonlinear_evidence=:all_good_leaves)
-    @test_throws ArgumentError run(callback=(state, stage) -> false)
     @test_throws ArgumentError run(checkpoint_dir=mktempdir())
-    @test_throws ArgumentError run(stop_requested=() -> false)
+    @test_throws ArgumentError run(checkpoint_interval=60)
+    @test_throws ArgumentError run(resume=true)
     # Not a reparametrized problem.
     @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(7), EightSchools(); scale_centering=true)
     # Every log-scale a constant: no sampled scale to follow.
@@ -154,7 +154,76 @@ end
         PartiallyCentered(0.0), Mu(), 0.0) for j in 1:8])
     @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(7),
         ReparametrizedProblem(constant, EightSchools(), AutoEnzyme()); scale_centering=true)
-    # The samplers built on it refuse the keyword by name.
-    @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], rp(); scale_centering=true)
+    # The cooperative sampler refuses the keyword by name.
     @test_throws ArgumentError cooperative_warmup_mcmc(Xoshiro(1), rp(); scale_centering=true)
+end
+
+@testitem "scale_centering = true: callback and stop_requested reach both passes" setup=[ScaleCenteringFixtures] begin
+    # Snag adaptive-two-lev-635adfff: completion's quorum stops a chain through
+    # its callback, so the two passes must answer one.
+    using Test, WarmupHMC, Random
+    using DifferentiationInterface, Enzyme
+    rp() = ReparametrizedProblem(eight_schools_ir(), EightSchools(), AutoEnzyme())
+    stages = Symbol[]
+    r = adaptive_warmup_mcmc(Xoshiro(11), rp(); n_draws=60, scale_centering=true,
+        callback=(state, stage) -> (push!(stages, stage); false))
+    @test size(r.posterior_position, 2) >= 60
+    k = findfirst(==(:init), stages)
+    # Pass 1's boundaries, then pass 2's, each starting at its initialization.
+    @test first(stages) === :first_pass_init
+    @test !isnothing(k) && all(s -> s in (:first_pass_init, :first_pass_window), stages[1:k-1])
+    @test all(s -> s in (:init, :window), stages[k:end])
+    @test count(==(:first_pass_init), stages) == 1 && count(==(:init), stages) == 1
+    # Stopped in pass 1: no pass 2, pass 1's draws so far. (A floor no first
+    # window reaches, so the stop and not the floor ends pass 1.)
+    seen = Symbol[]
+    r = adaptive_warmup_mcmc(Xoshiro(11), rp(); n_draws=5000, scale_centering=true,
+        callback=(state, stage) -> (push!(seen, stage); stage === :first_pass_window))
+    @test size(r.posterior_position, 2) < 5000
+    @test seen == [:first_pass_init, :first_pass_window]
+    @test r.total_evaluation_counter == r.first_pass.total_evaluation_counter
+    @test haskey(r, :selected_centering)
+    # A predicate that is true at once stops before pass 1 samples anything.
+    r = adaptive_warmup_mcmc(Xoshiro(11), rp(); n_draws=60, scale_centering=true,
+        stop_requested=() -> true)
+    @test size(r.posterior_position, 2) == 0
+end
+
+@testitem "completion_warmup_mcmc(...; scale_centering = true) runs both passes per chain" setup=[ScaleCenteringFixtures] begin
+    using Test, WarmupHMC, Random
+    using DifferentiationInterface, Enzyme
+    rp = ReparametrizedProblem(eight_schools_ir(), EightSchools(), AutoEnzyme())
+    out = completion_warmup_mcmc([Xoshiro(21), Xoshiro(22), Xoshiro(23)], rp;
+        n_draws=60, scale_centering=true)
+    @test out.completion.quorum_met && out.completion.n_completed == 3
+    for r in out.results
+        @test size(r.posterior_position, 2) == r.n_samples >= 60
+        @test haskey(r, :selected_centering) && haskey(r, :first_pass)
+        @test r.total_evaluation_counter > r.first_pass.total_evaluation_counter
+        @test all(p -> last(p) isa Union{PartiallyCentered,ScaleCentered}, r.selected_centering)
+    end
+    # Admission judged pass 2: every slot was compared on its own pass-2 step size.
+    @test all(c -> c.status === :completed && !isnothing(c.stepsize), out.completion.chains)
+    # The caller's problem is not mutated.
+    @test all(p -> last(p) == PartiallyCentered(0.0), WarmupHMC.reparam_sources(rp))
+    # A user callback sees both passes' stages, per chain.
+    stages = Set{Symbol}()
+    lk = ReentrantLock()
+    completion_warmup_mcmc([Xoshiro(31), Xoshiro(32)], rp; n_draws=40, scale_centering=true,
+        callback=(state, stage) -> (Base.@lock lk push!(stages, stage); false))
+    @test stages ⊇ Set([:first_pass_init, :init])
+end
+
+@testitem "completion_warmup_mcmc refuses what scale_centering cannot honour, before any chain" setup=[ScaleCenteringFixtures] begin
+    using Test, WarmupHMC, Random
+    using DifferentiationInterface, Enzyme
+    rp = ReparametrizedProblem(eight_schools_ir(), EightSchools(), AutoEnzyme())
+    rngs = [Xoshiro(1), Xoshiro(2)]
+    # An ArgumentError at the call, not a CompletionQuorumError of failed chains.
+    @test_throws ArgumentError completion_warmup_mcmc(rngs, rp; scale_centering=true, checkpoint_dir=mktempdir())
+    @test_throws ArgumentError completion_warmup_mcmc(rngs, rp; scale_centering=true, nonlinear_adapt=false)
+    @test_throws ArgumentError completion_warmup_mcmc(rngs, rp; scale_centering=true,
+        nonlinear_evidence=:all_good_leaves)
+    @test_throws ArgumentError completion_warmup_mcmc(rngs, EightSchools(); scale_centering=true)
+    @test :scale_centering in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
 end

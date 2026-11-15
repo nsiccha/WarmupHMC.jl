@@ -633,6 +633,14 @@ adaptive single-chain keywords, including `callback(state, stage)`: returning
 one chain's node it stops that chain, on the node passed as `progress` (or an
 ancestor) it stops every running chain and starts no further slot.
 Callbacks may run concurrently and must be observational and thread-safe.
+`scale_centering = true` runs each chain as `adaptive_warmup_mcmc(...;
+scale_centering = true)` does: pass 1 selects the chain's centering, pass 2
+samples it from a fresh start, and its result carries `selected_centering` and
+`first_pass`. The quorum stops a chain at a boundary of either pass; a chain
+stopped in pass 1 runs no pass 2 and is `:stopped`. The admission checks judge
+pass 2 only: pass 1's step sizes and draws are not published to siblings. The
+two passes' limits apply (no `checkpoint_dir`, `resume`, `overwrite`, nor a
+`PathfinderResult` `init`), and are refused before any chain starts.
 `blas_threads=1` holds BLAS at that many threads for the whole call, every chain
 included, as for [`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS
 untouched.
@@ -724,7 +732,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         init=missing, checkpoint_dir=nothing, resume=false, overwrite=false,
         callback=nothing, progress=nothing, description="MCMC",
         monitor_ess=!isnothing(progress), blas_threads=_DEFAULT_BLAS_THREADS,
-        kwargs...) = _with_blas_threads(blas_threads) do
+        scale_centering::Bool=false, kwargs...) = _with_blas_threads(blas_threads) do
     n = length(rngs)
     Base.require_one_based_indexing(rngs, lpdfs)
     n > 0 || throw(ArgumentError("At least one RNG is required."))
@@ -741,6 +749,15 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         "current round, and every full result is retained. Omit this keyword, including on resume."))
     _check_kwargs(:completion_warmup_mcmc, kwargs)
     inits = ensurevector(init, n)
+    # Refused here, before any chain starts, rather than as n failed chains.
+    if scale_centering
+        checked = (; (k => kwargs[k] for k in (:nonlinear_adapt, :nonlinear_evidence,
+                                                :checkpoint_interval) if haskey(kwargs, k))...)
+        for i in 1:n
+            _check_scale_centering(; init=inits[i], checkpoint_dir, resume, overwrite, checked...)
+            _scale_centering_problem(lpdfs[i])
+        end
+    end
     resume && overwrite && throw(ArgumentError("`resume` and `overwrite` are mutually exclusive."))
     terminal_path = isnothing(checkpoint_dir) ? nothing : joinpath(checkpoint_dir, "completion_terminal.jls")
     if resume && !isnothing(terminal_path) && isfile(terminal_path)
@@ -796,7 +813,10 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
                 # Published before the stop query: it can settle a sibling that
                 # waits for a step size or a mass to be compared with, and so
                 # the quorum. Read-only, so the chain samples as it would alone.
-                _report_boundary!(control, _adapted_stepsize(state),
+                # `scale_centering`'s pass 1 publishes nothing: its draws are
+                # discarded and its step sizes belong to another frame, so only
+                # pass 2 is judged. Its boundaries still answer the quorum stop.
+                _is_first_pass_stage(stage) || _report_boundary!(control, _adapted_stepsize(state),
                     size(state.recording_lpdf.posterior_position, 2),
                     _mass_check(admission) ? _state_log_mass(state) : nothing)
                 control() || user_stop
@@ -804,7 +824,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             result = adaptive_warmup_mcmc(rngs[i], densities[i]; n_draws, init=deepcopy(inits[i]),
                 checkpoint_dir=dir, resume=resume_chain, callback=boundary,
                 progress=cprogress, description=description * ".$i", monitor_ess, blas_threads,
-                kwargs...)
+                scale_centering, kwargs...)
             result, size(result.posterior_position, 2) >= n_draws
         end
         initial_results = Dict{Int,Any}()

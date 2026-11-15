@@ -29,8 +29,10 @@ and `(1, 0)` is the standardized innovation (non-centred) of a chain whose state
 `exp(log_scale_t)`. The log-Jacobian is `sum((1 - c_t) * log_scale_t)`.
 
 At every restarting warm-up window, `phi_t` is refitted by least-squares
-regression of `w_t` on `m_t` over the window's evidence, then `c_t` is chosen on
-the grid `range(0, 1, 11)` by the default criterion of
+regression of `w_t` on `m_t` over the window's evidence, bounded to `[0, 1]`
+(between the state and its innovation, where a Gaussian Markov posterior's
+conditional slope lies), then `c_t` is chosen on the grid `range(0, 1, 11)` by
+the default criterion of
 [`candidate_scoring_losses`](@ref), the smallest position–gradient correlation,
 with the gradients taken in the frame of the new `phi`. A chain thus ends up
 centred where observations pin its states and close to the innovation where they
@@ -315,10 +317,18 @@ function _chain_scores(chain, positions, gradients, weights)
                                  weight=_column_weight(weights, k))
         end
     end
+    # The slope is bounded to [0, 1], between the state (0) and its innovation (1).
+    # A Gaussian Markov posterior's conditional slope lies there: it is the prior
+    # transition's share q⁻² / (q⁻² + λ_t) of the state's precision. Unbounded, a
+    # location that barely varies over the window gives a slope of noise over a
+    # vanishing variance: an Ornstein-Uhlenbeck coefficient exp(-1 / range) at a
+    # tiny range made m_t ≈ 1e-65 and phi 1e47–1e67, and at an ordinary range
+    # phi * m_t then moved every state so far that the chain never returned
+    # (snag non-centred-ou-s-83c75167).
     phi = copy(phi0)
     for (t, r) in enumerate(regression)
         slope = r.co_position_gradient / r.m2_gradient
-        r.m2_gradient > 0 && isfinite(slope) && (phi[t] = slope)
+        r.m2_gradient > 0 && isfinite(slope) && (phi[t] = clamp(slope, 0.0, 1.0))
     end
     losses = [WeightedReparametrizationLoss() for _ in CHAIN_CENTERINGS, _ in 1:T]
     for k in columns

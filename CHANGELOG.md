@@ -40,6 +40,19 @@ refer to that version's tree.
 
 ### Fixed
 
+- A `MarkovChain`'s refitted coefficient `phi_t` is bounded to `[0, 1]`, between
+  the state and its innovation, where a Gaussian Markov posterior's conditional
+  slope lies. It was the unbounded least-squares slope of `w_t` on `m_t`, so a
+  location that barely varied over a window gave noise over a vanishing
+  variance. On an Ornstein-Uhlenbeck series whose coefficient is
+  `exp(-1 / range)`, a chain that wandered to a tiny range had `m_t ≈ 1e-65` and
+  `phi` of 1e47–1e67. Back at an ordinary range `phi * m_t` moved every state by
+  as much, so the chain stayed at the tiny range for the rest of the run (snag
+  `non-centred-ou-s-83c75167`: 3 of 6 runs of 4 chains on the reporter's
+  32-group model, max R-hat 1.39–1.60, with step-size halvings and, in two of
+  them, 3 and 26 divergent draws). With the bound, no chain of the same 6 runs
+  stays at a tiny range, and none halves its step size or diverges. Where
+  every slope already lay in `[0, 1]`, the fit is unchanged.
 - `adaptive_warmup_mcmc` (and `completion_warmup_mcmc`'s chains) refit the
   linear metric only at a window that restarts, and a window restarted only
   when the active metric's per-coordinate scales were off by

@@ -233,6 +233,36 @@ end
     @test_throws ArgumentError candidate_scoring_losses(rp, draws, gradients; weights=[-1.0; ones(n - 1)])
 end
 
+@testitem "MarkovChain: a location that barely varies keeps phi in [0, 1]" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
+    using Test, WarmupHMC, Random
+    const W = WarmupHMC
+
+    # Snag non-centred-ou-s-83c75167: an Ornstein-Uhlenbeck series whose
+    # coefficient exp(-1 / range) underflows where a window's evidence holds a
+    # tiny range. Its locations m_t = coefficient * w_{t-1} then vary by about
+    # 1e-65, and the least-squares slope of w_t on m_t is noise divided by that
+    # variance (phi of 1e47 to 1e67 on the reporter's model). Back at an ordinary
+    # range, phi * m_t moved every state by as much, so the chain stayed where the
+    # range was tiny for the rest of the run.
+    T = 20
+    rng = Xoshiro(5)
+    n = 2000
+    draws = [randn(rng, T, n); -5.0 .+ 0.01 .* randn(rng, 1, n)]
+    gradients = -draws
+    coefficient(x) = exp(-1 / exp(x[T + 1]))
+    ir = IndexedReparametrization([]; chains=[MarkovChain(1:T; coefficient, log_scale=0.0)])
+    W.optimize!(ir, copy(draws), copy(gradients))
+    chain = ir.chains[1]
+    @test all(p -> 0 <= p <= 1, chain.phi)
+
+    # An ordinary range (3, coefficient 0.72) maps to coordinates of the states'
+    # own size in the selected frame.
+    x = [randn(rng, T); log(3.0)]
+    source = W._inverse_with_logabsdet_jacobian(ir, x)[2]
+    @test all(isfinite, source)
+    @test maximum(abs, source[1:T]) < 10
+end
+
 @testitem "MarkovChain: adaptive warm-up on partially observed walks" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
     using Test, WarmupHMC, Random, Statistics
     using LogDensityProblems

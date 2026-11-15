@@ -54,6 +54,8 @@ Treebars.short_string(x::WarmupHMC.MatrixFactorization) =
     "$(nameof(typeof(x.m1)))(d = $(size(x.m1, 1)))"
 Treebars.short_string(x::Pathfinder.WoodburyPDRightFactor) = "Pathfinder($(size(x.V, 1)))"
 Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:WarmupHMC.SuccessiveReflections}) = "Adaptive($(length(x.m1.reflections)))"
+# EXPERIMENTAL two-stage `:adaptive` (decision `01buaqu`): reflections per stage.
+Treebars.short_string(x::WarmupHMC.TwoStageScaleThenReflect) = "Adaptive($(WarmupHMC.n_reflections(x.m1))+$(WarmupHMC.n_reflections(x.m2)))"
 Treebars.short_string(x::Diagonal) = "Diagonal($(short_string(diag(x))))"
 Treebars.short_string(x::Beta) = "$(short_string(x.α)) out of $(short_string(x.α+x.β)) ($(short_string(100*quantile(x, .05))) - $(short_string(100*quantile(x, .95)))%)"
 

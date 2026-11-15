@@ -246,67 +246,43 @@ _failing_top_window(rng; n=400) = begin
     [x1'; x23], [(-x1 ./ σ .^ 2)'; -(C \ x23)]
 end
 
-@testset "a direction search continues past a failing top direction" begin
+@testset "the reflection fit searches past a failing top direction" begin
     for seed in 1:5
         p, g = _failing_top_window(Xoshiro(seed))
         fit(; kwargs...) = WarmupHMC.update_loss!(SR(3), copy(p), copy(g); kwargs...)
-        @test isempty(fit().reflections)              # the top direction fails: the shipped rule stops
-        @test isempty(fit(n_directions=1, contiguous=true).reflections)
-        found = fit(n_directions=3)
-        @test length(found.reflections) == 1          # the pair's minor axis
+        @test isempty(fit(n_directions=1).reflections)  # the earlier rule stops at the top direction
+        found = fit()
+        @test length(found.reflections) == 1            # the pair's minor axis
         @test found.idxs[1] == [1, 2, 3]
         # It reflects the pair, not the mixture coordinate, and fits both of them.
         @test abs(found.reflections[1][1]) < 0.05
         @test all(<(log(2)), found.transformation_losses[2:3])
         @test found.transformation_losses[1] >= log(2)
-        # `:best` may take the major axis instead (it passes too); it fits the pair alike.
-        best = fit(n_directions=3, pick=:best)
-        @test length(best.reflections) == 1 && all(<(log(2)), best.transformation_losses[2:3])
-        L, Ls = WarmupHMC._scale_then_reflect(3), WarmupHMC._scale_then_reflect(3)
-        @test WarmupHMC.update_loss!(Ls, copy(p), copy(g); n_directions=3) <
-              WarmupHMC.update_loss!(L, copy(p), copy(g))
+        # The `:adaptive` candidate's loss drops with it.
+        stl(; kwargs...) = WarmupHMC.update_loss!(MF(SR(3), Diagonal(ones(3))), copy(p), copy(g); kwargs...)
+        @test stl() < stl(n_directions=1)
     end
 end
 
-@testset "a contiguous bad block: the same fit to rounding, reflected in place" begin
+@testset "the reflection fit reflects the caller's window in place" begin
+    # The loop reflects a contiguous copy of the bad block and writes the rows
+    # back; the diagonal fit reads the reflected window next.
     rng = Xoshiro(5)
     d = 40
     p, g = _correlated_pairs_window(rng, d)
-    pv, gv, pc, gc = copy(p), copy(g), copy(p), copy(g)
-    viewed = WarmupHMC.update_loss!(SR(d), pv, gv)
-    contig = WarmupHMC.update_loss!(SR(d), pc, gc; contiguous=true)
-    @test length(viewed.reflections) > 2              # positive control: the loop ran
-    @test contig.idxs == viewed.idxs
-    @test all(contig.reflections .≈ viewed.reflections)
-    # Both reflect the caller's window in place (the diagonal fit reads it next).
-    @test pc ≈ pv && gc ≈ gv
-    @test !(pc ≈ p)
-end
-
-@testset "two-stage fit: a second loop after the diagonal, sharing the bound" begin
-    rng = Xoshiro(6)
-    d = 40
-    p, g = _correlated_pairs_window(rng, d)
-    single = WarmupHMC._scale_then_reflect(d)
-    loss1 = WarmupHMC.update_loss!(single, copy(p), copy(g))
-    n1 = WarmupHMC.n_reflections(single)
-    @test n1 > 2
-    # Stage 2 gets no budget: the candidate is the single-stage one, bit for bit,
-    # so a zero-reflection fit ties `:diagonal` exactly as before.
-    two = WarmupHMC._two_stage_scale_then_reflect(d)
-    @test WarmupHMC.update_loss!(two, copy(p), copy(g); max_reflections=n1) === loss1
-    @test WarmupHMC.n_reflections(two.m2) == 0
-    @test two.m1.m2.diag == single.m2.diag && all(==(1), two.m2.m2.diag)
-    @test two.m1.m1.reflections == single.m1.reflections
-    # The bound covers both stages.
-    bounded = WarmupHMC._two_stage_scale_then_reflect(d)
-    WarmupHMC.update_loss!(bounded, copy(p), copy(g); max_reflections=3, n_directions=5)
-    @test WarmupHMC.n_reflections(bounded) <= 3
-    # The operator is L = R₁ D₁ R₂ D₂.
-    x = randn(rng, d)
-    (R1, D1), (R2, D2) = (bounded.m1.m1, bounded.m1.m2), (bounded.m2.m1, bounded.m2.m2)
-    @test bounded * reshape(x, d, 1) ≈ reshape(R1 * (D1 * (R2 * (D2 * x))), d, 1)
-    @test bounded * (bounded \ x) ≈ x
+    pf, gf = copy(p), copy(g)
+    t = WarmupHMC.update_loss!(SR(d), pf, gf)
+    @test length(t.reflections) > 2                     # positive control: the loop ran
+    reflect(x) = begin
+        y = copy(x)
+        for (idx, v) in zip(t.idxs, t.reflections)
+            y[idx, :] .-= 2 .* v * (v' * y[idx, :])
+        end
+        y
+    end
+    @test pf ≈ reflect(p) && gf ≈ reflect(g)
+    @test !(pf ≈ p)
+    @test t.s1 ≈ std.(eachrow(pf)) && t.s2 ≈ std.(eachrow(gf))
 end
 
 @testset "determinants and vector solves (a scale as a Gaussian reference's square root)" begin

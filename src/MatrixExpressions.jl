@@ -340,19 +340,20 @@ end
 # d = 400 (go/no-go `04q64y5`). The user asked for a bound that is smallish by
 # default and tunable.
 const _DEFAULT_MAX_REFLECTIONS = 16
-# EXPERIMENTAL keywords (decision `01buaqu`, todo `1l56lb2`), off by default; the
-# defaults run exactly the shipped operations:
-#   n_directions  when the top singular direction of the bad block fails the 1-D
-#                 check, also try the next `n_directions - 1` before stopping
-#                 (1 = stop at the first failure, the shipped rule);
-#   pick          which passing direction a search takes: `:first` in singular
-#                 order, or `:best`, the smallest 1-D loss;
-#   contiguous    copy the bad block into contiguous matrices before the TSVD, so
-#                 its products are BLAS ones (a row view with an index vector
-#                 falls back to generic products), and write the reflected rows
-#                 back. Same arithmetic up to rounding.
+# How many of the bad block's leading gradient singular directions the loop tries
+# before it stops (decision `01buaqu`). The top direction is reflected when it
+# passes the 1-D check, as before. When it fails, the next ones are tried in
+# singular order and the first that passes is reflected; 1 stops at the first
+# failure, the earlier rule. The top direction fails often off the Gaussian: a
+# coordinate whose scale varies across the window (a funnel's neck and mouth, a
+# scale mixture) has the largest gradient spread and no single scale fits it, so
+# the earlier rule left every correlation behind it unfitted (snag
+# `adaptive-metric-ec8b47d3`). The search runs only on a failing top direction,
+# and one truncated SVD of rank `n_directions` costs O(n_directions · m · n) per
+# Lanczos step on an m × n block, so the fit stays linear in the dimension.
+const _DEFAULT_N_DIRECTIONS = 10
 update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), max_reflections=_DEFAULT_MAX_REFLECTIONS,
-             n_directions=1, pick=:first, contiguous=false, kwargs...) = begin
+             n_directions=_DEFAULT_N_DIRECTIONS, kwargs...) = begin
     (;idxs, reflections, s1, s2, transformation_losses) = t
     dimension = LinearAlgebra.checksquare(t)
     s1 .= std.(eachrow(p))
@@ -367,9 +368,13 @@ update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, 
         length(bad_idxs) == 0 && break
         length(idxs) >= max_reflections && break
 
-        bad_p = contiguous ? copy(p[bad_idxs, :]) : p[bad_idxs, :]
-        bad_g = contiguous ? copy(g[bad_idxs, :]) : g[bad_idxs, :]
-        v, l = _reflection_direction(v_f, bad_p, bad_g, threshold, n_directions, pick)
+        # A contiguous copy of the bad block, so the SVD's and the 1-D checks'
+        # products are BLAS ones (on a row view with an index vector they fall
+        # back to generic ones). The reflected rows are written back below: the
+        # diagonal fit reads the reflected window next.
+        bad_p = copy(p[bad_idxs, :])
+        bad_g = copy(g[bad_idxs, :])
+        v, l = _reflection_direction(v_f, bad_p, bad_g, threshold, n_directions)
         # display((;n=length(bad_idxs),threshold,v_f) => l)
         l > threshold && break
 
@@ -381,10 +386,8 @@ update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, 
         vg = v' * bad_g
         bad_p .-= 2 .* v * vp
         bad_g .-= 2 .* v * vg
-        if contiguous
-            p[bad_idxs, :] .= bad_p
-            g[bad_idxs, :] .= bad_g
-        end
+        p[bad_idxs, :] .= bad_p
+        g[bad_idxs, :] .= bad_g
         s1[bad_idxs] .= std.(eachrow(bad_p))
         s2[bad_idxs] .= std.(eachrow(bad_g))
         @. transformation_losses[bad_idxs] = abs2(log(s1[bad_idxs] * s2[bad_idxs]))
@@ -396,23 +399,19 @@ end
 # coordinate `v` is reflected onto will have.
 _direction_loss(v, p, g) = abs2(log(std(v' * p) * std(v' * g)))
 
-# The direction the reflection loop reflects next and its 1-D loss. The top left
-# singular vector of the gradients (`v_f`) first; with `n_directions > 1` and a
-# failing top direction, the leading `n_directions` singular vectors are searched
-# for one that passes (EXPERIMENTAL, decision `01buaqu`).
-_reflection_direction(v_f, p, g, threshold, n_directions, pick) = begin
+# The direction the reflection loop reflects next and its 1-D loss: the top left
+# singular vector of the gradients (`v_f`) if it passes, else the first of the
+# next `n_directions - 1` singular vectors that does. When none passes, the top
+# one and its loss, and the loop stops.
+_reflection_direction(v_f, p, g, threshold, n_directions) = begin
     v = v_f(p, g)
     l = _direction_loss(v, p, g)
     (l <= threshold || n_directions <= 1) && return v, l
-    best_v, best_l = v, l
     for u in Iterators.drop(_leading_directions(g, n_directions), 1)
         lu = _direction_loss(u, p, g)
-        lu <= threshold && pick === :first && return u, lu
-        if lu < best_l
-            best_v, best_l = u, lu
-        end
+        lu <= threshold && return u, lu
     end
-    best_v, best_l
+    v, l
 end
 
 # The leading `k` left singular vectors of `g` (m × n), in singular order. A block
@@ -484,39 +483,3 @@ update_loss!(t::ScaleThenReflect, p, g; kwargs...) = begin
     update_loss!(t.m1, p, g; kwargs...)
     return update_loss!(t.m2, p, g; kwargs...)
 end
-
-# EXPERIMENTAL (decision `01buaqu`, todo `1l56lb2`): search for reflection
-# directions in the diagonally rescaled frame too. L = R₁ D₁ R₂ D₂: the shipped
-# fit (R₁ D₁), then a second reflection loop in D₁'s frame, where each bad
-# coordinate's gradients are rescaled by its fitted scale, so the singular
-# vectors (and their 1-D losses) differ from the raw frame's. A direction found
-# there is not one reflection of the raw frame, hence the extra factors.
-#
-# Stage 1 leaves `p`, `g` reflected into R₁'s frame (`update_loss!` on
-# `SuccessiveReflections` reflects in place); scaling the rows by D₁ moves them
-# into stage 2's frame in O(d n), with no column-by-column solve. Both stages
-# share one `max_reflections` budget. When stage 2 adds no reflection, D₂ is
-# exactly the identity and the loss is stage 1's, so the candidate is the
-# shipped one, bit for bit (no rounding-level loss differences that would
-# break the `:adaptive` / `:diagonal` tie at zero reflections differently).
-TwoStageScaleThenReflect{T} = MatrixFactorization{T,<:ScaleThenReflect,<:ScaleThenReflect}
-update_loss!(t::TwoStageScaleThenReflect, p, g; max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...) = begin
-    loss1 = update_loss!(t.m1, p, g; max_reflections, kwargs...)
-    D1 = t.m1.m2.diag
-    p ./= D1
-    g .*= D1
-    update_loss!(t.m2.m1, p, g; max_reflections=max_reflections - n_reflections(t.m1), kwargs...)
-    if n_reflections(t.m2) == 0
-        t.m2.m2.diag .= 1
-        return loss1
-    end
-    update_loss!(t.m2.m2, p, g; kwargs...)
-end
-n_reflections(t::ScaleThenReflect) = length(t.m1.reflections)
-n_reflections(t::TwoStageScaleThenReflect) = n_reflections(t.m1) + n_reflections(t.m2)
-
-_scale_then_reflect(dimension) = MatrixFactorization(SuccessiveReflections(dimension), Diagonal(ones(dimension)))
-_two_stage_scale_then_reflect(dimension) = MatrixFactorization(_scale_then_reflect(dimension), _scale_then_reflect(dimension))
-# The `:adaptive` linear transformation candidate the samplers fit each window
-# (an indirection an investigation driver may redefine in its own process).
-_adaptive_scale(dimension) = _scale_then_reflect(dimension)

@@ -63,7 +63,8 @@
             target = ShiftedBanana(2e-12, 3e-12)
             refreshed = WH.rescore_warmup_checkpoint(target, p)
             audit = only(refreshed.rescored)
-            @test audit.changed_values == 1
+            # The live value and every retained draw's recorded log density.
+            @test audit.changed_values == 1 + size(p.posterior_position, 2)
             @test audit.changed_gradient_components == 2audit.n_evaluations
             @test 0 < audit.max_scaled <= 1e-10
             @test refreshed.position_and_gradient.ℓq == p.position_and_gradient.ℓq + 2e-12
@@ -73,10 +74,16 @@
                     @test gradients[:, column] == last(LogDensityProblems.logdensity_and_gradient(target, positions[:, column]))
                 end
             end
+            @test refreshed.posterior_log_density ==
+                [first(LogDensityProblems.logdensity_and_gradient(target, x)) for x in eachcol(p.posterior_position)]
             for key in keys(p)
-                key in (:position_and_gradient, :posterior_gradient, :halo_gradient, :rescored, :scale_options) && continue
+                key in (:position_and_gradient, :posterior_gradient, :posterior_log_density,
+                    :halo_gradient, :rescored, :scale_options) && continue
                 @test same(p[key], refreshed[key])
             end
+            # A payload written before the log densities were recorded gains none.
+            unrecorded = Base.structdiff(p, (; posterior_log_density=nothing))
+            @test !haskey(WH.rescore_warmup_checkpoint(target, unrecorded), :posterior_log_density)
             @test same(comparable(p), comparable(before))
             @test_throws ArgumentError WH.rescore_warmup_checkpoint(target, p; rtol=0)
             twice = WH.rescore_warmup_checkpoint(target, refreshed; rtol=0)

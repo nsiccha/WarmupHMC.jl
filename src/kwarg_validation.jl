@@ -97,6 +97,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
 # so that keyword is refused here by name instead of failing inside a chain.
 _SAMPLER_KWARGS[:completion_warmup_mcmc] = (
     :min_completed, :stuck_stepsize_ratio, :max_admitted_divergent_fraction,
+    :max_admitted_log_mass_gap,
     filter(!=(:scale_centering), _SAMPLER_KWARGS[:adaptive_warmup_mcmc])...,
 )
 

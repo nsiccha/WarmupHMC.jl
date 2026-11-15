@@ -105,6 +105,7 @@ const PUBLIC_RESULT_FIELDS = [
     :halo_gradient,
     :posterior_position,
     :posterior_gradient,
+    :posterior_log_density,
     :ess,
     :scale_options,
     :active_transformation,

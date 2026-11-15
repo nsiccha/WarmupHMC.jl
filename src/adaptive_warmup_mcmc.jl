@@ -852,6 +852,11 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     target_acceptance::Float64
     acceptance_pending::Bool
     retained_acceptance_sum::Float64
+    # The log density `ℓq` at each retained draw, in the sampling frame of
+    # `posterior_position` and in its column order, zeroed with the draws.
+    # `finalize_warmup!` moves it into the model frame with the draws. The
+    # completion quorum's mass check reads it (`_log_mass_estimate`).
+    posterior_log_density::Vector{Float64}
     # ── draws DROPPED at the most recent restart or halving (consumer-facing, inert on resume) ──
     # A restarting window empties the recorder (`reset!(recording_lpdf)`) and the
     # checkpoint is serialized AFTER that, so CP-N would otherwise pair complete
@@ -1080,6 +1085,7 @@ _drop_retained_draws!(state::AWMState) = begin
     state.n_samples = 0
     reset!(recording_lpdf.posterior_position)
     reset!(recording_lpdf.posterior_gradient)
+    empty!(state.posterior_log_density)
     state
 end
 
@@ -1301,7 +1307,7 @@ init_state(
         false, 0,
         current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
-        restart, n_samples, 0, 0, stepsize_adaptation.δ, false, 0.0,
+        restart, n_samples, 0, 0, stepsize_adaptation.δ, false, 0.0, Float64[],
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
         NamedTuple[],
     )
@@ -1405,6 +1411,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             # Record posterior positions, gradients and whether the current transition diverged
             append!(recording_lpdf.posterior_position, state.position_and_gradient.q)
             append!(recording_lpdf.posterior_gradient, state.position_and_gradient.∇ℓq)
+            push!(state.posterior_log_density, state.position_and_gradient.ℓq)
             is_divergent && (state.n_divergent_samples += 1)
             state.retained_acceptance_sum += stats.acceptance_rate
             # ... and charge this transition's gradient evaluations to the
@@ -1525,13 +1532,14 @@ finalize_warmup!(state::AWMState) = begin
     # `IndexedReparametrization` and `reparametrize!` returns immediately unless
     # `has_reparametrization(ir)`, so this is a no-op for a plain lpdf and for a
     # `ReparametrizedProblem` carrying no spec.
-    reparametrize!(lpdf, recording_lpdf.posterior_position)
+    reparametrize!(lpdf, recording_lpdf.posterior_position, state.posterior_log_density)
     (;
         initial_position=state.position,
         halo_position=recording_lpdf.halo_position,
         halo_gradient=recording_lpdf.halo_gradient,
         posterior_position=recording_lpdf.posterior_position,
         posterior_gradient=recording_lpdf.posterior_gradient,
+        posterior_log_density=state.posterior_log_density,
         ess=_returned_ess(state.ess, recording_lpdf.posterior_position, state.monitor_ess),
         scale_options=state.scale_options,
         active_transformation=state.active_transformation,
@@ -1639,6 +1647,11 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # resumes with no halving and the call's `target_acceptance_rate`. `stepsize` is
 # already the halved value.
 #
+# `posterior_log_density` is the log density `ℓq` at each retained draw, in the
+# same WORKING frame and column order as `posterior_position`, emptied with it.
+# ADDITIVE: an older checkpoint resumes with the values re-evaluated once on
+# the restored density (`_restored_log_density`).
+#
 # `nonlinear_recorder.mode` and `custom_candidate_scoring` are both DECLARED
 # state. The EFFECTIVE evidence mode is a function of the two rather than a
 # stored key, because a plan silently reads `:linear_pool` as online
@@ -1672,7 +1685,7 @@ checkpoint_payload(state::AWMState) = (;
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
     state.restart, state.n_samples, state.divergence_gate_restarts,
     state.stepsize_halvings, state.target_acceptance, state.acceptance_pending,
-    state.retained_acceptance_sum,
+    state.retained_acceptance_sum, state.posterior_log_density,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
     state.rescored,
@@ -2257,6 +2270,7 @@ restore_state(p, lpdf, progress;
         p.restart, p.n_samples, get(p, :divergence_gate_restarts, 0),
         halvings, Float64(target_acceptance), get(p, :acceptance_pending, false),
         get(p, :retained_acceptance_sum, 0.0),
+        _restored_log_density(p, lpdf),
         # Carried forward, never read back into the sampler. `get` (not `p.x`) so
         # a checkpoint written before these keys existed still resumes — they are
         # ADDITIVE, which is why `checkpoint_schema_version` does NOT move.
@@ -2266,6 +2280,14 @@ restore_state(p, lpdf, progress;
         get(p, :rescored, NamedTuple[]),
     )
 end
+
+# The retained draws' log densities, one per column of `posterior_position`. A
+# checkpoint written before they were recorded has them evaluated here, once,
+# on the density with its saved reparametrization already restored. A copy, so
+# the resumed run never writes into the caller's payload.
+_restored_log_density(p, lpdf) = haskey(p, :posterior_log_density) ?
+    Vector{Float64}(p.posterior_log_density) :
+    Float64[DynamicHMC.evaluate_ℓ(lpdf, collect(x)).ℓq for x in eachcol(p.posterior_position)]
 
 """
     adaptive_warmup_mcmc(rng, lpdf; kwargs...)
@@ -2592,12 +2614,17 @@ off, and with them off the run is byte-for-byte identical to the plain sampler.
 
 For the single-chain method, a `NamedTuple` with fields including
 `initial_position`, `halo_position`, `halo_gradient`,
-`posterior_position`, `posterior_gradient`, `ess`, `scale_options`,
+`posterior_position`, `posterior_gradient`, `posterior_log_density`, `ess`, `scale_options`,
 `active_transformation`, `stepsize`, `stepsize_halvings`,
 `effective_target_acceptance_rate`, `total_evaluation_counter`,
 `sampling_evaluation_counter`,
 `n_divergent_samples`, `position_and_gradient`, `scale_changes`.
 For the multi-chain method, a `Vector` of such `NamedTuple`s.
+
+`posterior_log_density[j]` is the log density of the model, in its own
+parametrization, at the draw `posterior_position[:, j]`: for a
+[`ReparametrizedProblem`](@ref), the inner problem's log density, without the
+reparametrization's log-Jacobian. The sampler records it as it samples.
 
 `ess` is the per-coordinate bulk ESS of the returned `posterior_position`, in
 coordinate order and in the model's own parametrization: `ess[k]` is the ESS of

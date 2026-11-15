@@ -418,4 +418,35 @@ end
     @test_throws ArgumentError scale_from_data(bad(indices=[[1, 2], [1, 2, 3]],
         reflections=[normalize([1.0, 1.0]), normalize([1.0, 1.0, 1.0])]))
 end
+
+@testset "relative metric condition: matrix-free, against a dense SVD" begin
+    # σ_max(A⁻¹B) · σ_max(B⁻¹A), the restart test's measure of a metric change
+    # (snag adaptive-metric-ec8b47d3), from power iterations on the operators.
+    κ(A, B) = (s = svdvals(Matrix(A) \ Matrix(B)); maximum(s) / minimum(s))
+    dense(L) = (d = size(L, 1); hcat((L * Matrix(1.0I, d, d)[:, j] for j in 1:d)...))
+    rng = Xoshiro(17)
+    n = 9
+    D1 = Diagonal(exp.(randn(rng, n))); D2 = Diagonal(exp.(randn(rng, n)))
+    # Two diagonals: the max/min of their ratio, the marginal-scale condition.
+    r = D2.diag ./ D1.diag
+    @test WarmupHMC._relative_metric_condition(D1, D2) ≈ maximum(r) / minimum(r) rtol = 1e-6
+    # Reflections composed with a diagonal (the :adaptive family), and a
+    # triangular factor times a diagonal (the shape of a :pathfinder entry).
+    v1 = normalize(randn(rng, n)); v2 = normalize(randn(rng, 5))
+    R = SR([collect(1:n), collect(3:7)], [v1, v2], zeros(n), zeros(n), zeros(n))
+    S = MF(R, Diagonal(exp.(2 .* randn(rng, n))))
+    P = MF(_lower(n), _diag(n))
+    for (A, B) in ((D1, S), (S, D1), (P, S), (S, P), (D1, P))
+        @test WarmupHMC._relative_metric_condition(A, B) ≈ κ(dense(A), dense(B)) rtol = 1e-5
+    end
+    # An orthogonal factor is the same metric: B = A·Q reads 1.
+    @test WarmupHMC._relative_metric_condition(D1, MF(D1, R)) ≈ 1 atol = 1e-8
+    # The same scale reads exactly 1, and nothing d × d is built: the
+    # workspace is a few d-vectors.
+    @test WarmupHMC._relative_metric_condition(S, S) ≈ 1 atol = 1e-10
+    m = 2000
+    big = Diagonal(exp.(randn(rng, m)))
+    WarmupHMC._relative_metric_condition(big, big)
+    @test @allocated(WarmupHMC._relative_metric_condition(big, big)) < 16 * 8 * m
+end
 end

@@ -9,6 +9,29 @@ refer to that version's tree.
 
 ### Fixed
 
+- `adaptive_warmup_mcmc` (and `completion_warmup_mcmc`'s chains) refit the
+  linear metric only at a window that restarts, and a window restarted only
+  when the active metric's per-coordinate scales were off by
+  `variance_cond_target`. Once they fit, that test reads about 1 on any
+  posterior, however correlated, so the successive reflections that a later,
+  larger window could fit were never installed: the run kept an early window's
+  diagonal or Pathfinder metric to the end. A window now also restarts when the
+  candidates refit on its halo select a metric of another shape (another
+  candidate, or new reflections) that fits the halo at least
+  `variance_cond_target` times better than the active metric and differs from
+  it by at least that relative condition number, measured matrix-free in
+  O(d · `max_reflections`). Nothing changes where the refit keeps the active
+  candidate's shape. On 15 posteriordb models (4 seeds each, 1000 draws), 52
+  of 60 runs were identical. The 7 changed runs of pilots and diamonds took
+  0.03–0.88 times the gradient evaluations per minimum bulk ESS (pilots: 9–40
+  divergent draws down to 2–5), and one eight-schools (centered) run took 1.8
+  times as many. On a 100-dimensional rotated Student-t, 3 of 4 runs now
+  install the reflections a fourth run found by itself: a quarter of the
+  gradients per draw, but the worst coordinate mixes more slowly, 1.1–1.9 times
+  the evaluations per minimum ESS. The reflection fit itself still stops at the
+  first gradient direction that fails its one-dimensional check (open decision
+  `01buaqu`), so where that happens at every window the metric stays diagonal
+  (snag `adaptive-metric-ec8b47d3`).
 - The warning for a rejected centering update counted only the transported
   pool's nonfinite entries, so an update rejected because the chain's current
   point was not finite in the new coordinates read `bad_positions = 0` and

@@ -272,6 +272,45 @@ function _top_left_singular_vector(g; maxiter=1000, tol=1e-12)
     v
 end
 
+# The largest singular value of an operator M given through its normal operator
+# `normal!(w, v)`, which writes M'M v into `w`: power iteration on M'M, whose
+# Rayleigh quotient approaches σ_max(M)² from below. O(d) workspace, one
+# application of the normal operator per step; the start vector is fixed, so the
+# result draws no random number.
+function _largest_singular_value(normal!, d; maxiter=1000, rtol=1e-8)
+    v = normalize!([1 + (i - 1) / d for i in 1:d])
+    w = similar(v)
+    λ = 0.0
+    for _ in 1:maxiter
+        normal!(w, v)
+        λnew = dot(v, w)
+        nw = norm(w)
+        isfinite(nw) || return Inf
+        nw > 0 || return 0.0
+        w ./= nw
+        v, w = w, v
+        converged = abs(λnew - λ) <= rtol * λnew
+        λ = λnew
+        converged && break
+    end
+    sqrt(max(λ, 0.0))
+end
+
+# How far the scale `B` is from the scale `A`, as metrics: the relative condition
+# number σ_max(A⁻¹B) · σ_max(B⁻¹A) of the change A → B. Two power iterations of
+# operator products, O(d · reflections) each, never a d × d matrix (decision
+# `1o12joq`). An orthogonal factor does not count (B = A·Q gives 1: the same
+# kinetic energy), and for two diagonals it is the max/min of their ratio, the
+# marginal-scale condition the restart test has always used.
+function _relative_metric_condition(A, B)
+    d = LinearAlgebra.checksquare(A)
+    t1, t2 = zeros(d), zeros(d)
+    At, Bt = A', B'
+    forward!(w, v) = (mul!(t1, B, v); ldiv!(t2, A, t1); ldiv!(t1, At, t2); mul!(w, Bt, t1); w)
+    backward!(w, v) = (mul!(t1, A, v); ldiv!(t2, B, t1); ldiv!(t1, Bt, t2); mul!(w, At, t1); w)
+    _largest_singular_value(forward!, d) * _largest_singular_value(backward!, d)
+end
+
 # The fallback used to be `eigen(Symmetric(cov(g')))`: a dense d × d covariance
 # and eigendecomposition (O(d²) memory, O(d³) time), and the top eigenvector of
 # the CENTERED covariance, a different vector from the uncentered singular

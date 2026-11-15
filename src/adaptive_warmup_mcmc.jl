@@ -1099,8 +1099,74 @@ end
 # resolves that all-`Inf` tie to the first key, `:diagonal`: a frame switch on no
 # evidence at all.
 function _select_transformation!(scale_options, active, positions, gradients; kwargs...)
-    losses = map(L -> update_loss!(L, positions, gradients; kwargs...), scale_options)
+    losses = _candidate_losses!(scale_options, positions, gradients; kwargs...)
     any(isfinite, losses) ? argmin(losses) : active
+end
+# Refit every candidate on the window's evidence and return its loss. The
+# `:adaptive` fit reflects `positions` and `gradients` in place, after the other
+# candidates have read them.
+_candidate_losses!(scale_options, positions, gradients; kwargs...) =
+    map(L -> update_loss!(L, positions, gradients; kwargs...), scale_options)
+
+# The loss of the frame `L` as it stands, refitting nothing: the mean over
+# coordinates of std(position) · std(gradient) in that frame, the loss
+# `update_loss!` reports for a candidate after its refit. The diagonal part of
+# `L` does not change it. One pass over the columns with per-coordinate running
+# moments, so its workspace is O(d), not a transformed copy of the halo.
+function _frame_loss(L, positions, gradients)
+    d, n = size(positions)
+    x, y = zeros(d), zeros(d)
+    mx, my, sx, sy = zeros(d), zeros(d), zeros(d), zeros(d)
+    Lt = L'
+    for j in 1:n
+        ldiv!(x, L, view(positions, :, j))
+        mul!(y, Lt, view(gradients, :, j))
+        @. sx += (x - mx)^2 * (j - 1) / j
+        @. mx += (x - mx) / j
+        @. sy += (y - my)^2 * (j - 1) / j
+        @. my += (y - my) / j
+    end
+    mean(sqrt.(sx ./ (n - 1)) .* sqrt.(sy ./ (n - 1)))
+end
+
+# Whether a restart would install a metric of a different SHAPE that fits this
+# window's halo much better than the active one: copies of every candidate are
+# refit and selected exactly as `_select_transformation!` does at a restart (the
+# run's candidates and halo are left untouched). The result is the smaller of two
+# factors, each measured against the restart threshold `variance_cond_target`:
+#   * how much better the selected candidate fits the halo: the active frame's
+#     loss as it stands over the candidate's loss after its refit (the loss is a
+#     per-coordinate ratio of marginal to conditional scale, ≈ 1 where the frame
+#     fits, and the diagonal part of a frame does not change it);
+#   * how far the candidate's metric is from the active one: the relative
+#     condition number of the change (`_relative_metric_condition`).
+#
+# The marginal-scale test (`_linear_restart_condition`) sees only how much the
+# active frame's per-coordinate scales are off. Once they fit it reads ≈ 1 on
+# ANY posterior, however correlated, so on its own it never restarts to install
+# the reflections the `:adaptive` candidate fits from a bigger window, and an
+# early window's metric stays for the whole run (snag `adaptive-metric-ec8b47d3`:
+# 360–600 leapfrog steps per draw on a 35-dimensional posterior where the
+# reflections need 23). This measures what that test cannot see. It returns 1
+# when the restart would refit only the active candidate's diagonal (the
+# selection keeps `:diagonal` or `:pathfinder`): that change is the
+# marginal-scale test's to judge, which keeps its decisions as they were.
+#
+# Requiring the fit to improve by the threshold, not merely to improve, is what
+# keeps estimate noise from restarting: on 18 targets (15 posteriordb models)
+# the candidates that won by noise fit 1.00–1.35 times better, the structure the
+# active metric was missing 2.1–70 times better.
+function _metric_change_condition(scale_options, active, positions, gradients; kwargs...)
+    size(positions, 2) > 2 || return 1.0
+    candidates = deepcopy(scale_options)
+    losses = _candidate_losses!(candidates, copy(positions), copy(gradients); kwargs...)
+    any(isfinite, losses) || return 1.0
+    next = argmin(losses)
+    next === active && active !== :adaptive && return 1.0
+    improvement = _frame_loss(scale_options[active], positions, gradients) / losses[next]
+    isfinite(improvement) && improvement > 1 || return 1.0
+    condition = _relative_metric_condition(scale_options[active], candidates[next])
+    isfinite(condition) ? min(improvement, condition) : 1.0
 end
 
 function _apply_linear_metric_fallback!(scale_options, old_diagonal, correction;
@@ -1359,6 +1425,16 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             )
             state.variance_cond = _linear_restart_condition(state.variance_memory)
             pushfirst!(state.scale_changes, sqrt(state.variance_cond))
+            # The marginal scales fit: restart anyway when the metric the restart
+            # would install differs from the active one in shape, and fits the
+            # window's evidence better, each by the same factor.
+            if state.variance_cond < state.variance_cond_target
+                state.variance_cond = max(state.variance_cond, _metric_change_condition(
+                    state.scale_options, state.active_transformation,
+                    recording_lpdf.halo_position, recording_lpdf.halo_gradient;
+                    state.kwargs...,
+                ))
+            end
             state.restart = state.variance_cond >= state.variance_cond_target
         end
         state.n_samples = size(recording_lpdf.posterior_position, 2)
@@ -2225,7 +2301,13 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   transitions per window (default 50), then freezes the step size and
   treats subsequent transitions as posterior samples.
 * Stops warm-up adaptively: if the marginal-scale condition number drops
-  below `variance_cond_target` (default `2.0`), no new window starts.
+  below `variance_cond_target` (default `2.0`), no new window starts, unless
+  the candidates refit on the window's halo select a metric of another shape
+  (a different candidate, or new reflections) that fits the halo at least
+  `variance_cond_target` times better than the active metric and differs from
+  it by at least that relative condition number. Without that second test a
+  correlated posterior whose marginal scales fit never restarted, so the
+  reflections a later, larger window could find were never installed.
   `linear_restart_source=:halo` preserves the existing thinned-halo criterion.
   Opt-in `:nuts_weighted` uses each trajectory's exact NUTS proposal
   distribution, while `:all_good_leaves` weights every eligible noninitial
@@ -2423,7 +2505,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   condition number. With `nonlinear_adapt=true` it also decides whether the
   centering is refit, since that happens only at a restarting window. The scales
   are computed per coordinate in the active linear transformation's frame, so
-  two square roots of the same metric can restart differently.
+  two square roots of the same metric can restart differently. The same factor
+  bounds the shape test: a window also restarts when the metric its halo would
+  select is of another shape, fits the halo this many times better, and differs
+  from the active metric by this relative condition number.
 * `max_divergent_fraction=0.5` — the divergence gate on the window that reaches
   `n_draws`: when more than this fraction of the retained draws diverged, warm-up
   restarts instead of returning them (at most twice per run, see above). `1.0`

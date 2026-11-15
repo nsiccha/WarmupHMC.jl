@@ -7,6 +7,37 @@ refer to that version's tree.
 
 ## Unreleased
 
+### Changed
+
+- The `:adaptive` metric's reflection fit no longer stops at the first
+  gradient direction that fails its one-dimensional check. When the top
+  gradient singular direction of the badly fitted coordinates fails, the fit
+  tries the next nine in singular order and reflects the first that passes; it
+  stops only when none of the ten does (decision `01buaqu`). The top direction
+  often fails off the Gaussian: a coordinate whose scale varies across the
+  window, as a funnel's neck does, has the largest gradient spread and no
+  single scale fits it. The earlier rule then left every correlation behind
+  that coordinate unfitted, and on some posteriors the metric stayed diagonal
+  at every window (snag `adaptive-metric-ec8b47d3`). The search runs only when
+  the top direction fails, through one truncated SVD of rank 10, so the fit
+  stays linear in the dimension and `max_reflections` still bounds it.
+  Measured end to end (1000 draws, `nonlinear_adapt=false`) on 15 posteriordb
+  models plus Neal's funnel, the fit changed on 7 of the models and on the
+  funnel; the other 8 ran identically (6 seeds each). Over 46 seeds each, the
+  changed targets took 0.72 times the gradient evaluations per minimum bulk
+  ESS (geometric mean over the 8). Per target: pilots 0.17 times, gp_pois_regr
+  0.80, irt_2pl 0.85, eight-schools (centered) 0.85, the funnel 0.91,
+  mcycle_gp 0.93, nes2000 0.95 and diamonds 0.96. Only pilots' and
+  gp_pois_regr's 95% intervals exclude 1. On a 35-dimensional applied
+  posterior where the earlier fit added no reflection at any window (282–315
+  leapfrog steps per draw, snag `adaptive-metric-ec8b47d3`), it installed 16
+  reflections, the `max_reflections` bound, at 88–111 steps per draw: 0.35 and
+  0.88 times the gradient evaluations per minimum bulk ESS (2 seeds). A
+  refit's median fit time is 1.4 times the earlier one's (112 refits of these
+  runs). The badly fitted block is now copied into a contiguous matrix before
+  its SVD, which alone makes a fit 0.7 times as long, with the same result to
+  rounding (within 1e-10 on those refits).
+
 ### Fixed
 
 - `adaptive_warmup_mcmc` (and `completion_warmup_mcmc`'s chains) refit the
@@ -28,10 +59,10 @@ refer to that version's tree.
   times as many. On a 100-dimensional rotated Student-t, 3 of 4 runs now
   install the reflections a fourth run found by itself: a quarter of the
   gradients per draw, but the worst coordinate mixes more slowly, 1.1–1.9 times
-  the evaluations per minimum ESS. The reflection fit itself still stops at the
-  first gradient direction that fails its one-dimensional check (open decision
-  `01buaqu`), so where that happens at every window the metric stays diagonal
-  (snag `adaptive-metric-ec8b47d3`).
+  the evaluations per minimum ESS. Where the reflection fit stopped at the
+  first gradient direction that failed its one-dimensional check at every
+  window, the metric stayed diagonal; the fit now searches past a failing
+  first direction (Changed, above).
 - The warning for a rejected centering update counted only the transported
   pool's nonfinite entries, so an update rejected because the chain's current
   point was not finite in the new coordinates read `bad_positions = 0` and

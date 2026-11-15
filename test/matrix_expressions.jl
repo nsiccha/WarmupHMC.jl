@@ -233,6 +233,58 @@ end
     @test isempty(fit(max_reflections=0).reflections)
 end
 
+# Coordinate 1: a scale mixture (σ = 0.05 or 10, a funnel's neck and mouth). It
+# has the largest gradient spread, and no single scale fits it, so the top
+# singular direction fails the 1-D check. Coordinates 2 and 3: a Gaussian pair
+# with ρ = 0.95, each coordinate badly fitted alone, whose minor axis is an exact
+# 1-D direction (decision `01buaqu`).
+_failing_top_window(rng; n=400) = begin
+    σ = ifelse.(rand(rng, n) .< 0.5, 0.05, 10.0)
+    x1 = σ .* randn(rng, n)
+    C = [1 0.95; 0.95 1]
+    x23 = cholesky(C).L * randn(rng, 2, n)
+    [x1'; x23], [(-x1 ./ σ .^ 2)'; -(C \ x23)]
+end
+
+@testset "the reflection fit searches past a failing top direction" begin
+    for seed in 1:5
+        p, g = _failing_top_window(Xoshiro(seed))
+        fit(; kwargs...) = WarmupHMC.update_loss!(SR(3), copy(p), copy(g); kwargs...)
+        @test isempty(fit(n_directions=1).reflections)  # the earlier rule stops at the top direction
+        found = fit()
+        @test length(found.reflections) == 1            # the pair's minor axis
+        @test found.idxs[1] == [1, 2, 3]
+        # It reflects the pair, not the mixture coordinate, and fits both of them.
+        @test abs(found.reflections[1][1]) < 0.05
+        @test all(<(log(2)), found.transformation_losses[2:3])
+        @test found.transformation_losses[1] >= log(2)
+        # The `:adaptive` candidate's loss drops with it.
+        stl(; kwargs...) = WarmupHMC.update_loss!(MF(SR(3), Diagonal(ones(3))), copy(p), copy(g); kwargs...)
+        @test stl() < stl(n_directions=1)
+    end
+end
+
+@testset "the reflection fit reflects the caller's window in place" begin
+    # The loop reflects a contiguous copy of the bad block and writes the rows
+    # back; the diagonal fit reads the reflected window next.
+    rng = Xoshiro(5)
+    d = 40
+    p, g = _correlated_pairs_window(rng, d)
+    pf, gf = copy(p), copy(g)
+    t = WarmupHMC.update_loss!(SR(d), pf, gf)
+    @test length(t.reflections) > 2                     # positive control: the loop ran
+    reflect(x) = begin
+        y = copy(x)
+        for (idx, v) in zip(t.idxs, t.reflections)
+            y[idx, :] .-= 2 .* v * (v' * y[idx, :])
+        end
+        y
+    end
+    @test pf ≈ reflect(p) && gf ≈ reflect(g)
+    @test !(pf ≈ p)
+    @test t.s1 ≈ std.(eachrow(pf)) && t.s2 ≈ std.(eachrow(gf))
+end
+
 @testset "determinants and vector solves (a scale as a Gaussian reference's square root)" begin
     # Base answers `logabsdet`, `det`, `logdet` and `A \ x` through `lu`, which
     # indexes element by element: on these operators all four threw

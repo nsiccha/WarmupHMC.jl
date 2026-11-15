@@ -340,7 +340,20 @@ end
 # d = 400 (go/no-go `04q64y5`). The user asked for a bound that is smallish by
 # default and tunable.
 const _DEFAULT_MAX_REFLECTIONS = 16
-update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), max_reflections=_DEFAULT_MAX_REFLECTIONS, kwargs...) = begin
+# How many of the bad block's leading gradient singular directions the loop tries
+# before it stops (decision `01buaqu`). The top direction is reflected when it
+# passes the 1-D check, as before. When it fails, the next ones are tried in
+# singular order and the first that passes is reflected; 1 stops at the first
+# failure, the earlier rule. The top direction fails often off the Gaussian: a
+# coordinate whose scale varies across the window (a funnel's neck and mouth, a
+# scale mixture) has the largest gradient spread and no single scale fits it, so
+# the earlier rule left every correlation behind it unfitted (snag
+# `adaptive-metric-ec8b47d3`). The search runs only on a failing top direction,
+# and one truncated SVD of rank `n_directions` costs O(n_directions · m · n) per
+# Lanczos step on an m × n block, so the fit stays linear in the dimension.
+const _DEFAULT_N_DIRECTIONS = 10
+update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, idx_f=v->argmax(v.^2), max_reflections=_DEFAULT_MAX_REFLECTIONS,
+             n_directions=_DEFAULT_N_DIRECTIONS, kwargs...) = begin
     (;idxs, reflections, s1, s2, transformation_losses) = t
     dimension = LinearAlgebra.checksquare(t)
     s1 .= std.(eachrow(p))
@@ -355,10 +368,13 @@ update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, 
         length(bad_idxs) == 0 && break
         length(idxs) >= max_reflections && break
 
-        bad_p = p[bad_idxs, :]
-        bad_g = g[bad_idxs, :]
-        v = v_f(bad_p, bad_g)
-        l = abs2(log(std(v' * bad_p) * std(v' * bad_g)))
+        # A contiguous copy of the bad block, so the SVD's and the 1-D checks'
+        # products are BLAS ones (on a row view with an index vector they fall
+        # back to generic ones). The reflected rows are written back below: the
+        # diagonal fit reads the reflected window next.
+        bad_p = copy(p[bad_idxs, :])
+        bad_g = copy(g[bad_idxs, :])
+        v, l = _reflection_direction(v_f, bad_p, bad_g, threshold, n_directions)
         # display((;n=length(bad_idxs),threshold,v_f) => l)
         l > threshold && break
 
@@ -368,13 +384,54 @@ update_loss!(t::SuccessiveReflections, p, g; threshold=log(2), v_f=grad_cov_ev, 
         push!(reflections, v)
         vp = v' * bad_p
         vg = v' * bad_g
-        bad_p .-= 2 .* v * vp 
-        bad_g .-= 2 .* v * vg 
+        bad_p .-= 2 .* v * vp
+        bad_g .-= 2 .* v * vg
+        p[bad_idxs, :] .= bad_p
+        g[bad_idxs, :] .= bad_g
         s1[bad_idxs] .= std.(eachrow(bad_p))
         s2[bad_idxs] .= std.(eachrow(bad_g))
         @. transformation_losses[bad_idxs] = abs2(log(s1[bad_idxs] * s2[bad_idxs]))
     end
     t
+end
+
+# The 1-D check's loss of the unit direction `v` on the bad block: the loss the
+# coordinate `v` is reflected onto will have.
+_direction_loss(v, p, g) = abs2(log(std(v' * p) * std(v' * g)))
+
+# The direction the reflection loop reflects next and its 1-D loss: the top left
+# singular vector of the gradients (`v_f`) if it passes, else the first of the
+# next `n_directions - 1` singular vectors that does. When none passes, the top
+# one and its loss, and the loop stops.
+_reflection_direction(v_f, p, g, threshold, n_directions) = begin
+    v = v_f(p, g)
+    l = _direction_loss(v, p, g)
+    (l <= threshold || n_directions <= 1) && return v, l
+    for u in Iterators.drop(_leading_directions(g, n_directions), 1)
+        lu = _direction_loss(u, p, g)
+        lu <= threshold && return u, lu
+    end
+    v, l
+end
+
+# The leading `k` left singular vectors of `g` (m × n), in singular order. A block
+# of at most `k + 1` rows takes a dense SVD of the block, O(m² n) for m ≤ k + 1;
+# a larger one a truncated SVD, O(k m n) per Lanczos step. If the truncated SVD
+# fails, only the top direction is returned (power iteration), as in `grad_cov_ev`.
+_leading_directions(g, k) = begin
+    m = size(g, 1)
+    m == 1 && return [ones(1)]
+    U = if m <= k + 1
+        svd(Matrix(g)).U
+    else
+        try
+            tsvd(g, k; initvec=ones(m))[1]
+        catch e
+            @error "tsvd(..., $k) failed, searching the top direction only" size(g) exception=(e, catch_backtrace())
+            reshape(_top_left_singular_vector(g), m, 1)
+        end
+    end
+    [U[:, j] for j in 1:min(k, size(U, 2))]
 end
 cv_mean(x1, x2) = begin 
     m1 = mean(x1)

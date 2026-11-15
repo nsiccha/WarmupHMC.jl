@@ -5,7 +5,45 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
-## Unreleased
+## 0.3.3
+
+### Added
+
+- `completion_warmup_mcmc` leaves out a chain that finished in a minor mode far
+  below its siblings, at an ordinary step size and without divergences, which
+  neither existing check could see (snag `default-starts-t-013b07f7`, decision
+  `1csfn2g`). A chain that reaches `n_draws` now counts toward `min_completed`
+  only if its estimated log posterior mass is not more than
+  `max_admitted_log_mass_gap` (default 25) nats below the largest of its
+  siblings' estimates, or not more than 4 standard errors below it; otherwise
+  it is `:stuck`, with `stuck_reason = :low_mass`. The estimate is the mean
+  model-frame log density of the retained draws plus `Σᵢ log sdᵢ` of their
+  per-coordinate standard deviations, so a wide genuine mode is not mistaken
+  for a minor one for its lower density; its standard error is that of the
+  mean log density, `sd / √ESS`. It is linear in the dimension, and each chain
+  is compared in the model's own parametrization whatever centering it
+  adapted. `max_admitted_log_mass_gap=Inf` switches the check off. Measured
+  with every chain kept, 4 chains per run: on a sinusoid regression whose
+  likelihood has side lobes, 10 of 24 chains from the default starts sat in
+  lobes 44–168 nats below; 3 of them passed both existing checks, at max R-hat
+  2.1–2.6, and the mass check leaves out all 3. On 136 healthy chains of 11
+  targets (Gaussians to d = 1000, AR(1) to d = 400, equal-mass mixtures of
+  unequal widths, Student-t, centred funnels to d = 50, eight schools) it
+  leaves out none: the largest gap, 49.5 nats on the d = 50 funnel, was within
+  2.3 standard errors. `completion.chains[i]` records `log_mass`,
+  `log_mass_se`, `reference_log_mass` and `reference_log_mass_se`,
+  `run_summary.json` the matching `chain_*` columns, and the outcome and run
+  manifest the threshold; both move to `schema_version` 4. A finished run
+  recorded before the check reopens as recorded whatever threshold is passed.
+  The check compares chains with each other only, so it keeps a run in which
+  every chain sits in one minor mode.
+- `adaptive_warmup_mcmc` results carry `posterior_log_density`: the model's log
+  density at each returned draw, in its own parametrization (for a
+  `ReparametrizedProblem`, the inner problem's, without the reparametrization's
+  log-Jacobian), recorded as the sampler samples. Checkpoints carry it in the
+  sampling frame under an additive key, `rescore_warmup_checkpoint` refreshes
+  it under the same tolerance as the live log density, and a checkpoint written
+  before it resumes with it evaluated once at the retained draws.
 
 ### Changed
 

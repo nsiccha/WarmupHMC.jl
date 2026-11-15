@@ -59,7 +59,9 @@ selection. Requiring every chain, the default `min_completed`, never selects.
 
 `posterior_position` stores coordinates in rows and draws in columns. For a
 `ReparametrizedProblem`, these positions have already been transformed into the
-wrapped model's coordinates. Do not transform them again. `posterior_gradient`,
+wrapped model's coordinates. Do not transform them again. `posterior_log_density`
+is the wrapped model's own log density at those positions, without the
+reparametrization's log-Jacobian. `posterior_gradient`,
 `halo_position`, `halo_gradient`, and the saved active position retain working
 coordinates, so they cannot be paired with returned model-frame positions as
 though they shared a frame. The reported `ess` belongs to the returned positions.

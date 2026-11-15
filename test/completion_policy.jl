@@ -160,7 +160,8 @@ end
 # diverge, takes short cheap trajectories and can finish before every sibling.
 _admission_fixture(stepsize; n=20, n_divergent=0) = (; posterior_position=zeros(2, n),
     n_divergent_samples=n_divergent, stepsize)
-const _ADMISSION_CHECKS = WarmupHMC._CompletionAdmission(10.0, 0.1)
+# These two checks are judged here without the mass check, which has its own tests.
+const _ADMISSION_CHECKS = WarmupHMC._CompletionAdmission(10.0, 0.1, Inf)
 
 @testset "a collapsed chain that finishes first does not count" begin
     s = WarmupHMC._CompletionState(4; clock=() -> 0.0, min_completed=2,
@@ -262,9 +263,19 @@ end
 
 @testset "stuck chains are omitted and named in the outcome" begin
     # Chain 3 diverges on 15% of its draws. That needs no sibling to judge.
-    out = WarmupHMC._completion_batch(4; min_completed=3, admission=_ADMISSION_CHECKS) do i, stop
+    # Every slot enters its round before any returns: otherwise chains 1, 2 and
+    # 4 can meet the quorum before slot 3's task starts, which then never runs.
+    entered = Channel{Int}(4)
+    release = Channel{Nothing}(4)
+    batch = Threads.@spawn WarmupHMC._completion_batch(4; min_completed=3,
+            admission=_ADMISSION_CHECKS) do i, stop
+        put!(entered, i)
+        take!(release)
         _admission_fixture(0.17; n_divergent=i == 3 ? 3 : 0), true
     end
+    foreach(_ -> take!(entered), 1:4)
+    foreach(_ -> put!(release, nothing), 1:4)
+    out = fetch(batch)
     c = out.completion
     @test c.completed_chain_indices == [1, 2, 4]
     @test c.stuck_chain_indices == [3]
@@ -293,7 +304,7 @@ end
     @test occursin("left out as stuck after reaching `n_draws`: [1]", message)
     # Switched off, both checks admit every full chain.
     off = WarmupHMC._completion_batch(2; min_completed=2,
-            admission=WarmupHMC._CompletionAdmission(Inf, 1.0)) do i, stop
+            admission=WarmupHMC._CompletionAdmission(Inf, 1.0, Inf)) do i, stop
         i == 1 ? (_admission_fixture(1e-6; n_divergent=20), true) : (_admission_fixture(0.17), true)
     end
     @test off.completion.completed_chain_indices == [1, 2]
@@ -313,6 +324,200 @@ end
     @test c.chains[1].reference_stepsize ≈ 0.175
     @test c.completed_chain_indices == [2]
     @test c.chains[3].status === :not_started
+    @test c.quorum_at_seconds == 0.0
+end
+
+# Snag default-starts-t-013b07f7, decision 1csfn2g: a chain can also settle in a
+# minor mode far below its siblings, at an ordinary step size and without
+# diverging. A fixture's estimate is `log_mass` with a standard error at
+# rounding level: its log density is constant and its one coordinate
+# alternates ±1.
+function _mass_fixture(log_mass; n=20, n_divergent=0, stepsize=0.17)
+    log_volume = log(n / (n - 1)) / 2
+    (; posterior_position=reshape(repeat([-1.0, 1.0], n ÷ 2), 1, n),
+       posterior_log_density=fill(log_mass - log_volume, n), n_divergent_samples=n_divergent, stepsize)
+end
+_mass(log_mass; se=1.0) = (; log_mass, se)
+# A 2-D funnel in its centred (model) frame: y2 | y1 ~ N(0, exp(y1)^2).
+struct _MassFunnel end
+LogDensityProblems.dimension(::_MassFunnel) = 2
+LogDensityProblems.capabilities(::Type{_MassFunnel}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity(::_MassFunnel, y) = -y[1]^2 / 2 - (y[2] * exp(-y[1]))^2 / 2 - y[1]
+const _MASS_CHECK = WarmupHMC._CompletionAdmission(Inf, 0.1, 25.0)
+
+@testset "the mass estimate does not mistake a wide mode for a minor one" begin
+    # Two equal-mass Gaussian modes, of widths 1/2 and 2 in 20 dimensions: the
+    # wide one's mean log density is lower by 20 log 4 ≈ 27.7, its mass is not.
+    d, n = 20, 4000
+    rng = Xoshiro(7)
+    estimate(sigma) = begin
+        x = sigma .* randn(rng, d, n)
+        lp = [-sum(abs2, c) / (2sigma^2) - d * log(sigma) - d * log(2π) / 2 for c in eachcol(x)]
+        WarmupHMC._log_mass_estimate(nothing, x, lp), mean(lp)
+    end
+    (narrow, narrow_lp), (wide, wide_lp) = estimate(0.5), estimate(2.0)
+    @test narrow_lp - wide_lp > 25
+    @test abs(narrow.log_mass - wide.log_mass) < 1
+    @test 0 < narrow.se < 0.2 && 0 < wide.se < 0.2
+    # A mode holding e^-30 of the mass sits 30 below.
+    x = randn(rng, d, n)
+    lp = [-sum(abs2, c) / 2 - d * log(2π) / 2 - 30 for c in eachcol(x)]
+    @test WarmupHMC._log_mass_estimate(nothing, x, lp).log_mass ≈ narrow.log_mass - 30 atol=1
+    # Too few draws: no estimate.
+    @test isnothing(WarmupHMC._log_mass_estimate(nothing, x[:, 1:10], lp[1:10]))
+    @test_throws DimensionMismatch WarmupHMC._log_mass_estimate(nothing, x, lp[1:end-1])
+end
+
+@testset "the mass estimate maps sampling-frame draws into the model frame" begin
+    # A 2-D funnel sampled non-centred: the source frame is a standard normal and
+    # the model frame is y = (x1, x2 exp(x1)). Estimating from the source draws
+    # with their source log density, through the map, must equal estimating from
+    # the model draws with the model's own log density.
+    funnel(y) = LogDensityProblems.logdensity(_MassFunnel(), y)
+    rp = ReparametrizedProblem(IndexedReparametrization([
+            2 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(0.0), 0.0, x -> x[1])]),
+        _MassFunnel(), AutoEnzyme())
+    x = randn(Xoshiro(3), 2, 500)
+    source_lp = [LogDensityProblems.logdensity(rp, c) for c in eachcol(x)]
+    y = vcat(x[1:1, :], (x[2, :] .* exp.(x[1, :]))')
+    model = WarmupHMC._log_mass_estimate(nothing, y, [funnel(c) for c in eachcol(y)])
+    mapped = WarmupHMC._log_mass_estimate(WarmupHMC.reparametrizer(rp), x, source_lp)
+    @test mapped.log_mass ≈ model.log_mass
+    @test mapped.se ≈ model.se
+    # Unmapped, the source frame's estimate is a different number.
+    @test abs(WarmupHMC._log_mass_estimate(nothing, x, source_lp).log_mass - model.log_mass) > 0.1
+end
+
+@testset "a chain far below its siblings' mass does not count" begin
+    s = WarmupHMC._CompletionState(4; clock=() -> 0.0, min_completed=2, admission=_MASS_CHECK)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._report_boundary!(stop1, 0.17, 30, _mass(100.0))
+        # Chain 3 finishes 40 below chain 1's estimate, at a healthy step size
+        # and without divergences.
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(60.0), true), s, 3)
+        @test s.statuses[3] === :stuck
+        @test s.admissions[3].stuck_reason === :low_mass
+        @test s.admissions[3].log_mass ≈ 60.0
+        @test s.admissions[3].log_mass_se < 1e-12
+        @test s.admissions[3].reference_log_mass == 100.0
+        @test s.admissions[3].reference_log_mass_se == 1.0
+        # 10 below is within the 25-nat bound.
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(90.0), true), s, 2)
+        @test s.statuses[2] === :completed
+        @test s.admissions[2].reference_log_mass == 100.0
+        # Counted, chain 3 would have met the quorum of two with chain 2 and
+        # stopped this chain. It does not count.
+        @test !stop1()
+        _mass_fixture(100.0), true
+    end
+    @test s.statuses[1] === :completed
+    # Chain 1 is compared with chain 2, the best sibling not left out.
+    @test s.admissions[1].reference_log_mass ≈ 90.0
+    WarmupHMC._completion_worker!((_, _) -> error("the quorum is met"), s, 4)
+    @test s.statuses == [:completed, :completed, :stuck, :not_started]
+end
+
+@testset "the gap must exceed both bounds" begin
+    # 30 below: beyond 25 nats. With the reference's standard error at 10, 30 is
+    # within 4 standard errors and the chain is kept; at 5 it is left out.
+    for (se, verdict) in ((10.0, :completed), (5.0, :stuck))
+        s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1, admission=_MASS_CHECK)
+        WarmupHMC._completion_worker!(s, 1) do _, stop1
+            WarmupHMC._report_boundary!(stop1, 0.17, 30, _mass(100.0; se))
+            WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(70.0), true), s, 2)
+            @test s.statuses[2] === verdict
+            _mass_fixture(100.0; n=5), false
+        end
+    end
+    # A larger bound keeps a 40-nat gap.
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1,
+        admission=WarmupHMC._CompletionAdmission(Inf, 0.1, 50.0))
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._report_boundary!(stop1, 0.17, 30, _mass(100.0))
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(60.0), true), s, 2)
+        @test s.statuses[2] === :completed
+        _mass_fixture(100.0; n=5), false
+    end
+end
+
+@testset "a finished chain waits, uncounted, for a sibling's mass" begin
+    # The step-size check is on too: its comparison is made once, at the first
+    # sibling boundary that keeps draws, and is not repeated while the chain
+    # waits for a mass to compare with.
+    checks = WarmupHMC._CompletionAdmission(10.0, 0.1, 25.0)
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1, admission=checks)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(60.0), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        # Draws but too few for an estimate: the step size is compared, the mass is not.
+        WarmupHMC._report_boundary!(stop1, 0.15, 8, nothing)
+        @test s.statuses[2] === :awaiting_reference
+        @test s.admissions[2].reference_stepsize == 0.15
+        @test isnothing(s.admissions[2].reference_log_mass)
+        # A boundary with an estimate settles it.
+        WarmupHMC._report_boundary!(stop1, 0.9, 30, _mass(100.0))
+        @test s.statuses[2] === :stuck
+        @test s.admissions[2].stuck_reason === :low_mass
+        @test s.admissions[2].reference_stepsize == 0.15
+        @test !stop1()
+        _mass_fixture(100.0), true
+    end
+    # Chain 1 has no sibling left to compare with, so it is admitted unchecked.
+    @test s.statuses == [:completed, :stuck]
+
+    # Once no sibling can supply a mass, the waiting chain is admitted unchecked.
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1, admission=_MASS_CHECK)
+    WarmupHMC._completion_worker!(s, 1) do _, _
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(60.0), true), s, 2)
+        @test s.statuses[2] === :awaiting_reference
+        error("chain 1 fails before it keeps draws")
+    end
+    @test s.statuses == [:failed, :completed]
+    @test isnothing(s.admissions[2].reference_log_mass)
+    # A chain without an estimate of its own (at most 10 draws) is not compared.
+    s = WarmupHMC._CompletionState(2; clock=() -> 0.0, min_completed=1, admission=_MASS_CHECK)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._report_boundary!(stop1, 0.17, 30, _mass(100.0))
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(-1e6; n=10), true), s, 2)
+        @test s.statuses[2] === :completed
+        @test isnothing(s.admissions[2].log_mass)
+        _mass_fixture(100.0; n=5), false
+    end
+end
+
+@testset "a stuck sibling's mass is no reference" begin
+    s = WarmupHMC._CompletionState(3; clock=() -> 0.0, min_completed=1, admission=_MASS_CHECK)
+    WarmupHMC._completion_worker!(s, 1) do _, stop1
+        WarmupHMC._report_boundary!(stop1, 0.17, 30, _mass(100.0))
+        # Chain 3 is left out for its divergences. Its large estimate must not
+        # make chain 2 look minor.
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(1000.0; n_divergent=10), true), s, 3)
+        @test s.admissions[3].stuck_reason === :divergence
+        WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(95.0), true), s, 2)
+        @test s.statuses[2] === :completed
+        @test s.admissions[2].reference_log_mass == 100.0
+        _mass_fixture(100.0), true
+    end
+    @test s.statuses == [:completed, :completed, :stuck]
+end
+
+@testset "resume judges mass against every checkpoint before scheduling" begin
+    # Slot 3's checkpoint keeps draws whose estimate is 101 but is not complete.
+    initial = Dict(1 => _mass_fixture(60.0), 2 => _mass_fixture(100.0))
+    out = WarmupHMC._completion_batch(3; min_completed=1, admission=_MASS_CHECK,
+            initial_results=initial, initial_stepsizes=Dict(3 => 0.18),
+            initial_log_masses=Dict(3 => _mass(101.0))) do i, stop
+        error("No incomplete worker should start after quorum.")
+    end
+    c = out.completion
+    @test c.stuck_chain_indices == [1]
+    @test c.chains[1].stuck_reason === :low_mass
+    @test c.chains[1].reference_log_mass == 101.0
+    @test c.chains[2].reference_log_mass == 101.0
+    @test c.completed_chain_indices == [2]
+    @test c.chains[3].status === :not_started
+    @test isnothing(c.chains[3].log_mass)
+    @test c.max_admitted_log_mass_gap == 25.0
     @test c.quorum_at_seconds == 0.0
 end
 
@@ -357,6 +562,139 @@ LogDensityProblems.logdensity(p::CompletionWall, x) = first(LogDensityProblems.l
     @test all(i -> c.chains[i].divergent_fraction == 0, (1, 2, 4))
     @test all(i -> !isnothing(c.chains[i].reference_stepsize), (1, 2, 4))
     @test c.n_samples == 600
+end
+
+# The calibration targets of decision 1csfn2g. A sinusoid regression
+# y_i = a sin(w t_i) + N(0, sigma^2), coordinates (w, a, log sigma, z...), with
+# nuisance z_j ~ N(0, s_j^2) on scales 1e-3 to 1: the periodogram's side lobes
+# in w are minor modes far below the main one, and (w, a) -> (-w, -a) is an
+# equal-mass second mode.
+struct CompletionSinus
+    t::Vector{Float64}
+    y::Vector{Float64}
+    zs::Vector{Float64}
+end
+function completion_sinus(; n=200, T=8.0, w=1.0, a=1.0, sigma=0.3)
+    t = collect(range(0, T; length=n))
+    CompletionSinus(t, a .* sin.(w .* t) .+ sigma .* randn(Xoshiro(11), n), exp10.(range(-3, 0; length=7)))
+end
+LogDensityProblems.dimension(p::CompletionSinus) = 3 + length(p.zs)
+LogDensityProblems.capabilities(::Type{CompletionSinus}) = LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity_and_gradient(p::CompletionSinus, x)
+    w, a, ls = x[1], x[2], x[3]
+    s2, n = exp(2ls), length(p.t)
+    gw = ga = ss = 0.0
+    for i in 1:n
+        sn, cs = sincos(w * p.t[i])
+        r = p.y[i] - a * sn
+        ss += r^2; gw += r * a * cs * p.t[i]; ga += r * sn
+    end
+    # Spelled as the calibration script spelled it, so its seeds reproduce.
+    lp = -n * ls - 0.5 * ss / s2
+    g = zeros(length(x))
+    g[1] = gw / s2 - w / 1.5^2; g[2] = ga / s2 - a / 2^2; g[3] = -n + ss / s2 - ls
+    lp += -0.5 * (w / 1.5)^2 - 0.5 * (a / 2)^2 - 0.5 * ls^2
+    z = @view x[4:end]
+    lp += -0.5 * sum(abs2, z ./ p.zs); g[4:end] .= -z ./ p.zs .^ 2
+    lp, g
+end
+LogDensityProblems.logdensity(p::CompletionSinus, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+
+# Two equal-mass Gaussian modes: N(-m e1, s1^2 I) and N(+m e1, s2^2 I).
+struct CompletionMix2
+    d::Int
+    m::Float64
+    s1::Float64
+    s2::Float64
+end
+LogDensityProblems.dimension(t::CompletionMix2) = t.d
+LogDensityProblems.capabilities(::Type{CompletionMix2}) = LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity_and_gradient(t::CompletionMix2, x)
+    c1, c2 = copy(x), copy(x)
+    c1[1] += t.m; c2[1] -= t.m
+    l1 = log(0.5) - t.d * log(t.s1) - 0.5 * sum(abs2, c1) / t.s1^2
+    l2 = log(0.5) - t.d * log(t.s2) - 0.5 * sum(abs2, c2) / t.s2^2
+    lp = WarmupHMC.LogExpFunctions.logaddexp(l1, l2)
+    w1, w2 = exp(l1 - lp), exp(l2 - lp)
+    lp, -(w1 .* c1 ./ t.s1^2 .+ w2 .* c2 ./ t.s2^2)
+end
+LogDensityProblems.logdensity(t::CompletionMix2, x) = first(LogDensityProblems.logdensity_and_gradient(t, x))
+
+# Neal's centred funnel: v ~ N(0, 3^2), x_i | v ~ N(0, exp(v)), coordinates (v, x...).
+struct CompletionFunnel
+    d::Int
+end
+LogDensityProblems.dimension(t::CompletionFunnel) = t.d
+LogDensityProblems.capabilities(::Type{CompletionFunnel}) = LogDensityProblems.LogDensityOrder{1}()
+function LogDensityProblems.logdensity_and_gradient(t::CompletionFunnel, x)
+    v = x[1]; z = @view x[2:end]; k = length(z); q = sum(abs2, z)
+    lp = -v^2 / 18 - k * v / 2 - q * exp(-v) / 2
+    g = similar(x); g[1] = -v / 9 - k / 2 + q * exp(-v) / 2; g[2:end] .= -z .* exp(-v)
+    lp, g
+end
+LogDensityProblems.logdensity(t::CompletionFunnel, x) = first(LogDensityProblems.logdensity_and_gradient(t, x))
+
+_completion_outcome(f) = try
+    f()
+catch e
+    e isa WarmupHMC.CompletionQuorumError || rethrow()
+    e.outcome
+end
+
+@testset "a real chain in a minor mode is left out for its mass alone" begin
+    BLAS.set_num_threads(1)
+    p = completion_sinus()
+    main, mirror = [1.0, 1.0, log(0.3), zeros(7)...], [-1.0, -1.0, log(0.3), zeros(7)...]
+    # Chain 4's Pathfinder run from w = 1.56 ends in a side lobe, where it stays.
+    inits = [main, mirror, main, [1.56, 1.0, log(0.3), zeros(7)...]]
+    sample(; kwargs...) = _completion_outcome(() -> completion_warmup_mcmc(
+        [Xoshiro(300 + i) for i in 1:4], p; init=inits, min_completed=4, n_draws=1000, kwargs...))
+    # Without the mass check both other checks admit it: the snag's R-hat.
+    unchecked = sample(; max_admitted_log_mass_gap=Inf)
+    @test unchecked.completion.completed_chain_indices == 1:4
+    lobe, healthy = unchecked.results[4], unchecked.results[1]
+    @test abs(mean(lobe.posterior_position[1, :])) > 1.2
+    @test abs(mean(healthy.posterior_position[1, :])) < 1.1
+    @test mean(lobe.posterior_log_density) < mean(healthy.posterior_log_density) - 100
+    c = sample().completion
+    @test !c.quorum_met
+    @test c.completed_chain_indices == [1, 2, 3]
+    @test c.stuck_chain_indices == [4]
+    @test c.chains[4].stuck_reason === :low_mass
+    @test c.chains[4].divergent_fraction <= 0.1
+    @test c.chains[4].stepsize >= c.chains[4].reference_stepsize / 10
+    @test c.chains[4].reference_log_mass - c.chains[4].log_mass > 100
+    @test all(i -> !isnothing(c.chains[i].reference_log_mass), 1:4)
+end
+
+@testset "real chains in equal-mass modes of unequal widths are kept" begin
+    BLAS.set_num_threads(1)
+    m = CompletionMix2(20, 12.0, 0.5, 2.0)
+    inits = [[-12.0; zeros(19)], [-12.0; zeros(19)], [12.0; zeros(19)], [12.0; zeros(19)]]
+    out = completion_warmup_mcmc([Xoshiro(100 + i) for i in 1:4], m; init=inits, n_draws=1000)
+    c = out.completion
+    @test c.completed_chain_indices == 1:4
+    # Each chain stays in its mode, and the wide mode's mean log density is more
+    # than 25 below the narrow one's: compared by density, it would be left out.
+    @test [mean(r.posterior_position[1, :]) > 0 for r in out.results] == [false, false, true, true]
+    @test mean(out.results[1].posterior_log_density) - mean(out.results[3].posterior_log_density) > 25
+    @test maximum(ch -> ch.log_mass, c.chains) - minimum(ch -> ch.log_mass, c.chains) < 1
+end
+
+@testset "real centred-funnel chains are kept: the standard-error bound" begin
+    BLAS.set_num_threads(1)
+    # The other two checks are off, so only the mass check could leave one out.
+    out = completion_warmup_mcmc([Xoshiro(100 + i) for i in 1:4], CompletionFunnel(50);
+        n_draws=1000, stuck_stepsize_ratio=Inf, max_admitted_divergent_fraction=1.0)
+    c = out.completion
+    @test c.completed_chain_indices == 1:4
+    # Against the best final estimate, a chain sits more than 25 nats below, but
+    # within 4 standard errors: the 25-nat bound alone would leave it out.
+    best = argmax(ch -> ch.log_mass, c.chains)
+    gap(ch) = (; ch.log_mass, ch.log_mass_se, reference_log_mass=best.log_mass,
+        reference_log_mass_se=best.log_mass_se)
+    @test maximum(ch -> best.log_mass - ch.log_mass, c.chains) > 25
+    @test !any(ch -> WarmupHMC._low_mass(gap(ch), WarmupHMC._CompletionAdmission(Inf, 1.0, 25.0)), c.chains)
 end
 
 @testset "numerical equivalence and recovery" begin
@@ -405,7 +743,8 @@ end
             # This mode's current round reaches only half the draw target;
             # a full result would have to be included even after quorum.
             return merge(full[i], (; posterior_position=full[i].posterior_position[:, 1:50],
-                posterior_gradient=full[i].posterior_gradient[:, 1:50])), false
+                posterior_gradient=full[i].posterior_gradient[:, 1:50],
+                posterior_log_density=full[i].posterior_log_density[1:50])), false
         end
         full[i], true
     end
@@ -471,7 +810,7 @@ end
     # Stuck and failed chains are health verdicts, named in their own fields.
     # The odd fixtures are 20% divergent, above this 10% threshold.
     out = rendezvous([:full, :full, :full, :full, :fail]; min_completed=2,
-        admission=WarmupHMC._CompletionAdmission(Inf, 0.1))
+        admission=WarmupHMC._CompletionAdmission(Inf, 0.1, Inf))
     @test out.completion.stuck_chain_indices == [1, 3]
     @test out.completion.failed_chain_indices == [5]
     @test out.completion.stop_reason === :quorum_reached
@@ -523,11 +862,11 @@ end
             (; schema_version=1, sampler=:completion, n_requested=2))
         # Complete chain 2 separately. Resume must admit it before any worker
         # has a chance to initialize chain 1. Chain 1 keeps no draws, so the
-        # step-size check would make chain 2 wait for it to sample ("a finished
-        # chain waits, uncounted"); this run pins admission without that check.
+        # step-size and mass checks would make chain 2 wait for it to sample ("a
+        # finished chain waits, uncounted"); this run pins admission without them.
         ordinary = adaptive_warmup_mcmc(Xoshiro(999), p;
             n_draws=40, checkpoint_dir=joinpath(dir, "chain_2"), resume=true)
-        unchecked = (; stuck_stepsize_ratio=Inf)
+        unchecked = (; stuck_stepsize_ratio=Inf, max_admitted_log_mass_gap=Inf)
         n_warned, out = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(999), Xoshiro(999)], p;
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...))
         @test out.completion.completed_chain_indices == [2]
@@ -543,7 +882,13 @@ end
             "run_manifest.json"))["selection_warning"] == caveat
         @test _run_json(joinpath(out.completion.attempt_directory,
             "run_summary.json"))["selection_warning"] == caveat
-        @test out.completion.schema_version == 3
+        @test out.completion.schema_version == 4
+        @test out.completion.max_admitted_log_mass_gap == Inf
+        # The judged chain's own estimate is recorded even with the check off.
+        @test isfinite(out.completion.chains[2].log_mass)
+        @test isnothing(out.completion.chains[2].reference_log_mass)
+        @test occursin("\"chain_log_masses\":[null,",
+            read(joinpath(out.completion.attempt_directory, "run_summary.json"), String))
         @test out.completion.stop_policy === :finish_current_round
         cp1 = read(joinpath(dir, "chain_1", "cp_latest.jls"))
         @test isfile(joinpath(dir, "completion_terminal.jls"))
@@ -585,13 +930,28 @@ end
             n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true, unchecked...)
         @test recovered.completion == out.completion
         @test read(summary) == original_summary
+        # refused: the mass threshold is part of the recorded policy too.
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1), Xoshiro(2)], p;
+            n_draws=40, min_completed=1, checkpoint_dir=dir, resume=true,
+            unchecked..., max_admitted_log_mass_gap=3.0)
+        # A run recorded before the mass check has no mass threshold: it reopens
+        # as recorded whatever `max_admitted_log_mass_gap` is passed.
+        pre_mass = (; out.results, completion=(; (k => v for (k, v) in pairs(out.completion)
+            if k !== :max_admitted_log_mass_gap)...))
+        WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_terminal.jls"),
+            (; schema_version=2, n_draws=40, outcome=pre_mass))
+        n_warned, reopened_pre_mass = _selection_warnings(() -> completion_warmup_mcmc(
+            [Xoshiro(1), Xoshiro(2)], p; n_draws=40, min_completed=1, checkpoint_dir=dir,
+            resume=true, stuck_stepsize_ratio=Inf, max_admitted_log_mass_gap=3.0))
+        @test n_warned == 1
+        @test reopened_pre_mass.completion == pre_mass.completion
         # A schema-1 terminal fixture retains the OLD selection semantics,
         # including a full chain omitted after cutoff. It must not be silently
         # reinterpreted under the new policy when reopened.
         legacy_fields = (; (k => v for (k, v) in pairs(out.completion)
             if k ∉ (:schema_version, :stop_policy, :stop_requested_at_seconds,
-                :stuck_stepsize_ratio, :max_admitted_divergent_fraction, :n_stuck,
-                :stuck_chain_indices))...)
+                :stuck_stepsize_ratio, :max_admitted_divergent_fraction,
+                :max_admitted_log_mass_gap, :n_stuck, :stuck_chain_indices))...)
         legacy_chains = Any[Base.structdiff(c, WarmupHMC._UNJUDGED) for c in out.completion.chains]
         legacy_chains[1] = merge(legacy_chains[1], (; status=:completed_after_cutoff,
             finished_at_seconds=4.0, n_samples=40))
@@ -614,6 +974,7 @@ end
         @test old.results[1].posterior_position == out.results[1].posterior_position
         @test occursin("\"grace_seconds\":3.0", read(summary, String))
         @test !occursin("chain_stuck_reasons", read(summary, String))
+        @test !occursin("chain_log_masses", read(summary, String))
         # Explicit overwrite starts a new run and clears the old selection.
         n_warned, fresh = _selection_warnings(() -> completion_warmup_mcmc([Xoshiro(21), Xoshiro(22)], p;
             n_draws=40, checkpoint_dir=dir, overwrite=true))
@@ -679,8 +1040,15 @@ end
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p;
             max_admitted_divergent_fraction=value)
     end
+    # refused: a negative gap would leave out chains above the best sibling
+    # (decision 1csfn2g).
+    for value in (-1.0, NaN, true, "25")
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p;
+            max_admitted_log_mass_gap=value)
+    end
     @test :stuck_stepsize_ratio in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
     @test :max_admitted_divergent_fraction in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
+    @test :max_admitted_log_mass_gap in WarmupHMC._SAMPLER_KWARGS[:completion_warmup_mcmc]
     for value in (0, -1, typemax(Int), true, 1.5)
         @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], p; n_draws=value)
     end

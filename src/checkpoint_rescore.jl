@@ -71,10 +71,9 @@ end
 function _rescore_matrix!(audit, target, positions, gradients, field, dimension)
     size(positions) == size(gradients) && size(positions, 1) == dimension ||
         throw(DimensionMismatch("checkpoint re-scoring: $field and its positions must have matching dimension × count shapes"))
-    for column in axes(positions, 2)
-        _rescore_evaluate!(audit, target, view(positions, :, column),
-            view(gradients, :, column), field, column, dimension)
-    end
+    # The fresh log density at each column, in column order.
+    Float64[_rescore_evaluate!(audit, target, view(positions, :, column),
+        view(gradients, :, column), field, column, dimension) for column in axes(positions, 2)]
 end
 
 """
@@ -86,15 +85,17 @@ resuming on another CPU; ordinary resume keeps its existing replay behavior.
 Supply the same target, data and reparametrization structure as the original
 run. Saved controls are applied privately, leaving the caller's controls alone.
 
-Every old/new live log density and gradient component must be finite and obey
+Every old/new live log density, retained log density and gradient component
+must be finite and obey
 `abs(new - old) <= rtol * max(abs(old), 1)`. Retained positions and new log
 densities must also be finite. `rtol` must be finite and nonnegative; zero
 requires numerical equality. A mismatch throws `ArgumentError` with the
 largest scaled deviation and its field, column and coordinate (zero denotes
 the live scalar). The supplied payload is unchanged on success or failure.
 
-Refreshes `position_and_gradient`, `posterior_gradient`, `halo_gradient`, and
-occupied nonlinear leaf-sample gradients. Preserves RNGs, counters, window
+Refreshes `position_and_gradient`, `posterior_gradient`, `posterior_log_density`
+(when the payload records it), `halo_gradient`, and occupied nonlinear
+leaf-sample gradients. Preserves RNGs, counters, window
 phase, metric, dual averaging, accumulated moments and candidate losses.
 Dropped-epoch snapshots are inert and remain in their original frame. This is
 tolerance-checked continuation, not trajectory replay or proof of target
@@ -120,8 +121,20 @@ function rescore_warmup_checkpoint(lpdf, payload::NamedTuple; rtol=1e-10)
         :position_and_gradient, 0, p.dimension)
     _rescore_compare!(audit, q.ℓq, value, :position_and_gradient, 0, 0)
     current = DynamicHMC.EvaluatedLogDensity(q.q, value, q.∇ℓq)
-    _rescore_matrix!(audit, target, p.posterior_position, p.posterior_gradient,
+    values = _rescore_matrix!(audit, target, p.posterior_position, p.posterior_gradient,
         :posterior_gradient, p.dimension)
+    # A payload written before the retained log densities were recorded has none
+    # to compare or refresh; resuming it evaluates them (`_restored_log_density`).
+    retained = if haskey(p, :posterior_log_density)
+        length(p.posterior_log_density) == length(values) || throw(DimensionMismatch(
+            "checkpoint re-scoring: posterior_log_density must hold one value per retained position"))
+        for (column, (old, new)) in enumerate(zip(p.posterior_log_density, values))
+            _rescore_compare!(audit, old, new, :posterior_log_density, column, 0)
+        end
+        (; posterior_log_density=values)
+    else
+        (;)
+    end
     _rescore_matrix!(audit, target, p.halo_position, p.halo_gradient,
         :halo_gradient, p.dimension)
     recorder = get(p, :nonlinear_recorder, nothing)
@@ -141,5 +154,5 @@ function rescore_warmup_checkpoint(lpdf, payload::NamedTuple; rtol=1e-10)
         audit.n_evaluations, audit.changed_values, audit.changed_gradient_components,
         audit.max_abs, audit.max_scaled, audit.location,
         historical_state=:preserved))
-    merge(p, (; position_and_gradient=current, rescored=history))
+    merge(p, (; position_and_gradient=current, rescored=history), retained)
 end

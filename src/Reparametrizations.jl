@@ -1892,11 +1892,16 @@ end
 # the model's own (`target`) parametrization therefore applies `ir` itself.
 # Applying `inverse(ir)` here maps target -> source, i.e. the wrong direction —
 # it was a no-op only while adaptation left `source == target`.
-reparametrize!(lpdf, posterior_position) = begin
+#
+# A `log_density` vector, one recorded value per draw, moves with the draws:
+# `logdensity` adds the map's log-Jacobian to the inner problem's, so the
+# model's own log density at the mapped draw is the recorded value minus it.
+reparametrize!(lpdf, posterior_position, log_density=nothing) = begin
     ir = reparametrizer(lpdf)
     has_reparametrization(ir) || return
-    for col in eachcol(posterior_position)
+    for (j, col) in enumerate(eachcol(posterior_position))
         ljac, y = ir(col)
         col .= y
+        isnothing(log_density) || (log_density[j] -= ljac)
     end
 end

@@ -5,7 +5,8 @@
 #   WHMC_RS_ARM=topk WHMC_BENCH_OUT=<dir> julia --project=bench/research bench/research/reflection_search_sample.jl
 #
 # Knobs: WHMC_RS_ARM (a variant name, required), WHMC_RS_SEEDS (default 6),
-# WHMC_RS_DRAWS (n_draws, default 1000), WHMC_RS_TARGETS (comma-separated).
+# WHMC_RS_SEED0 (first seed, default 1), WHMC_RS_DRAWS (n_draws, default 1000),
+# WHMC_RS_TARGETS (comma-separated), WHMC_RS_TAG (output name suffix).
 #
 # The arm is installed in THIS process only: `WarmupHMC._adaptive_scale` is
 # redefined to build the arm's candidate structure, and a narrower method of
@@ -24,8 +25,9 @@ using Serialization, Random
 
 const ARM = variant(ENV["WHMC_RS_ARM"])
 const N_SEEDS = parse(Int, get(ENV, "WHMC_RS_SEEDS", "6"))
+const SEED0 = parse(Int, get(ENV, "WHMC_RS_SEED0", "1"))
 const N_DRAWS = parse(Int, get(ENV, "WHMC_RS_DRAWS", "1000"))
-const OUT = joinpath(ENV["WHMC_BENCH_OUT"], "sample_$(ARM.name).jls")
+const OUT = joinpath(ENV["WHMC_BENCH_OUT"], "sample_$(ARM.name)$(get(ENV, "WHMC_RS_TAG", "")).jls")
 const ARM_KW = ARM.kw
 
 if ARM.name != "shipped"
@@ -62,7 +64,7 @@ end
 rows = NamedTuple[]
 for name in selected_targets()
     problem = make_problem(name)
-    for seed in 1:N_SEEDS
+    for seed in SEED0:SEED0+N_SEEDS-1
         row = try
             run_one(name, problem, seed)
         catch err

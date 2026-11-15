@@ -633,8 +633,8 @@ adaptive single-chain keywords, including `callback(state, stage)`: returning
 one chain's node it stops that chain, on the node passed as `progress` (or an
 ancestor) it stops every running chain and starts no further slot.
 Callbacks may run concurrently and must be observational and thread-safe.
-`scale_centering = true` runs each chain as `adaptive_warmup_mcmc(...;
-scale_centering = true)` does: pass 1 selects the chain's centering, pass 2
+`scale_centering = true` runs each chain through both passes of
+[`adaptive_warmup_mcmc`](@ref)'s scale-dependent centering: pass 1 selects the chain's centering, pass 2
 samples it from a fresh start, and its result carries `selected_centering` and
 `first_pass`. The quorum stops a chain at a boundary of either pass; a chain
 stopped in pass 1 runs no pass 2 and is `:stopped`. The admission checks judge

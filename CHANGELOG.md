@@ -30,7 +30,8 @@ refer to that version's tree.
 
 ### Documentation
 
-- The reparametrization guide says that selection scores each pair on its own
+- `adaptive_warmup_mcmc`'s docstring ("Scale-dependent centering", rendered in
+  the reference) says that selection scores each pair on its own
   and cannot see the funnel neck a constant centering leaves at small scales,
   so adding a level's pairs is not guaranteed to sample at least as well as
   leaving the level in the model's frame. Measured on a three-level toy (3

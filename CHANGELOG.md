@@ -33,6 +33,19 @@ refer to that version's tree.
     1.005 / 1.019 and min bulk ESS 177 / 167 → 703 / 489. The natural-level and
     site-inventory blocks, which the per-pair choice had left centred in some
     chains and non-centred in others, are centred in every chain.
+  - The reporter's 12 `scale_centering` fits of those data (seeds 71–73, "first
+    only" and "none", two sampler seeds each): fits above max R-hat 1.05 went
+    from 5 to 2 and the median min bulk ESS from 110 to 231. Default cell
+    selection, 4 fits (seeds 72–73): above 1.05 from 3 to 1, min bulk ESS 21–101
+    → 113–595. One fit in 12 still had one chain held at small
+    `residual_trend.spread` / `rate_gap.spread` (max R-hat 1.53), as on 0.3.4 at
+    another seed; those blocks keep their per-pair centerings.
+  - Held-out (posteriordb eight schools, radon ×2 and seeds, plus Neal's funnel;
+    8 seeds each, `bench/research/run_reparam_benchmark.jl`): default fits are
+    identical draw for draw in 40 of 40 runs; `scale_centering` fits are
+    identical on eight schools and the funnel and within seed-to-seed spread on
+    the other three (median ESS per 1,000 gradients 26.4 / 21.6 / 6.1 →
+    23.5 / 22.9 / 8.3).
   - On the three-level toy of snag `adaptive-two-lev-635adfff` (completion, 4
     chains, 12 runs per regime) default fits are unchanged draw for draw, and
     `scale_centering` fits are within run-to-run noise.

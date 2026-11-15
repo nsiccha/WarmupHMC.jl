@@ -2393,6 +2393,19 @@ removed 90–100% of the default's divergent transitions (0.06–2.5% → 0–0.
 at 30–40% lower bulk ESS per gradient where the default already worked and up to
 twice it where it did not.
 
+Default selection scores each pair on its own: at a restarting window it picks,
+for every pair, the constant centering whose position-gradient correlation on
+the retained states is lowest. That criterion averages over the states it has
+and does not see the neck a constant `c > 0` keeps where the pair's scale is
+small. So adding a level's pairs is not guaranteed to sample at least as well as
+leaving that level in the model's frame, although the model's frame is one of
+the candidates. On a three-level toy (3 groups of 3 units, 72 four-chain runs;
+snag `adaptive-two-lev-635adfff`), adding the group level's pairs to the unit
+level's raised the runs with max R-hat above 1.02 from 2 to 9, in 5 of them with
+one chain held at small group scales, and multiplied the divergent transitions
+by 2.5 to 4. With `scale_centering = true` the same runs had 1 such run and 95%
+fewer divergent transitions than without it.
+
 Requirements and limits:
 
 * `lpdf` is a [`ReparametrizedProblem`](@ref) over an

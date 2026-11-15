@@ -258,22 +258,6 @@ location and log-scale their maps read there. A pair with equal centerings
 reads neither, so a location or log-scale that is not finite at the current
 point shows only once selection moves its pair.
 
-Selection scores each pair on its own: at a restarting window it picks, for
-every pair, the constant centering whose position-gradient correlation on the
-retained states is lowest. That criterion averages over the states it has; it
-does not see that a constant `c > 0` keeps a funnel neck where the pair's scale
-is small. So adding a level's pairs is not guaranteed to sample at least as well
-as leaving that level in the model's frame, although the model's frame is one of
-the candidates. A level with few groups, whose scale ranges over orders of
-magnitude in the posterior, is where this happens: on a three-level toy (3
-groups of 3 units, 72 four-chain runs), adding the group level's pairs to the
-unit level's raised the poorly mixing runs (max R-hat above 1.02) from 2 to 9,
-in 5 of them with one chain held at small group scales, and multiplied the
-divergences by 2.5 to 4. For such a level pass
-`scale_centering = true` to `adaptive_warmup_mcmc` or `completion_warmup_mcmc`:
-its centering then follows the sampled scale (`ScaleCentered`), at the cost of
-a second warm-up.
-
 The default candidate rule can be replaced with a `CandidateScoringPlan` or a
 `WindowSelectionPlan`. These advanced callbacks have different evidence and
 checkpoint contracts; their complete interfaces belong in the

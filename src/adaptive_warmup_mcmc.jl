@@ -2393,18 +2393,35 @@ removed 90–100% of the default's divergent transitions (0.06–2.5% → 0–0.
 at 30–40% lower bulk ESS per gradient where the default already worked and up to
 twice it where it did not.
 
-Default selection scores each pair on its own: at a restarting window it picks,
-for every pair, the constant centering whose position-gradient correlation on
-the retained states is lowest. That criterion averages over the states it has
-and does not see the neck a constant `c > 0` keeps where the pair's scale is
-small. So adding a level's pairs is not guaranteed to sample at least as well as
-leaving that level in the model's frame, although the model's frame is one of
-the candidates. On a three-level toy (3 groups of 3 units, 72 four-chain runs;
-snag `adaptive-two-lev-635adfff`), adding the group level's pairs to the unit
-level's raised the runs with max R-hat above 1.02 from 2 to 9, in 5 of them with
-one chain held at small group scales, and multiplied the divergent transitions
-by 2.5 to 4. With `scale_centering = true` the same runs had 1 such run and 95%
-fewer divergent transitions than without it.
+Default selection first scores each pair on its own: at a restarting window it
+picks, for every pair, the constant centering whose position-gradient
+correlation on the retained states is lowest. That criterion averages over the
+states it has and does not see the neck a constant `c > 0` keeps where the
+pair's scale is small. So adding a level's pairs is not guaranteed to sample at
+least as well as leaving that level in the model's frame, although the model's
+frame is one of the candidates. On a three-level toy (3 groups of 3 units, 72
+four-chain runs; snag `adaptive-two-lev-635adfff`), adding the group level's
+pairs to the unit level's raised the runs with max R-hat above 1.02 from 2 to 9,
+in 5 of them with one chain held at small group scales, and multiplied the
+divergent transitions by 2.5 to 4. With `scale_centering = true` the same runs
+had 1 such run and 95% fewer divergent transitions than without it.
+
+Nor does a pair's own correlation see the stiffness its frame puts on the
+log-scale and location coordinates it reads. So every block of pairs reading one
+log-scale is then checked against the block-wide candidates (each candidate
+given to all its pairs; under `scale_centering = true`, the block's midpoints)
+by the loss the diagonal metric fits: the mean over all coordinates of
+std(position) · std(gradient), ≈ 1 where a frame fits, on the retained states
+moved into the trial frame. A block-wide candidate replaces the per-pair choice
+only when it lowers that loss by 10%. Blocks are decided in the order of their
+first pair. At most 32 blocks (the largest) and 500 retained states take part,
+one transport of the states per candidate and block, so the cost is linear in
+the dimension. A [`CandidateScoringPlan`](@ref) or a
+[`WindowSelectionPlan`](@ref) keeps its own choice. On a joint model whose
+sites' natural level and Cs-137 inventory are coupled through the data (snag
+`warmuphmc-0-3-4-aeb3d521`), the per-pair choices differed between chains and
+left the trajectories at the tree-depth limit; the block check centres those two
+blocks in every chain, and the chains mix several times faster.
 
 Requirements and limits:
 

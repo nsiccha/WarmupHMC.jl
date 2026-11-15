@@ -1441,7 +1441,11 @@ L = w₁ * (-mean(Δlog|J|) + log(var(position)) / 2) +
     (1 - w₁) * cor(position, gradient),       w₁ = 0
 ```
 
-so the selected candidate minimizes weighted position-gradient correlation.
+so each pair's choice minimizes weighted position-gradient correlation. The
+sampler then checks every block of pairs reading one log-scale against the
+block-wide candidates by the whole-frame metric-fit loss (see
+[`adaptive_warmup_mcmc`](@ref), "Scale-dependent centering"); these rows are the
+per-pair losses only.
 Writing `W = sum(wᵢ)`, `q̄ = sum(wᵢqᵢ) / W`, and
 `ḡ = sum(wᵢgᵢ) / W`, that correlation is exactly
 

@@ -5,6 +5,38 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.5
+
+### Changed
+
+- Adaptive centering checks the per-pair choice block-wise (snag
+  `warmuphmc-0-3-4-aeb3d521`). Per-pair selection scores each pair by its own
+  coordinate's position-gradient correlation, which cannot see the stiffness a
+  block's frame puts on the log-scale and location coordinates the block reads.
+  At every restarting window, after the per-pair choice, each block of pairs
+  reading one callable log-scale is now checked against the block-wide
+  candidates: each of the eleven constants given to all its pairs, or, under
+  `scale_centering = true`, each of the block's `ScaleCentered` midpoints. They
+  are compared by the loss the diagonal metric fits, the mean over all
+  coordinates of std(position) · std(gradient), on the retained states moved
+  into the trial frame. A block-wide candidate replaces the per-pair choice
+  only when it lowers that loss by 10%. At most 32 blocks (the largest) and 500
+  retained states take part, so the cost stays linear in the dimension; it uses
+  map gradients only, no target evaluations. `CandidateScoringPlan` and
+  `WindowSelectionPlan` problems keep their own choice, and
+  `candidate_scoring_losses` still reports the per-pair losses. Default fits
+  can therefore choose a different centering than 0.3.4 did; a fit whose blocks
+  the check leaves alone is unchanged draw for draw.
+  - Measured on ODLProject's AP 2.5 sparse thinning fit (89 coordinates, seed
+    72, "none"; `scale_centering = true` through completion, 4 chains × 1,000
+    draws, gordito): at sampler seeds 1072 / 72, max R-hat 1.023 / 1.036 →
+    1.005 / 1.019 and min bulk ESS 177 / 167 → 703 / 489. The natural-level and
+    site-inventory blocks, which the per-pair choice had left centred in some
+    chains and non-centred in others, are centred in every chain.
+  - On the three-level toy of snag `adaptive-two-lev-635adfff` (completion, 4
+    chains, 12 runs per regime) default fits are unchanged draw for draw, and
+    `scale_centering` fits are within run-to-run noise.
+
 ## 0.3.4
 
 ### Added

@@ -278,7 +278,7 @@ end
 # application of the normal operator per step; the start vector is fixed, so the
 # result draws no random number.
 function _largest_singular_value(normal!, d; maxiter=1000, rtol=1e-8)
-    v = normalize!(collect(range(1.0, 2.0; length=d)))
+    v = normalize!([1 + (i - 1) / d for i in 1:d])
     w = similar(v)
     λ = 0.0
     for _ in 1:maxiter

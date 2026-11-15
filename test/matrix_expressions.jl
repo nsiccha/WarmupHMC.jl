@@ -441,6 +441,8 @@ end
     end
     # An orthogonal factor is the same metric: B = A·Q reads 1.
     @test WarmupHMC._relative_metric_condition(D1, MF(D1, R)) ≈ 1 atol = 1e-8
+    # A one-dimensional target: any change of one scale is the same metric shape.
+    @test WarmupHMC._relative_metric_condition(Diagonal([2.0]), Diagonal([3.0])) ≈ 1
     # The same scale reads exactly 1, and nothing d × d is built: the
     # workspace is a few d-vectors.
     @test WarmupHMC._relative_metric_condition(S, S) ≈ 1 atol = 1e-10

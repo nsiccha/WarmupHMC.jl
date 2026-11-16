@@ -32,6 +32,30 @@ LogDensityProblems.logdensity_and_gradient(p::Collapsed, x) = abs(x[1]) > p.cap 
 LogDensityProblems.logdensity(p::Collapsed, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
 ℓ(target, x) = LogDensityProblems.logdensity(target, x)
 
+# Near 0 about a standard normal; the curvature along each coordinate is cosh(a x),
+# 5e12 at |x| = 2 for a = 15, so from a random start in ±2 the first L-BFGS steps
+# measure curvatures up to 1e12 times the bulk's.
+struct SteepTails
+    d::Int
+    a::Float64
+end
+LogDensityProblems.capabilities(::Type{SteepTails}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::SteepTails) = p.d
+LogDensityProblems.logdensity_and_gradient(p::SteepTails, x) =
+    (-sum(xi -> (cosh(p.a * xi) - 1) / p.a^2, x), -sinh.(p.a .* x) ./ p.a)
+LogDensityProblems.logdensity(p::SteepTails, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+# The pre-fix criterion: every pair up to the fit's iterate, not only the fit's own.
+function drops_curvature_any_pair(result)
+    P, G, Σ = result.optim_trace.points, result.optim_trace.gradients, result.fit_distribution.Σ
+    any(1:result.fit_iteration) do l
+        s, y = P[l + 1] - P[l], G[l] - G[l + 1]
+        dot(s, y) > 0 && dot(y, Σ * y) > WarmupHMC._DROPPED_CURVATURE_RATIO * dot(s, y)
+    end
+end
+rejected_pairs(result) = (P = result.optim_trace.points; G = result.optim_trace.gradients;
+    [l for l in 1:length(P) - 1 if !(dot(P[l + 1] - P[l], G[l] - G[l + 1]) >
+        WarmupHMC._PATHFINDER_CURVATURE_EPS * sum(abs2, G[l] - G[l + 1]))])
+
 stiff = Collapsed([1e-12, 0.5], Inf)            # the reporter's target
 # The same, overflowing beyond |x₁| > 0.01: past L-BFGS's first trial step from
 # `init` (about 3e-3; a cap inside it fails that line search, and Pathfinder
@@ -102,6 +126,66 @@ try
             @test start.position == result.draws[:, 1]
             @test start.squared_scale isa WarmupHMC.Pathfinder.WoodburyPDMat
             @test WarmupHMC._xoshiro_words(rng) == WarmupHMC._xoshiro_words(reference)
+        end
+    end
+
+    @testset "only the pairs the fit is built from judge it" begin
+        # Snag pathfinder-start-6abaede3: the first L-BFGS steps out of steep tails
+        # measure the tails' curvature, far above the bulk's. Checked against a fit
+        # made in the bulk 17-25 iterates later, they declared a sound fit unusable,
+        # and the recovery then started the chain in the tails. Only the fit's own
+        # L-BFGS history counts.
+        steep = SteepTails(10, 15.0)
+        old_flags = 0
+        for seed in 1:10
+            start_point = rand(Xoshiro(100 + seed), 10) .* 4 .- 2
+            reference = Xoshiro(seed)
+            result = quietly(() -> WarmupHMC.mypathfinder(steep; rng=reference, init=copy(start_point), maxiters=100))
+            pairs = WarmupHMC._fit_history_pairs(result)
+            @test last(pairs) == result.fit_iteration
+            accepted = count(l -> l ∉ rejected_pairs(result), pairs)
+            @test accepted == min(WarmupHMC.Pathfinder.DEFAULT_HISTORY_LENGTH,
+                count(l -> l ∉ rejected_pairs(result), 1:result.fit_iteration))
+            old_flags += drops_curvature_any_pair(result)
+            @test !WarmupHMC._fit_drops_curvature(result)
+            # The start is Pathfinder's own draw with its fit, and no further random number is drawn.
+            rng = Xoshiro(seed)
+            start = quietly(() -> WarmupHMC.initialize_mcmc(steep, copy(start_point); rng, progress=nothing))
+            @test start.position == result.draws[:, 1]
+            @test ℓ(steep, start.position) > -10
+            @test start.squared_scale isa WarmupHMC.Pathfinder.WoodburyPDMat
+            @test WarmupHMC._xoshiro_words(rng) == WarmupHMC._xoshiro_words(reference)
+        end
+        # Positive control: every pair up to the fit's iterate, as before the fix,
+        # flags most of these fits. Measured 9 of 10.
+        @test old_flags >= 5
+
+        # The recovery's diagonal is taken from the same stretch. Over the whole
+        # trajectory the tails' gradients (3e8 to 3e11 at these starts) shrink it to
+        # 2e-5 here; over the fit's history it stays within 0.03-1 (measured).
+        result = quietly(() -> WarmupHMC.mypathfinder(steep; rng=Xoshiro(1),
+            init=rand(Xoshiro(101), 10) .* 4 .- 2, maxiters=100))
+        @test first(WarmupHMC._fit_history_pairs(result)) > 1
+        @test drops_curvature_any_pair(result)
+        scale = WarmupHMC._trajectory_scale(result)
+        @test all(s -> 0.01 < s < 10, scale)
+        P, G = result.optim_trace.points, result.optim_trace.gradients
+        whole = [(var(p[i] for p in P) / var(g[i] for g in G))^(1 / 4) for i in 1:10]
+        @test minimum(whole) < 1e-4
+
+        # A caller may supply a PathfinderResult with a nondefault fit history.
+        # Its covariance records that history independently of the optimizer.
+        for history_length in (2, 10)
+            result = quietly(() -> WarmupHMC.Pathfinder.pathfinder(
+                WarmupHMC._pathfinder_objective(steep, WarmupHMC.Pathfinder.SciMLBase.NoAD());
+                dim=10, input=steep, rng=Xoshiro(1),
+                init=rand(Xoshiro(101), 10) .* 4 .- 2,
+                history_length, maxiters=100, ndraws=1, ndraws_elbo=1, ntries=1))
+            span = WarmupHMC._fit_history_pairs(result)
+            @test count(l -> l ∉ rejected_pairs(result), span) == history_length
+            @test !WarmupHMC._fit_drops_curvature(result)
+            start = quietly(() -> WarmupHMC.initialize_mcmc(steep, result; progress=nothing))
+            @test start.position == result.draws[:, 1]
         end
     end
 

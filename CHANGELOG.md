@@ -5,6 +5,17 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.7
+
+### Fixed
+
+- Pathfinder initialization checks curvature and estimates its recovery scale
+  over the selected fit's L-BFGS history, including rejected pairs in that
+  span. Earlier steps in steep tails could incorrectly mark a usable fit as
+  unusable and shrink the recovery scale enough to stall warm-up. Fits whose
+  entire history rejects collapsed curvature still trigger recovery. The
+  check respects the history length of caller-supplied Pathfinder results.
+
 ## 0.3.6
 
 ### Added

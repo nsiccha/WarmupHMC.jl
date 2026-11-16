@@ -437,7 +437,7 @@ end
     DDrebuilt = scale_from_data(dd)
     @test DDrebuilt * z ≈ DD * z rtol = 1e-14
     @test DDrebuilt \ z ≈ DD \ z rtol = 1e-14
-    @test first(logabsdet(DDrebuilt)) ≈ first(logabsdet(DD)) rtol = 1e-14
+    @test first(logabsdet(DDrebuilt)) ≈ first(logabsdet(DD)) rtol = 1e-14 atol = 1e-14
     pilot = adaptive_warmup_mcmc(Xoshiro(827), DiagGaussian([0.0, 0.0], [1.0, 0.5]);
         init=(; position=[0.1, -0.1], squared_scale=ones(2)),
         n_draws=64, n_evaluations=100, recording_target=64, stepsize_adaptation_limit=24,

@@ -58,7 +58,7 @@ module WarmupHMCEnzymeExt
 using WarmupHMC, Enzyme
 using WarmupHMC: IndexedReparametrization, reparam, _reparam_framed, _run_start,
     _is_identity, _first_moved, _share_pattern, _patterned_frames,
-    _chain_frames, _chain_step, _chain_unstep, _each_chain
+    _chain_frames, _chain_walk!, _chain_unwalk!, _each_chain
 using DifferentiationInterface: AutoEnzyme
 
 # One pair's share of `_reparam_objective`: its log-Jacobian plus `seed` times
@@ -178,18 +178,9 @@ end
 # --- Markov chains -----------------------------------------------------------------
 
 # One chain's share of `_reparam_objective`: its log-Jacobian plus each state's
-# seed times its model value.
-_chain_objective(chain, seed, x) = begin
-    frames = _chain_frames(chain, x)
-    total = zero(eltype(x))
-    previous = zero(eltype(x))
-    for (t, idx) in enumerate(chain.states)
-        log_step, yt = _chain_step(chain.phi[t], chain.c[t], frames, t, previous, x[idx])
-        total += log_step + seed[idx] * yt
-        previous = yt
-    end
-    total
-end
+# seed times its model value, by the map's own walk.
+_chain_objective(chain, seed, x) =
+    _chain_walk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, x, _chain_frames(chain, x))
 
 # Accumulate into `gradient` the chains' terms of the gradient of
 # `ljac(x) + dot(seed, y(x))`, consuming `seed` at their states.
@@ -211,18 +202,10 @@ function _accumulate_chain!(gradient, seed, mode, chain, x)
 end
 
 # One chain's share of the inverse: its log-Jacobian plus each state's seed times
-# its recovered source value. It reads only the model point `m`.
-_chain_inverse_objective(chain, seed, m) = begin
-    frames = _chain_frames(chain, m)
-    states = chain.states
-    total = zero(eltype(m))
-    for (t, idx) in enumerate(states)
-        previous = t == 1 ? zero(eltype(m)) : m[states[t - 1]]
-        ljac, st = _chain_unstep(chain.phi[t], chain.c[t], frames, t, previous, m[idx])
-        total += ljac + seed[idx] * st
-    end
-    total
-end
+# its recovered source value, by the inverse's own walk. It reads only the model
+# point `m`.
+_chain_inverse_objective(chain, seed, m) =
+    _chain_unwalk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, m, _chain_frames(chain, m))
 
 # The inverse reads the chains' frames and previous states off the model point
 # `m`, as the pairs' runs, so their reverse needs no order with the pairs': each

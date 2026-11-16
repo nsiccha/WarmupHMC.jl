@@ -494,7 +494,12 @@ end
 #   `_DROPPED_CURVATURE_RATIO` the fit is unusable. This check needs no draw, so
 #   it also covers a fit so wide that none of its draws is finite (the
 #   log-density overflows), where the fit's scale would otherwise stand in at an
-#   L-BFGS iterate.
+#   L-BFGS iterate. Only the pairs the fit is built from count: those its
+#   L-BFGS history spans (`_fit_history_pairs`), including rejected pairs in
+#   that span. Earlier pairs can measure much higher curvature in the tails
+#   than at the selected fit. Comparing that fit against them falsely rejects
+#   it and sends a usable start through recovery. When all pairs were rejected,
+#   the whole trajectory still counts, preserving the collapsed-scale check.
 # * The draw. Between the iterate the fit was made at, x, and a draw θ, the fit
 #   q predicts the target's log density to change by `log q(θ) - log q(x)`; the
 #   target actually changes by `ℓ(θ) - ℓ(x)` (both values are already known: ℓ(θ)
@@ -511,22 +516,55 @@ end
 #   iterate.
 
 """
-Largest `y'Σy / s'y` over the L-BFGS curvature pairs up to the fit's iterate at
+Largest `y'Σy / s'y` over the L-BFGS curvature pairs the fit is built from at
 which Pathfinder's fit still counts as usable (`_fit_drops_curvature`).
 """
 const _DROPPED_CURVATURE_RATIO = 1e8
 
 """
+The `ϵ` of `Pathfinder.lbfgs_inverse_hessians`: Pathfinder accepts an L-BFGS
+curvature pair `(s, y)` into its inverse-Hessian history only when
+`s'y > ϵ |y|²`. `mypathfinder` leaves it at Pathfinder's default.
+"""
+const _PATHFINDER_CURVATURE_EPS = 1e-12
+
+"""
+    _fit_history_pairs(result)
+
+The span of curvature pairs in the selected fit's L-BFGS history, including
+rejected pairs within that span. Pair `l` joins `optim_trace.points[l]` and
+`points[l + 1]`. Pathfinder's Woodbury factor has two columns per retained
+pair, so the span also respects a caller-supplied fit's history length.
+If no pair was accepted, use every pair up to the fit's iterate.
+"""
+function _fit_history_pairs(result)
+    points, gradients = result.optim_trace.points, result.optim_trace.gradients
+    k = result.fit_iteration
+    history_length = size(result.fit_distribution.Σ.B, 2) ÷ 2
+    iszero(history_length) && return 1:k
+    first_pair, accepted = k + 1, 0
+    for l in k:-1:1
+        first_pair = l
+        s = points[l + 1] - points[l]
+        y = gradients[l] - gradients[l + 1]
+        dot(s, y) > _PATHFINDER_CURVATURE_EPS * sum(abs2, y) && (accepted += 1)
+        accepted == history_length && break
+    end
+    first_pair:k
+end
+
+"""
     _fit_drops_curvature(result)
 
-Whether Pathfinder's fit is far wider than the curvature its own L-BFGS
-trajectory measured: some pair `(s, y)` up to the fit's iterate with `s'y > 0`
-has `y'Σy > _DROPPED_CURVATURE_RATIO * s'y`, with `Σ` the fit's covariance.
+Whether Pathfinder's fit is far wider than a curvature its own L-BFGS history
+measured: some pair `(s, y)` the fit is built from (`_fit_history_pairs`) with
+`s'y > 0` has `y'Σy > _DROPPED_CURVATURE_RATIO * s'y`, with `Σ` the fit's
+covariance.
 """
 function _fit_drops_curvature(result)
     points, gradients = result.optim_trace.points, result.optim_trace.gradients
     Σ = result.fit_distribution.Σ
-    for l in 1:result.fit_iteration
+    for l in _fit_history_pairs(result)
         s = points[l + 1] - points[l]
         y = gradients[l] - gradients[l + 1]
         sy = dot(s, y)
@@ -610,8 +648,12 @@ end
 # `ContinuousNUTSState` adapts with) is exact for a Gaussian along every
 # coordinate the optimizer moved: on the collapsed-variance targets above it
 # gave 1e-12 for a 1e-12 scale from a single L-BFGS step. A coordinate it never
-# moved gets Nutpie's start-point estimate `1/sqrt|∂ℓ/∂x|` at the trajectory's
-# first point, and 1 where that gradient component is zero or not finite.
+# moved gets Nutpie's start-point estimate `1/sqrt|∂ℓ/∂x|` at the first iterate,
+# and 1 where that gradient component is zero or not finite. Use the same
+# history span as the curvature check: extreme gradients early in the path
+# otherwise shrink the recovery scale even after the optimizer reaches the
+# bulk. The collapsed-scale trajectories above are one step long, so their
+# diagonal is unchanged.
 # Pathfinder then runs again from the same start, on the target in coordinates
 # divided by that diagonal, where its scales are of order one; its fit is
 # mapped back (a low-rank-plus-diagonal covariance stays one), and its draw,
@@ -653,13 +695,16 @@ end
 """
     _trajectory_scale(result)
 
-A diagonal scale from Pathfinder's L-BFGS trajectory: per coordinate the Nutpie
-ratio `(var(position) / var(gradient))^(1/4)` over its iterates where that is
-finite and positive, else `1/sqrt|g|` with `g` the gradient at the
-trajectory's first point, else 1.
+A diagonal scale from the stretch of Pathfinder's L-BFGS trajectory its fit is
+built from (the iterates `_fit_history_pairs` joins): per coordinate the Nutpie
+ratio `(var(position) / var(gradient))^(1/4)` over those iterates where that is
+finite and positive, else `1/sqrt|g|` with `g` the gradient at the first of
+them, else 1.
 """
 function _trajectory_scale(result)
-    points, gradients = result.optim_trace.points, result.optim_trace.gradients
+    pairs = _fit_history_pairs(result)
+    span = first(pairs):(last(pairs) + 1)
+    points, gradients = result.optim_trace.points[span], result.optim_trace.gradients[span]
     first_gradient = first(gradients)
     map(eachindex(first_gradient)) do i
         s = (var(p[i] for p in points) / var(g[i] for g in gradients))^(1 / 4)

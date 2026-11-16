@@ -4,6 +4,7 @@
 @testmodule MarkovChainFixtures begin
 using LogDensityProblems, Random, LinearAlgebra
 export WalkModel, walk_model, walk_posterior, Smooth
+export AnchoredWalk, anchored_walk, anchored_posterior, condition_number
 
 # The reporter's walk: states w_1..w_T with w_t ~ N(w_{t-1}, q) and w_0 = 0,
 # observed as y_t ~ N(w_t, sigma) outside the first `head` and last `tail`
@@ -62,6 +63,78 @@ function LogDensityProblems.logdensity_and_gradient(m::Smooth, y)
     neighbours = [0.0; y[1:end-1]] .+ [y[2:end]; 0.0]
     (-sum(abs2, y) / 2 - 0.05sum(y .^ 4) + 0.2sum(y[1:end-1] .* y[2:end]),
      -y .- 0.2 .* y .^ 3 .+ 0.2 .* neighbours)
+end
+
+# Snag markovchain-on-a-ed98880f: the walk w_t ~ N(w_{t-1}, q), w_0 = 0, read
+# only relative to its state `anchor`, as y_t ~ N(base + w_t - w_anchor, sigma)
+# at the steps `observed` (the anchor's own reading carries nothing). With
+# `offset`, `base` is coordinate T + 1 with prior N(0, 2); without, it is 0. With
+# `sampled_q`, log q is the last coordinate, prior N(log 0.6, 1).
+struct AnchoredWalk
+    y::Vector{Float64}
+    anchor::Int
+    observed::Vector{Int}
+    log_q::Float64
+    sigma::Float64
+    offset::Bool
+    sampled_q::Bool
+end
+function anchored_walk(T; anchor, observed, q=0.6, sigma=0.5, seed=1, offset=true,
+                       sampled_q=false)
+    rng = Xoshiro(seed)
+    w = q .* cumsum(randn(rng, T))
+    y = (offset ? 1.0 : 0.0) .+ w .- w[anchor] .+ sigma .* randn(rng, T)
+    AnchoredWalk(y, anchor, setdiff(observed, anchor), log(q), sigma, offset, sampled_q)
+end
+LogDensityProblems.dimension(m::AnchoredWalk) = length(m.y) + m.offset + m.sampled_q
+LogDensityProblems.capabilities(::Type{AnchoredWalk}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.logdensity(m::AnchoredWalk, x) =
+    first(LogDensityProblems.logdensity_and_gradient(m, x))
+function LogDensityProblems.logdensity_and_gradient(m::AnchoredWalk, x)
+    T = length(m.y)
+    w = x[1:T]
+    base = m.offset ? x[T+1] : 0.0
+    lq = m.sampled_q ? x[end] : m.log_q
+    q = exp(lq)
+    step = diff([0.0; w]) ./ q
+    residual = (m.y[m.observed] .- base .- w[m.observed] .+ w[m.anchor]) ./ m.sigma
+    lp = -sum(abs2, step) / 2 - T * lq - sum(abs2, residual) / 2 - base^2 / 8
+    g = -step ./ q
+    g[1:T-1] .+= step[2:T] ./ q
+    g[m.observed] .+= residual ./ m.sigma
+    g[m.anchor] -= sum(residual) / m.sigma
+    m.offset && (g = [g; sum(residual) / m.sigma - base / 4])
+    m.sampled_q || return lp, g
+    lp - (lq - log(0.6))^2 / 2, [g; sum(abs2, step) - T - (lq - log(0.6))]
+end
+
+# The exact Gaussian posterior of a fixed-q anchored walk (dense, small T only):
+# mean and precision of (w, base).
+function anchored_posterior(m::AnchoredWalk)
+    T = length(m.y)
+    d = T + m.offset
+    D = Matrix(Bidiagonal(ones(T), -ones(T - 1), :L))
+    Q = zeros(d, d)
+    Q[1:T, 1:T] .= D' * D ./ exp(2m.log_q)
+    m.offset && (Q[d, d] += 1 / 4)
+    b = zeros(d)
+    for t in m.observed
+        e = zeros(d)
+        e[t] += 1
+        e[m.anchor] -= 1
+        m.offset && (e[d] += 1)
+        Q .+= e * e' ./ m.sigma^2
+        b .+= e .* m.y[t] ./ m.sigma^2
+    end
+    Symmetric(Q) \ b, Symmetric(Q)
+end
+
+# The condition number of a covariance's correlation matrix: roughly the squared
+# number of leapfrog steps a draw needs under a well-fitted diagonal metric.
+function condition_number(S)
+    s = sqrt.(diag(S))
+    ev = eigvals(Symmetric(S ./ (s * s')))
+    maximum(ev) / minimum(ev)
 end
 end
 
@@ -416,4 +489,253 @@ end
     rescored = W.rescore_warmup_checkpoint(problem(), payload)
     @test last(rescored.rescored).max_scaled <= 1e-10
     @test W.back_transform(payload, problem(), payload.posterior_position) ≈ result.posterior_position
+end
+
+@testitem "MarkovChain: a reference state — map, inverse, gradient, transport and controls" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
+    using Test, WarmupHMC, Random, LinearAlgebra
+    using LogDensityProblems
+    using DifferentiationInterface, Enzyme
+    const LDP = LogDensityProblems
+    const W = WarmupHMC
+
+    # Snag markovchain-on-a-ed98880f. Coordinates: a walk with drift and a reference
+    # in its middle (1:8, reference 4), read at a level that varies per state
+    # (base + a * t, base 20 and a 21), an AR(1) series without a reference
+    # (9:14), log q (15), atanh rho (16), mu (17), log s (18), one pair (19).
+    rho(x) = tanh(x[16])
+    level(x) = [x[20] + x[21] * t for t in 1:8]
+    walk(; reference=4, kw...) = MarkovChain(1:8; log_scale=x -> x[15], drift=0.3,
+        coefficient=x -> fill(0.9, 8), initial=0.2, reference, level, kw...)
+    ar1(; kw...) = MarkovChain(9:14; coefficient=rho, drift=x -> (1 - rho(x)) * x[17],
+        initial=x -> x[17], log_scale=x -> [x[18] - log1p(-rho(x)^2) / 2; fill(x[18], 5)], kw...)
+    pairs(c=0.4) = [19 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(c),
+                                             x -> x[17], x -> x[18])]
+    build(; kw...) = IndexedReparametrization(pairs(); chains=(walk(; kw...), ar1()))
+    moved_psi(seed) = (p = rand(Xoshiro(seed), 8); p[4] = 0; p)
+    moved(seed) = IndexedReparametrization(pairs(); chains=(
+        walk(; phi=rand(Xoshiro(seed), 8), c=rand(Xoshiro(seed + 1), 8), psi=moved_psi(seed + 2)),
+        ar1(; phi=2 .* rand(Xoshiro(seed + 3), 6) .- 0.5, c=rand(Xoshiro(seed + 4), 6))))
+    x = 0.5 .* randn(Xoshiro(4), 21)
+
+    @testset "construction" begin
+        @test_throws ArgumentError MarkovChain(1:3; log_scale=0.0, level=1.0)
+        @test_throws ArgumentError MarkovChain(1:3; log_scale=0.0, psi=0.5)
+        for r in (0, 4, true, 2.0)
+            @test_throws ArgumentError MarkovChain(1:3; log_scale=0.0, reference=r)
+        end
+        @test_throws ArgumentError MarkovChain(1:3; log_scale=0.0, reference=2, level=[1.0])
+        @test_throws ArgumentError MarkovChain(1:3; log_scale=0.0, reference=2, psi=[0.1, 0.2, 0.3])
+        @test_throws DimensionMismatch MarkovChain(1:3; log_scale=0.0, reference=2, psi=[0.0, 0.0])
+        chain = MarkovChain(1:3; log_scale=0.0, reference=2)
+        @test chain.reference == 2 && chain.level == 0.0 && chain.psi == zeros(3)
+        @test MarkovChain(1:3; log_scale=0.0).reference == 0
+    end
+
+    @testset "the map and its inverse" begin
+        ir = moved(10)
+        ljac, y = ir(x)
+        back_ljac, back = W._inverse_with_logabsdet_jacobian(ir, y)
+        @test back ≈ x atol = 1e-12
+        @test ljac + back_ljac ≈ 0 atol = 1e-12
+        a = ir.chains[1]
+        e(t, l) = exp((1 - a.c[t]) * l)
+        R(t) = y[4] - level(x)[t]
+        # The reference is located at `initial`, the states after it at the one
+        # before, the states before it at the one after, through that one's
+        # transition, with that one's scale.
+        @test y[4] ≈ a.phi[4] * 0.2 + x[4] * e(4, x[15])
+        @test y[6] ≈ a.phi[6] * (0.9 * y[5] + 0.3) + a.psi[6] * R(6) + x[6] * e(6, x[15])
+        @test y[2] ≈ a.phi[2] * (0.9 * y[3] + 0.3) + a.psi[2] * R(2) + x[2] * e(2, x[15])
+        @test y[1] ≈ a.phi[1] * (0.9 * y[2] + 0.3) + a.psi[1] * R(1) + x[1] * e(1, x[15])
+        # A per-state log-scale makes the backward states take their next state's.
+        perstate = IndexedReparametrization([]; chains=[MarkovChain(1:8; reference=4,
+            log_scale=x -> x[13:20], phi=0.5, c=0.3, psi=[fill(0.2, 3); 0.0; fill(0.2, 4)])])
+        ljac2, y2 = perstate(x)
+        # The backward states 1:3 take the scales of 2:4, the reference and 5:8 their own.
+        @test ljac2 ≈ 0.7 * (sum(x[14:16]) + sum(x[16:20]))
+        @test y2[3] ≈ 0.5 * y2[4] + 0.2 * y2[4] + x[3] * exp(0.7 * x[16])
+        @test last(W._inverse_with_logabsdet_jacobian(perstate, y2)) ≈ x atol = 1e-12
+        # With identity controls a chain with a reference changes nothing, bit for bit.
+        @test build()(x) == IndexedReparametrization(pairs())(x)
+    end
+
+    @testset "the gradient" begin
+        problem = Smooth(21)
+        for ir in (moved(20), moved(30), build())
+            rp = ReparametrizedProblem(ir, problem, AutoEnzyme())
+            lp, g = LDP.logdensity_and_gradient(rp, x)
+            @test lp ≈ LDP.logdensity(rp, x)
+            @test g ≈ fd_gradient(z -> LDP.logdensity(rp, z), x) rtol = 1e-6
+            y = last(ir(x))
+            g_y = last(LDP.logdensity_and_gradient(problem, y))
+            generic = invoke(W._reparam_gradient, Tuple{Any,Any,Any,Any,Any},
+                             AutoEnzyme(), ir, x, y, g_y)
+            @test W._reparam_gradient(AutoEnzyme(), ir, x, y, g_y) ≈ generic atol = 1e-12
+        end
+    end
+
+    @testset "the window-end transport" begin
+        problem = Smooth(21)
+        old, new = moved(40), moved(50)
+        g_old = last(LDP.logdensity_and_gradient(ReparametrizedProblem(old, problem, AutoEnzyme()), x))
+        x_new, model = similar(x), similar(x)
+        W._transport_position!(x_new, model, new, old, x)
+        @test last(new(x_new)) ≈ last(old(x)) atol = 1e-12
+        enzyme = W._transport_gradient_method(AutoEnzyme(), new, old, copy(x_new), copy(g_old))
+        generic = invoke(W._transport_gradient_method, Tuple{Any,Any,Any,Any,Any},
+                         AutoEnzyme(), new, old, copy(x_new), copy(g_old))
+        g1, g2 = similar(x), similar(x)
+        enzyme(g1, copy(x_new), copy(g_old))
+        generic(g2, copy(x_new), copy(g_old))
+        @test g1 ≈ g2 atol = 1e-10
+        direct = last(LDP.logdensity_and_gradient(ReparametrizedProblem(new, problem, AutoEnzyme()), x_new))
+        @test g1 ≈ direct atol = 1e-10
+        # The selection's own move of a column agrees with the transport.
+        positions, gradients = reshape(copy(x), :, 1), reshape(copy(g_old), :, 1)
+        chain0 = old.chains[1]
+        W._move_chain_columns!(new.chains[1], chain0.phi, chain0.psi, chain0.c, positions, gradients)
+        @test positions[1:8] ≈ x_new[1:8] atol = 1e-12
+    end
+
+    @testset "controls, snapshots and restore" begin
+        ir = moved(60)
+        controls = W.reparam_controls(ir)
+        @test keys(controls.chains[1]) == (:reference, :phi, :c, :psi)
+        @test keys(controls.chains[2]) == (:phi, :c)
+        @test controls.chains[1].psi == ir.chains[1].psi && controls.chains[1].reference == 4
+        snap = W.snapshot_reparametrization(ir)
+        snap.chains[1].psi .= 0.5
+        @test ir.chains[1].psi != snap.chains[1].psi
+        fresh = build()
+        W.restore_reparam_controls!(fresh, controls)
+        @test fresh(x) == ir(x)
+        W._restore_reparametrization!(snap, ir)
+        @test snap.chains[1].psi == ir.chains[1].psi
+        # Controls recorded with another reference, or without one, do not belong here.
+        other = IndexedReparametrization(pairs(); chains=(walk(; reference=5), ar1()))
+        @test_throws ArgumentError W.restore_reparam_controls!(other, controls)
+        plain = IndexedReparametrization(pairs(); chains=(
+            MarkovChain(1:8; log_scale=x -> x[15], drift=0.3, coefficient=x -> fill(0.9, 8),
+                        initial=0.2), ar1()))
+        @test_throws ArgumentError W.restore_reparam_controls!(plain, controls)
+        @test_throws ArgumentError W.restore_reparam_controls!(fresh, W.reparam_controls(plain))
+    end
+end
+
+@testitem "MarkovChain: a reference on Gaussian posteriors read relative to a state" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
+    using Test, WarmupHMC, Random, LinearAlgebra, Statistics
+    using LogDensityProblems
+    using DifferentiationInterface, Enzyme
+    const W = WarmupHMC
+
+    # The frame each chain selects on exact posterior draws, as a covariance of the
+    # sampler's coordinates.
+    function selected(chain, model, n=8000)
+        mu, Q = anchored_posterior(model)
+        draws = mu .+ cholesky(Q).U \ randn(Xoshiro(3), length(mu), n)
+        gradients = -(Q * (draws .- mu))
+        ir = IndexedReparametrization([]; chains=[chain])
+        W.optimize!(ir, copy(draws), copy(gradients))
+        source = reduce(hcat, [W._inverse_with_logabsdet_jacobian(ir, d)[2] for d in eachcol(draws)])
+        ir.chains[1], cov(source')
+    end
+    T = 30
+    walk(; kw...) = MarkovChain(1:T; log_scale=log(0.6), kw...)
+
+    # Readings of w_t - w_10 on both sides of the anchor, without an offset: the
+    # chain's frame relative to the anchor whitens the posterior, which the walk
+    # from the first state cannot.
+    model = anchored_walk(T; anchor=10, observed=3:24, offset=false)
+    chain, S = selected(walk(; reference=10), model)
+    @test condition_number(S) < 1.5
+    @test all(p -> 0 <= p <= 1, chain.phi + chain.psi) && all(>=(0), chain.psi)
+    @test mean(chain.psi[11:24]) > 0.2
+    @test condition_number(last(selected(walk(), model))) > 20   # 69 at T = 30
+
+    # With a sampled offset `base` (coordinate T + 1), the readings' reference is
+    # w_10 - base: the chain needs it as its `level`.
+    model = anchored_walk(T; anchor=10, observed=11:24)
+    _, S_level = selected(walk(; reference=10, level=x -> x[T+1]), model)
+    _, S_no_level = selected(walk(; reference=10), model)
+    _, S_plain = selected(walk(), model)
+    @test condition_number(S_level) < 10
+    @test condition_number(S_no_level) > 10condition_number(S_level)
+    @test condition_number(S_plain) > 10condition_number(S_level)
+
+    # Absolute readings: a declared reference keeps the exact frame, psi fits to
+    # zero away from the reference.
+    absolute = walk_model(T; head=5, tail=8)
+    mu, S0, Q = walk_posterior(absolute)
+    draws = mu .+ cholesky(Q).U \ randn(Xoshiro(2), T, 8000)
+    ir = IndexedReparametrization([]; chains=[walk(; reference=15)])
+    W.optimize!(ir, copy(draws), -(Q * (draws .- mu)))
+    source = reduce(hcat, [W._inverse_with_logabsdet_jacobian(ir, d)[2] for d in eachcol(draws)])
+    @test condition_number(cov(source')) < 1.5
+    @test maximum(abs, ir.chains[1].psi[[1:13; 17:T]]) < 0.05
+
+    # The retrospective rows score at the fitted (phi, psi).
+    rp = ReparametrizedProblem(IndexedReparametrization([]; chains=[walk(; reference=15)]),
+                               absolute, AutoEnzyme())
+    rows = candidate_scoring_losses(rp, draws, -(Q * (draws .- mu)))
+    @test [rows[11(t-1)+1].psi for t in 1:T] == ir.chains[1].psi
+    @test [rows[11(t-1)+1].phi for t in 1:T] == ir.chains[1].phi
+end
+
+@testitem "MarkovChain: adaptive warm-up of a walk read relative to a state" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
+    using Test, WarmupHMC, Random, Statistics, Serialization
+    using LogDensityProblems
+    using MCMCDiagnosticTools
+    using DifferentiationInterface, Enzyme
+    const W = WarmupHMC
+
+    # The reporter's shape, shorter: readings base + (w_t - w_12) from the anchor
+    # to step 80, nothing before it or after; base and log q sampled.
+    T = 100
+    model = anchored_walk(T; anchor=12, observed=13:80, q=0.3, sampled_q=true)
+    d = T + 2
+    problem(; kw...) = ReparametrizedProblem(IndexedReparametrization([]; chains=[
+            MarkovChain(1:T; log_scale=x -> x[d], reference=12, level=x -> x[T+1], kw...)]),
+        model, AutoEnzyme())
+    init = (; position=zeros(d), squared_scale=ones(d))
+
+    @testset "mixing" begin
+        lpdfs = [problem() for _ in 1:2]
+        results = adaptive_warmup_mcmc([Xoshiro(1), Xoshiro(2)], lpdfs; n_draws=300,
+                                       init=[init, init], parallel=false)
+        n = minimum(size(r.posterior_position, 2) for r in results)
+        draws = cat([permutedims(r.posterior_position[:, end-n+1:end]) for r in results]...; dims=3)
+        draws = permutedims(draws, (1, 3, 2))
+        @test maximum(rhat(draws)) < 1.1
+        @test minimum(ess(draws)) > 50
+        evaluations = sum(r.sampling_evaluation_counter for r in results)
+        @test evaluations / sum(size(r.posterior_position, 2) for r in results) < 64
+        for lpdf in lpdfs
+            chain = W.reparametrizer(lpdf).chains[1]
+            @test mean(chain.psi[14:80]) > 0.2
+        end
+    end
+
+    @testset "checkpoints, back_transform, resume and fixed controls" begin
+        dir = mktempdir()
+        lpdf = problem()
+        result = adaptive_warmup_mcmc(Xoshiro(3), lpdf; n_draws=200, init, checkpoint_dir=dir)
+        payload = deserialize(joinpath(dir, "cp_latest.jls"))
+        controls = payload.reparam_sources.chains[1]
+        @test controls.reference == 12 && controls.psi == W.reparametrizer(lpdf).chains[1].psi
+        @test any(!iszero, controls.psi)
+        @test W.back_transform(payload, problem(), payload.posterior_position) ≈ result.posterior_position
+        @test_throws ArgumentError W.back_transform(payload, ReparametrizedProblem(
+            IndexedReparametrization([]; chains=[MarkovChain(1:T; log_scale=x -> x[d], reference=13,
+                                                             level=x -> x[T+1])]),
+            model, AutoEnzyme()), payload.posterior_position)
+        resumed = adaptive_warmup_mcmc(Xoshiro(99), problem(); n_draws=300, checkpoint_dir=dir, resume=true)
+        @test size(resumed.posterior_position, 2) >= 300
+        rescored = W.rescore_warmup_checkpoint(problem(), payload)
+        @test last(rescored.rescored).max_scaled <= 1e-10
+
+        fixed = problem(phi=0.5, psi=[fill(0.3, 11); 0.0; fill(0.3, T - 12)], c=0.5)
+        adaptive_warmup_mcmc(Xoshiro(4), fixed; n_draws=100, init, nonlinear_adapt=false)
+        chain = W.reparametrizer(fixed).chains[1]
+        @test chain.phi == fill(0.5, T) && chain.c == fill(0.5, T) && chain.psi[1] == 0.3
+    end
 end

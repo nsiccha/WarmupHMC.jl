@@ -5,6 +5,54 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.6
+
+### Added
+
+- `MarkovChain(states; ..., reference = r, level)` for a chain whose readings
+  see it only relative to one of its own states, as `level_t + (w_t - w_r)`
+  (snag `markovchain-on-a-ed98880f`, decision `11fctf6`): a level reported as
+  its change since an anchor time, plus an offset. The per-state regression on
+  the previous state assumed a posterior that is Markov in time order; such
+  readings break that, because every read state also depends on `w_r`. It
+  returned `phi` ≈ 0.99 in the read block (nearly the innovation frame) and the
+  anchor level mixed worst. With a reference the walk starts at `r`, located at
+  `initial`, and goes forward over `r+1, …, T` and backward over `r-1, …, 1`,
+  each backward state located at its next state through that state's
+  transition. Every other state gets a third control `psi_t`, the share of
+  `R_t = w_r - level_t` in its location:
+  `x_t = (w_t - phi_t * m_t - psi_t * R_t) * exp((c_t - 1) * log_scale_t)`. At
+  every restarting window `(phi_t, psi_t)` are refitted by weighted least
+  squares of `w_t` on `(m_t, R_t)`, bounded to the triangle `phi, psi >= 0`,
+  `phi + psi <= 1` (the state, the state relative to the reference, the
+  innovation), then `c_t` is chosen on the grid as before. `level` is an
+  accessor of untransformed coordinates, one value or one per state, default
+  `0.0`; `psi` takes starting values like `phi` and `c`. Costs stay linear in
+  the chain's length.
+  - Measured on a walk of the reporter's shape (790 states read as
+    `base + (w_t - w_67)` from state 68 to 571, nothing before or after;
+    sampled `log q`, `base`, `log sigma`; 4 chains × 1,000 draws; 5 data sets
+    over two regimes), on the model as written: without a reference 40–119
+    gradient evaluations per draw, max R-hat 1.013–1.544 and 0.07–0.54 min
+    bulk ESS per 1,000 gradients; with `reference = 67` alone 19–31, R-hat up
+    to 1.383, the offset `base` mixing worst; with `reference = 67,
+    level = base` 15.0, R-hat 1.010–1.029 and 3.6–8.9 per 1,000 gradients.
+    With the anchor inside the readings (state 300, 3 data sets) the plain
+    chain took 71–94 gradients per draw (R-hat up to 1.642) and the reference
+    15.0–15.2 (R-hat ≤ 1.015).
+- A chain with a reference records its controls as
+  `(; reference, phi, c, psi)`; restoring them onto a chain with another
+  reference, or without one, is refused. `candidate_scoring_losses` rows of a
+  chain gain `psi` (zero without a reference).
+
+### Changed
+
+- A chain without a reference maps, inverts and selects exactly as in 0.3.5,
+  bit for bit. Its Enzyme gradient is the same function computed by restructured
+  code, which can round differently (by 2e-16 on one coordinate of the
+  package's check), so a run with such a chain can draw a different sequence
+  from 0.3.5 at the same seed, from the same distribution.
+
 ## 0.3.5
 
 ### Changed

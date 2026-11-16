@@ -1485,10 +1485,10 @@ their curves are retrospective diagnostics.
 
 For an [`IndexedReparametrization`](@ref) with chains, the matrix method appends
 one row per [`MarkovChain`](@ref) state and candidate centering, with fields
-`chain_number`, `state_number` (the time step), `index`, `phi` (the regression
-coefficient the candidates are scored at), `candidate`, `loss`, `groups` and
-`effective_n`, computed from the supplied columns as a restarting window selects
-them. The payload method returns the pairs' rows only: a chain's candidates
+`chain_number`, `state_number` (the time step), `index`, `phi` and `psi` (the
+regression coefficients the candidates are scored at; `psi` is zero without a
+reference), `candidate`, `loss`, `groups` and `effective_n`, computed from the
+supplied columns as a restarting window selects them. The payload method returns the pairs' rows only: a chain's candidates
 depend on the coefficient fitted at the window's end, which the payload cannot
 evaluate without the chain.
 """

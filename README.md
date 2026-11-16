@@ -27,7 +27,7 @@ Each group links to the reference page that documents it.
   `reposition!`.
 - [Transformations](https://nsiccha.github.io/WarmupHMC.jl/dev/reference/transformations):
   `scale_data`, `scale_from_data`, `fit_gaussian_moments`, `PartiallyCentered`
-  (re-exported from ReparametrizableDistributions), `Reparametrization`,
+  (re-exported from ReparametrizableDistributions), `ScaleCentered`, `Reparametrization`,
   `SharedAccessor`, `IndexedReparametrization`, `MarkovChain`,
   `ReparametrizedProblem`, `CandidateScoringPlan`, `candidate_scoring_losses`,
   `WindowSelectionPlan`.

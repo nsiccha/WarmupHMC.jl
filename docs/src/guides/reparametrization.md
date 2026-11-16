@@ -16,9 +16,9 @@ vector. Pass the logarithm of the scale, not the scale itself.
 target endpoint stays fixed; adaptation changes the source endpoint. Equal
 endpoints give the identity initially, even if adaptation will later move them.
 
-This construction records a non-centered sampler coordinate for a centered
-model coordinate with a fixed scale. Inspecting the object verifies the direction
-without running a sampler:
+This records a non-centered sampler coordinate for a centered model coordinate
+with a fixed scale; inspecting the object verifies the direction without
+sampling:
 
 ```@example coordinates
 using WarmupHMC
@@ -31,7 +31,7 @@ indexed = IndexedReparametrization([1 => transform])
 
 For a hierarchical model, replace the constants with accessors such as a
 function reading the location coordinate or the log-scale coordinate. Use
-floating-point centering values when their source endpoints will be adapted.
+floating-point centering values for source endpoints that adapt.
 
 ## Nested hierarchies
 
@@ -95,13 +95,12 @@ maps = IndexedReparametrization([
    locations=[c([0.0, 0.0, 1.5]) for c in locations])
 ```
 
-The output checks both the retained type and the two accessor behaviours. Keep
-the pair order and accessor meanings unchanged when rebuilding a checkpoint's
-target.
+The output checks the retained type and both accessors. Keep the pair order
+and accessor meanings unchanged when rebuilding a checkpoint's target.
 
 ## Shared locations
 
-Many coordinates often take their location or log-scale from one computation:
+Many coordinates take their location or log-scale from one computation:
 a mean, or a vector of locations a model computes in one pass. Reuse one
 accessor object across their pairs, or read element `i` of one function with
 `SharedAccessor(f, i)`. Consecutive pairs in increasing index order that share
@@ -180,21 +179,21 @@ example above, are not affected. The limitation is tracked upstream as
 ## Markov chains
 
 A latent random walk, AR(1) series or discretely observed Ornstein–Uhlenbeck
-process has no single good frame. Centred, it mixes badly through unobserved
-stretches. Non-centred, its step size falls with the series' length where
+process has no single good frame: centred, it mixes badly through unobserved
+stretches; non-centred, its step size falls with the series' length where
 observations pin its slow modes.
 `MarkovChain(states; log_scale, coefficient, drift, initial)` lets warm-up choose
 per time step.
 
 The model is written in the states `w_t`. State `t`'s location `m_t` is
 `initial` for the first state and `coefficient * w[t-1] + drift` for every later
-one, with the previous state read in the model's frame. The sampler coordinate
-is `(w_t - phi_t * m_t) * exp((c_t - 1) * log_scale)`, and the controls start at
+one, the previous state read in the model's frame. The sampler coordinate is
+`(w_t - phi_t * m_t) * exp((c_t - 1) * log_scale)`, starting at
 `(phi_t, c_t) = (0, 1)`, the model as written. At every restarting window,
 `phi_t` is refitted by regressing `w_t` on `m_t`, and `c_t` is chosen on the
-centering grid with gradients taken in the frame of the new `phi`. A stretch
-without observations then moves towards the innovation, `(1, 0)`. Passed as
-starting controls, `(1, 0)` maps standardized innovations to a random walk:
+centering grid in the frame of the new `phi`, so a stretch without observations
+moves towards the innovation, `(1, 0)`. As starting controls, `(1, 0)` maps
+standardized innovations to a random walk:
 
 ```@example coordinates
 walk = MarkovChain(1:3; log_scale = x -> x[4], phi = 1.0, c = 0.0)
@@ -203,28 +202,40 @@ z = [0.5, -1.0, 2.0, log(0.5)]
 (; states = last(innovations(z))[1:3], walk = 0.5 .* cumsum(z[1:3]))
 ```
 
+When readings see a chain only as `level_t + (w_t - w_r)`, relative to its state
+`r` plus an offset, pass `reference = r` and `level`. Every other state then
+gets a third control `psi_t`, its share of `w_r - level_t`; the
+[`MarkovChain`](@ref) docstring describes the walk. At `psi = 1` the sampler
+coordinates are what the readings see:
+
+```@example coordinates
+anchored = MarkovChain(1:3; log_scale = 0.0, reference = 1, level = x -> x[4],
+                       psi = [0.0, 1.0, 1.0])
+w = [0.5, 0.8, 1.6, 2.0]   # three states and the offset
+_, x = WarmupHMC._inverse_with_logabsdet_jacobian(
+    IndexedReparametrization([]; chains = [anchored]), w)
+(; sampler = x[2:3], readings = w[4] .+ (w[2:3] .- w[1]))
+```
+
 Chains go into `IndexedReparametrization(pairs; chains = [...])` and take part
 in everything pairs do: the adaptive and cooperative samplers,
-`nonlinear_adapt=false`, checkpoints and `WarmupHMC.back_transform`. The map,
-its inverse and its gradient are one pass over each chain. `log_scale`, `coefficient` and `drift` can return one value per
-state, for an AR(1) series with a stationary first state or an
-Ornstein–Uhlenbeck process on an irregular time grid. They, and `initial`, may
-read only coordinates that no chain or pair transforms. A pair's accessor should
-not read a chain's states either: centering selection would see their sampler
-coordinates, whose meaning changes when the chain adapts.
+`nonlinear_adapt=false`, checkpoints and `WarmupHMC.back_transform`; each path
+is one pass over each chain. Accessors may return one value per state (an AR(1)
+series' stationary first state, an irregular time grid) and read only
+coordinates no chain or pair transforms. A pair's accessor should not read a
+chain's states, whose sampler coordinates change meaning when the chain adapts.
 
-With a streaming `nonlinear_evidence` mode, or a `CandidateScoringPlan`, each
-chain is selected on a sample of `recording_target` leaves per window, which
-takes the memory of the retained pool.
+Under a streaming `nonlinear_evidence` mode or a `CandidateScoringPlan`, a chain
+is selected on a per-window sample of `recording_target` leaves, the memory of
+the retained pool.
 
 ## Derivatives
 
 A sampling wrapper needs an AD backend in its third constructor argument:
 `ReparametrizedProblem(indexed, problem, backend)`. The wrapper reuses the inner
-problem's gradient and differentiates the coordinate map and Jacobian. Load the
-package implementing the chosen DifferentiationInterface backend as well as the
-interface itself. For Enzyme, load `Enzyme` and pass `AutoEnzyme()`; a function
-annotation is not required.
+problem's gradient and differentiates the coordinate map and Jacobian. Load
+DifferentiationInterface and the package implementing the chosen backend. For
+Enzyme, load `Enzyme` and pass `AutoEnzyme()`; no function annotation is needed.
 
 Registered Enzyme releases compile gradients that are not memory-safe while
 another thread of the process allocates, which chains running at once do for
@@ -236,10 +247,10 @@ an Enzyme. The repair is on the `dogfood` branch of
 [nsiccha/Enzyme.jl](https://github.com/nsiccha/Enzyme.jl/tree/dogfood) from
 `72d5d25`.
 
-The two-argument constructor can evaluate a transformed log density, but it
-does not supply a sampling gradient. An empty indexed map adapts no coordinates.
-`nonlinear_adapt=true` does not discover a hierarchy in a plain target: the
-coordinate map must be supplied explicitly.
+The two-argument constructor evaluates a transformed log density but supplies
+no sampling gradient. An empty indexed map adapts no coordinates.
+`nonlinear_adapt=true` does not discover a hierarchy in a plain target: supply
+the coordinate map explicitly.
 
 ## Adaptation and results
 
@@ -260,7 +271,7 @@ point shows only once selection moves its pair.
 
 The default candidate rule can be replaced with a `CandidateScoringPlan` or a
 `WindowSelectionPlan`. These advanced callbacks have different evidence and
-checkpoint contracts; their complete interfaces belong in the
+checkpoint contracts; their interfaces are in the
 [transformation reference](../reference/transformations.md).
 
 The [Gaussian calibration example](../examples/gaussian.md) evaluates a

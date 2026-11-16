@@ -5,6 +5,51 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.5
+
+### Changed
+
+- Adaptive centering checks the per-pair choice block-wise (snag
+  `warmuphmc-0-3-4-aeb3d521`). Per-pair selection scores each pair by its own
+  coordinate's position-gradient correlation, which cannot see the stiffness a
+  block's frame puts on the log-scale and location coordinates the block reads.
+  At every restarting window, after the per-pair choice, each block of pairs
+  reading one callable log-scale is now checked against the block-wide
+  candidates: each of the eleven constants given to all its pairs, or, under
+  `scale_centering = true`, each of the block's `ScaleCentered` midpoints. They
+  are compared by the loss the diagonal metric fits, the mean over all
+  coordinates of std(position) · std(gradient), on the retained states moved
+  into the trial frame. A block-wide candidate replaces the per-pair choice
+  only when it lowers that loss by 10%. At most 32 blocks (the largest) and 500
+  retained states take part, so the cost stays linear in the dimension; it uses
+  map gradients only, no target evaluations. `CandidateScoringPlan` and
+  `WindowSelectionPlan` problems keep their own choice, and
+  `candidate_scoring_losses` still reports the per-pair losses. Default fits
+  can therefore choose a different centering than 0.3.4 did; a fit whose blocks
+  the check leaves alone is unchanged draw for draw.
+  - Measured on ODLProject's AP 2.5 sparse thinning fit (89 coordinates, seed
+    72, "none"; `scale_centering = true` through completion, 4 chains × 1,000
+    draws, gordito): at sampler seeds 1072 / 72, max R-hat 1.023 / 1.036 →
+    1.005 / 1.019 and min bulk ESS 177 / 167 → 703 / 489. The natural-level and
+    site-inventory blocks, which the per-pair choice had left centred in some
+    chains and non-centred in others, are centred in every chain.
+  - The reporter's 12 `scale_centering` fits of those data (seeds 71–73, "first
+    only" and "none", two sampler seeds each): fits above max R-hat 1.05 went
+    from 5 to 2 and the median min bulk ESS from 110 to 231. Default cell
+    selection, 4 fits (seeds 72–73): above 1.05 from 3 to 1, min bulk ESS 21–101
+    → 113–595. One fit in 12 still had one chain held at small
+    `residual_trend.spread` / `rate_gap.spread` (max R-hat 1.53), as on 0.3.4 at
+    another seed; those blocks keep their per-pair centerings.
+  - Held-out (posteriordb eight schools, radon ×2 and seeds, plus Neal's funnel;
+    8 seeds each, `bench/research/run_reparam_benchmark.jl`): default fits are
+    identical draw for draw in 40 of 40 runs; `scale_centering` fits are
+    identical on eight schools and the funnel and within seed-to-seed spread on
+    the other three (median ESS per 1,000 gradients 26.4 / 21.6 / 6.1 →
+    23.5 / 22.9 / 8.3).
+  - On the three-level toy of snag `adaptive-two-lev-635adfff` (completion, 4
+    chains, 12 runs per regime) default fits are unchanged draw for draw, and
+    `scale_centering` fits are within run-to-run noise.
+
 ## 0.3.4
 
 ### Added

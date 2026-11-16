@@ -1441,7 +1441,11 @@ L = w₁ * (-mean(Δlog|J|) + log(var(position)) / 2) +
     (1 - w₁) * cor(position, gradient),       w₁ = 0
 ```
 
-so the selected candidate minimizes weighted position-gradient correlation.
+so each pair's choice minimizes weighted position-gradient correlation. The
+sampler then checks every block of pairs reading one log-scale against the
+block-wide candidates by the whole-frame metric-fit loss (see
+[`adaptive_warmup_mcmc`](@ref), "Scale-dependent centering"); these rows are the
+per-pair losses only.
 Writing `W = sum(wᵢ)`, `q̄ = sum(wᵢqᵢ) / W`, and
 `ḡ = sum(wᵢgᵢ) / W`, that correlation is exactly
 
@@ -1823,6 +1827,140 @@ _endpoints_at(ir, x, coordinates) = nothing
 _named_endpoints((location, log_scale)::Tuple{Any,Any}) = (; location, log_scale)
 _named_endpoints(values) = values
 
+# --- Block arbitration by the whole-frame metric-fit loss ---
+#
+# Per-pair selection (`_select_on_pool!`, or the online scorer) scores each pair
+# by its own coordinate's position-gradient correlation. A frame that is wrong
+# for a block of pairs reading one log-scale can leave each pair's coordinate
+# looking fine while the stiffness lands on the log-scale and location
+# coordinates the block reads, which no pair's score sees, and with blocks
+# coupled through the data pair-by-pair choices end in a bad joint frame. On a
+# joint model whose sites' natural level and Cs-137 inventory are coupled
+# through the data, the frames chosen were 1.5-3 times worse by the loss below
+# than a constant frame of the same candidate set, and that frame sampled at
+# max R-hat 1.004 where the chosen ones reached 1.02-1.10 (snag
+# warmuphmc-0-3-4-aeb3d521).
+#
+# So after the per-pair choice every block is checked against the block-wide
+# candidates (each candidate given to all its pairs) by the loss the diagonal
+# metric fits: the mean over ALL coordinates of std(position) * std(gradient),
+# ≈ 1 where a frame fits, on the retained pool transported into the trial frame
+# (`_jointly_transport_halo!`'s pass). A block-wide candidate replaces the
+# per-pair choice only when it lowers that loss by `_BLOCK_ARBITRATION_MARGIN`,
+# so estimate noise does not overrule the per-pair choice. Blocks are decided in
+# order of their first pair (the dependency order), each against the frame the
+# earlier decisions left.
+#
+# Why block-wise: scoring single pairs by the coordinates they read needs each
+# pair's location and log-scale Jacobian at every pool state, one accessor VJP
+# per pair and state, O(d²) for blocks whose pairs share one accessor
+# computation. A block-wide trial is one transport per candidate, O(d) per pool
+# state; at most `_MAX_ARBITRATED_BLOCKS` blocks (the largest) and
+# `_ARBITRATION_COLUMNS` pool states are used, so the cost stays linear in the
+# dimension.
+const _BLOCK_ARBITRATION_MARGIN = 1.1
+const _MAX_ARBITRATED_BLOCKS = 32
+const _ARBITRATION_COLUMNS = 500
+
+# Blocks: the pairs (positions in `pairs`) whose log-scale is one callable
+# accessor (`===`), at least two of them, in order of their first pair. A pair
+# with a constant log-scale is in no block.
+function _centering_blocks(pairs)
+    keys = Any[]
+    blocks = Vector{Int}[]
+    for (k, (_, value)) in enumerate(pairs)
+        value isa Reparametrization || continue
+        log_scale = value.args[2]
+        log_scale isa Real && continue
+        n = findfirst(key -> key === log_scale, keys)
+        if isnothing(n)
+            push!(keys, log_scale)
+            push!(blocks, [k])
+        else
+            push!(blocks[n], k)
+        end
+    end
+    blocks = filter(b -> length(b) > 1, blocks)
+    if length(blocks) > _MAX_ARBITRATED_BLOCKS
+        blocks = sort(blocks; by=length, rev=true)[1:_MAX_ARBITRATED_BLOCKS]
+    end
+    sort!(blocks; by=first)
+end
+
+# The block-wide candidates of a block: its first pair's `ScaleCentered`
+# midpoints where the pool places a grid for it (`scale_centering`), otherwise
+# the eleven constants, as the per-pair search scores them.
+_block_candidates(grid) = isempty(grid) ? PartiallyCentered.(range(0, 1, 11)) : ScaleCentered.(grid)
+
+# The whole-frame metric-fit loss of transported pool states: the mean over
+# coordinates of std(position) * std(gradient). A coordinate the pool cannot
+# measure (a zero or nonfinite spread) makes it `Inf`, so such a trial never wins.
+function _frame_fit_loss(position, gradient)
+    total = 0.0
+    for i in axes(position, 1)
+        s1, s2 = std(view(position, i, :)), std(view(gradient, i, :))
+        isfinite(s1) && isfinite(s2) && s1 > 0 && s2 > 0 || return Inf
+        total += s1 * s2
+    end
+    total / size(position, 1)
+end
+
+# Re-decide the blocks of `reparametrizer(lpdf)`, whose per-pair choice has just
+# been made, on the pool `old_position`/`old_gradient` given in `old_ir`'s source
+# coordinates. Only the default candidate scoring is arbitrated: a
+# `CandidateScoringPlan` owns its criterion. Writes the decisions into the
+# reparametrizer's pairs; the caller synchronizes and transports.
+function _arbitrate_blocks!(lpdf, old_ir, old_position, old_gradient)
+    ir = reparametrizer(lpdf)
+    ir isa IndexedReparametrization && candidate_scoring_plan(lpdf) isa DirectCandidateScoring ||
+        return ir
+    n = size(old_position, 2)
+    n > 2 || return ir
+    blocks = _centering_blocks(ir.pairs)
+    isempty(blocks) && return ir
+    columns = n <= _ARBITRATION_COLUMNS ? (1:n) :
+        unique(round.(Int, range(1, n, _ARBITRATION_COLUMNS)))
+    P = old_position[:, columns]
+    G = old_gradient[:, columns]
+    grids = _scale_grids_on(old_ir.pairs, P)
+    trial = snapshot_reparametrization(ir)
+    X, Gx = similar(P), similar(G)
+    backend = _reparametrization_ad_backend(lpdf)
+    model_position, x, g_old, g_new = ntuple(_ -> Vector{eltype(P)}(undef, size(P, 1)), 4)
+    _transport_position!(x, model_position, trial, old_ir, view(P, :, 1))
+    copyto!(g_old, view(G, :, 1))
+    transport_gradient! = _transport_gradient_method(backend, trial, old_ir, x, g_old)
+    trial_loss() = begin
+        for j in axes(P, 2)
+            _transport_position!(view(X, :, j), model_position, trial, old_ir, view(P, :, j))
+            copyto!(x, view(X, :, j))
+            copyto!(g_old, view(G, :, j))
+            transport_gradient!(g_new, x, g_old)
+            Gx[:, j] .= g_new
+        end
+        all(isfinite, X) && all(isfinite, Gx) || return Inf
+        _frame_fit_loss(X, Gx)
+    end
+    set_block!(block, sources) = for (k, source) in zip(block, sources)
+        idx, value = trial.pairs[k]
+        trial.pairs[k] = idx => Reparametrization(value.target, source, value.args...)
+    end
+    for block in blocks
+        chosen = [last(trial.pairs[k]).source for k in block]
+        chosen_loss = trial_loss()
+        best, best_loss = chosen, chosen_loss
+        for candidate in _block_candidates(grids[first(block)])
+            set_block!(block, Iterators.repeated(candidate))
+            loss = trial_loss()
+            loss < best_loss && ((best, best_loss) = (fill(candidate, length(block)), loss))
+        end
+        best_loss * _BLOCK_ARBITRATION_MARGIN < chosen_loss || (best = chosen)
+        set_block!(block, best)
+    end
+    ir.pairs .= trial.pairs
+    ir
+end
+
 find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradient) = begin
     ir = reparametrizer(lpdf)
     has_reparametrization(ir) || return position_and_gradient
@@ -1831,6 +1969,7 @@ find_reparametrization!(lpdf, halo_position, halo_gradient, position_and_gradien
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, halo_position, halo_gradient)
+    _arbitrate_blocks!(lpdf, old_ir, old_position, old_gradient)
     _synchronize_scoring!(lpdf)
     _validated_transport!(lpdf, old_ir, old_position, old_gradient,
                           halo_position, halo_gradient, position_and_gradient)
@@ -1854,6 +1993,7 @@ function find_reparametrization!(lpdf, recorder::NonlinearRecorder,
     old_position = copy(halo_position)
     old_gradient = copy(halo_gradient)
     optimize!(ir, recorder.online)
+    _arbitrate_blocks!(lpdf, old_ir, old_position, old_gradient)
     _synchronize_scoring!(lpdf)
     point = _validated_transport!(lpdf, old_ir, old_position, old_gradient,
                                   halo_position, halo_gradient, position_and_gradient)

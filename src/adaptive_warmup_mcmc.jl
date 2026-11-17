@@ -1337,7 +1337,7 @@ init_state(
     stepsize = DynamicHMC.find_initial_stepsize(
         stepsize_search,
         DynamicHMC.local_log_acceptance_ratio(
-            DynamicHMC.Hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
+            _hamiltonian(kinetic_energy, lpdf), position_gradient_and_momentum
         )
     )
     # For monitoring purposes: Keep track of the number of gradient evaluations during warm-up
@@ -1440,7 +1440,6 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
         state.current_evaluation_counter = 0
         state.window_in_progress = true
     end
-    hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, recording_lpdf)
     # We run the current warm-up/sampling window until
     #   a) we have collected enough samples and can break out of the outer loop as well or
     #   b) we have reached the current targeted number of gradient evaluations AND we estimate that
@@ -1451,6 +1450,9 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
         # One MCMC transition
         reset!(recording_lpdf.leaves)
         trajectory_stepsize = state.stepsize
+        # A fresh Hamiltonian per transition: its kinetic energy carries M⁻¹
+        # products along this trajectory only (`TrajectoryEnergy`).
+        hamiltonian = _hamiltonian(state.kinetic_energy, recording_lpdf)
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
         finalize_leaf_recording!(recording_lpdf, stats.depth)
         state.nonlinear_adapt && record_nonlinear!(

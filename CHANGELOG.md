@@ -5,6 +5,27 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.9
+
+### Changed
+
+- A leapfrog step multiplies by the metric once instead of three times, in
+  every sampler (snag `fixed-kernel-nut-d274a5f0`). The kinetic energy built
+  from a scale `L` is `M⁻¹ = L L'`, and DynamicHMC multiplied by it three times
+  per step: for the half-step momentum, then twice for the new momentum, once
+  for the leaf's kinetic energy and once for its turn statistic. Each product
+  is two products of `L`, O(d · k) for the `:pathfinder` and `:adaptive`
+  scales, so on a 1,000- to 2,000-dimensional logistic regression a step with
+  the `:pathfinder` metric spent more time outside the gradient than in it.
+  Each transition now carries `M⁻¹ p` and `M⁻¹ ∇ℓ` along its trajectory, so a
+  step makes the one product `M⁻¹ ∇ℓ` at its new point and gets the others by
+  linearity, and the leapfrog allocates fewer temporaries. The kernel is
+  unchanged. The carried products equal the direct ones up to rounding, so
+  draws for a given seed differ from 0.3.8's by rounding at first and then
+  diverge, as the compatibility page allows; a resumed run still reproduces the
+  uninterrupted one bit for bit, because nothing is carried from one transition
+  to the next.
+
 ## 0.3.8
 
 ### Changed

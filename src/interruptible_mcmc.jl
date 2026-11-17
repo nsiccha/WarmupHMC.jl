@@ -251,7 +251,7 @@ fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=_DEFAULT_
         restore_reparam_sources!(deepcopy(lpdf), state.reparam_sources)
     pg = _evaluate_transition_start(active_lpdf, copy(state.position), "the state's position")
     rng = copy(state.rng)
-    hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, active_lpdf)
+    hamiltonian = _hamiltonian(state.kinetic_energy, active_lpdf)
     next_pg, stats = DynamicHMC.sample_tree(
         rng, state.algorithm, hamiltonian, pg, state.stepsize)
     next_state = FixedKernelNUTSState(rng, copy(next_pg.q), state.kinetic_energy,
@@ -464,7 +464,6 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
         n_draws, max_tree_depth, ring, samples, rng_states, divergences,
         dimension, n_written, durable, progress, description, start_time) = begin
     algorithm = DynamicHMC.NUTS(; max_depth=max_tree_depth)
-    hamiltonian = DynamicHMC.Hamiltonian(kinetic_energy, lpdf)
     steps_per_draw = OnlineStatsBase.Mean()
     total_steps = 0                                        # Σ leapfrog steps = Σ gradient evals
     ess_next = 16                                          # first ESS window
@@ -477,7 +476,7 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
     # label merge lands on the advancing bar. On resume it counts this session's
     # draws (n_written already on disk), while the labels report absolute counts.
     @progress progress "$description" for k in (n_written + 1):n_draws
-        pg, stats = DynamicHMC.sample_tree(rng, algorithm, hamiltonian, pg, stepsize)
+        pg, stats = DynamicHMC.sample_tree(rng, algorithm, _hamiltonian(kinetic_energy, lpdf), pg, stepsize)
         @views samples[:, k] .= pg.q                      # raw SOURCE-frame draw
         diverged = DynamicHMC.is_divergent(stats.termination)
         divergences[k] = diverged ? Int8(1) : Int8(0)     # per-draw divergent flag

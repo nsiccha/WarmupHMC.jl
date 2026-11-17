@@ -160,7 +160,7 @@ function ContinuousNUTSState(rng, lpdf; init=missing, target_acceptance_rate::Re
         stepsize = DynamicHMC.find_initial_stepsize(
             DynamicHMC.InitialStepsizeSearch(),
             DynamicHMC.local_log_acceptance_ratio(
-                DynamicHMC.Hamiltonian(kinetic_energy, lpdf),
+                _hamiltonian(kinetic_energy, lpdf),
                 DynamicHMC.PhasePoint(pg, DynamicHMC.rand_p(rng, kinetic_energy)),
             ),
         )
@@ -222,7 +222,7 @@ continuous_nuts_step(state::ContinuousNUTSState, lpdf; adapt::Bool=true,
     end
     target = adapt ? LeafMomentsPosterior(lpdf, state.moments) : lpdf
     ε = state.stepsize
-    hamiltonian = DynamicHMC.Hamiltonian(state.kinetic_energy, target)
+    hamiltonian = _hamiltonian(state.kinetic_energy, target)
     next_pg, stats = DynamicHMC.sample_tree(state.rng, state.algorithm, hamiltonian, pg, ε)
     state.position = copy(next_pg.q)
     state.n_transitions += 1

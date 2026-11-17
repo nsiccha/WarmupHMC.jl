@@ -252,7 +252,7 @@ _coop_chain(index, rng, lpdf, init, cfg; progress) = begin
     stepsize = DynamicHMC.find_initial_stepsize(
         DynamicHMC.InitialStepsizeSearch(),
         DynamicHMC.local_log_acceptance_ratio(
-            DynamicHMC.Hamiltonian(kinetic_energy, lpdf),
+            _hamiltonian(kinetic_energy, lpdf),
             DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy)),
         ),
     )
@@ -277,7 +277,7 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
     reset!(recording_lpdf.leaves)
     ε = chain.stepsize
     chain.position_and_gradient, stats = DynamicHMC.sample_tree(
-        chain.rng, cfg.algorithm, DynamicHMC.Hamiltonian(chain.kinetic_energy, recording_lpdf),
+        chain.rng, cfg.algorithm, _hamiltonian(chain.kinetic_energy, recording_lpdf),
         chain.position_and_gradient, ε,
     )
     finalize_leaf_recording!(recording_lpdf, stats.depth)

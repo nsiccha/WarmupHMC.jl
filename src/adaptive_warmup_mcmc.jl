@@ -1041,6 +1041,37 @@ _divergence_gate!(state::AWMState) = begin
     true
 end
 
+# A chain only ever sits where its target answered finite: initialization refuses
+# a nonfinite start, and a NUTS transition never ends on a divergent leaf. So a
+# target that is a function of the position alone answers finite there again. At
+# every window boundary the chain's current point is evaluated once more, before
+# anything is decided from the window. A nonfinite answer means the target changed
+# its answer at an unchanged point: it keeps state between evaluations, and an
+# earlier evaluation broke it (snag centred-latent-l-16f7838d: after one NaN
+# evaluation at a leapfrog point, an RKPPL sampler target returned NaN in part of
+# every later gradient). Every transition from such a point diverges at its first
+# evaluation whatever the step size, so the run would only drive the step size
+# towards zero and the divergence gate would blame the chain's position. Raise
+# instead, as for a nonfinite start. The evaluation is neither recorded nor
+# counted, and uses no random numbers.
+function _check_current_point(lpdf, point, where)
+    isfinite(point.ℓq) && all(isfinite, point.∇ℓq) || return nothing
+    ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(lpdf, point.q)
+    isfinite(ℓq) && all(isfinite, ∇ℓq) && return nothing
+    bad = findall(!isfinite, ∇ℓq)
+    gradient = isempty(bad) ? "a finite gradient" :
+        "$(length(bad)) nonfinite gradient entries (coordinates $(join(first(bad, 5), ", "))" *
+        (length(bad) > 5 ? ", …)" : ")")
+    error("$where: the target no longer answers finite at the chain's current point. " *
+          "The chain reached that point with log density $(point.ℓq) and a finite " *
+          "gradient; evaluated again at the same position, the target now gives log " *
+          "density $ℓq and $gradient. A log density that depends on the position alone " *
+          "cannot do that: the target keeps state between evaluations, and an earlier " *
+          "evaluation changed it. Every transition from here would diverge at its first " *
+          "evaluation whatever the step size. A newly built target evaluated at this " *
+          "position tells whether its state is the cause; fix the target, then rerun.")
+end
+
 const _DEFAULT_DIVERGENCE_TOLERANCE = 1.0
 const _MAX_STEPSIZE_HALVINGS = 3
 
@@ -1501,6 +1532,8 @@ end
 
 _finish_outer_iteration!(state::AWMState) = begin
     (; progress, lpdf, recording_lpdf) = state
+    _check_current_point(lpdf, state.position_and_gradient,
+        "adaptive_warmup_mcmc, at the end of warm-up window $(state.outer_counter)")
     if state.monitor_ess && state.n_samples > 10
         state.ess .= _coordinate_ess(recording_lpdf.posterior_position)
         _ess_progress!(progress, state)
@@ -2390,6 +2423,13 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   run. Past that bound the draws are returned with a warning: re-adapting in
   place cannot rescue a chain whose position is the problem, and rerunning is
   the caller's job.
+* Evaluates the chain's current point once more at the end of every window,
+  before deciding anything from it, and raises an `ErrorException` when the
+  target no longer answers a finite log density and gradient there. The chain
+  only ever sits where the target answered finite, so such an answer means the
+  target keeps state between evaluations and an earlier evaluation broke it;
+  every transition from that point would diverge at its first evaluation. The
+  evaluation is not counted and uses no random numbers.
 * Opt-in (`divergence_tolerance` below 1): when more than `divergence_tolerance`
   of the draws of that window diverged and the gate did not restart, halves the
   step size, drops the draws and samples `n_draws` new ones under the same metric

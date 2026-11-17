@@ -141,6 +141,9 @@ end
     @test !unmet.completion.quorum_met
     @test unmet.completion.stop_reason === :quorum_unmet
     @test occursin("0 of 2", sprint(showerror, WarmupHMC.CompletionQuorumError(unmet)))
+    # A failed chain's first error line is in the quorum error itself.
+    @test occursin("; chain 1 failed: failed initialization",
+                   sprint(showerror, WarmupHMC.CompletionQuorumError(unmet)))
 end
 
 @testset "already-complete admission precedes scheduling" begin

@@ -563,6 +563,13 @@ _run_round!(run::CoopRun) = begin
         end
         update_progress!(chain.progress, "$(chain.status) · batch $(run.batch), waiting for the round")
     end
+    # As at an adaptive window boundary (`_check_current_point`): every chain that
+    # sampled in this round, including one that finished in it, is evaluated once
+    # more at its current point, serially at the barrier.
+    for chain in chains
+        _check_current_point(chain.lpdf, chain.position_and_gradient,
+            "cooperative_warmup_mcmc, chain $(chain.chain_index) at the end of round $(run.round)")
+    end
 end
 
 # Rounds of batch k: 2^(k-1). Batch k ends after round 2^k - 1.

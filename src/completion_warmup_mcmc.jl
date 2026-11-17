@@ -29,10 +29,19 @@ end
 Base.showerror(io::IO, e::CompletionQuorumError) = print(io,
     "Completion quorum unmet: ", e.outcome.completion.n_completed, " of ",
     e.outcome.completion.min_completed, " required chains completed",
-    _stuck_note(e.outcome.completion), ". Inspect `outcome.completion.chains`.")
+    _stuck_note(e.outcome.completion), _failed_note(e.outcome.completion),
+    ". Inspect `outcome.completion.chains`.")
 # A run recorded before the admission checks has no stuck chains to name.
 _stuck_note(c) = isempty(get(c, :stuck_chain_indices, Int[])) ? "" :
     "; left out as stuck after reaching `n_draws`: $(c.stuck_chain_indices)"
+# A failed chain's exception is otherwise visible only in `outcome.completion.chains`,
+# so the quorum error carries the first line of each (snag centred-latent-l-16f7838d:
+# a chain whose target broke failed with a message that named the cause).
+_failed_note(c) = join(("; chain $(ch.chain_index) failed: $(_first_error_line(ch.error))"
+                        for ch in get(c, :chains, ())
+                        if ch.status === :failed && !isnothing(get(ch, :error, nothing))), "")
+_first_error_line(e::CapturedException) = _first_error_line(e.ex)
+_first_error_line(e) = first(split(sprint(showerror, e), '\n'))
 
 # What a chain that reaches `n_draws` must also pass to count toward the quorum.
 # Finishing first is no evidence of health: a chain whose step size collapsed, or

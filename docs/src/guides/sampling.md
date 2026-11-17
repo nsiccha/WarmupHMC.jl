@@ -22,6 +22,14 @@ The dimension is the length of the unconstrained parameter vector. Transform
 constrained parameters before sampling and include the corresponding Jacobian
 in the log density. A finite starting log density and gradient are required.
 
+The log density and gradient must depend on the position alone. A target that
+keeps work buffers between evaluations must not let one evaluation, for example
+a `NaN` at an extreme leapfrog point, change its later answers. At every warm-up
+window boundary of `adaptive_warmup_mcmc`, and at every round barrier of
+`cooperative_warmup_mcmc`, the sampler evaluates each chain's current point
+once more. It raises an error when the target no longer answers finite there,
+because every transition from that point would diverge whatever the step size.
+
 ## Initialization
 
 `adaptive_warmup_mcmc(rng, problem; ...)` uses Pathfinder by default. Use `init`

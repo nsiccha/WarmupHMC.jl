@@ -5,6 +5,31 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.8
+
+### Changed
+
+- `adaptive_warmup_mcmc` (and so `completion_warmup_mcmc`, whose chains are
+  adaptive runs) evaluates the chain's current point once more at the end of
+  every warm-up window, and `cooperative_warmup_mcmc` evaluates each chain's
+  current point at every round barrier. When the target no longer answers a
+  finite log density and gradient there, the call raises an `ErrorException`
+  naming the stored and new log densities and up to five nonfinite gradient
+  coordinates (snag `centred-latent-l-16f7838d`). A chain only ever sits where
+  its target answered finite, so such an answer means the target keeps state
+  between evaluations and an earlier evaluation broke it. Before, every later
+  transition diverged at its first evaluation: the step size fell towards
+  zero, a completion chain was left out as stuck, and the divergence gate's
+  warning blamed the chain's position. In the reported run, one `NaN`
+  evaluation at a leapfrog point left a ReactiveKernelsPPL sampler target
+  returning `NaN` in eight gradient coordinates at every later position. The
+  extra evaluation is not counted in `total_evaluation_counter`, uses no random
+  numbers, and leaves the draws of a target that depends on the position alone
+  unchanged, bit for bit.
+- `CompletionQuorumError`'s message names each failed chain with the first line
+  of its error (`; chain 1 failed: …`). Before, a failed chain's exception was
+  visible only in `outcome.completion.chains[i].error`.
+
 ## 0.3.7
 
 ### Fixed

@@ -73,10 +73,15 @@ jobs:
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           git clone https://github.com/nsiccha/ReparametrizableDistributions.jl.git "$RUNNER_TEMP/ReparametrizableDistributions.jl"
           git -C "$RUNNER_TEMP/ReparametrizableDistributions.jl" checkout --detach 8f7d382df700d3780ed31d093bc4983d3734a6c6
+          # Our Pathfinder fork's `save_trace=false` (Project.toml [sources]); the
+          # fork's version equals the registered 0.10.9, so only a develop takes it.
+          git clone https://github.com/nsiccha/Pathfinder.jl.git "$RUNNER_TEMP/Pathfinder.jl"
+          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach c24c1317b2c7cd13f3c194944061549e2145b315
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
             PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "Pathfinder.jl")),
           ]); Pkg.instantiate()'
       - name: Run tests
         # NOT `julia-actions/julia-runtest@v1`: this web/integration suite lives
@@ -97,6 +102,7 @@ jobs:
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
             PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "Pathfinder.jl")),
           ]); Pkg.instantiate(); Pkg.precompile()'
       - name: Run package tests
         run: julia --project=test -e 'include("test/runtests.jl")'
@@ -138,10 +144,15 @@ jobs:
           git clone --branch main https://github.com/nsiccha/Treebars.jl.git
           git clone https://github.com/nsiccha/ReparametrizableDistributions.jl.git "$RUNNER_TEMP/ReparametrizableDistributions.jl"
           git -C "$RUNNER_TEMP/ReparametrizableDistributions.jl" checkout --detach 8f7d382df700d3780ed31d093bc4983d3734a6c6
+          # Our Pathfinder fork's `save_trace=false` (Project.toml [sources]); the
+          # fork's version equals the registered 0.10.9, so only a develop takes it.
+          git clone https://github.com/nsiccha/Pathfinder.jl.git "$RUNNER_TEMP/Pathfinder.jl"
+          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach c24c1317b2c7cd13f3c194944061549e2145b315
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
             PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "ReparametrizableDistributions.jl")),
+            PackageSpec(path=joinpath(ENV["RUNNER_TEMP"], "Pathfinder.jl")),
           ]); Pkg.instantiate()'
       - name: Run the Enzyme items
         # `--tag=enzyme` errors if it matches nothing, so deleting or retagging

@@ -89,13 +89,15 @@ try
         # and the fit's own iterate inside it.
         @test !inside(beyond, result.draws[:, 1])
         @test result.fit_distribution.μ[1] > 0.6
-        points = result.optim_trace.points
-        @test inside(beyond, points[result.fit_iteration + 1])
+        # The fit's iterate, which WarmupHMC's Pathfinder (`save_trace=false`)
+        # does not keep: replayed, as the initializer replays it.
+        fit_point = WarmupHMC._pathfinder_path(beyond, result).span.fit_point
+        @test inside(beyond, fit_point)
         # Pathfinder itself warns here too: its ELBO draw lands outside the
         # support as well, so its "failed after 1 tries" precedes our warning.
         start = @test_logs (:warn, r"L-BFGS iterate 1 of 1") match_mode=:any WarmupHMC.initialize_mcmc(
             beyond, copy(init); rng=Xoshiro(1), progress=nothing)
-        @test start.position == points[result.fit_iteration + 1]
+        @test start.position == fit_point
         @test inside(beyond, start.position)
     end
 

@@ -123,23 +123,61 @@ end
     @test sum(a -> a.size, allocs) < dense_bytes * 4
     # The same objective, with Pathfinder's own default-built one as the
     # control: the prototype is the ONLY difference, and the trajectory, the
-    # fit, the ELBO and the draw are bit-identical.
-    ours = WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100)
-    theirs = Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
-        ndraws=1, ndraws_elbo=1, ntries=1, adtype=Pathfinder.SciMLBase.NoAD(),
-        optimizer=WarmupHMC._pathfinder_optimizer(6))
-    @test ours.optim_solution.cache.f.hess_prototype isa Diagonal
-    @test theirs.optim_solution.cache.f.hess_prototype === nothing
-    @test ours.optim_trace.points == theirs.optim_trace.points
-    @test ours.optim_trace.gradients == theirs.optim_trace.gradients
-    @test ours.fit_iteration == theirs.fit_iteration
-    @test [e.value for e in ours.elbo_estimates] == [e.value for e in theirs.elbo_estimates]
-    @test ours.draws == theirs.draws
-    @test ours.input === target
-    @test @allocated(WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100)) <
-        @allocated(Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
+    # fit, the ELBO and the draw are bit-identical. Both runs keep the trace
+    # or both drop it (`save_trace`), since the two score fits from different
+    # random streams.
+    trace_modes = WarmupHMC._PATHFINDER_SAVE_TRACE_OPTIONAL ?
+        ((; save_trace=false), (; save_trace=true)) : ((;),)
+    for kw in trace_modes
+        ours = WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100, kw...)
+        theirs = Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
             ndraws=1, ndraws_elbo=1, ntries=1, adtype=Pathfinder.SciMLBase.NoAD(),
-            optimizer=WarmupHMC._pathfinder_optimizer(6))) - dense_bytes
+            optimizer=WarmupHMC._pathfinder_optimizer(6), kw...)
+        @test ours.optim_solution.cache.f.hess_prototype isa Diagonal
+        @test theirs.optim_solution.cache.f.hess_prototype === nothing
+        @test ours.optim_trace.log_densities == theirs.optim_trace.log_densities
+        @test ours.optim_trace.points == theirs.optim_trace.points
+        @test ours.optim_trace.gradients == theirs.optim_trace.gradients
+        @test ours.fit_iteration == theirs.fit_iteration
+        @test [e.value for e in ours.elbo_estimates] == [e.value for e in theirs.elbo_estimates]
+        @test ours.draws == theirs.draws
+        @test ours.input === target
+        @test @allocated(WarmupHMC.mypathfinder(target; rng=Xoshiro(8), init, maxiters=100, kw...)) <
+            @allocated(Pathfinder.pathfinder(target; rng=Xoshiro(8), init, maxiters=100,
+                ndraws=1, ndraws_elbo=1, ntries=1, adtype=Pathfinder.SciMLBase.NoAD(),
+                optimizer=WarmupHMC._pathfinder_optimizer(6), kw...)) - dense_bytes
+    end
+end
+
+@testset "a Pathfinder start's memory does not grow with maxiters" begin
+    # A released Pathfinder keeps its whole trajectory, every fit and every fit's
+    # ELBO draws until it returns: about 34 words per coordinate and iterate at
+    # WarmupHMC's settings (snag `atlas-pathfinder-5cae9aa7`). With our fork's
+    # `save_trace=false` it keeps the selected fit, and WarmupHMC its
+    # `_TrajectoryRecorder` (`_RECORDED_ITERATES` iterates) and the checks'
+    # summary (`_pathfinder_path`): what grows with the iterations is a few
+    # scalars per iterate (snag `pathfinder-start-30deca51`). This target's
+    # L-BFGS runs to the cap.
+    if WarmupHMC._PATHFINDER_SAVE_TRACE_OPTIONAL
+        n = 200
+        steep = DiagGaussian(zeros(n), exp.(range(-3, 3, length = n)))
+        start = fill(2.0, n)
+        function retained(maxiters; kw...)
+            recorder = WarmupHMC._TrajectoryRecorder(steep)
+            result = WarmupHMC._pathfinder_or_refit(steep; rng=Xoshiro(9), init=start,
+                callback=(state, args...) -> false, maxiters, recorder, kw...)
+            @test length(result.optim_trace) == maxiters + 1
+            path = WarmupHMC._pathfinder_path(steep, result, recorder)
+            Base.summarysize((result, recorder, path))
+        end
+        short, long = retained(50), retained(400)
+        # Positive control: with the trace, the same run retains O(d) words per iterate.
+        traced = retained(400; save_trace=true) - retained(50; save_trace=true)
+        @test traced > 8 * n * 350 * 20
+        # Without it, less than one word per coordinate and iterate.
+        @test long - short < 8 * n * 350
+        @test long < 8 * n * (4 * WarmupHMC._RECORDED_ITERATES + 200)
+    end
 end
 
 @testset "a caller-supplied dense matrix still factorizes (f210206's case)" begin

@@ -190,9 +190,12 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
     with_progress(progress, maxiters; description="Pathfinder", transient=true) do pprogress
         gradient = _check_finite_init(lpdf, init)
         callback = pathfinder_callback(pprogress)
-        pathfind(start) = _pathfinder_or_refit(lpdf; rng, init=start, callback, maxiters, kwargs...)
+        # Each run with the recorder of its trajectory (`_pathfinder_path`).
+        pathfind(start) = let recorder = _TrajectoryRecorder(lpdf)
+            (_pathfinder_or_refit(lpdf; rng, init=start, callback, maxiters, recorder, kwargs...), recorder)
+        end
         stationary = recover && _stationary_start(gradient)
-        result = stationary ? nothing : pathfind(init)
+        result, recorder = stationary ? (nothing, nothing) : pathfind(init)
         if recover && (stationary || isempty(result.elbo_estimates))
             why = stationary ?
                 "the start is a stationary point of the log density (largest gradient " *
@@ -201,7 +204,7 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
             for scale in _STATIONARY_START_JITTERS
                 jittered = init .+ scale .* randn(rng, length(init))
                 isnothing(_evaluate_if_finite(lpdf, jittered)) && continue
-                result = pathfind(jittered)
+                result, recorder = pathfind(jittered)
                 isempty(result.elbo_estimates) || break
             end
             if isnothing(result) || isempty(result.elbo_estimates)
@@ -214,18 +217,23 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
             @info "Initialization: $why; Pathfinder ran from the start plus a Gaussian jitter " *
                 "instead, and the chain starts from that run's draw with its metric." maxlog=1
         end
-        initialize_mcmc(lpdf, result; progress=pprogress, maxiters, kwargs...)
+        initialize_mcmc(lpdf, result; progress=pprogress, maxiters, recorder, kwargs...)
     end
-initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, progress=nothing, maxiters=100, kwargs...) = begin
+initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, progress=nothing, maxiters=100,
+        recorder=nothing, kwargs...) = begin
     isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
+    # What the checks read of the L-BFGS trajectory, in memory independent of
+    # its length: `recorder` rode along WarmupHMC's own run; a caller's result
+    # without its trace is replayed (`_pathfinder_path`).
+    path = _pathfinder_path(lpdf, init, recorder)
     # The start is a point at which the target is finite: the draw, a redraw, or
     # an L-BFGS iterate (`_finite_pathfinder_start`). `rng` is the stream
     # Pathfinder drew on, so a redraw continues it as a second draw would have.
     # A finite draw the fit cannot have produced means the fit is unusable, and
     # Pathfinder runs again on a rescaled target (`_rescaled_pathfinder_start`).
-    position_and_gradient = _finite_pathfinder_start(lpdf, init, rng)
+    position_and_gradient = _finite_pathfinder_start(lpdf, init, path, rng)
     isnothing(position_and_gradient) &&
-        return _rescaled_pathfinder_start(lpdf, init; rng, progress, maxiters, kwargs...)
+        return _rescaled_pathfinder_start(lpdf, init, path; rng, progress, maxiters, kwargs...)
     position = position_and_gradient.q
     dimension = length(position)
     squared_scale = init.fit_distribution.Σ
@@ -298,11 +306,31 @@ end
 # draw are bit-identical (`test/linear_scaling.jl`). No `hess` is supplied even
 # for a second-order target: L-BFGS never asks for one, and WarmupHMC never
 # forms a full Hessian.
-function _pathfinder_objective(lpdf, adtype)
-    f(x, _...) = -LogDensityProblems.logdensity(lpdf, x)
-    grad(res, x, _...) = (res .= .-last(LogDensityProblems.logdensity_and_gradient(lpdf, x)); res)
+#
+# `threw` is set when an evaluation of the target throws. Pathfinder evaluates
+# the target only through this objective (its ELBO's `logp` is `-f`), so a
+# `PosDefException` that leaves a Pathfinder run with `threw` unset came from
+# Pathfinder's own fit (`_pathfinder_or_refit`).
+function _pathfinder_objective(lpdf, adtype, threw::Base.RefValue{Bool}=Ref(false))
+    f(x, _...) = _flag_throw(threw) do
+        -LogDensityProblems.logdensity(lpdf, x)
+    end
+    grad(res, x, _...) = _flag_throw(threw) do
+        res .= .-last(LogDensityProblems.logdensity_and_gradient(lpdf, x))
+        res
+    end
     Pathfinder.SciMLBase.OptimizationFunction(f, adtype; grad,
         hess_prototype=Diagonal(zeros(LogDensityProblems.dimension(lpdf))))
+end
+
+"`f()`, setting `threw[]` before rethrowing anything it throws."
+function _flag_throw(f, threw)
+    try
+        f()
+    catch
+        threw[] = true
+        rethrow()
+    end
 end
 
 "The L-BFGS Pathfinder's trajectory is optimized with: `history_length` curvature pairs, Hager–Zhang line search."
@@ -312,7 +340,45 @@ _pathfinder_optimizer(history_length) = Pathfinder.Optim.LBFGS(;
     alphaguess=Pathfinder.LineSearches.InitialHagerZhang()
 )
 
-"Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248"
+# ── Pathfinder without its trace: memory independent of `maxiters` ──────────
+#
+# A released Pathfinder (0.10.9) keeps its whole L-BFGS trajectory, the
+# Gaussian it fits at every iterate and the ELBO draws of every fit until it
+# returns: 8 · d · L · (4 · history + 5 + ndraws_elbo) bytes for L iterates
+# (snag `atlas-pathfinder-5cae9aa7`), so a start's memory grows with `maxiters`
+# (snag `pathfinder-start-30deca51`: Bruno passes the fit's `maxiters`, 1000
+# in its reports). Our fork's `save_trace=false` (nsiccha/Pathfinder.jl
+# `save-trace-false`, upstream draft mlcolab/Pathfinder.jl#437, pinned in
+# Project.toml's [sources]) scores each fit as its iterate is reached and keeps
+# only the selected one, its draws and the per-iterate log densities.
+# `mypathfinder` asks for it whenever the loaded Pathfinder has it; a caller's
+# `save_trace` in `pathfinder_kw` overrides that.
+#
+# The checks of the start below need more of the trajectory than the selected
+# fit: the fit's own iterate, and the stretch of iterates its L-BFGS history
+# is built from. `_TrajectoryRecorder` rides along the run as its callback and
+# keeps the last `_RECORDED_ITERATES` iterates; when the stretch lies before
+# them, L-BFGS is replayed to the fit's iterate, which reproduces the
+# trajectory exactly (`_replay_trajectory`). Either way the start holds
+# O(d · (history + _RECORDED_ITERATES)) memory, whatever `maxiters` is
+# (`_pathfinder_path`).
+
+"""
+Whether the loaded Pathfinder takes `save_trace`: our fork's
+`save-trace-false`, not a Pathfinder release up to 0.10.9.
+"""
+const _PATHFINDER_SAVE_TRACE_OPTIONAL = isdefined(Pathfinder, :_pathfinder) &&
+    any(m -> :save_trace in Base.kwarg_decl(m), methods(Pathfinder._pathfinder))
+
+"Whether a Pathfinder run with these keywords keeps no trace (`save_trace=false`)."
+_pathfinder_without_trace(kwargs) =
+    _PATHFINDER_SAVE_TRACE_OPTIONAL && !get(kwargs, :save_trace, false)
+
+"""
+Set other defaults and works around https://github.com/mlcolab/Pathfinder.jl/issues/248
+
+`threw` is the flag `_pathfinder_objective` sets when the target throws.
+"""
 mypathfinder(lpdf;
     ndraws=1, ndraws_elbo=1, ntries=1,
     history_length=6,
@@ -323,12 +389,99 @@ mypathfinder(lpdf;
     # so no second AD package is ever pulled into the initializer.
     adtype=Pathfinder.SciMLBase.NoAD(),
     optimizer=_pathfinder_optimizer(history_length),
+    threw=Ref(false),
     kwargs...
 ) = pathfinder(
-    _pathfinder_objective(lpdf, adtype);
+    _pathfinder_objective(lpdf, adtype, threw);
     input=lpdf, dim=LogDensityProblems.dimension(lpdf),
-    ndraws, ntries, ndraws_elbo, optimizer, kwargs...
+    ndraws, ntries, ndraws_elbo, optimizer,
+    (_PATHFINDER_SAVE_TRACE_OPTIONAL ? (; save_trace=false) : (;))..., kwargs...
 )
+
+"""
+Iterates `_TrajectoryRecorder` keeps of the end of a Pathfinder run: 2 × d words
+each, with their gradients.
+"""
+const _RECORDED_ITERATES = 32
+
+"""
+    _TrajectoryRecorder(lpdf)
+
+What WarmupHMC keeps of a Pathfinder run's L-BFGS trajectory, filled by
+`_record!` from the run's callback: the number of iterates seen, the start
+(iterate 0), the last `_RECORDED_ITERATES` iterates with the log-density
+gradients there, and for every curvature pair (iterates `l - 1` and `l`)
+whether Pathfinder's inverse-Hessian history takes it (`_accepts_pair`). Memory:
+O(d · _RECORDED_ITERATES) and one bit per iterate. `lpdf` supplies a gradient
+the optimizer does not report.
+"""
+mutable struct _TrajectoryRecorder{P}
+    const lpdf::P
+    n::Int
+    const start::Vector{Float64}
+    const iterates::Vector{Tuple{Int,Vector{Float64},Vector{Float64}}}
+    const accepted::BitVector
+end
+_TrajectoryRecorder(lpdf) = _TrajectoryRecorder(lpdf, 0, Float64[],
+    Tuple{Int,Vector{Float64},Vector{Float64}}[], BitVector())
+
+function Base.empty!(recorder::_TrajectoryRecorder)
+    recorder.n = 0
+    empty!(recorder.start)
+    empty!(recorder.iterates)
+    empty!(recorder.accepted)
+    recorder
+end
+
+"The log-density gradient at the optimizer's `state`: its own, else from `lpdf`."
+_state_gradient(lpdf, state) = isnothing(state.grad) ?
+    collect(Float64, last(LogDensityProblems.logdensity_and_gradient(lpdf, state.u))) :
+    -collect(Float64, state.grad)
+
+"""
+    _accepts_pair(xs, gs, xt, gt)
+
+Whether Pathfinder's L-BFGS inverse Hessian takes the curvature pair from iterate
+`xs` (log-density gradient `gs`) to the next one `xt` (`gt`): `s'y > ϵ |y|²` with
+`s = xt - xs`, `y = gs - gt` (`_PATHFINDER_CURVATURE_EPS`).
+"""
+function _accepts_pair(xs, gs, xt, gt)
+    sy = yy = 0.0
+    for i in eachindex(xs)
+        s, y = xt[i] - xs[i], gs[i] - gt[i]
+        sy += s * y
+        yy += y * y
+    end
+    sy > _PATHFINDER_CURVATURE_EPS * yy
+end
+
+"""
+    _record!(recorder, x, g)
+
+Add the next iterate `x` of the trajectory, with log-density gradient `g`.
+"""
+function _record!(recorder::_TrajectoryRecorder, x, g)
+    i = recorder.n
+    iszero(i) && append!(recorder.start, x)
+    if !isempty(recorder.iterates)
+        _, xs, gs = last(recorder.iterates)
+        push!(recorder.accepted, _accepts_pair(xs, gs, x, g))
+    end
+    if length(recorder.iterates) == _RECORDED_ITERATES
+        # Reuse the oldest iterate's buffers: no allocation per iterate.
+        _, xo, go = popfirst!(recorder.iterates)
+        push!(recorder.iterates, (i, copyto!(xo, x), copyto!(go, g)))
+    else
+        push!(recorder.iterates, (i, collect(Float64, x), collect(Float64, g)))
+    end
+    recorder.n += 1
+    recorder
+end
+_record!(recorder::_TrajectoryRecorder, state) =
+    _record!(recorder, state.u, _state_gradient(recorder.lpdf, state))
+
+"The callback that records each iterate in `recorder`, then calls `callback`."
+_recording(recorder, callback) = (state, args...) -> (_record!(recorder, state); callback(state, args...))
 
 # ── Pathfinder's fit on a stalled trajectory ────────────────────────────────
 #
@@ -344,29 +497,48 @@ mypathfinder(lpdf;
 # closure). Every iterate before the first failing one has a valid fit, and
 # both L-BFGS and the fit are deterministic, so Pathfinder rerun from the same
 # start for fewer iterations reproduces that prefix and succeeds.
+#
+# Without its trace (`save_trace=false`), Pathfinder fits each iterate as the
+# optimizer reaches it, so the exception leaves the run at the first failing
+# iterate: the last one `_TrajectoryRecorder` saw. With its trace it leaves only
+# after the optimization, and `_first_unfactorizable_iterate` finds the iterate
+# by fitting prefixes of a recorded trajectory.
 
 """
-    _pathfinder_or_refit(lpdf; rng, init, callback, maxiters, kwargs...)
+    _pathfinder_or_refit(lpdf; rng, init, callback, maxiters, recorder=_TrajectoryRecorder(lpdf), kwargs...)
 
 `mypathfinder`, or, when its inverse-Hessian fit throws a `PosDefException`, the
 same Pathfinder run on the longest prefix of its L-BFGS trajectory that Pathfinder
-can factorize. A run that succeeds is not touched. The trajectory is recorded by
-rerunning Pathfinder on a copy of `rng`, and the failure must reproduce in
-Pathfinder's own fit of that trajectory; anything else, including a
-`PosDefException` the target threw, is rethrown.
+can factorize. A run that succeeds is not touched. The refit is Pathfinder from the
+same `rng` state with fewer iterations. A `PosDefException` the target threw is
+rethrown. `recorder` records the trajectory of the run returned.
 """
-function _pathfinder_or_refit(lpdf; rng, init, callback, maxiters, kwargs...)
+function _pathfinder_or_refit(lpdf; rng, init, callback, maxiters,
+        recorder=_TrajectoryRecorder(lpdf), kwargs...)
+    without_trace = _pathfinder_without_trace(kwargs)
+    # A run without its trace draws one seed from `rng` per iterate before it
+    # can throw; the refit starts from the same state as the failed run.
+    saved_rng = without_trace && applicable(copy, rng) ? copy(rng) : nothing
+    threw = Ref(false)
     try
-        return mypathfinder(lpdf; rng, init, callback, maxiters, kwargs...)
+        return mypathfinder(lpdf; rng, init, callback=_recording(recorder, callback), maxiters, threw, kwargs...)
     catch err
         err isa PosDefException || rethrow()
-        failing = _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
+        failing = if without_trace
+            # The target's own exception, or Pathfinder's fit of the last iterate seen.
+            threw[] ? nothing : recorder.n - 1
+        else
+            _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
+        end
         # Not Pathfinder's fit of this trajectory, or no iterate before it to fit.
         (isnothing(failing) || failing < 2) && rethrow()
         @warn "Pathfinder's inverse-Hessian fit is not positive definite at iteration $failing " *
             "of its L-BFGS trajectory (a PosDefException; typical of an optimizer stalled on a " *
             "kink of the log density). Refitting on the first $(failing - 1) iterations."
-        return mypathfinder(lpdf; rng, init, callback, maxiters=failing - 1, kwargs...)
+        isnothing(saved_rng) || !applicable(copy!, rng, saved_rng) || copy!(rng, saved_rng)
+        empty!(recorder)
+        return mypathfinder(lpdf; rng, init, callback=_recording(recorder, callback),
+            maxiters=failing - 1, kwargs...)
     end
 end
 
@@ -377,6 +549,8 @@ Rerun `mypathfinder` on a copy of `rng`, recording its L-BFGS trajectory, and re
 the first iterate (counting the start as iterate 0) at which Pathfinder's fit of
 that trajectory throws a `PosDefException`. `nothing` when the rerun does not throw
 one, or when the recorded trajectory fits, i.e. the exception came from elsewhere.
+`_pathfinder_or_refit` uses it for a Pathfinder that keeps its trace, which throws
+only after the optimization; it records the whole trajectory.
 """
 function _first_unfactorizable_iterate(lpdf; rng, init, callback, maxiters, kwargs...)
     # The same iterates and log-density gradients Pathfinder's own trace records.
@@ -495,7 +669,7 @@ end
 #   it also covers a fit so wide that none of its draws is finite (the
 #   log-density overflows), where the fit's scale would otherwise stand in at an
 #   L-BFGS iterate. Only the pairs the fit is built from count: those its
-#   L-BFGS history spans (`_fit_history_pairs`), including rejected pairs in
+#   L-BFGS history spans (`_history_span_start`), including rejected pairs in
 #   that span. Earlier pairs can measure much higher curvature in the tails
 #   than at the selected fit. Comparing that fit against them falsely rejects
 #   it and sends a usable start through recovery. When all pairs were rejected,
@@ -517,7 +691,7 @@ end
 
 """
 Largest `y'Σy / s'y` over the L-BFGS curvature pairs the fit is built from at
-which Pathfinder's fit still counts as usable (`_fit_drops_curvature`).
+which Pathfinder's fit still counts as usable (`_HistorySpan`'s `drops_curvature`).
 """
 const _DROPPED_CURVATURE_RATIO = 1e8
 
@@ -529,48 +703,182 @@ curvature pair `(s, y)` into its inverse-Hessian history only when
 const _PATHFINDER_CURVATURE_EPS = 1e-12
 
 """
-    _fit_history_pairs(result)
+    _history_span_start(accepted, k, history_length)
 
-The span of curvature pairs in the selected fit's L-BFGS history, including
-rejected pairs within that span. Pair `l` joins `optim_trace.points[l]` and
-`points[l + 1]`. Pathfinder's Woodbury factor has two columns per retained
-pair, so the span also respects a caller-supplied fit's history length.
-If no pair was accepted, use every pair up to the fit's iterate.
+The first iterate of the stretch of the L-BFGS trajectory Pathfinder's fit at
+iterate `k` is built from: going back from `k`, the curvature pairs up to the
+`history_length`-th one its inverse-Hessian history takes (`accepted[l]` for the
+pair of iterates `l - 1` and `l`), with the rejected pairs between them. If no
+pair was accepted, every pair up to `k`, from the start (iterate 0).
 """
-function _fit_history_pairs(result)
-    points, gradients = result.optim_trace.points, result.optim_trace.gradients
-    k = result.fit_iteration
-    history_length = size(result.fit_distribution.Σ.B, 2) ÷ 2
-    iszero(history_length) && return 1:k
-    first_pair, accepted = k + 1, 0
+function _history_span_start(accepted, k, history_length)
+    iszero(history_length) && return 0
+    first_pair, n = k + 1, 0
     for l in k:-1:1
         first_pair = l
-        s = points[l + 1] - points[l]
-        y = gradients[l] - gradients[l + 1]
-        dot(s, y) > _PATHFINDER_CURVATURE_EPS * sum(abs2, y) && (accepted += 1)
-        accepted == history_length && break
+        accepted[l] && (n += 1)
+        n == history_length && break
     end
-    first_pair:k
+    first_pair - 1
 end
 
 """
-    _fit_drops_curvature(result)
-
-Whether Pathfinder's fit is far wider than a curvature its own L-BFGS history
-measured: some pair `(s, y)` the fit is built from (`_fit_history_pairs`) with
-`s'y > 0` has `y'Σy > _DROPPED_CURVATURE_RATIO * s'y`, with `Σ` the fit's
-covariance.
+The number of curvature pairs in the L-BFGS history of a Pathfinder fit with
+covariance `Σ`: its Woodbury factor has two columns per pair, so this also
+respects a caller-supplied fit's history length.
 """
-function _fit_drops_curvature(result)
-    points, gradients = result.optim_trace.points, result.optim_trace.gradients
-    Σ = result.fit_distribution.Σ
-    for l in _fit_history_pairs(result)
-        s = points[l + 1] - points[l]
-        y = gradients[l] - gradients[l + 1]
-        sy = dot(s, y)
-        sy > 0 && dot(y, Σ * y) > _DROPPED_CURVATURE_RATIO * sy && return true
+_fit_history_length(Σ) = size(Σ.B, 2) ÷ 2
+
+"""
+    _HistorySpan(Σ, lo, k)
+
+Fed the iterates `lo, …, k` of an L-BFGS trajectory in order (`_visit!`), with
+their log-density gradients: the stretch the Pathfinder fit at iterate `k`, of
+covariance `Σ`, is built from (`_history_span_start`). It accumulates what the
+checks of the start read, in O(d) memory however long the stretch is:
+
+* `drops_curvature`: whether the fit is far wider than a curvature that stretch
+  measured: some pair `(s, y)` with `s'y > 0` has
+  `y'Σy > _DROPPED_CURVATURE_RATIO * s'y`;
+* the per-coordinate variances of the positions and gradients, and the gradient
+  at `lo` (`_trajectory_scale`);
+* `fit_point`, the iterate `k` the fit was made at.
+"""
+mutable struct _HistorySpan{S}
+    const Σ::S
+    const lo::Int
+    const k::Int
+    n::Int
+    drops_curvature::Bool
+    const position_mean::Vector{Float64}
+    const position_m2::Vector{Float64}
+    const gradient_mean::Vector{Float64}
+    const gradient_m2::Vector{Float64}
+    const first_gradient::Vector{Float64}
+    const previous_position::Vector{Float64}
+    const previous_gradient::Vector{Float64}
+    const fit_point::Vector{Float64}
+end
+_HistorySpan(Σ, lo, k) = _HistorySpan(Σ, lo, k, 0, false, (zeros(size(Σ, 1)) for _ in 1:8)...)
+
+"Welford's update of a per-coordinate running `mean` and sum of squares `m2` by the `n`-th value `x`."
+function _welford!(mean, m2, x, n)
+    for i in eachindex(mean, m2, x)
+        δ = x[i] - mean[i]
+        mean[i] += δ / n
+        m2[i] += δ * (x[i] - mean[i])
     end
-    false
+end
+
+"""
+    _visit!(span, i, x, g)
+
+Feed iterate `i` (point `x`, log-density gradient `g`) to `span`; an iterate
+outside `span.lo:span.k` is ignored. The iterates inside it come in order.
+"""
+function _visit!(span::_HistorySpan, i, x, g)
+    span.lo <= i <= span.k || return span
+    if i > span.lo
+        s = x .- span.previous_position
+        y = span.previous_gradient .- g
+        sy = dot(s, y)
+        sy > 0 && dot(y, span.Σ * y) > _DROPPED_CURVATURE_RATIO * sy && (span.drops_curvature = true)
+    else
+        copyto!(span.first_gradient, g)
+    end
+    span.n += 1
+    _welford!(span.position_mean, span.position_m2, x, span.n)
+    _welford!(span.gradient_mean, span.gradient_m2, g, span.n)
+    copyto!(span.previous_position, x)
+    copyto!(span.previous_gradient, g)
+    i == span.k && copyto!(span.fit_point, x)
+    span
+end
+
+"""
+    _PathfinderPath
+
+What the checks of a Pathfinder start read of its L-BFGS trajectory
+(`_pathfinder_path`): the `start` (iterate 0), the fit's history stretch `span`
+(`_HistorySpan`, which holds the fit's iterate), the iterates kept for the
+fallback of `_finite_pathfinder_start` as `(iterate, point)`, latest first, and
+the trajectory's number of iterates.
+"""
+struct _PathfinderPath{S}
+    start::Vector{Float64}
+    span::S
+    iterates::Vector{Tuple{Int,Vector{Float64}}}
+    n_iterates::Int
+end
+
+"""
+    _replay_trajectory(visit, lpdf, result, stop)
+
+The L-BFGS trajectory of the Pathfinder run `result` again, from its optimization
+problem with its optimizer, up to iterate `stop`: `visit(i, x, g)` for every
+iterate `i` with point `x` and log-density gradient `g` (from `lpdf` when the
+optimizer reports none). Neither the fits nor the ELBO are computed, and no
+random number is drawn. L-BFGS is deterministic, so this is the trajectory
+Pathfinder took (`_pathfinder_or_refit` relies on that too), measured bit for
+bit against the recorded one (`test/pathfinder_trace.jl`). Pathfinder's other
+solve keywords only stop the optimizer, so they cannot change that prefix.
+"""
+function _replay_trajectory(visit, lpdf, result, stop)
+    i = Ref(0)
+    callback = (state, args...) -> begin
+        visit(i[], state.u, _state_gradient(lpdf, state))
+        i[] += 1
+        false
+    end
+    Pathfinder.SciMLBase.solve(result.optim_prob, result.optimizer; maxiters=stop, callback)
+    i[] == stop + 1 || error("""
+        Initialization failed: replaying Pathfinder's L-BFGS trajectory to the iterate its fit
+        was made at ($stop) ended after iterate $(i[] - 1). L-BFGS is deterministic, so the
+        target answers differently now from when Pathfinder ran.""")
+    nothing
+end
+
+"""
+    _pathfinder_path(lpdf, result, recorder=nothing)
+
+What the checks of a start from the Pathfinder run `result` read of its L-BFGS
+trajectory (`_PathfinderPath`). With the trajectory in `result` (Pathfinder's
+trace) it is read from there. Without it (`save_trace=false`), from `recorder`,
+the `_TrajectoryRecorder` that rode along the run; when the fit's history
+stretch lies before the iterates it kept, L-BFGS is replayed to the fit's
+iterate (`_replay_trajectory`). A `result` without its trace and without the
+recorder of its run (a caller's `PathfinderResult`) is replayed to its fit's
+iterate first, to record it. Memory: O(d · (history + _RECORDED_ITERATES)),
+whatever the trajectory's length.
+"""
+function _pathfinder_path(lpdf, result, recorder=nothing)
+    k, Σ = result.fit_iteration, result.fit_distribution.Σ
+    history_length = _fit_history_length(Σ)
+    trace = result.optim_trace
+    if !isempty(trace.points)
+        P, G = trace.points, trace.gradients
+        accepted = [_accepts_pair(P[l], G[l], P[l + 1], G[l + 1]) for l in 1:k]
+        span = _HistorySpan(Σ, _history_span_start(accepted, k, history_length), k)
+        foreach(i -> _visit!(span, i, P[i + 1], G[i + 1]), span.lo:k)
+        return _PathfinderPath(collect(Float64, first(P)), span,
+            [(i - 1, P[i]) for i in length(P):-1:1], length(P))
+    end
+    # Pathfinder keeps the log density of every iterate, so this counts them.
+    n_iterates = length(trace)
+    if isnothing(recorder) || recorder.n != n_iterates
+        recorder = _TrajectoryRecorder(lpdf)
+        _replay_trajectory((_, x, g) -> _record!(recorder, x, g), lpdf, result, k)
+    end
+    span = _HistorySpan(Σ, _history_span_start(recorder.accepted, k, history_length), k)
+    kept = recorder.iterates
+    if first(first(kept)) <= span.lo && first(last(kept)) >= k
+        foreach(((i, x, g),) -> _visit!(span, i, x, g), kept)
+    else
+        _replay_trajectory((i, x, g) -> _visit!(span, i, x, g), lpdf, result, k)
+    end
+    iterates = [(i, x) for (i, x, _) in Iterators.reverse(kept)]
+    first(last(iterates)) == 0 || push!(iterates, (0, recorder.start))
+    _PathfinderPath(copy(recorder.start), span, iterates, n_iterates)
 end
 
 """
@@ -582,37 +890,37 @@ draw (`_fit_log_weight_change`) before the fit counts as unusable: `10 (d + 10)`
 _implausible_drop(dimension) = 10 * (dimension + 10)
 
 """
-    _fit_log_weight_change(result, θ, ℓθ)
+    _fit_log_weight_change(result, path, θ, ℓθ)
 
 The importance log-weight of `θ` (log density `ℓθ`) under Pathfinder's fit,
-relative to the iterate the fit was made at: `(ℓθ - ℓ(x)) - (log q(θ) - log q(x))`.
-Zero for a fit equal to the target up to normalization; far below zero where the
-fit is far too wide.
+relative to the iterate the fit was made at (`path.span.fit_point`):
+`(ℓθ - ℓ(x)) - (log q(θ) - log q(x))`. Zero for a fit equal to the target up to
+normalization; far below zero where the fit is far too wide.
 """
-function _fit_log_weight_change(result, θ, ℓθ)
-    k = result.fit_iteration + 1
+function _fit_log_weight_change(result, path, θ, ℓθ)
     q = result.fit_distribution
-    x = result.optim_trace.points[k]
-    (ℓθ - result.optim_trace.log_densities[k]) - (logpdf(q, θ) - logpdf(q, x))
+    x = path.span.fit_point
+    (ℓθ - result.optim_trace.log_densities[result.fit_iteration + 1]) - (logpdf(q, θ) - logpdf(q, x))
 end
 
 """
-    _finite_pathfinder_start(lpdf, result, rng)
+    _finite_pathfinder_start(lpdf, result, path, rng)
 
 The position Pathfinder's `result` starts the chain from, evaluated: its first
 draw when the target is finite there; else the first of up to
 `_PATHFINDER_REDRAWS` fresh draws from `result.fit_distribution` on `rng` at
 which it is; else the first L-BFGS iterate at which it is, the one the fit was
-made at and then the rest from the trajectory's end backwards, with a warning.
+made at and then the other iterates `path` kept from the latest back to the start
+(all of them when Pathfinder kept its trace), with a warning.
 `nothing` when the fit is unusable, and the caller recovers
 (`_rescaled_pathfinder_start`): when it is far wider than the curvature its
-trajectory measured (`_fit_drops_curvature`), or when its first finite draw is
-implausible under it (more than `_implausible_drop` nats below what the fit
-predicts).
+L-BFGS history measured (`path.span.drops_curvature`), or when its first finite
+draw is implausible under it (more than `_implausible_drop` nats below what the
+fit predicts).
 """
-function _finite_pathfinder_start(lpdf, result, rng)
-    _fit_drops_curvature(result) && return nothing
-    usable(pg) = _fit_log_weight_change(result, pg.q, pg.ℓq) >=
+function _finite_pathfinder_start(lpdf, result, path, rng)
+    path.span.drops_curvature && return nothing
+    usable(pg) = _fit_log_weight_change(result, path, pg.q, pg.ℓq) >=
         -_implausible_drop(length(pg.q))
     pg = _evaluate_if_finite(lpdf, collect(Float64, result.draws[:, 1]))
     isnothing(pg) || return usable(pg) ? pg : nothing
@@ -620,23 +928,22 @@ function _finite_pathfinder_start(lpdf, result, rng)
         pg = _evaluate_if_finite(lpdf, collect(Float64, rand(rng, result.fit_distribution)))
         isnothing(pg) || return usable(pg) ? pg : nothing
     end
-    points = result.optim_trace.points
-    # `fit_distributions[i]` is Pathfinder's fit at `points[i]`; `points[1]` is the start.
-    fit = result.fit_iteration + 1
-    for i in unique!(vcat(fit, length(points):-1:1))
-        pg = _evaluate_if_finite(lpdf, collect(Float64, points[i]))
+    k = result.fit_iteration
+    candidates = [(k, path.span.fit_point); [(i, x) for (i, x) in path.iterates if i != k]]
+    for (i, x) in candidates
+        pg = _evaluate_if_finite(lpdf, collect(Float64, x))
         isnothing(pg) && continue
         @warn "Pathfinder's draw and $(_PATHFINDER_REDRAWS) further draws from its fit lie " *
             "where the log density is not finite (outside the target's support); the " *
-            "chain starts at L-BFGS iterate $(i - 1) of $(length(points) - 1) instead, " *
+            "chain starts at L-BFGS iterate $i of $(path.n_iterates - 1) instead, " *
             "with the fit's scale."
         return pg
     end
     error("""
         Initialization failed: no point of Pathfinder's run has a finite log density and
         gradient. Not its draw, not $(_PATHFINDER_REDRAWS) further draws from its fit, and
-        not one of the $(length(points)) L-BFGS iterates, which the optimizer evaluated as
-        finite: the target answers differently now from when it ran.
+        not one of the $(length(candidates)) L-BFGS iterates kept of its trajectory, which
+        the optimizer evaluated as finite: the target answers differently now from when it ran.
         """)
 end
 
@@ -693,23 +1000,20 @@ function LogDensityProblems.logdensity_and_gradient(p::_DiagonallyScaled, u)
 end
 
 """
-    _trajectory_scale(result)
+    _trajectory_scale(span)
 
 A diagonal scale from the stretch of Pathfinder's L-BFGS trajectory its fit is
-built from (the iterates `_fit_history_pairs` joins): per coordinate the Nutpie
-ratio `(var(position) / var(gradient))^(1/4)` over those iterates where that is
-finite and positive, else `1/sqrt|g|` with `g` the gradient at the first of
-them, else 1.
+built from (`_HistorySpan`): per coordinate the Nutpie ratio
+`(var(position) / var(gradient))^(1/4)` over those iterates where that is finite
+and positive, else `1/sqrt|g|` with `g` the gradient at the first of them, else 1.
 """
-function _trajectory_scale(result)
-    pairs = _fit_history_pairs(result)
-    span = first(pairs):(last(pairs) + 1)
-    points, gradients = result.optim_trace.points[span], result.optim_trace.gradients[span]
-    first_gradient = first(gradients)
-    map(eachindex(first_gradient)) do i
-        s = (var(p[i] for p in points) / var(g[i] for g in gradients))^(1 / 4)
+function _trajectory_scale(span::_HistorySpan)
+    span.n == span.k - span.lo + 1 ||
+        error("internal: the history span was fed $(span.n) of iterates $(span.lo):$(span.k)")
+    map(eachindex(span.first_gradient)) do i
+        s = (span.position_m2[i] / span.gradient_m2[i])^(1 / 4)
         isfinite(s) && s > 0 && return s
-        g = abs(first_gradient[i])
+        g = abs(span.first_gradient[i])
         isfinite(g) && g > 0 ? 1 / sqrt(g) : 1.0
     end
 end
@@ -723,28 +1027,30 @@ _unscale_squared_scale(squared_scale::AbstractMatrix, scale) =
     Diagonal(scale) * squared_scale * Diagonal(scale)
 
 """
-    _rescaled_pathfinder_start(lpdf, result; rng, progress, maxiters, kwargs...)
+    _rescaled_pathfinder_start(lpdf, result, path; rng, progress, maxiters, kwargs...)
 
 The initialization for a Pathfinder `result` whose fit is unusable
 (`_finite_pathfinder_start` returned `nothing`): Pathfinder from the same start
-on `lpdf` rescaled by `_trajectory_scale(result)`, its draw and its covariance
+on `lpdf` rescaled by `_trajectory_scale(path.span)`, its draw and its covariance
 mapped back; failing that, `result`'s fit iterate with that diagonal as metric.
+`path` is `result`'s `_PathfinderPath`.
 """
-function _rescaled_pathfinder_start(lpdf, result; rng, progress, maxiters, kwargs...)
-    scale = _trajectory_scale(result)
+function _rescaled_pathfinder_start(lpdf, result, path; rng, progress, maxiters, kwargs...)
+    scale = _trajectory_scale(path.span)
     scaled = _DiagonallyScaled(lpdf, scale)
-    start = collect(Float64, first(result.optim_trace.points))
+    start = path.start
     why = "Pathfinder's fit is unusable: its covariance is far wider than the target, " *
         "either along a curvature its L-BFGS trajectory measured or at its draw, where the " *
         "log density lies more than $(_implausible_drop(length(scale))) nats below what the " *
         "fit predicts (typical of a target whose scales span more than Pathfinder's fit " *
         "accepts, such as a collapsed variance)"
+    recorder = _TrajectoryRecorder(scaled)
     rescaled = with_progress(progress, maxiters; description="Pathfinder (rescaled)", transient=true) do pprogress
         _pathfinder_or_refit(scaled; rng, init=start ./ scale,
-            callback=pathfinder_callback(pprogress), maxiters, kwargs...)
+            callback=pathfinder_callback(pprogress), maxiters, recorder, kwargs...)
     end
     if !isempty(rescaled.elbo_estimates)
-        draw = _finite_pathfinder_start(scaled, rescaled, rng)
+        draw = _finite_pathfinder_start(scaled, rescaled, _pathfinder_path(scaled, rescaled, recorder), rng)
         if !isnothing(draw)
             position = scale .* draw.q
             position_and_gradient = _evaluate_if_finite(lpdf, position)
@@ -758,7 +1064,7 @@ function _rescaled_pathfinder_start(lpdf, result; rng, progress, maxiters, kwarg
             end
         end
     end
-    iterate = collect(Float64, result.optim_trace.points[result.fit_iteration + 1])
+    iterate = copy(path.span.fit_point)
     @warn "Initialization: $why, and Pathfinder on the target rescaled by a diagonal " *
         "estimated from its L-BFGS trajectory gave no usable fit either. The chain starts at " *
         "L-BFGS iterate $(result.fit_iteration) with that diagonal as its metric."

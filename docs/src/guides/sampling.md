@@ -6,7 +6,8 @@ positions without confusing them with warm-up state.
 ## Target
 
 The installation command on [Start](../index.md) adds the checked-out revision
-and its unregistered dependencies to Julia's active environment. Use
+and the dependency revisions its `Project.toml` pins under `[sources]`, our
+Pathfinder fork among them (see Initialization), to Julia's active environment. Use
 `julia --project=path/to/your/environment WarmupHMC.jl/scripts/install.jl` to
 choose a project explicitly. The script reads dependency revisions from the
 package's `Project.toml` rather than relying on Julia's transitive handling of
@@ -38,6 +39,17 @@ operator mapping a standard normal vector into a displacement in parameter
 space; it is not a covariance matrix. See the `init` argument in
 [`adaptive_warmup_mcmc`](@ref) for the accepted forms and stationary-start
 controls.
+
+A Pathfinder release keeps its whole L-BFGS trajectory, the Gaussian fitted at
+every iterate and their ELBO draws until it returns, about 34 words per
+coordinate and iterate, so the start's memory grows with `maxiters` in
+`pathfinder_kw`. WarmupHMC pins the fork `nsiccha/Pathfinder.jl` (branch
+`save-trace-false`, proposed upstream as mlcolab/Pathfinder.jl#437), with which
+Pathfinder keeps only the fit it selects: the start then holds memory
+proportional to the dimension, whatever `maxiters` is. Julia does not apply a
+dependency's `[sources]` to your environment, so the fork reaches it through the
+installation script or your own `[sources]` entry; with a Pathfinder release the
+start keeps the whole trajectory, as before.
 
 Request retained draws with `n_draws`. Warm-up may restart and discard an earlier
 sampling epoch; the returned positions belong to the retained epoch. Treat the

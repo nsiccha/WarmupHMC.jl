@@ -7,7 +7,10 @@
 # On a log density with a kink at its mode, Pathfinder's inverse-Hessian fit can
 # throw a `PosDefException` (snag `adaptive-warmup-9e5a75a0`). The initializer then
 # refits on the longest prefix of the L-BFGS trajectory that factorizes, instead of
-# letting the exception end the sampler call. See `_pathfinder_or_refit`.
+# letting the exception end the sampler call. See `_pathfinder_or_refit`. Without
+# its trace (`save_trace=false`, WarmupHMC's default on our Pathfinder fork) the
+# exception leaves the run at the failing iterate; with it (`save_trace=true`, a
+# Pathfinder release) only after the optimization. Both are checked.
 
 const Pathfinder = WarmupHMC.Pathfinder
 problem = KinkedGaussian(
@@ -24,9 +27,10 @@ throws_posdef(f) = try
 catch err
     err isa PosDefException || rethrow(); true
 end
-plain(x0, rng) = WarmupHMC.mypathfinder(problem; rng, init=x0, maxiters=100)
+plain(x0, rng; kw...) = WarmupHMC.mypathfinder(problem; rng, init=x0, maxiters=100, kw...)
 no_progress = (state, args...) -> false
-refit(x0, rng) = WarmupHMC._pathfinder_or_refit(problem; rng, init=x0, callback=no_progress, maxiters=100)
+refit(x0, rng; kw...) = WarmupHMC._pathfinder_or_refit(problem; rng, init=x0, callback=no_progress, maxiters=100, kw...)
+trace_modes = WarmupHMC._PATHFINDER_SAVE_TRACE_OPTIONAL ? ((;), (; save_trace=true)) : ((;),)
 
 failing = filter(x0 -> quietly(() -> throws_posdef(() -> plain(x0, Xoshiro(1)))), starts)
 fitting = filter(x0 -> !(x0 in failing), starts)
@@ -38,27 +42,41 @@ fitting = filter(x0 -> !(x0 in failing), starts)
     @test !isempty(fitting)
 end
 
-@testset "a failing start is refit on the trajectory prefix" begin
+@testset "a failing start is refit on the trajectory prefix ($(keys(kw)))" for kw in trace_modes
     for x0 in failing
+        # The failing iterate by fitting prefixes of the whole recorded trajectory.
         f = WarmupHMC._first_unfactorizable_iterate(problem;
-            rng=Xoshiro(2), init=x0, callback=no_progress, maxiters=100)
+            rng=Xoshiro(2), init=x0, callback=no_progress, maxiters=100, kw...)
         @test f isa Int && f >= 2
-        result = @test_logs (:warn, r"not positive definite at iteration") match_mode=:any refit(x0, Xoshiro(2))
-        # Exactly Pathfinder with fewer iterations: the same trajectory and draws.
-        reference = quietly(() -> WarmupHMC.mypathfinder(problem; rng=Xoshiro(2), init=x0, maxiters=f - 1))
+        # Found the same way from either mode: without the trace, as the last
+        # iterate seen when the exception leaves the run.
+        recorder = WarmupHMC._TrajectoryRecorder(problem)
+        rng = Xoshiro(2)
+        result = @test_logs (:warn, Regex("not positive definite at iteration $f ")) match_mode=:any refit(
+            x0, rng; recorder, kw...)
+        # Exactly Pathfinder with fewer iterations: the same trajectory, the same
+        # draws, and the random stream where that run leaves it.
+        reference_rng = Xoshiro(2)
+        reference = quietly(() -> WarmupHMC.mypathfinder(problem; rng=reference_rng, init=x0, maxiters=f - 1, kw...))
         @test length(result.optim_trace) == f
+        @test result.optim_trace.log_densities == reference.optim_trace.log_densities
         @test result.optim_trace.points == reference.optim_trace.points
+        @test result.fit_iteration == reference.fit_iteration
         @test result.draws == reference.draws
+        @test WarmupHMC._xoshiro_words(rng) == WarmupHMC._xoshiro_words(reference_rng)
         @test !isempty(result.elbo_estimates)
+        # The recorder holds the refit's trajectory, not the failed run's.
+        @test recorder.n == f
         # The longest such prefix: one more iteration no longer factorizes.
-        @test quietly(() -> throws_posdef(() -> WarmupHMC.mypathfinder(problem; rng=Xoshiro(2), init=x0, maxiters=f)))
+        @test quietly(() -> throws_posdef(() -> WarmupHMC.mypathfinder(problem; rng=Xoshiro(2), init=x0, maxiters=f, kw...)))
     end
 end
 
-@testset "a start that fits is untouched" begin
+@testset "a start that fits is untouched ($(keys(kw)))" for kw in trace_modes
     for x0 in fitting
-        result = quietly(() -> refit(x0, Xoshiro(3)))
-        reference = quietly(() -> plain(x0, Xoshiro(3)))
+        result = quietly(() -> refit(x0, Xoshiro(3); kw...))
+        reference = quietly(() -> plain(x0, Xoshiro(3); kw...))
+        @test result.optim_trace.log_densities == reference.optim_trace.log_densities
         @test result.optim_trace.points == reference.optim_trace.points
         @test result.draws == reference.draws
     end
@@ -86,14 +104,15 @@ function LogDensityProblems.logdensity_and_gradient(::ThrowsPastOne, x)
 end
 LogDensityProblems.logdensity(p::ThrowsPastOne, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
 
-@testset "a PosDefException from the target is rethrown" begin
+@testset "a PosDefException from the target is rethrown ($(keys(kw)))" for kw in trace_modes
     # The target throws on the way to its mode at x[1] = 3, and the trajectory
-    # recorded up to that throw fits, so nothing is refit.
+    # recorded up to that throw fits, so nothing is refit. Without the trace,
+    # the objective's flag says the target threw (`_pathfinder_objective`).
     @test throws_posdef(() -> LogDensityProblems.logdensity(ThrowsPastOne(), [2.0, 0.0]))
     @test isnothing(quietly(() -> WarmupHMC._first_unfactorizable_iterate(ThrowsPastOne();
-        rng=Xoshiro(6), init=[0.0, 0.5], callback=no_progress, maxiters=100)))
+        rng=Xoshiro(6), init=[0.0, 0.5], callback=no_progress, maxiters=100, kw...)))
     err = try
-        quietly(() -> WarmupHMC.initialize_mcmc(ThrowsPastOne(), [0.0, 0.5]; rng=Xoshiro(6), progress=nothing))
+        quietly(() -> WarmupHMC.initialize_mcmc(ThrowsPastOne(), [0.0, 0.5]; rng=Xoshiro(6), progress=nothing, kw...))
         nothing
     catch err
         err

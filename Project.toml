@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.3.9"
+version = "0.3.10"
 
 [deps]
 CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
@@ -78,3 +78,13 @@ rev = "main"
 [sources.ReparametrizableDistributions]
 url = "https://github.com/nsiccha/ReparametrizableDistributions.jl"
 rev = "8f7d382df700d3780ed31d093bc4983d3734a6c6"
+
+# Our fork's `save_trace=false` (branch `save-trace-false`, upstream draft
+# mlcolab/Pathfinder.jl#437): Pathfinder scores each fit as its iterate is
+# reached and keeps only the selected one, so the start's memory does not grow
+# with `maxiters`. No Pathfinder release carries it yet (0.10.9 does not), and
+# the fork's version is 0.10.9 too, so [compat] cannot tell them apart: a
+# consumer pins this source itself (warmuphmc-use §2).
+[sources.Pathfinder]
+url = "https://github.com/nsiccha/Pathfinder.jl"
+rev = "c24c1317b2c7cd13f3c194944061549e2145b315"

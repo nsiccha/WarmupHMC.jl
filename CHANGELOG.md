@@ -5,6 +5,41 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.10
+
+### Changed
+
+- A Pathfinder start's memory no longer grows with `maxiters` (snag
+  `pathfinder-start-30deca51`). Pathfinder 0.10.9 keeps its whole L-BFGS
+  trajectory, the Gaussian it fits at every iterate and their ELBO draws until
+  it returns, about 34 words per coordinate and iterate at WarmupHMC's
+  settings, and Bruno passes its fits' `maxiters` (1000 in its reports) to
+  every chain's start. WarmupHMC now pins our fork `nsiccha/Pathfinder.jl`
+  (`save-trace-false` at `c24c131`, upstream draft mlcolab/Pathfinder.jl#437)
+  in `[sources]` and runs Pathfinder with `save_trace=false`, which scores each
+  fit as its iterate is reached and keeps only the selected one. The checks of
+  the start need more of the trajectory than that fit: its iterate, and the
+  stretch of iterates its L-BFGS history is built from. WarmupHMC records the
+  last 32 iterates as the run goes and, when that stretch lies before them,
+  replays L-BFGS to the fit's iterate, which reproduces the trajectory bit for
+  bit; the checks read exactly what they read from the whole trajectory before.
+  Measured peak memory of one start (`initialize_mcmc` from a vector, fresh
+  process): 879 MB → 26 MB at d = 2,000 and 5.9 GB → 0.11 GB at d = 20,000 on a
+  Gaussian at `maxiters = 1000`, 4.2 GB → 0.05 GB on a funnel at d = 20,000. The
+  replay costs gradient evaluations only when the fit is selected early (the
+  funnel: 6,107 → 6,287 at `maxiters = 1000`, 850 → 1,015 at 100). Pathfinder
+  scores the fits from a different random stream without its trace, so its
+  selected iterate and draw, and every draw after them, differ from 0.3.9's for
+  a given seed. A Pathfinder `PosDefException` on a kinked log density now
+  leaves the run at the failing iterate and is refit as before; a
+  `PosDefException` the target throws is still rethrown. `pathfinder_kw =
+  (; save_trace = true)` keeps the trace. Julia does not apply a dependency's
+  `[sources]`, so a consumer pins the fork itself (`scripts/install.jl` does);
+  with a Pathfinder release WarmupHMC reads Pathfinder's trace, as before.
+- A caller's `PathfinderResult` without its trace (`save_trace = false`) is
+  accepted as `init`: its trajectory is replayed. Before, the checks of the
+  start indexed its empty trace.
+
 ## 0.3.9
 
 ### Changed

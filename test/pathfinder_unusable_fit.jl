@@ -44,15 +44,29 @@ LogDensityProblems.dimension(p::SteepTails) = p.d
 LogDensityProblems.logdensity_and_gradient(p::SteepTails, x) =
     (-sum(xi -> (cosh(p.a * xi) - 1) / p.a^2, x), -sinh.(p.a .* x) ./ p.a)
 LogDensityProblems.logdensity(p::SteepTails, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+# The whole L-BFGS trajectory of a run: WarmupHMC's Pathfinder keeps none
+# (`save_trace=false`), so it is replayed, as `_pathfinder_path` replays it.
+function trajectory(target, result)
+    isempty(result.optim_trace.points) || return result.optim_trace.points, result.optim_trace.gradients
+    P, G = Vector{Float64}[], Vector{Float64}[]
+    WarmupHMC._replay_trajectory((_, x, g) -> (push!(P, copy(x)); push!(G, copy(g))),
+        target, result, length(result.optim_trace) - 1)
+    P, G
+end
+# What the checks read of the run, replayed for want of the run's recorder.
+path(target, result) = WarmupHMC._pathfinder_path(target, result)
+drops_curvature(target, result) = path(target, result).span.drops_curvature
+# The pairs the fit is built from, `l` joining iterates `l - 1` and `l`.
+history_pairs(target, result) = (path(target, result).span.lo + 1):result.fit_iteration
 # The pre-fix criterion: every pair up to the fit's iterate, not only the fit's own.
-function drops_curvature_any_pair(result)
-    P, G, Σ = result.optim_trace.points, result.optim_trace.gradients, result.fit_distribution.Σ
+function drops_curvature_any_pair(target, result)
+    (P, G), Σ = trajectory(target, result), result.fit_distribution.Σ
     any(1:result.fit_iteration) do l
         s, y = P[l + 1] - P[l], G[l] - G[l + 1]
         dot(s, y) > 0 && dot(y, Σ * y) > WarmupHMC._DROPPED_CURVATURE_RATIO * dot(s, y)
     end
 end
-rejected_pairs(result) = (P = result.optim_trace.points; G = result.optim_trace.gradients;
+rejected_pairs(target, result) = ((P, G) = trajectory(target, result);
     [l for l in 1:length(P) - 1 if !(dot(P[l + 1] - P[l], G[l] - G[l + 1]) >
         WarmupHMC._PATHFINDER_CURVATURE_EPS * sum(abs2, G[l] - G[l + 1]))])
 
@@ -75,12 +89,13 @@ try
         draw = result.draws[:, 1]
         @test isfinite(ℓ(stiff, draw))
         @test ℓ(stiff, draw) < -1e10
-        @test WarmupHMC._fit_drops_curvature(result)
-        @test WarmupHMC._fit_log_weight_change(result, draw, ℓ(stiff, draw)) < -WarmupHMC._implausible_drop(2)
+        @test drops_curvature(stiff, result)
+        @test WarmupHMC._fit_log_weight_change(result, path(stiff, result), draw, ℓ(stiff, draw)) <
+            -WarmupHMC._implausible_drop(2)
         # Overflowing: no draw is finite at all, which the curvature check still sees.
         result = quietly(() -> pathfinder(overflowing, 1))
         @test !isfinite(ℓ(overflowing, result.draws[:, 1]))
-        @test WarmupHMC._fit_drops_curvature(result)
+        @test drops_curvature(overflowing, result)
     end
 
     @testset "the start is a draw of the target, the metric its scales" begin
@@ -120,7 +135,7 @@ try
             start_point = rand(Xoshiro(100 + seed), LogDensityProblems.dimension(target)) .* 4 .- 2
             reference = Xoshiro(seed)
             result = WarmupHMC.mypathfinder(target; rng=reference, init=copy(start_point), maxiters=100)
-            @test !WarmupHMC._fit_drops_curvature(result)
+            @test !drops_curvature(target, result)
             rng = Xoshiro(seed)
             start = WarmupHMC.initialize_mcmc(target, copy(start_point); rng, progress=nothing)
             @test start.position == result.draws[:, 1]
@@ -141,13 +156,14 @@ try
             start_point = rand(Xoshiro(100 + seed), 10) .* 4 .- 2
             reference = Xoshiro(seed)
             result = quietly(() -> WarmupHMC.mypathfinder(steep; rng=reference, init=copy(start_point), maxiters=100))
-            pairs = WarmupHMC._fit_history_pairs(result)
+            pairs = history_pairs(steep, result)
             @test last(pairs) == result.fit_iteration
-            accepted = count(l -> l ∉ rejected_pairs(result), pairs)
+            rejected = rejected_pairs(steep, result)
+            accepted = count(l -> l ∉ rejected, pairs)
             @test accepted == min(WarmupHMC.Pathfinder.DEFAULT_HISTORY_LENGTH,
-                count(l -> l ∉ rejected_pairs(result), 1:result.fit_iteration))
-            old_flags += drops_curvature_any_pair(result)
-            @test !WarmupHMC._fit_drops_curvature(result)
+                count(l -> l ∉ rejected, 1:result.fit_iteration))
+            old_flags += drops_curvature_any_pair(steep, result)
+            @test !drops_curvature(steep, result)
             # The start is Pathfinder's own draw with its fit, and no further random number is drawn.
             rng = Xoshiro(seed)
             start = quietly(() -> WarmupHMC.initialize_mcmc(steep, copy(start_point); rng, progress=nothing))
@@ -165,25 +181,29 @@ try
         # 2e-5 here; over the fit's history it stays within 0.03-1 (measured).
         result = quietly(() -> WarmupHMC.mypathfinder(steep; rng=Xoshiro(1),
             init=rand(Xoshiro(101), 10) .* 4 .- 2, maxiters=100))
-        @test first(WarmupHMC._fit_history_pairs(result)) > 1
-        @test drops_curvature_any_pair(result)
-        scale = WarmupHMC._trajectory_scale(result)
+        @test first(history_pairs(steep, result)) > 1
+        @test drops_curvature_any_pair(steep, result)
+        scale = WarmupHMC._trajectory_scale(path(steep, result).span)
         @test all(s -> 0.01 < s < 10, scale)
-        P, G = result.optim_trace.points, result.optim_trace.gradients
+        P, G = trajectory(steep, result)
         whole = [(var(p[i] for p in P) / var(g[i] for g in G))^(1 / 4) for i in 1:10]
         @test minimum(whole) < 1e-4
 
         # A caller may supply a PathfinderResult with a nondefault fit history.
         # Its covariance records that history independently of the optimizer.
-        for history_length in (2, 10)
+        # With its trace (Pathfinder's default) the checks read it; without it
+        # (`save_trace=false`) its trajectory is replayed.
+        trace_modes = WarmupHMC._PATHFINDER_SAVE_TRACE_OPTIONAL ? ((;), (; save_trace=false)) : ((;),)
+        for history_length in (2, 10), kw in trace_modes
             result = quietly(() -> WarmupHMC.Pathfinder.pathfinder(
                 WarmupHMC._pathfinder_objective(steep, WarmupHMC.Pathfinder.SciMLBase.NoAD());
                 dim=10, input=steep, rng=Xoshiro(1),
                 init=rand(Xoshiro(101), 10) .* 4 .- 2,
-                history_length, maxiters=100, ndraws=1, ndraws_elbo=1, ntries=1))
-            span = WarmupHMC._fit_history_pairs(result)
-            @test count(l -> l ∉ rejected_pairs(result), span) == history_length
-            @test !WarmupHMC._fit_drops_curvature(result)
+                history_length, maxiters=100, ndraws=1, ndraws_elbo=1, ntries=1, kw...))
+            @test isempty(result.optim_trace.points) == haskey(kw, :save_trace)
+            span = history_pairs(steep, result)
+            @test count(l -> l ∉ rejected_pairs(steep, result), span) == history_length
+            @test !drops_curvature(steep, result)
             start = quietly(() -> WarmupHMC.initialize_mcmc(steep, result; progress=nothing))
             @test start.position == result.draws[:, 1]
         end
@@ -196,8 +216,8 @@ try
         result = quietly(() -> pathfinder(stiff, 1))
         stationary = DiagGaussian(copy(init), [1.0, 1.0])
         start = @test_logs (:warn, r"gave no usable fit either") match_mode=:any WarmupHMC._rescaled_pathfinder_start(
-            stationary, result; rng=Xoshiro(2), progress=nothing, maxiters=100)
-        @test start.position == result.optim_trace.points[result.fit_iteration + 1]
+            stationary, result, path(stiff, result); rng=Xoshiro(2), progress=nothing, maxiters=100)
+        @test start.position == first(trajectory(stiff, result))[result.fit_iteration + 1]
         @test start.squared_scale isa Diagonal
         @test 1e-26 < start.squared_scale[1, 1] < 1e-22         # the trajectory measured x₁'s scale
         @test start.squared_scale[2, 2] ≈ 1 / 1.2               # never moved: 1/|∂ℓ/∂x₂| at the init

@@ -739,3 +739,122 @@ end
         @test chain.phi == fill(0.5, T) && chain.c == fill(0.5, T) && chain.psi[1] == 0.3
     end
 end
+
+@testitem "MarkovChain: accessors that read one function evaluate it once" setup=[WarmupHMCSharedFixtures, MarkovChainFixtures] begin
+    using Test, WarmupHMC, Random, LinearAlgebra
+    using LogDensityProblems
+    using DifferentiationInterface, Enzyme
+    const LDP = LogDensityProblems
+    const W = WarmupHMC
+
+    # Snag markovchain-acce-da401817: a chain whose accessors all read one frame
+    # function, as RKPPL's compiled chain kernel is read, ran it once per
+    # accessor on every path: four times per map, eight per gradient. Accessors
+    # that are `SharedAccessor`s over one `f` now share one evaluation per
+    # chain, as a pair's location and log-scale do, and give the same results as
+    # reading `f` once per accessor: exactly for the maps and the selection, to
+    # rounding for the derivatives.
+    const CALLS = Ref(0)
+    tick!() = (CALLS[] += 1; nothing)
+    # Counted in the primal; Enzyme does not differentiate the counter.
+    Enzyme.EnzymeRules.inactive(::typeof(tick!), args...) = nothing
+    counted(f) = (CALLS[] = 0; f(); CALLS[])
+
+    # Coordinates: one chain (1:8), log s (9), atanh rho (10), mu (11), a reading
+    # offset (12), and one pair centred on mu (13). The kernel computes every
+    # state's values in one pass, as families read by number or, for a single
+    # value, by `CartesianIndex(family, 1)`, RKPPL's selectors: log-scales (1),
+    # coefficients (2), drifts (3), the initial location (4), the level (5).
+    struct Families{T}
+        values::Vector{Vector{T}}
+    end
+    Base.getindex(f::Families, family::Int) = f.values[family]
+    Base.getindex(f::Families, i::CartesianIndex{2}) = f.values[i[1]][i[2]]
+    struct Kernel <: Function end
+    function (::Kernel)(x)
+        tick!()
+        rho = tanh(x[10])
+        Families([[x[9] - log1p(-rho^2) / 2; fill(x[9], 7)], fill(rho, 8),
+                  fill((1 - rho) * x[11], 8), [x[11]], [x[12] + 0.1 * t for t in 1:8]])
+    end
+    # The same values read by an accessor of its own, each running the kernel.
+    struct Own{I} <: Function
+        i::I
+    end
+    (a::Own)(x) = Kernel()(x)[a.i]
+    shared(i) = SharedAccessor(Kernel(), i)
+
+    pairs() = [13 => Reparametrization(PartiallyCentered(1.0), PartiallyCentered(0.4),
+                                       x -> x[11], x -> x[9])]
+    function build(read; reference=false, seed=10)
+        accessors = (; log_scale=read(1), coefficient=read(2), drift=read(3),
+                       initial=read(CartesianIndex(4, 1)))
+        controls = (; phi=rand(Xoshiro(seed), 8), c=rand(Xoshiro(seed + 1), 8))
+        chain = reference ?
+            MarkovChain(1:8; accessors..., controls..., reference=4, level=read(5),
+                        psi=(p = rand(Xoshiro(seed + 2), 8); p[4] = 0; p)) :
+            MarkovChain(1:8; accessors..., controls...)
+        IndexedReparametrization(pairs(); chains=[chain])
+    end
+    x = 0.5 .* randn(Xoshiro(4), 13)
+    problem = Smooth(13)
+    rp(ir) = ReparametrizedProblem(ir, problem, AutoEnzyme())
+
+    for reference in (false, true)
+        n = reference ? 5 : 4    # accessors that read the kernel
+        ir, own = build(shared; reference), build(Own; reference)
+        @testset "reference = $reference: the map and its inverse" begin
+            @test counted(() -> ir(x)) == 1
+            @test counted(() -> own(x)) == n
+            @test ir(x) == own(x)
+            y = last(ir(x))
+            inverse(ir) = W._inverse_with_logabsdet_jacobian(ir, y)
+            @test counted(() -> inverse(ir)) == 1
+            @test inverse(ir) == inverse(own)
+            @test last(inverse(ir)) ≈ x atol = 1e-12
+            @test counted(() -> LDP.logdensity(rp(ir), x)) == 1
+        end
+        @testset "reference = $reference: the gradient" begin
+            # One evaluation for the map's value, one in the Enzyme objective.
+            @test counted(() -> LDP.logdensity_and_gradient(rp(ir), x)) <= 2
+            @test counted(() -> LDP.logdensity_and_gradient(rp(own), x)) >= 2n
+            lp, g = LDP.logdensity_and_gradient(rp(ir), x)
+            lp_own, g_own = LDP.logdensity_and_gradient(rp(own), x)
+            @test lp == lp_own
+            @test g ≈ g_own rtol = 1e-12
+            @test g ≈ fd_gradient(z -> LDP.logdensity(rp(ir), z), x) rtol = 1e-6
+            y = last(ir(x))
+            g_y = last(LDP.logdensity_and_gradient(problem, y))
+            generic = invoke(W._reparam_gradient, Tuple{Any,Any,Any,Any,Any},
+                             AutoEnzyme(), ir, x, y, g_y)
+            @test W._reparam_gradient(AutoEnzyme(), ir, x, y, g_y) ≈ generic atol = 1e-12
+        end
+        @testset "reference = $reference: selection and transport" begin
+            P = x .+ 0.3 .* randn(Xoshiro(5), 13, 6)
+            G = randn(Xoshiro(6), 13, 6)
+            losses(ir) = candidate_scoring_losses(rp(ir), P, G)
+            # Two passes over the columns, the regression and the scoring.
+            @test counted(() -> losses(ir)) == 2 * 6
+            @test counted(() -> losses(own)) == 2 * 6 * n
+            @test isequal(losses(ir), losses(own))
+            function transport(old, new)
+                P2, G2 = copy(P), copy(G)
+                W._jointly_transport_halo!(rp(new), old, P, G, P2, G2)
+                P2, G2
+            end
+            shared_moved, own_moved = transport(ir, build(shared; reference, seed=20)),
+                                      transport(own, build(Own; reference, seed=20))
+            @test shared_moved[1] == own_moved[1]
+            @test shared_moved[2] ≈ own_moved[2] rtol = 1e-12
+            @test n * counted(() -> transport(ir, build(shared; reference, seed=20))) <=
+                  counted(() -> transport(own, build(Own; reference, seed=20)))
+            # The selection's own move of a column agrees with the transport.
+            new = build(shared; reference, seed=20)
+            positions, gradients = copy(P), copy(G)
+            old_chain = ir.chains[1]
+            @test counted(() -> W._move_chain_columns!(new.chains[1], old_chain.phi, old_chain.psi,
+                                                       old_chain.c, positions, gradients)) == 6
+            @test positions[1:8, :] ≈ shared_moved[1][1:8, :] atol = 1e-12
+        end
+    end
+end

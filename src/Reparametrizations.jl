@@ -470,7 +470,9 @@ returns `[locations; log_scale]`, read with `SharedAccessor(f, i)` and
 `f` may instead return a frame of endpoint arrays read with
 `CartesianIndex(family, element)`. Several blocks whose pairs all read one such `f`
 form one run, so work they share, such as a common log-scale, also runs once;
-with a function per block it runs once per block.
+with a function per block it runs once per block. The accessors of a
+[`MarkovChain`](@ref) that read one `f` share its evaluation the same way, once
+per chain.
 
 The shared value is computed where its run of pairs starts, so `f` must not read
 the coordinates of the pairs in its own run. It reads the coordinates of earlier

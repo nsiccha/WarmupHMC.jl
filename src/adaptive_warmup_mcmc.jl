@@ -1308,6 +1308,31 @@ function _linear_restart_condition(scales)
     hi / lo
 end
 
+# A window whose recorded positions did not move at all in some coordinates: the
+# chain's step size times its metric scale there is below what a Float64 position
+# can resolve, so it cannot leave where it is. The restart test has no finite
+# factor for such a window (`_linear_restart_condition` is `Inf`, and the progress
+# label reads `frozen`). Warm-up restarts, but re-adapting in place does not
+# reliably move such a chain (user principle `caller-recovers-lost-chain`), so the
+# first such window of a run warns, naming what the caller can do (snag
+# collapsed-chains-10d2df94). `scale_changes` is the run's record of earlier
+# windows, restored on resume, so a resumed run does not warn twice.
+_warn_frozen(state) = begin
+    isinf(state.variance_cond) || return nothing
+    any(!isfinite, state.scale_changes) && return nothing
+    # A zero scale is a coordinate whose positions never moved; `NaN`, one whose
+    # positions and gradient both never changed.
+    frozen = count(x -> iszero(x) || isnan(x), state.variance_memory)
+    frozen > 0 || return nothing
+    @warn "adaptive_warmup_mcmc: in warm-up window $(state.outer_counter) the chain's " *
+          "recorded positions did not move in $frozen of $(state.dimension) coordinates " *
+          "(step size $(state.stepsize)): there its step size times its metric scale is " *
+          "below what a Float64 position can resolve. Warm-up restarts, but re-adapting in " *
+          "place does not reliably move such a chain. Rerun it from another start, or " *
+          "sample with completion_warmup_mcmc, which leaves such a chain out."
+    nothing
+end
+
 const _DEFAULT_MAX_DIVERGENT_FRACTION = 0.5
 const _MAX_DIVERGENCE_GATE_RESTARTS = 2
 
@@ -1815,6 +1840,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
                 recording_lpdf.halo_position, recording_lpdf.halo_gradient,
             )
             state.variance_cond = _linear_restart_condition(state.variance_memory)
+            _warn_frozen(state)
             pushfirst!(state.scale_changes, sqrt(state.variance_cond))
             # The marginal scales fit: restart anyway when the metric the restart
             # would install differs from the active one in shape, and fits the

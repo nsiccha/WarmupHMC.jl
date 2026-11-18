@@ -74,6 +74,11 @@ runtime; assess that selection when runtime depends on posterior location. The
 completion sampler warns, and records the caveat in
 `completion.selection_warning`, only when its returned chains are such a
 selection. Requiring every chain, the default `min_completed`, never selects.
+The completion sampler also leaves out chains that are stuck: a chain whose
+step size collapses far below its siblings' is stopped while it is still
+warming up, and a finished chain must pass its step-size, divergence and mass
+checks to count. WarmupHMC does not move such a chain back; rerun it from
+another start if it is needed.
 
 ## Returned coordinates
 

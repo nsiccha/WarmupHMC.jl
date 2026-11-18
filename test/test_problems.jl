@@ -1,6 +1,6 @@
 @testmodule WarmupHMCSharedFixtures begin
 using LogDensityProblems, WarmupHMC
-export DiagGaussian, NaNProblem, BadGradientProblem, KinkedGaussian, fd_gradient, CaptureProgress, _Treebars
+export DiagGaussian, NaNProblem, BadGradientProblem, KinkedGaussian, NoisyTrapProblem, fd_gradient, CaptureProgress, _Treebars
 
 # Shared LogDensityProblems fixtures + helpers for the WarmupHMC test suite.
 # Kept at top level (struct defs + method extensions can't live inside a @testset).
@@ -87,6 +87,31 @@ function LogDensityProblems.logdensity_and_gradient(p::KinkedGaussian, x)
     (-sum(abs2, x ./ p.scale) / 2 + p.c * pieces[j], -x ./ p.scale .^ 2 .+ p.c .* p.W[j, :])
 end
 LogDensityProblems.logdensity(p::KinkedGaussian, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
+
+"""
+    NoisyTrapProblem(dimension, edge, amplitude)
+
+A standard Gaussian whose log density carries deterministic pseudo-random noise of
+up to `amplitude` nats wherever `x[1] > edge`, with the Gaussian's gradient
+everywhere: the shape of a model whose log density is noisy at Float64 resolution
+in one region (a cancelling formula, an adaptive solver's tolerance noise). No
+step size reaches the target acceptance there, so a chain started there collapses:
+dual averaging drives its step size towards zero and its positions stop moving
+(snag collapsed-chains-10d2df94).
+"""
+struct NoisyTrapProblem
+    dimension::Int
+    edge::Float64
+    amplitude::Float64
+end
+LogDensityProblems.capabilities(::Type{NoisyTrapProblem}) = LogDensityProblems.LogDensityOrder{1}()
+LogDensityProblems.dimension(p::NoisyTrapProblem) = p.dimension
+function LogDensityProblems.logdensity_and_gradient(p::NoisyTrapProblem, x)
+    l = -sum(abs2, x) / 2
+    x[1] > p.edge && (l += p.amplitude * (hash(x) % 1_000_003) / 1_000_003)
+    (l, -collect(float.(x)))
+end
+LogDensityProblems.logdensity(p::NoisyTrapProblem, x) = first(LogDensityProblems.logdensity_and_gradient(p, x))
 
 "Central finite-difference gradient of scalar `f` at `x`."
 function fd_gradient(f, x; h=1e-6)

@@ -37,7 +37,16 @@ _rate_or_pace(n::Real, seconds::Real) = begin
         "$(short_string(rate)) / s"
 end
 Base.string(x::Speed) = "$(x.n) in $(short_string(x.dt/1e9)) seconds ($(_rate_or_pace(x.n, x.dt/1e9)))"
-Base.string(x::ActiveTransformation) = "$(short_string(x.kinetic_energy.M⁻¹.m1)) (marginal scale changes = $(short_string(x.scale_changes)))"
+Base.string(x::ActiveTransformation) = "$(short_string(x.kinetic_energy.M⁻¹.m1)) (marginal scale changes = $(short_string(_ScaleChange.(x.scale_changes))))"
+# One entry of `scale_changes`, as the label shows it. A restart test that could
+# not measure a coordinate's scale, because the window's recorded positions never
+# moved there (or its gradient never changed), has no finite factor: it reads
+# `frozen`, never `Inf` (snag collapsed-chains-10d2df94). The returned and
+# checkpointed `scale_changes` keep the number.
+struct _ScaleChange
+    x::Float64
+end
+Treebars.short_string(c::_ScaleChange) = isfinite(c.x) ? short_string(c.x) : "frozen"
 
 Treebars.short_string(x::WarmupHMC.MatrixFactorization{<:Any, <:LinearAlgebra.Transpose}) = short_string(parent(x.m1))
 # `_initial_pathfinder_scale` takes a DENSE Cholesky factor only for a

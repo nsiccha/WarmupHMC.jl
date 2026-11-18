@@ -5,6 +5,43 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.12
+
+### Changed
+
+- `completion_warmup_mcmc` leaves out a chain whose step size collapses while
+  it warms up, instead of waiting for it to reach `n_draws` (snag
+  `collapsed-chains-10d2df94`). On a 20-chain fit, four chains ran for hours at
+  step sizes of 1e-11 to 1e-7 with metric scales near 1e-9, every transition at
+  the tree-depth ceiling, and one was 11 hours from `n_draws`, where the
+  step-size check would first have judged it. At every warm-up window boundary,
+  its own or a sibling's, a running chain whose step size at each of its last
+  two window boundaries is below the median of its siblings that keep draws by
+  more than `stuck_stepsize_ratio` times 10 (100 at the default) is `:stuck`
+  with `stuck_reason = :stepsize`, and stops at its next transition (it polls
+  between transitions, so it does not finish its window). Measured on 393 window
+  boundaries of healthy chains on 11 targets, the larger of a chain's last two
+  window-boundary step sizes was at most 2.6 times below that median; collapsed
+  chains sat 1e3 to 1e16 times below. Its `completion.chains` entry records the
+  `stepsize` and `reference_stepsize` it was judged by, with no
+  `divergent_fraction`, and `CompletionQuorumError` names such chains as left
+  out during warm-up. A resumed run judges a partial checkpoint the same way
+  before restarting its slot. `stuck_stepsize_ratio = Inf` switches it off with
+  the step-size check. A run in which every chain collapses together is still
+  not caught.
+- Completion chains now poll between transitions (the same control as
+  `stop_requested`), so a Treebars interrupt also reaches them between
+  transitions; the quorum's own stop still waits for the end of a chain's
+  current window. A caller's `stop_requested` is combined with the warm-up
+  check's.
+- A warm-up window whose recorded positions never moved in some coordinate (the
+  chain's step size times its metric scale is below what a Float64 position can
+  resolve there) reads `frozen` in the progress tree's "marginal scale changes",
+  not `Inf`; the returned and checkpointed `scale_changes` keep the number. The
+  first such window of a run `@warn`s, naming how many coordinates did not move
+  and that rerunning the chain, or sampling with `completion_warmup_mcmc`, is
+  the remedy.
+
 ## 0.3.11
 
 ### Changed

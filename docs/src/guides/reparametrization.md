@@ -220,9 +220,9 @@ _, x = WarmupHMC._inverse_with_logabsdet_jacobian(
 Chains go into `IndexedReparametrization(pairs; chains = [...])` and take part
 in everything pairs do: the adaptive and cooperative samplers,
 `nonlinear_adapt=false`, checkpoints and `WarmupHMC.back_transform`; each path
-is one pass over each chain. Accessors may return one value per state (an AR(1)
-series' stationary first state, an irregular time grid) and read only
-coordinates no chain or pair transforms. A pair's accessor should not read a
+is one pass over each chain. Accessors may return one value per state, read
+only coordinates no chain or pair transforms, and share one evaluation when they
+are `SharedAccessor`s of one function. A pair's accessor should not read a
 chain's states, whose sampler coordinates change meaning when the chain adapts.
 
 Under a streaming `nonlinear_evidence` mode or a `CandidateScoringPlan`, a chain

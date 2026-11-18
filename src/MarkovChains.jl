@@ -93,6 +93,13 @@ They may read only coordinates that no chain or pair transforms, such as a log
 step size, an autoregression coefficient, a mean or a reading offset. They are
 evaluated once per chain on every path, and they run under AD on every gradient
 evaluation, so keep them cheap and type-generic, as for a `Reparametrization`.
+Accessors that compute the same thing share one evaluation, as a pair's location
+and log-scale do: when several of them read one function `f`, such as a frame
+holding every state's log-scale, coefficient and drift, read each with a
+[`SharedAccessor`](@ref) over `f` (`SharedAccessor(f, i)` is `f(x)[i]`, so
+`initial` can read `SharedAccessor(f, CartesianIndex(family, 1))`) and `f` runs
+once per chain on every path, not once per accessor. One accessor object passed
+for two of them is shared the same way.
 
 `phi`, `c` and `psi` are the starting controls, one number for every state or a
 vector with one entry per state; the default is the identity. `psi` needs a
@@ -231,11 +238,32 @@ end
 # is state 1 and the walk is the time order, the chain as it was before
 # references, operation for operation.
 
-@inline _chain_frames(chain::MarkovChain, x) = (
-    maybecall(chain.log_scale, x), maybecall(chain.coefficient, x),
-    maybecall(chain.drift, x), maybecall(chain.initial, x), _level_frame(chain.level, x))
-@inline _level_frame(::Nothing, x) = nothing
-@inline _level_frame(level, x) = maybecall(level, x)
+# A chain's accessors in the order of its frames, `level` only with a reference
+# (without one it is `nothing` and its frame is `nothing`).
+@inline _chain_accessors(chain::MarkovChain) =
+    (chain.log_scale, chain.coefficient, chain.drift, chain.initial, chain.level)
+@inline _chain_accessors(chain::MarkovChain{<:Any,<:Any,<:Any,<:Any,Nothing}) =
+    (chain.log_scale, chain.coefficient, chain.drift, chain.initial)
+@inline _chain_values(args::NTuple{4,Any}, frames) = (map(_read_frame, args, frames)..., nothing)
+@inline _chain_values(args::NTuple{5,Any}, frames) = map(_read_frame, args, frames)
+# The accessors' values at `x`. Accessors that compute the same thing (the same
+# object, or `SharedAccessor`s over one `f` at one stage) share one evaluation,
+# as a pair's location and log-scale do (`_collect_frames`): a chain whose
+# accessors all read one frame function, such as RKPPL's compiled chain kernel,
+# runs it once per chain, not once per accessor (snag
+# `markovchain-acce-da401817`).
+@inline function _chain_frames(chain::MarkovChain, x)
+    args = _chain_accessors(chain)
+    _chain_values(args, _collect_frames(args, x, (), ()))
+end
+# The same from a sharing pattern decided beforehand (`_share_pattern`), for the
+# Enzyme extension, which keeps the comparisons out of its objectives as it does
+# for the pairs' runs.
+@inline function _chain_frames(chain::MarkovChain, x, pattern::Val)
+    args = _chain_accessors(chain)
+    _chain_values(args, _frames_by(args, x, pattern))
+end
+_chain_share_pattern(chain::MarkovChain) = Val(_share_pattern(_chain_accessors(chain)))
 @inline _per_state(value::Real, t) = value
 @inline _per_state(value::AbstractVector, t) = value[t]
 

@@ -50,7 +50,9 @@ module WarmupHMCEnzymeExt
 #
 # A Markov chain (`WarmupHMC.MarkovChain`) is differentiated in one `autodiff`
 # call per chain: one reverse sweep over its states, whose tape holds a few
-# numbers per state. Its accessors are evaluated once per chain. The map writes
+# numbers per state. Its accessors are evaluated once per chain, and accessors
+# that compute the same thing (`SharedAccessor`s over one `f`) once between them,
+# by a sharing pattern decided outside the objective, as for a run. The map writes
 # the chains before the pairs, so their reverse comes after the pairs' sweep and
 # takes whatever `ybar` holds at their states, before the rest of `ybar` goes to
 # the gradient. Their accessors read coordinates nothing transforms.
@@ -58,7 +60,7 @@ module WarmupHMCEnzymeExt
 using WarmupHMC, Enzyme
 using WarmupHMC: IndexedReparametrization, reparam, _reparam_framed, _run_start,
     _is_identity, _first_moved, _share_pattern, _patterned_frames,
-    _chain_frames, _chain_walk!, _chain_unwalk!, _each_chain
+    _chain_frames, _chain_share_pattern, _chain_walk!, _chain_unwalk!, _each_chain
 using DifferentiationInterface: AutoEnzyme
 
 # One pair's share of `_reparam_objective`: its log-Jacobian plus `seed` times
@@ -179,8 +181,9 @@ end
 
 # One chain's share of `_reparam_objective`: its log-Jacobian plus each state's
 # seed times its model value, by the map's own walk.
-_chain_objective(chain, seed, x) =
-    _chain_walk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, x, _chain_frames(chain, x))
+_chain_objective(chain, seed, x, pattern) =
+    _chain_walk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, x,
+                 _chain_frames(chain, x, pattern))
 
 # Accumulate into `gradient` the chains' terms of the gradient of
 # `ljac(x) + dot(seed, y(x))`, consuming `seed` at their states.
@@ -193,7 +196,8 @@ function _accumulate_chain!(gradient, seed, mode, chain, x)
         end
     else
         Enzyme.autodiff(mode, _chain_objective, Enzyme.Active, Enzyme.Const(chain),
-                        Enzyme.Const(seed), Enzyme.Duplicated(x, gradient))
+                        Enzyme.Const(seed), Enzyme.Duplicated(x, gradient),
+                        Enzyme.Const(_chain_share_pattern(chain)))
     end
     for idx in chain.states
         seed[idx] = 0
@@ -204,8 +208,9 @@ end
 # One chain's share of the inverse: its log-Jacobian plus each state's seed times
 # its recovered source value, by the inverse's own walk. It reads only the model
 # point `m`.
-_chain_inverse_objective(chain, seed, m) =
-    _chain_unwalk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, m, _chain_frames(chain, m))
+_chain_inverse_objective(chain, seed, m, pattern) =
+    _chain_unwalk!(nothing, seed, chain, chain.phi, chain.psi, chain.c, m,
+                   _chain_frames(chain, m, pattern))
 
 # The inverse reads the chains' frames and previous states off the model point
 # `m`, as the pairs' runs, so their reverse needs no order with the pairs': each
@@ -224,7 +229,8 @@ function _accumulate_inverse_chain!(dm, ds, sd, mode, chain, m)
             ds[idx] = 0
         end
         Enzyme.autodiff(mode, _chain_inverse_objective, Enzyme.Active,
-                        Enzyme.Const(chain), Enzyme.Const(sd), Enzyme.Duplicated(m, dm))
+                        Enzyme.Const(chain), Enzyme.Const(sd), Enzyme.Duplicated(m, dm),
+                        Enzyme.Const(_chain_share_pattern(chain)))
     end
     nothing
 end

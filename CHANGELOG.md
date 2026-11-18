@@ -5,6 +5,23 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.11
+
+### Changed
+
+- A `MarkovChain`'s accessors that read one function share its evaluation, as a
+  pair's location and log-scale do (snag `markovchain-acce-da401817`). Pass
+  `log_scale`, `coefficient`, `drift`, `initial` and `level` as
+  `SharedAccessor`s over one `f` (or one accessor object for several of them)
+  and `f` runs once per chain on every path: the map and its inverse, the
+  gradient (Enzyme extension and generic), the window-end transport and the
+  selection. Before, each accessor ran `f` on its own: four times per map and
+  eight per gradient for ReactiveKernelsPPL's chain kernel, which computes every
+  state's log-scale, coefficient and drift in one pass. Results equal reading
+  `f` once per accessor, exactly for the maps and the selection and to rounding
+  for the gradients. Chains whose accessors read different functions evaluate
+  as before.
+
 ## 0.3.10
 
 ### Changed

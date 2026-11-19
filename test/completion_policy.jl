@@ -371,6 +371,34 @@ const _MASS_CHECK = WarmupHMC._CompletionAdmission(Inf, 0.1, 25.0)
     @test_throws DimensionMismatch WarmupHMC._log_mass_estimate(nothing, x, lp[1:end-1])
 end
 
+@testset "equal-weight modes with different correlations can score 20 nats apart" begin
+    # Draw from each component of a 50:50 Gaussian mixture. Their centres are
+    # 100 marginal SDs apart, so the other component contributes below machine
+    # precision at these draws. Common random numbers isolate the volume effect.
+    pairs, draws, rho = 113, 500, 0.55
+    z = randn(Xoshiro(42), 2pairs, draws)
+    function component_score(correlation, centre)
+        positions = copy(z)
+        residual_scale = sqrt(1 - correlation^2)
+        @views positions[2:2:end, :] .= correlation .* z[1:2:end, :] .+ residual_scale .* z[2:2:end, :]
+        positions[1, :] .+= centre
+        # Both components have the same weight and unit marginal variances.
+        # Constants common to both log densities cancel in the comparison.
+        lp = [-sum(abs2, draw) / 2 - pairs * log(residual_scale) for draw in eachcol(z)]
+        WarmupHMC._log_mass_estimate(nothing, positions, lp)
+    end
+    independent = component_score(0.0, -50.0)
+    correlated = component_score(rho, 50.0)
+    expected_gap = -pairs * log1p(-rho^2) / 2
+    @test correlated.log_mass - independent.log_mass ≈ expected_gap atol=1
+
+    comparison = (; log_mass=independent.log_mass, log_mass_se=independent.se,
+        reference_log_mass=correlated.log_mass, reference_log_mass_se=correlated.se)
+    default_policy = WarmupHMC._CompletionAdmission(Inf, 0.1, WarmupHMC._DEFAULT_MAX_ADMITTED_LOG_MASS_GAP)
+    @test !WarmupHMC._low_mass(comparison, default_policy)
+    @test WarmupHMC._low_mass(comparison, WarmupHMC._CompletionAdmission(Inf, 0.1, 15.0))
+end
+
 @testset "the mass estimate maps sampling-frame draws into the model frame" begin
     # A 2-D funnel sampled non-centred: the source frame is a standard normal and
     # the model frame is y = (x1, x2 exp(x1)). Estimating from the source draws

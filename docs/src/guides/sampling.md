@@ -80,6 +80,48 @@ warming up, and a finished chain must pass its step-size, divergence and mass
 checks to count. WarmupHMC does not move such a chain back; rerun it from
 another start if it is needed.
 
+### Calibrating a log-mass cutoff
+
+The completion sampler compares a finished chain with the best eligible
+sibling at the time of admission. To see how a different cutoff would treat a
+recorded comparison, take the four fields below from an entry in
+`outcome.completion.chains`. Skip entries with a missing estimate or reference
+(`nothing`). Here the reference scores 20 nats higher, and the gap exceeds
+four combined standard errors.
+
+```@example admission
+chain = (log_mass=-120.0, reference_log_mass=-100.0,
+         log_mass_se=1.2, reference_log_mass_se=1.6)
+gap = chain.reference_log_mass - chain.log_mass
+four_se = 4 * hypot(chain.log_mass_se, chain.reference_log_mass_se)
+for cutoff in (25, 15)
+    low_mass = gap > cutoff && gap > four_se
+    println("cutoff = $cutoff nats, low_mass = $low_mass")
+end
+```
+
+The default cutoff of 25 nats admits this chain on the mass check. At 15 nats
+the same comparison would exclude it. To choose a cutoff, check what it does
+to modes whose weights you know independently. For example, consider two
+well-separated Gaussian components of equal weight in 226 dimensions. Both
+have unit marginal variances. One has independent coordinates and the other
+has correlation 0.55 within each of 113 independent pairs. The score adds the
+mean log density to the sum of the log marginal standard deviations. The
+marginal terms agree, but the correlated component's mean log density is
+higher by `-113 * log(1 - 0.55^2) / 2`, about 20.35 nats. A 15-nat cutoff
+can therefore exclude half the target mass even with very precise estimates.
+
+Choose a cutoff that preserves known modes and flags chains independently
+identified as trapped, for example by comparison with a reference fit.
+If the evidence on your target supports a tighter cutoff, pass it as
+`max_admitted_log_mass_gap` to a fresh `completion_warmup_mcmc` run. Use a
+new checkpoint directory if saving the fit. Changing admission can change
+which siblings finish and which comparisons take place. Record how many chains
+passed and whether they reached the requested quorum. Check maximum R-hat,
+minimum bulk and tail ESS, and the count and percentage of divergent draws
+across the retained chains. If the run throws a
+`WarmupHMC.CompletionQuorumError`, its `outcome.results` holds the passing chains.
+
 ## Returned coordinates
 
 `posterior_position` stores coordinates in rows and draws in columns. For a

@@ -14,6 +14,8 @@ refer to that version's tree.
   accounting. Target features enable a second wave of starts from nearby
   pilot chains. `FixedCoordinates` exposes a conditional of an existing
   log density by fixing the coordinates outside a supplied index set.
+- Shared-target cooperative chains also check acceptance, divergence and
+  the scaled gradient before retaining their first draw.
 - The cooperative sampler fits up to 16 Householder reflections per cluster.
   Set `max_reflections=0` for a diagonal metric. Shared-target runs can pool
   streaming centering evidence, including candidate scores. They refit shared

@@ -1262,6 +1262,13 @@ chain's draws; otherwise it keeps sampling under its fixed kernel, so every kept
 draw is an MCMC draw of an unchanging kernel. Step sizes follow a per-chain fit
 of acceptance ≈ 2Φ(-κε²) with the pooled κ as prior.
 
+Before retaining its first draw, each chain must finish warm-up with a
+nondivergent transition, acceptance of at least 0.6, and a finite squared
+whitened gradient per coordinate no larger than the greater of 10 and three
+times the median checked score. A failed check extends warm-up. A chain that
+exhausts 30 extensions requests a cold replacement. The same checks apply
+with a shared target and with an ordered family of targets.
+
 A poorly sampling singleton may restart at its own position with the majority
 cluster's geometry and step-size prior. Persistent extreme divergence or step-size
 collapse at consecutive batch ends with a rescue between them starts a fresh

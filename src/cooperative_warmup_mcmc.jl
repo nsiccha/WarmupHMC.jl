@@ -89,7 +89,7 @@ end
 # `out` := Σⱼ wⱼ partsⱼ, the moments of the union of the parts' states with each
 # state of part j counted wⱼ times. Parts without states, or with zero weight,
 # contribute nothing.
-_combine_moments!(out::CoopMoments, parts, weights) = begin
+_combine_moments!(out::CoopMoments, parts, weights; within_target=false) = begin
     _reset_moments!(out)
     for (m, w) in zip(parts, weights)
         (w > 0 && m.weight > 0) || continue
@@ -103,8 +103,13 @@ _combine_moments!(out::CoopMoments, parts, weights) = begin
     out.gradient_mean ./= out.weight
     for (m, w) in zip(parts, weights)
         (w > 0 && m.weight > 0) || continue
-        @. out.position_m2 += w * (m.position_m2 + m.weight * abs2(m.position_mean - out.position_mean))
-        @. out.gradient_m2 += w * (m.gradient_m2 + m.weight * abs2(m.gradient_mean - out.gradient_mean))
+        if within_target
+            @. out.position_m2 += w * m.position_m2
+            @. out.gradient_m2 += w * m.gradient_m2
+        else
+            @. out.position_m2 += w * (m.position_m2 + m.weight * abs2(m.position_mean - out.position_mean))
+            @. out.gradient_m2 += w * (m.gradient_m2 + m.weight * abs2(m.gradient_mean - out.gradient_mean))
+        end
     end
     out
 end
@@ -206,7 +211,7 @@ mutable struct CoopChain{R,L,RL}
     position_and_gradient
     # The metric's scale `L` (`L*L'` approximates the posterior covariance) and its
     # kinetic energy.
-    scale::Diagonal{Float64,Vector{Float64}}
+    scale::Union{Diagonal{Float64,Vector{Float64}},ScaleThenReflect{Float64}}
     kinetic_energy
     stepsize::Float64
     log_kappa::Float64
@@ -232,10 +237,12 @@ mutable struct CoopChain{R,L,RL}
     dropped_posterior_position::Matrix{Float64}
     dropped_posterior_gradient::Matrix{Float64}
     dropped_n_divergent_samples::Int
+    geometry_current::Bool  # halo and moments share the pool's coordinate frame
 end
 
 chain_draws(chain::CoopChain) = chain.recording_lpdf.posterior_position
 n_chain_draws(chain::CoopChain) = size(chain_draws(chain), 2)
+_coop_geometry_current(chain::CoopChain) = chain.geometry_current
 _running(chain::CoopChain) = chain.status !== :done
 
 # Build chain `index` on its own stream: deep-copied density, initialization
@@ -262,7 +269,7 @@ _coop_chain(index, rng, lpdf, init, cfg; progress) = begin
         position_and_gradient, scale, kinetic_energy, stepsize, log_kappa, log_kappa, 1.0,
         Float64[], Float64[], 0, CoopMoments(dimension), :warming,
         0, 0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension), Float64[], 0,
-        NamedTuple[], Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
+        NamedTuple[], Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0, true,
     )
     _initial_chain_progress!(progress, nothing, chain)
     update_progress!(progress, "warming · initialized")
@@ -341,9 +348,9 @@ end
 # Relative condition number of a new diagonal scale against the current one:
 # max/min of the per-coordinate scale ratios, over the coordinates the estimate
 # can judge.
-_relative_condition(new_scales, scale::Diagonal) = begin
+_relative_condition(new_scales::AbstractVector, scale::Diagonal) = begin
     lo, hi = Inf, -Inf
-    for (n, s) in zip(new_scales, diag(scale))
+    for (n, s) in zip(new_scales, scale.diag)
         isfinite(n) || continue
         r = n / s
         lo = min(lo, r); hi = max(hi, r)
@@ -351,15 +358,19 @@ _relative_condition(new_scales, scale::Diagonal) = begin
     isfinite(lo) ? hi / lo : 1.0
 end
 
-# Install `new_scales` (coordinates without an estimate keep theirs), drop the
-# draws, and start warm-up again. The step size carries over by the original's
-# rule, scaled by the change of the smallest scale; κ is re-based to it.
-_restart!(chain::CoopChain, new_scales, cc, cfg) = begin
-    old = diag(chain.scale)
-    scales = [isfinite(n) ? n : o for (n, o) in zip(new_scales, old)]
-    chain.scale = Diagonal(scales)
+_principal_scales(L::Diagonal) = L.diag
+_principal_scales(L::ScaleThenReflect) = L.m2.diag
+
+# Install the selected factor and re-base κ to the carried-over step size.
+_restart!(chain::CoopChain, new_scales::AbstractVector, cc, cfg) =
+    _restart!(chain, _complete_diagonal(new_scales, chain.scale), cc, cfg)
+_restart!(chain::CoopChain, scale::AbstractMatrix, cc, cfg) = begin
+    old = chain.scale
+    # Several chains may select the same factor. Each published chain state
+    # owns its mutable reflection vectors and diagonal.
+    chain.scale = deepcopy(scale)
     chain.kinetic_energy = _coop_energy(chain.scale)
-    chain.stepsize *= sqrt(minimum(old) / minimum(scales))
+    chain.stepsize *= sqrt(minimum(_principal_scales(old)) / minimum(_principal_scales(scale)))
     chain.log_kappa = _kappa_log(chain.stepsize, cfg.target_acceptance_rate)
     chain.backoff = 1.0
     empty!(chain.stepsizes); empty!(chain.acceptances)
@@ -418,8 +429,11 @@ _cluster_spread(chains) = begin
     total = zeros(first(chains).dimension)
     for c in chains
         v = _moment_variances(c.moments)
-        s = diag(c.scale)
-        @. total += ifelse(isfinite(v) & (v > 0), v, abs2(s))
+        if any(x -> !(isfinite(x) && x > 0), v)
+            fallback = _metric_variances(c.scale)
+            @. v = ifelse(isfinite(v) & (v > 0), v, fallback)
+        end
+        total .+= v
     end
     sqrt.(total ./ length(chains))
 end
@@ -441,6 +455,17 @@ _pool_clusters!(clusters::CoopClusters, chains, responsibilities) = begin
 end
 
 _update_clusters!(clusters::CoopClusters, chains, cfg) = begin
+    current = findall(_coop_geometry_current, chains)
+    if length(current) != length(chains)
+        # Cluster only positions in the current frame. Keep original chain rows
+        # for every caller, with zero membership for excluded chains.
+        pooled = isempty(current) ? CoopClusters() :
+                 _update_clusters!(clusters, view(chains, current), cfg)
+        R = zeros(length(chains), length(pooled.centers))
+        R[current, :] .= pooled.responsibilities
+        clusters.centers, clusters.stats, clusters.responsibilities = pooled.centers, pooled.stats, R
+        return clusters
+    end
     spread = _cluster_spread(chains)
     locations = map(_chain_location, chains)
     centers = clusters.centers
@@ -463,10 +488,7 @@ _update_clusters!(clusters::CoopClusters, chains, cfg) = begin
     _pool_clusters!(clusters, chains, _responsibilities(locations, clusters.centers, spread, cfg.bandwidth))
 end
 
-# Chain i's pooled estimate: its clusters' moments, weighted by its responsibilities.
-_pooled_estimate(clusters::CoopClusters, i) =
-    _combine_moments!(CoopMoments(length(first(clusters.centers))), clusters.stats,
-        view(clusters.responsibilities, i, :))
+include("cooperative_metric.jl")
 
 # Each chain's κ prior: the responsibility-weighted mean of its clusters' mean
 # log κ. O(chains × clusters).
@@ -478,6 +500,7 @@ _update_kappa_priors!(clusters::CoopClusters, chains) = begin
         mass > 0 ? sum(R[i, k] * chains[i].log_kappa for i in eachindex(chains)) / mass : 0.0
     end
     for (i, c) in enumerate(chains)
+        _coop_geometry_current(c) || continue
         c.kappa_prior = sum(R[i, k] * cluster_log_kappa[k] for k in axes(R, 2) if R[i, k] > 0)
     end
 end
@@ -579,13 +602,13 @@ _batch_ends_after(round) = ispow2(round + 1)
 # the same pre-restart state.
 _batch_end!(run::CoopRun) = begin
     cfg = run.cfg
+    geometry = _cluster_geometry(run.clusters, run.chains, cfg)
     decide(i, chain) = begin
-        _running(chain) || return nothing
-        estimate = _pooled_estimate(run.clusters, i)
-        new_scales = _moment_scales(estimate)
-        cc = _relative_condition(new_scales, chain.scale)
+        _running(chain) && _coop_geometry_current(chain) || return nothing
+        (; scale, weight, relative_condition) = _cluster_metric(geometry, i)
         sc = _stepsize_gain(chain, cfg)
-        (; chain, new_scales, cc, sc, restart=estimate.weight >= 2 && cc * sc > cfg.restart_threshold)
+        (; chain, new_scales=scale, cc=relative_condition, sc,
+           restart=weight >= 2 && relative_condition * sc > cfg.restart_threshold)
     end
     decisions = [decide(i, c) for (i, c) in enumerate(run.chains)]
     running = filter(!isnothing, decisions)
@@ -594,10 +617,12 @@ _batch_end!(run::CoopRun) = begin
     # chains re-cluster in the new frame and take their metrics from their
     # transported halos, as `adaptive_warmup_mcmc` does after its refit.
     if !isnothing(run.reparam_lpdf) && !isempty(running) && all(d -> d.restart, running) &&
+            all(c -> !_running(c) || _coop_geometry_current(c), run.chains) &&
             !isnothing(_refit_reparametrization!(run))
         run.clusters = CoopClusters()
         _update_clusters!(run.clusters, run.chains, cfg)
-        decisions = [isnothing(d) ? d : merge(d, (; new_scales=_moment_scales(_pooled_estimate(run.clusters, i)),
+        transported = _cluster_geometry(run.clusters, run.chains, cfg)
+        decisions = [isnothing(d) ? d : merge(d, (; new_scales=_cluster_metric(transported, i).scale,
                                                  centering_refit=true))
                      for (i, d) in enumerate(decisions)]
     end
@@ -648,15 +673,22 @@ _refit_reparametrization!(run::CoopRun) = begin
     for (c, pg, n) in zip(chains, points, columns)
         restore_reparam_sources!(c.lpdf, after)
         c.position_and_gradient = pg
+        cols = offset+1:offset+n
+        c.recording_lpdf.halo_position .= view(halo_position, :, cols)
+        c.recording_lpdf.halo_gradient .= view(halo_gradient, :, cols)
         _reset_moments!(c.moments)
-        for j in offset+1:offset+n
+        for j in cols
             _fit_moments!(c.moments, view(halo_position, :, j), view(halo_gradient, :, j))
         end
         offset += n
     end
     # A finished chain keeps its own frame for its draws; its moments, in the old
     # frame, no longer pool.
-    foreach(c -> _running(c) || _reset_moments!(c.moments), run.chains)
+    for c in run.chains
+        _running(c) && continue
+        c.geometry_current = false
+        _reset_moments!(c.moments)
+    end
     after
 end
 
@@ -872,6 +904,9 @@ end
 # run_manifest.json (at the start) and run_summary.json (at the finish) are
 # write-once; the summary's existence marks a finished run.
 
+_coop_scale_payload(L::Diagonal) = (; scale_options=(; diagonal=L), active_transformation=:diagonal)
+_coop_scale_payload(L::ScaleThenReflect) = (; scale_options=(; adaptive=L), active_transformation=:adaptive)
+
 _coop_payload(chain::CoopChain, run::CoopRun) = (;
     schema_version=checkpoint_schema_version(),
     sampler=:cooperative,
@@ -884,7 +919,7 @@ _coop_payload(chain::CoopChain, run::CoopRun) = (;
     round=run.round,
     dimension=chain.dimension,
     chain.rng, chain.position_and_gradient, chain.stepsize,
-    scale_options=(; diagonal=chain.scale), active_transformation=:diagonal,
+    _coop_scale_payload(chain.scale)..., chain.geometry_current,
     chain.log_kappa, chain.kappa_prior, chain.backoff, chain.stepsizes, chain.acceptances,
     chain.sampling_start, chain.moments, chain.current_transition_counter,
     chain.total_transition_counter, chain.total_evaluation_counter, chain.n_divergent,
@@ -968,7 +1003,7 @@ _restore_coop_chain(p, lpdf, cfg; progress) = begin
     recording_lpdf = RecordingPosterior2(lpdf, p.halo_position, p.halo_gradient,
         p.posterior_position, p.posterior_gradient, NUTSLeaves(d), p.recorder, p.rng)
     status = p.status === :warming ? :warming : p.n_samples >= cfg.n_draws ? :done : :sampling
-    scale = p.scale_options.diagonal
+    scale = p.scale_options[p.active_transformation]
     chain = CoopChain(
         p.chain_index, p.rng, lpdf, recording_lpdf, d, cfg.monitor_ess, time_ns(), progress,
         p.position_and_gradient, scale, _coop_energy(scale), p.stepsize, p.log_kappa, p.kappa_prior,
@@ -976,7 +1011,7 @@ _restore_coop_chain(p, lpdf, cfg; progress) = begin
         p.current_transition_counter, p.total_transition_counter, p.total_evaluation_counter, 0,
         p.n_divergent, p.n_divergent_samples, p.n_samples, p.steps_per_draw, p.ess,
         p.scale_changes, p.n_restarts, p.batches, p.dropped_posterior_position,
-        p.dropped_posterior_gradient, p.dropped_n_divergent_samples,
+        p.dropped_posterior_gradient, p.dropped_n_divergent_samples, get(p, :geometry_current, true),
     )
     _initial_chain_progress!(progress, nothing, chain)
     update_progress!(progress, "$(chain.status) · restored at batch $(p.window + 1)")
@@ -991,6 +1026,13 @@ _restore_coop_run(dir, lpdf, cfg, init, progress, description, adapt_centering) 
         "resume needs the run's n_chains = $(length(state.chains)); got n_chains = $(cfg.n_chains)."))
     nodes = [initialize_progress!(progress; description="$description.$(p.chain_index)") for p in state.chains]
     chains = [_restore_coop_chain(p, deepcopy(lpdf), cfg; progress=node) for (p, node) in zip(state.chains, nodes)]
+    # Legacy files predate the eligibility bit. A finished chain may still be
+    # in the frame it sampled before the last shared refit.
+    for (c, p) in zip(chains, state.chains)
+        if !haskey(p, :geometry_current) && !isnothing(state.master_sources)
+            c.geometry_current = p.reparam_sources == state.master_sources
+        end
+    end
     master = adapt_centering ? restore_reparam_sources!(deepcopy(lpdf), state.master_sources) : nothing
     CoopRun(state.rng, lpdf, cfg, init, progress, string(description), time_ns(), state.run_elapsed, master,
         CoopChain[chains...], state.clusters, Threads.Atomic{Int}(state.total_evaluations),
@@ -1012,7 +1054,11 @@ chains adapt TOGETHER and keep sampling until a stopping bound is met.
 Every leapfrog state of every chain feeds running position and gradient moments.
 Chains pool them through soft clusters (chains near each other in the posterior
 share; once they have mixed, all share one estimate), and each chain's metric is
-the Nutpie diagonal scale of its pooled moments. Work proceeds in rounds of
+fitted from its dominant cluster's recent position and gradient pairs. Each cluster
+takes at most `recording_target` leaves, apportioned by responsibility, and fits
+up to `max_reflections` Householder reflections (default 16). With too little
+evidence or no retained reflection, a chain uses its pooled Nutpie diagonal.
+`max_reflections=0` selects diagonal-only adaptation. Work proceeds in rounds of
 `n_evaluations` gradient evaluations per chain; batch k is 2^(k-1) rounds. At a
 batch end a chain restarts warm-up under its pooled estimate only when that
 estimate's relative condition number against its current metric, times the
@@ -1077,6 +1123,7 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     target_acceptance_rate=0.8,
     max_tree_depth=10,
     restart_threshold=2.0,
+    max_reflections::Integer=_DEFAULT_MAX_REFLECTIONS,
     max_clusters=8,
     bandwidth=1.0,
     kappa_prior_weight=2.0,
@@ -1098,6 +1145,8 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     _refuse_unsafe_concurrent_gradients(:cooperative_warmup_mcmc, (lpdf,),
         _concurrent_chains(n_chains, n_cores))
     guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
+    max_reflections >= 0 || throw(ArgumentError("max_reflections must be nonnegative"))
+    recording_target > 0 || throw(ArgumentError("recording_target must be positive"))
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))
     isfinite(rhat_threshold) && rhat_threshold > 1 || throw(ArgumentError(
         "cooperative_warmup_mcmc needs a finite rhat_threshold > 1, got $rhat_threshold."))
@@ -1123,7 +1172,7 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
         rhat_threshold=Float64(rhat_threshold), n_evaluations_budget,
         time_budget=Float64(time_budget), n_draws, n_evaluations, stepsize_adaptation_limit,
         target_acceptance_rate, algorithm=DynamicHMC.NUTS(; max_depth=max_tree_depth),
-        restart_threshold, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,
+        restart_threshold, max_reflections, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,
         recording_target, monitor_ess, initializer_kw=(; kwargs..., pathfinder_kw...))
     with_progress(progress; description) do progress
         _initial_run_labels!(progress, cfg)

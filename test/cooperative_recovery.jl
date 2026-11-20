@@ -110,7 +110,7 @@
         seed_rng = copy(run.rng)
         stream = Xoshiro(rand(seed_rng, UInt64))
         init = W._coop_cold_init(run.init, 2, stream)
-        expected = W._coop_chain(2, stream, run.lpdf.targets[2], init, run.cfg; progress=nothing, adapt_centering=false, geometry_current=true)
+        expected = W._coop_chain(2, stream, run.lpdf.targets[2], init, run.cfg; progress=nothing)
         old.status = :needs_replacement
         @test !W._running(old)
         W._replace_gate_failures!(run)
@@ -318,7 +318,8 @@ end
     failed = sample((; position=[20.0], squared_scale=[1.0]))
     @test failed.stop_reason === :recovery_failed
     @test failed.results[3].n_samples == 0 && 3 ∉ failed.pooled_chains
-    @test [a.reason for a in failed.results[3].abandoned] == [:divergences, :divergences]
+    @test [a.reason for a in failed.results[3].abandoned] == [:divergences, :first_draw_gate]
+    @test failed.results[3].accounting.freeze_extensions >= 30
 
     # For this seed, the third slot starts in the pocket; its fresh stream
     # chooses the broad region. The replay uses real NUTS transitions throughout.

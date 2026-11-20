@@ -4,18 +4,30 @@
 Conditional log density in the coordinates indexed by `free`, in that order.
 Every other coordinate retains its value in the full-length vector `base`.
 """
-struct FixedCoordinates{P}
+struct FixedCoordinates{P,T}
     problem::P
     free::Vector{Int}
-    base::Vector{Float64}
+    base::Vector{T}
+    function FixedCoordinates(problem, free::AbstractVector{<:Integer}, base::AbstractVector{T}) where {T<:Real}
+        length(base) == LogDensityProblems.dimension(problem) ||
+            throw(DimensionMismatch("base must give one value per coordinate of the joint problem"))
+        indices = collect(Int, free)
+        allunique(indices) && all(i -> 1 <= i <= length(base), indices) ||
+            throw(ArgumentError("free must contain distinct coordinate indices within the joint problem"))
+        new{typeof(problem),T}(problem, indices, collect(base))
+    end
 end
 
-LogDensityProblems.capabilities(::Type{<:FixedCoordinates}) = LogDensityProblems.LogDensityOrder{1}()
+_conditional_order(::LogDensityProblems.LogDensityOrder{K}) where {K} = LogDensityProblems.LogDensityOrder{min(K, 1)}()
+_conditional_order(::Nothing) = nothing
+LogDensityProblems.capabilities(::Type{<:FixedCoordinates{P}}) where {P} =
+    _conditional_order(LogDensityProblems.capabilities(P))
 LogDensityProblems.dimension(f::FixedCoordinates) = length(f.free)
 _own_gradient_backend(f::FixedCoordinates) = _own_gradient_backend(f.problem)
 
 function _full_position(f::FixedCoordinates, x)
-    y = copy(f.base)
+    length(x) == length(f.free) || throw(DimensionMismatch("expected one value per free coordinate"))
+    y = Vector{promote_type(eltype(f.base), eltype(x))}(f.base)
     y[f.free] = x
     y
 end

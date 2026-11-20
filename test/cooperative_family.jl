@@ -13,6 +13,10 @@
         @test LogDensityProblems.logdensity(f, x) == value
         @test LogDensityProblems.logdensity_and_gradient(f, x) == (value, g[[3,1]])
         @test base == [0., 7., 0.]
+        @test_throws ArgumentError FixedCoordinates(p, [3, 3], base)
+        @test_throws ArgumentError FixedCoordinates(p, [0], base)
+        @test_throws DimensionMismatch FixedCoordinates(p, 1:2, base[1:2])
+        @test_throws DimensionMismatch LogDensityProblems.logdensity(f, [8.])
         parts = [W.CoopMoments(1) for _ in 1:2]
         for (part, center) in zip(parts, (-10, 10)), z in (-1., 1.)
             W._fit_moments!(part, [center + z], [-z])

@@ -122,6 +122,29 @@ minimum bulk and tail ESS, and the count and percentage of divergent draws
 across the retained chains. If the run throws a
 `WarmupHMC.CompletionQuorumError`, its `outcome.results` holds the passing chains.
 
+## Cooperative draws from conditional targets
+
+Pass one target to share adaptation across chains sampling the same posterior.
+Pass an ordered vector of targets to sample a family of conditionals. For
+example, if `targets[k]` conditions on upstream draw `k`, supply its start
+at `starts[k]`. Calling
+`out = cooperative_warmup_mcmc(rng, targets; init=starts, n_draws=1)`
+requests one draw per target. Its column in `out.results[k].posterior_position`
+belongs to upstream draw `k`. Check
+`out.stop_reason` and the number of columns in each matrix before using the
+draws in a downstream calculation. An evaluation budget can expire before
+every target qualifies for its first draw. Dropping an empty matrix would also
+drop its upstream draw and change the weighting of the calculation.
+
+Pass a `features` matrix with one column per target to let later chains
+start from a nearby pilot chain. Each
+receiving chain warms up and checks a transition on its own target before
+retaining a draw. Pooled geometry uses variation within each conditional, so
+moving their means farther apart does not by itself increase the estimated
+scale. Assess each conditional against draws or known quantities for that
+conditional. The variation across upstream draws also contributes to the
+spread of the combined sample.
+
 ## Returned coordinates
 
 `posterior_position` stores coordinates in rows and draws in columns. For a

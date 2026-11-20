@@ -58,11 +58,12 @@ end
     p[i, :] .= s[i] .* z1; p[j, :] .= s[j] .* v
     g[i, :] .= -(z1 .- ρ .* v) ./ ((1 .- ρ .^ 2) .* s[i])
     g[j, :] .= -(v .- ρ .* z1) ./ ((1 .- ρ .^ 2) .* s[j])
-    # The `:adaptive` candidate both samplers fit each window.
-    L = WarmupHMC.MatrixFactorization(WarmupHMC.SuccessiveReflections(d), Diagonal(ones(d)))
-    WarmupHMC.update_loss!(L, p, g)
-    R = L.m1
+    # Cooperative and adaptive use the same bounded fitter. At d = 2000 a
+    # cluster's default 1000-leaf budget is enough to identify these directions.
     k = WarmupHMC._DEFAULT_MAX_REFLECTIONS
+    L = WarmupHMC._fit_cluster_factor!(p, g, k)
+    @test L isa WarmupHMC.ScaleThenReflect
+    R = L.m1
     @test 0 < length(R.reflections) <= k
     @test sum(length, R.reflections) <= k * d
     # The kinetic energy's M⁻¹ = L L' applies the reflections twice, each time

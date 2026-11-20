@@ -1331,8 +1331,7 @@ mutable struct NonlinearRecorder{O,T}
     online::O
 end
 
-function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
-                           good_leaf_threshold=log(1e-2), capacity=1000)
+function _check_nonlinear_evidence(mode, trajectory_weighting)
     mode in NONLINEAR_EVIDENCE_MODES || throw(ArgumentError(
         "unknown nonlinear evidence mode $mode; expected one of $(join(NONLINEAR_EVIDENCE_MODES, ", "))",
     ))
@@ -1340,6 +1339,12 @@ function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
         "unknown nonlinear trajectory weighting $trajectory_weighting; expected one of " *
         join(NONLINEAR_TRAJECTORY_WEIGHTINGS, ", "),
     ))
+    nothing
+end
+
+function NonlinearRecorder(lpdf; mode=:linear_pool, trajectory_weighting=:unit,
+                           good_leaf_threshold=log(1e-2), capacity=1000)
+    _check_nonlinear_evidence(mode, trajectory_weighting)
     plan = candidate_scoring_plan(lpdf)
     # Chains keep a leaf sample only where the evidence streams in.
     streaming = mode !== :linear_pool || _uses_online_candidate_scoring(plan)
@@ -1470,8 +1475,9 @@ The `payload` method reads the serialized `nonlinear_recorder` accumulator from
 an adaptive or cooperative checkpoint. It is the actual pending online curve
 since the most recent nonlinear reset, not a history: after a restarting window
 selects a candidate, the recorder is reset before that boundary's checkpoint is
-written. Payloads without that recorder, including cooperative checkpoints (the
-merged sampler refits from pooled halos and keeps no recorder), raise an
+written. A cooperative chain's curve covers its own transitions. The shared
+refit merges the running chains' accumulators at the batch barrier. Payloads
+without a recorder, including cooperative checkpoints before 0.3.14, raise an
 `ArgumentError`.
 
 The matrix method deliberately recomputes a retrospective curve. `positions`
@@ -1742,10 +1748,25 @@ end
 # refresh the density and gradient in the new source frame. Re-evaluating the
 # old source vector without transforming it can send the chain far outside the
 # typical set at every restarting window.
-function _transport_active_evaluation(lpdf, old_ir, position_and_gradient)
-    _, model_position = old_ir(position_and_gradient.q)
-    _, source_position = _inverse_with_logabsdet_jacobian(reparametrizer(lpdf), model_position)
-    DynamicHMC.evaluate_ℓ(lpdf, source_position; strict=false)
+function _checked_centering_point(lpdf, old_ir, position_and_gradient)
+    ir = reparametrizer(lpdf)
+    _, physical = old_ir(position_and_gradient.q)
+    _, source = _inverse_with_logabsdet_jacobian(ir, physical)
+    rejection = if !all(isfinite, source)
+        _point_rejection("the chain's current point has nonfinite coordinates in the new frame",
+                         ir, source, findall(!isfinite, source))
+    else
+        # Keep the actual nonfinite log density for the rejection diagnostic.
+        ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(lpdf, source)
+        isfinite(ℓq) && all(isfinite, ∇ℓq) &&
+            return DynamicHMC.EvaluatedLogDensity(source, ℓq, ∇ℓq), nothing
+        isfinite(ℓq) ?
+            _point_rejection("the gradient at the chain's current point is not finite in the new coordinates",
+                             ir, source, findall(!isfinite, ∇ℓq)) :
+            (; reason="the log density at the chain's current point is not finite in the new coordinates",
+               fields=(; log_density=ℓq))
+    end
+    position_and_gradient, rejection
 end
 
 # A candidate can be representable in the streaming scoring evidence but not
@@ -1764,24 +1785,9 @@ function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
     rejection = if !(all(isfinite, position) && all(isfinite, gradient))
         _pool_rejection(ir, position, gradient)
     else
-        _, physical = old_ir(position_and_gradient.q)
-        _, source = _inverse_with_logabsdet_jacobian(ir, physical)
-        if !all(isfinite, source)
-            _point_rejection("the chain's current point has nonfinite coordinates in the new frame",
-                             ir, source, findall(!isfinite, source))
-        else
-            # `DynamicHMC.evaluate_ℓ(lpdf, source; strict=false)`, without its
-            # replacement of a nonfinite log density by `-Inf`: the warning
-            # reports the value.
-            ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(lpdf, source)
-            isfinite(ℓq) && all(isfinite, ∇ℓq) &&
-                return DynamicHMC.EvaluatedLogDensity(source, ℓq, ∇ℓq)
-            isfinite(ℓq) ?
-                _point_rejection("the gradient at the chain's current point is not finite in the new coordinates",
-                                 ir, source, findall(!isfinite, ∇ℓq)) :
-                (; reason="the log density at the chain's current point is not finite in the new coordinates",
-                   fields=(; log_density=ℓq))
-        end
+        point, failure = _checked_centering_point(lpdf, old_ir, position_and_gradient)
+        isnothing(failure) && return point
+        failure
     end
     _restore_reparametrization!(ir, old_ir)
     _synchronize_scoring!(lpdf)

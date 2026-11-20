@@ -12,6 +12,7 @@ using LogDensityProblems,
     InverseFunctions,
     Treebars
 import DynamicHMC,
+    NearestNeighbors,
     StatsBase,
     JSON,
     OnlineStatsBase,
@@ -27,7 +28,7 @@ import ReparametrizableDistributions: PartiallyCentered, reparam
 using DifferentiationInterface: value_and_gradient, value_and_gradient!,
     prepare_gradient, Constant, Cache
 
-export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc,
+export adaptive_warmup_mcmc, resume_warmup_mcmc, cooperative_warmup_mcmc, FixedCoordinates,
     ReparametrizedProblem, IndexedReparametrization, PartiallyCentered, ScaleCentered, Reparametrization,
     SharedAccessor, MarkovChain,
     CandidateScoringPlan, candidate_scoring_losses, WindowSelectionPlan,
@@ -44,12 +45,14 @@ include("kinetic_energy.jl")
 include("WrappedLogDensityProblems.jl")
 include("Reparametrizations.jl")
 include("MarkovChains.jl")
+include("nonlinear_pooling.jl")
 include("concurrent_gradients.jl")
 include("run_files.jl")
 include("adaptive_warmup_mcmc.jl")
 include("weighted_scale.jl")
 include("checkpoint_rescore.jl")
 include("retained_rhat.jl")
+include("cooperative_family.jl")
 include("cooperative_warmup_mcmc.jl")
 include("completion_warmup_mcmc.jl")
 include("interruptible_mcmc.jl")

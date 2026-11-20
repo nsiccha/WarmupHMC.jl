@@ -134,8 +134,10 @@ end
     WS_SELECTIONS[] = 0
     empty!(WS_SIZES)
     rp = ws_problem()
+    # Selection runs only at a restarting boundary, even if the initializer
+    # already found a metric that would pass the default restart test.
     result = adaptive_warmup_mcmc(Xoshiro(20260926), rp; n_draws=1000,
-        progress=nothing, nonlinear_evidence=evidence, recording_target=500)
+        progress=nothing, nonlinear_evidence=evidence, recording_target=500, variance_cond_target=1.0)
     @test WS_SELECTIONS[] >= 1
     # One evidence size: the pool, or a same-size sample of the leaves.
     @test all(<=(500), WS_SIZES)

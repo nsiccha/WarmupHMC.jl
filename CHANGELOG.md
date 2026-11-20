@@ -5,6 +5,26 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.14
+
+### Changed
+
+- `cooperative_warmup_mcmc` accepts an ordered family of conditional targets.
+  Each target qualifies its own first draw and returns its own draws and
+  accounting. Target features enable a second wave of starts from nearby
+  pilot chains. `FixedCoordinates` exposes a conditional of an existing
+  log density by fixing the coordinates outside a supplied index set.
+- Shared-target cooperative chains also check acceptance, divergence and
+  the scaled gradient before retaining their first draw.
+- The cooperative sampler fits up to 16 Householder reflections per cluster.
+  Set `max_reflections=0` for a diagonal metric. Shared-target runs can pool
+  streaming centering evidence, including candidate scores. They refit shared
+  centering when every running chain already needs a restart.
+- Cooperative chains can borrow a healthy cluster's metric and step-size
+  estimate. A persistent extreme failure can trigger one cold replacement at
+  the same index. Results report abandoned attempts and the indices used for
+  pooled ESS. The shared-target convergence check uses every retained history.
+
 ## 0.3.13
 
 ### Changed

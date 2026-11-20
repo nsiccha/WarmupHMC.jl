@@ -5,6 +5,14 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.13
+
+### Changed
+
+- Adaptive and completion chain progress bars identify the warm-up window
+  that restarted when the counter returns to zero. A step-size halving also
+  labels the counter reset when the chain discards draws and resumes sampling.
+
 ## 0.3.12
 
 ### Changed

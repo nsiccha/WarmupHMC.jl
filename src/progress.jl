@@ -96,6 +96,12 @@ _ess_progress!(::Nothing, chain) = nothing
 _ess_progress!(progress, chain) = update_progress!(progress, nothing;
     ess=_ess_label(chain.ess) * " from $(chain.n_samples) samples.",
 )
+# Explain a backwards step on the chain node before publishing the lower count.
+_reset_chain_progress!(::Nothing, state, event) = nothing
+function _reset_chain_progress!(progress, state, event)
+    update_progress!(progress, "$event after window $(state.outer_counter)")
+    update_progress!(progress, state.current_transition_counter)
+end
 # After a restart reselected the linear transformation.
 _transformation_progress!(::Nothing, chain) = nothing
 _transformation_progress!(progress, chain) = update_progress!(progress, nothing;

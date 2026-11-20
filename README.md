@@ -20,7 +20,7 @@ Each group links to the reference page that documents it.
 
 - [Adaptive sampling](https://nsiccha.github.io/WarmupHMC.jl/dev/reference/sampling):
   `adaptive_warmup_mcmc`, `resume_warmup_mcmc`, `cooperative_warmup_mcmc`,
-  `completion_warmup_mcmc`.
+  `completion_warmup_mcmc`. Use `FixedCoordinates` to sample conditionals of a joint target.
 - [Streams and transitions](https://nsiccha.github.io/WarmupHMC.jl/dev/reference/streams):
   `stream_mcmc`, `open_stream`, `close_stream`, `FixedKernelNUTSState`,
   `fixed_kernel_nuts_step`, `ContinuousNUTSState`, `continuous_nuts_step`,

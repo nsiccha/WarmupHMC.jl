@@ -99,13 +99,22 @@ function _triangular_scale(m::AbstractMatrix)
     cholesky(Symmetric(L * L')).L
 end
 
+function _check_kernel_checkpoint(payload)
+    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
+    _check_schema_version(payload)
+    if checkpoint_sampler(payload) === :cooperative &&
+            get(payload, :status, nothing) in (:waiting, :needs_replacement, :recovery_failed)
+        throw(ArgumentError("cooperative chain $(payload.chain_index) has status $(payload.status) and no usable NUTS kernel"))
+    end
+end
+
 # Extract the fixed kernel from a WarmupHMC checkpoint payload AND restore its
 # learned reparametrization centerings onto `lpdf`, so `lpdf`'s frame matches the
 # checkpoint's. Returns `(kinetic_energy, stepsize)`. Shared by every
 # checkpoint-seeded entry point; called once per chain (on that chain's own lpdf
 # copy) in the multi-chain forms, which is why it takes and mutates `lpdf`.
 _checkpoint_kernel!(payload::NamedTuple, lpdf) = begin
-    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
+    _check_kernel_checkpoint(payload)
     dimension = LogDensityProblems.dimension(lpdf)
     dimension == payload.dimension || throw(DimensionMismatch(
         "checkpoint holds a $(payload.dimension)-dimensional problem but the " *
@@ -192,9 +201,10 @@ FixedKernelNUTSState(rng, position::AbstractVector;
         max_tree_depth, Pair[])
 
 FixedKernelNUTSState(payload::NamedTuple;
-        max_tree_depth::Integer=10, position=payload.position_and_gradient.q,
+        max_tree_depth::Integer=10, position=nothing,
         rng=payload.rng) = begin
-    check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
+    _check_kernel_checkpoint(payload)
+    isnothing(position) && (position = payload.position_and_gradient.q)
     length(position) == payload.dimension || throw(DimensionMismatch(
         "start `position` has length $(length(position)) but the checkpoint holds " *
         "a $(payload.dimension)-dimensional problem."))

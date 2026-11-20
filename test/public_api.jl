@@ -45,6 +45,7 @@ const PUBLIC_EXPORTS = [
     # samplers
     :adaptive_warmup_mcmc,
     :cooperative_warmup_mcmc,
+    :FixedCoordinates,
     :completion_warmup_mcmc,
     :resume_warmup_mcmc,        # deprecated in favour of `resume=true`, still exported
     # fixed-kernel interruptible streaming sampler

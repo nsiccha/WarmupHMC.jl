@@ -19,6 +19,7 @@ WarmupHMC.rescore_warmup_checkpoint
 
 ```@docs
 WarmupHMC.cooperative_warmup_mcmc
+WarmupHMC.FixedCoordinates
 ```
 
 ## Completion policy

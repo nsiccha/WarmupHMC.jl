@@ -6,12 +6,12 @@
 #     `(var(position) / var(gradient))^(1/4)` follows;
 #   * the moments ACCUMULATE from the chain's last restart on, over batches whose
 #     budget doubles with no cap;
-#   * at a batch end a chain restarts only when its pooled estimate is incompatible
+#   * at a batch end a chain normally restarts when its pooled estimate is incompatible
 #     with the metric it samples under: relative condition number × step-size gain
 #     > `restart_threshold`. The original used √2; the default is 2, the value
 #     `adaptive_warmup_mcmc` uses for the same statistic, because √2 restarted on
 #     estimate noise alone (snag `cooperative-warm-96ff19ae`);
-#   * no chain is ever parked or abandoned.
+#   * persistent extreme failures can start a new generation at the same index.
 # Step-size adaptation and pooling:
 #   * the step size: a per-chain fit of κ in acceptance ≈ 2Φ(-κε²), with the pooled
 #     log κ as prior and a backoff on failed transitions;
@@ -197,11 +197,13 @@ One chain of a [`cooperative_warmup_mcmc`](@ref) run. `status` is `:warming`
 (adapting its step size since its last restart), `:sampling` (kernel fixed,
 keeping draws) or `:done` (holds `n_draws` draws).
 """
-mutable struct CoopChain{R,L,RL}
+mutable struct CoopChain{R,L,RL,N}
     const chain_index::Int
     const rng::R
     const lpdf::L
     const recording_lpdf::RL
+    const nonlinear_recorder::N
+    geometry_current::Bool          # may lend source-frame geometry to the shared fit
     const dimension::Int
     const monitor_ess::Bool
     const start_time::UInt64
@@ -237,42 +239,79 @@ mutable struct CoopChain{R,L,RL}
     dropped_posterior_position::Matrix{Float64}
     dropped_posterior_gradient::Matrix{Float64}
     dropped_n_divergent_samples::Int
-    geometry_current::Bool  # halo and moments share the pool's coordinate frame
+    freeze::CoopFreeze
+    generation::Int
+    abandoned::Vector{NamedTuple}
+    rescue_prior::Union{Nothing,Float64}
 end
 
 chain_draws(chain::CoopChain) = chain.recording_lpdf.posterior_position
 n_chain_draws(chain::CoopChain) = size(chain_draws(chain), 2)
-_coop_geometry_current(chain::CoopChain) = chain.geometry_current
-_running(chain::CoopChain) = chain.status !== :done
+_running(chain::CoopChain) = chain.status in (:warming, :sampling)
+_coop_geometry_current(chain::CoopChain) = chain.geometry_current && chain.status in (:warming, :sampling, :done)
+
+function _coop_nonlinear_recorder(p, lpdf, capacity, settings, rng)
+    recorder = _restore_nonlinear_recorder(p, lpdf, capacity; settings...)
+    if recorder !== get(p, :nonlinear_recorder, nothing) &&
+            _effective_nonlinear_evidence(recorder, lpdf) !== :linear_pool
+        # Independent reservoirs within chains, independent slot choices at
+        # the barrier. On resume the saved reservoir already has its stream.
+        sample = _leaf_sample(recorder.online)
+        isnothing(sample) || Random.seed!(sample.rng, rand(rng, UInt64))
+    end
+    recorder
+end
 
 # Build chain `index` on its own stream: deep-copied density, initialization
 # (Pathfinder unless `init` says otherwise), diagonal scale from the
 # initializer's squared scale, initial step size and the log κ that gives it.
-_coop_chain(index, rng, lpdf, init, cfg; progress) = begin
+_coop_chain(index, rng, lpdf, init, cfg; progress, adapt_centering=false, waiting=false,
+            current_sources=nothing, start_time=time_ns()) = begin
     dimension = LogDensityProblems.dimension(lpdf)
     recording_lpdf = RecordingPosterior2(lpdf;
         recorder=LimitedRecorder2(cfg.recording_target, max(1, cfg.n_evaluations ÷ cfg.recording_target)), rng)
-    (; position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, cfg.initializer_kw...)
-    scale = _initial_diagonal_scale(squared_scale)
-    kinetic_energy = _coop_energy(scale)
-    position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
-    stepsize = DynamicHMC.find_initial_stepsize(
-        DynamicHMC.InitialStepsizeSearch(),
-        DynamicHMC.local_log_acceptance_ratio(
-            _hamiltonian(kinetic_energy, lpdf),
-            DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy)),
-        ),
-    )
-    log_kappa = _kappa_log(stepsize, cfg.target_acceptance_rate)
+    if waiting
+        # Leave the target and its initializer untouched until its donor is ready.
+        scale = Diagonal(ones(dimension))
+        kinetic_energy = _coop_energy(scale)
+        position_and_gradient = nothing
+        stepsize = log_kappa = NaN
+    else
+        (; position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, cfg.initializer_kw...)
+        position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
+        if !isnothing(current_sources) && reparam_sources(lpdf) != current_sources
+            original = snapshot_reparametrization(reparametrizer(lpdf))
+            restore_reparam_sources!(lpdf, current_sources)
+            position_and_gradient, rejection = _checked_centering_point(lpdf, original, position_and_gradient)
+            isnothing(rejection) || throw(ArgumentError(
+                "replacement init for chain $index could not enter the current coordinates: $(rejection.reason)"))
+            # The initializer's scale belongs to its original coordinates.
+            squared_scale = Diagonal(ones(dimension))
+        end
+        scale = _initial_diagonal_scale(squared_scale)
+        kinetic_energy = _coop_energy(scale)
+        stepsize = DynamicHMC.find_initial_stepsize(
+            DynamicHMC.InitialStepsizeSearch(),
+            DynamicHMC.local_log_acceptance_ratio(
+                _hamiltonian(kinetic_energy, lpdf),
+                DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy)),
+            ),
+        )
+        log_kappa = _kappa_log(stepsize, cfg.target_acceptance_rate)
+    end
+    nonlinear_recorder = adapt_centering ? _coop_nonlinear_recorder(
+        (;), lpdf, cfg.recording_target, cfg.nonlinear_settings, rng) : nothing
     chain = CoopChain(
-        index, rng, lpdf, recording_lpdf, dimension, cfg.monitor_ess, time_ns(), progress,
+        index, rng, lpdf, recording_lpdf, nonlinear_recorder, true, dimension, cfg.monitor_ess, start_time, progress,
         position_and_gradient, scale, kinetic_energy, stepsize, log_kappa, log_kappa, 1.0,
-        Float64[], Float64[], 0, CoopMoments(dimension), :warming,
+        Float64[], Float64[], 0, CoopMoments(dimension), waiting ? :waiting : :warming,
         0, 0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension), Float64[], 0,
-        NamedTuple[], Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0, true,
+        NamedTuple[], Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
+        CoopFreeze(get(cfg, :stepsize_adaptation_limit, 50)),
+        1, NamedTuple[], nothing,
     )
     _initial_chain_progress!(progress, nothing, chain)
-    update_progress!(progress, "warming · initialized")
+    update_progress!(progress, waiting ? "waiting for first wave" : "warming · initialized")
     chain
 end
 
@@ -288,6 +327,8 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
         chain.position_and_gradient, ε,
     )
     finalize_leaf_recording!(recording_lpdf, stats.depth)
+    isnothing(chain.nonlinear_recorder) ||
+        record_nonlinear!(chain.nonlinear_recorder, chain.lpdf, recording_lpdf.leaves, ε)
     _fit_leaves!(chain.moments, recording_lpdf.leaves)
     steps = stats.steps
     chain.total_evaluation_counter += steps
@@ -297,11 +338,15 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
     chain.total_transition_counter += 1
     OnlineStatsBase.fit!(chain.steps_per_draw, steps)
     divergent = DynamicHMC.is_divergent(stats.termination)
-    divergent && (chain.n_divergent += 1)
+    if divergent
+        chain.n_divergent += 1
+        chain.freeze.divergences += 1
+    end
     acceptance = stats.acceptance_rate
     push!(chain.stepsizes, ε)
     push!(chain.acceptances, acceptance)
     if chain.status === :warming
+        chain.freeze.warmup_transitions += 1
         # A divergence alone is not a step-size failure: leaving the support
         # diverges at any step size.
         failed = acceptance < 0.1
@@ -311,16 +356,23 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
         chain.log_kappa = _fit_log_kappa(chain.stepsizes, chain.acceptances, weights,
             chain.log_kappa, chain.kappa_prior, cfg.kappa_prior_weight)
         chain.stepsize = _kappa_stepsize(chain.log_kappa, cfg.target_acceptance_rate) * chain.backoff
-        if chain.current_transition_counter >= cfg.stepsize_adaptation_limit
-            chain.status = :sampling
-            chain.sampling_start = n
+        if chain.current_transition_counter >= chain.freeze.warmup
+            # Decide at the barrier against all checks, including simultaneous ones.
+            score = sum(abs2, chain.scale' * chain.position_and_gradient.∇ℓq) / chain.dimension
+            push!(chain.freeze.scores, score)
+            chain.freeze.pending = true
+            chain.freeze.clean = !divergent && acceptance >= 0.6
         end
     else
-        append!(recording_lpdf.posterior_position, chain.position_and_gradient.q)
-        append!(recording_lpdf.posterior_gradient, chain.position_and_gradient.∇ℓq)
-        divergent && (chain.n_divergent_samples += 1)
-        chain.n_samples += 1
-        chain.n_samples >= cfg.n_draws && (chain.status = :done)
+        f = chain.freeze
+        length(f.pilot) < f.pilot_quota && push!(f.pilot, copy(chain.position_and_gradient.q))
+        if chain.n_samples < cfg.n_draws
+            append!(recording_lpdf.posterior_position, chain.position_and_gradient.q)
+            append!(recording_lpdf.posterior_gradient, chain.position_and_gradient.∇ℓq)
+            divergent && (chain.n_divergent_samples += 1)
+            chain.n_samples += 1
+        end
+        chain.n_samples >= cfg.n_draws && length(f.pilot) >= f.pilot_quota && (chain.status = :done)
     end
     _transition_progress!(chain.progress, nothing, chain)
     chain
@@ -373,9 +425,11 @@ _restart!(chain::CoopChain, scale::AbstractMatrix, cc, cfg) = begin
     chain.stepsize *= sqrt(minimum(_principal_scales(old)) / minimum(_principal_scales(scale)))
     chain.log_kappa = _kappa_log(chain.stepsize, cfg.target_acceptance_rate)
     chain.backoff = 1.0
+    chain.rescue_prior = nothing
     empty!(chain.stepsizes); empty!(chain.acceptances)
     chain.sampling_start = 0
     _reset_moments!(chain.moments)
+    isnothing(chain.nonlinear_recorder) || reset!(chain.nonlinear_recorder)
     recording_lpdf = chain.recording_lpdf
     chain.dropped_posterior_position = Matrix{Float64}(recording_lpdf.posterior_position)
     chain.dropped_posterior_gradient = Matrix{Float64}(recording_lpdf.posterior_gradient)
@@ -383,6 +437,8 @@ _restart!(chain::CoopChain, scale::AbstractMatrix, cc, cfg) = begin
     reset!(recording_lpdf)
     chain.status = :warming
     chain.current_transition_counter = 0
+    chain.freeze.extensions = 0
+    empty!(chain.freeze.pilot)
     chain.n_divergent = 0
     chain.n_divergent_samples = 0
     chain.n_samples = 0
@@ -446,26 +502,15 @@ _responsibilities(locations, centers, spread, bandwidth) = begin
     R ./ sum(R; dims=2)
 end
 
-_pool_clusters!(clusters::CoopClusters, chains, responsibilities) = begin
+_pool_clusters!(clusters::CoopClusters, chains, responsibilities; within_target=false) = begin
     clusters.responsibilities = responsibilities
     d = first(chains).dimension
-    clusters.stats = [_combine_moments!(CoopMoments(d), (c.moments for c in chains), view(responsibilities, :, k))
+    clusters.stats = [_combine_moments!(CoopMoments(d), (c.moments for c in chains), view(responsibilities, :, k); within_target)
                       for k in axes(responsibilities, 2)]
     clusters
 end
 
-_update_clusters!(clusters::CoopClusters, chains, cfg) = begin
-    current = findall(_coop_geometry_current, chains)
-    if length(current) != length(chains)
-        # Cluster only positions in the current frame. Keep original chain rows
-        # for every caller, with zero membership for excluded chains.
-        pooled = isempty(current) ? CoopClusters() :
-                 _update_clusters!(clusters, view(chains, current), cfg)
-        R = zeros(length(chains), length(pooled.centers))
-        R[current, :] .= pooled.responsibilities
-        clusters.centers, clusters.stats, clusters.responsibilities = pooled.centers, pooled.stats, R
-        return clusters
-    end
+_update_active_clusters!(clusters::CoopClusters, chains, cfg; within_target=false) = begin
     spread = _cluster_spread(chains)
     locations = map(_chain_location, chains)
     centers = clusters.centers
@@ -473,7 +518,7 @@ _update_clusters!(clusters::CoopClusters, chains, cfg) = begin
         far = isempty(centers) || minimum(c -> _standardized_distance(x, c, spread), centers) > 4
         far && length(centers) < cfg.max_clusters && push!(centers, copy(x))
     end
-    _pool_clusters!(clusters, chains, _responsibilities(locations, centers, spread, cfg.bandwidth))
+    _pool_clusters!(clusters, chains, _responsibilities(locations, centers, spread, cfg.bandwidth); within_target)
     # Move each center to its cluster's mean, merge centers that came within 1,
     # drop clusters no chain belongs to, then pool once more.
     for (k, s) in enumerate(clusters.stats)
@@ -485,7 +530,27 @@ _update_clusters!(clusters::CoopClusters, chains, cfg) = begin
         keep[k] && keep[l] && _standardized_distance(centers[k], centers[l], spread) < 1 && (keep[l] = false)
     end
     clusters.centers = centers[keep]
-    _pool_clusters!(clusters, chains, _responsibilities(locations, clusters.centers, spread, cfg.bandwidth))
+    _pool_clusters!(clusters, chains, _responsibilities(locations, clusters.centers, spread, cfg.bandwidth); within_target)
+end
+
+# Waiting slots have no geometry or step-size evidence. Keep the final weight
+# rows indexed by the original target, including runs stopped in the first wave.
+function _update_clusters!(clusters::CoopClusters, chains, cfg)
+    within_target = get(cfg, :family, false)
+    active = findall(_coop_geometry_current, chains)
+    if isempty(active)
+        empty!(clusters.centers)
+        empty!(clusters.stats)
+        clusters.responsibilities = zeros(length(chains), 0)
+        return clusters
+    end
+    _update_active_clusters!(clusters, view(chains, active), cfg; within_target)
+    if length(active) != length(chains)
+        R = zeros(length(chains), length(clusters.centers))
+        R[active, :] = clusters.responsibilities
+        clusters.responsibilities = R
+    end
+    clusters
 end
 
 include("cooperative_metric.jl")
@@ -497,11 +562,12 @@ _update_kappa_priors!(clusters::CoopClusters, chains) = begin
     # A cluster whose responsibilities all underflowed carries no weight anywhere.
     cluster_log_kappa = map(axes(R, 2)) do k
         mass = sum(view(R, :, k))
-        mass > 0 ? sum(R[i, k] * chains[i].log_kappa for i in eachindex(chains)) / mass : 0.0
+        mass > 0 ? sum(R[i, k] * chains[i].log_kappa for i in eachindex(chains) if R[i,k] > 0) / mass : 0.0
     end
     for (i, c) in enumerate(chains)
         _coop_geometry_current(c) || continue
-        c.kappa_prior = sum(R[i, k] * cluster_log_kappa[k] for k in axes(R, 2) if R[i, k] > 0)
+        c.kappa_prior = c.status === :warming && !isnothing(c.rescue_prior) ? c.rescue_prior :
+            sum(R[i, k] * cluster_log_kappa[k] for k in axes(R, 2) if R[i, k] > 0)
     end
 end
 
@@ -538,6 +604,8 @@ _running_chains(run::CoopRun) = filter(_running, run.chains)
 _chain_init(init::AbstractVector{<:Real}, index) = init
 _chain_init(init::AbstractVector, index) = init[index]
 _chain_init(init, index) = init
+_coop_target(lpdf, index) = lpdf
+_coop_cold_init(init, index, rng) = _require_cold_init(_chain_init(init, index), index)
 
 # Create chains `indices` in parallel on `cfg.n_cores` workers. Their streams are
 # drawn from the seed RNG serially first, in index order, so the seed-to-chain
@@ -547,8 +615,22 @@ _create_chains!(run::CoopRun, indices) = begin
     nodes = [initialize_progress!(run.progress; description="$(run.description).$i") for i in indices]
     created = Vector{CoopChain}(undef, length(indices))
     _parallel_foreach(eachindex(indices), run.cfg.n_cores) do j
-        created[j] = _coop_chain(indices[j], streams[j], deepcopy(run.lpdf),
-            _chain_init(run.init, indices[j]), run.cfg; progress=nodes[j])
+        i, rng = indices[j], streams[j]
+        family = run.lpdf isa CoopFamily
+        source = family ? run.lpdf.source[i] : 0
+        waiting = !iszero(source)
+        target = deepcopy(_coop_target(run.lpdf, i))
+        init = waiting ? nothing : _coop_cold_init(run.init, i, rng)
+        master = run.reparam_lpdf
+        chain = _coop_chain(i, rng, target, init, run.cfg; progress=nodes[j], waiting,
+            adapt_centering=!isnothing(master),
+            current_sources=isnothing(master) ? nothing : reparam_sources(master))
+        if family
+            chain.freeze.source = source
+            chain.freeze.wave = waiting ? 2 : 1
+            chain.freeze.pilot_quota = !waiting && run.cfg.two_waves ? _COOP_PILOT_DRAWS : 0
+        end
+        created[j] = chain
     end
     append!(run.chains, created)
     created
@@ -579,12 +661,18 @@ _run_round!(run::CoopRun) = begin
     cfg = run.cfg
     chains = _running_chains(run)
     foreach(c -> (c.round_evaluations = 0), chains)
-    _parallel_foreach(chains, cfg.n_cores) do chain
-        update_progress!(chain.progress, "$(chain.status) · batch $(run.batch)")
-        while _running(chain) && chain.round_evaluations < cfg.n_evaluations && !_stop_requested(run)
-            _coop_transition!(chain, cfg, run.total_evaluations)
+    unfinished = chains
+    while !isempty(unfinished) && !_stop_requested(run)
+        _parallel_foreach(unfinished, cfg.n_cores) do chain
+            update_progress!(chain.progress, "$(chain.status) · batch $(run.batch)")
+            while _running(chain) && !chain.freeze.pending &&
+                    chain.round_evaluations < cfg.n_evaluations && !_stop_requested(run)
+                _coop_transition!(chain, cfg, run.total_evaluations)
+            end
         end
-        update_progress!(chain.progress, "$(chain.status) · batch $(run.batch), waiting for the round")
+        any(c -> c.freeze.pending, chains) || break
+        _qualify_freezes!(run.chains)
+        unfinished = filter(c -> _running(c) && c.round_evaluations < cfg.n_evaluations, chains)
     end
     # As at an adaptive window boundary (`_check_current_point`): every chain that
     # sampled in this round, including one that finished in it, is evaluated once
@@ -598,17 +686,27 @@ end
 # Rounds of batch k: 2^(k-1). Batch k ends after round 2^k - 1.
 _batch_ends_after(round) = ispow2(round + 1)
 
+include("cooperative_recovery.jl")
+
 # Each running chain's restart, decided from its cluster-pooled estimate, all from
 # the same pre-restart state.
 _batch_end!(run::CoopRun) = begin
     cfg = run.cfg
-    geometry = _cluster_geometry(run.clusters, run.chains, cfg)
+    geometry = _cluster_geometry(run.clusters, run.chains, cfg; within_target=cfg.family)
+    recovery = _coop_recovery_context(run, run.lpdf)
+    rescue_factors = Dict{Any,Union{Nothing,ScaleThenReflect{Float64}}}()
     decide(i, chain) = begin
         _running(chain) && _coop_geometry_current(chain) || return nothing
-        (; scale, weight, relative_condition) = _cluster_metric(geometry, i)
+        action = _coop_recovery_action(recovery, chain, run.batch)
+        cfg.family && chain.status === :sampling && action.kind === :none && return nothing
+        donor = action.kind === :rescue ? _coop_rescue_geometry(recovery, chain) : nothing
+        metric = isnothing(donor) ? _cluster_metric(geometry, i) :
+            _rescue_metric(geometry, i, donor, cfg, rescue_factors)
+        (; scale, weight, relative_condition) = metric
         sc = _stepsize_gain(chain, cfg)
-        (; chain, new_scales=scale, cc=relative_condition, sc,
-           restart=weight >= 2 && relative_condition * sc > cfg.restart_threshold)
+        restart = action.kind === :rescue ||
+            (action.kind === :none && weight >= 2 && relative_condition * sc > cfg.restart_threshold)
+        (; chain, new_scales=scale, cc=relative_condition, sc, action, donor, restart)
     end
     decisions = [decide(i, c) for (i, c) in enumerate(run.chains)]
     running = filter(!isnothing, decisions)
@@ -621,20 +719,35 @@ _batch_end!(run::CoopRun) = begin
             !isnothing(_refit_reparametrization!(run))
         run.clusters = CoopClusters()
         _update_clusters!(run.clusters, run.chains, cfg)
-        transported = _cluster_geometry(run.clusters, run.chains, cfg)
-        decisions = [isnothing(d) ? d : merge(d, (; new_scales=_cluster_metric(transported, i).scale,
-                                                 centering_refit=true))
-                     for (i, d) in enumerate(decisions)]
+        transported = _cluster_geometry(run.clusters, run.chains, cfg; within_target=cfg.family)
+        decisions = map(eachindex(decisions)) do i
+            d = decisions[i]
+            isnothing(d) && return nothing
+            # A change of coordinates supersedes a rescue proposed in the
+            # previous frame. Install the new metric and discard that prior.
+            action = d.action.kind === :rescue ? (; kind=:refit, d.action.reason, extreme=false) : d.action
+            merge(d, (; new_scales=_cluster_metric(transported, i).scale, action,
+                       donor=nothing, centering_refit=true))
+        end
     end
     for d in decisions
         isnothing(d) && continue
         chain = d.chain
-        push!(chain.batches, (; batch=run.batch, status=chain.status, relative_condition=d.cc,
+        push!(chain.batches, (; batch=run.batch, chain.generation, status=chain.status, relative_condition=d.cc,
             stepsize_gain=d.sc, restart=d.restart, centering_refit=get(d, :centering_refit, false),
-            n_samples=chain.n_samples,
+            recovery=d.action.kind, recovery_reason=d.action.reason, extreme=d.action.extreme,
+            n_transitions=chain.current_transition_counter, n_divergent=chain.n_divergent, n_samples=chain.n_samples,
             total_evaluation_counter=chain.total_evaluation_counter, stepsize=chain.stepsize,
             min_ess=chain.monitor_ess && chain.n_samples > 10 ? _min_ess(chain.ess) : NaN))
-        d.restart && _restart!(chain, d.new_scales, d.cc, cfg)
+        if d.action.kind === :replace
+            _replace_coop_chain!(run, chain, d.action.reason)
+        elseif d.restart
+            _restart!(chain, d.new_scales, d.cc, cfg)
+            if d.action.kind === :rescue
+                chain.rescue_prior = chain.kappa_prior = chain.log_kappa = d.donor.log_kappa
+                chain.stepsize = _kappa_stepsize(chain.log_kappa, cfg.target_acceptance_rate)
+            end
+        end
     end
     # Keep the halo ring (centering evidence) spanning one batch of the next size.
     next_batch_evaluations = cfg.n_evaluations * 2^run.batch
@@ -644,8 +757,8 @@ _batch_end!(run::CoopRun) = begin
     run.batch += 1
 end
 
-# Refit the shared reparametrization from every running chain's retained halo
-# (the `:linear_pool` evidence), on the master copy. On a change, restore the new
+# Refit the shared reparametrization from the running chains' evidence
+# on the master copy. On a change, restore the new
 # controls onto every running chain, move its current point into the new frame,
 # and refill its moments from its transported halo. A transported point that is
 # not finite rolls the whole refit back. Returns the new controls, or `nothing`
@@ -653,21 +766,34 @@ end
 _refit_reparametrization!(run::CoopRun) = begin
     master = run.reparam_lpdf
     chains = _running_chains(run)
+    isempty(chains) && return nothing
+    all(_coop_geometry_current, chains) || return nothing
+    recorder = deepcopy(first(chains).nonlinear_recorder)
     columns = [size(c.recording_lpdf.halo_position, 2) for c in chains]
-    sum(columns) > 0 || return nothing
+    if _effective_nonlinear_evidence(recorder, master) === :linear_pool
+        sum(columns) > 0 || return nothing
+    else
+        rng = isnothing(_leaf_sample(recorder.online)) ? nothing : Random.Xoshiro(rand(run.rng, UInt64))
+        for c in Iterators.drop(chains, 1)
+            _merge_nonlinear!(recorder.online, c.nonlinear_recorder.online, rng)
+        end
+    end
     before = deepcopy(reparam_sources(master))
     old_ir = snapshot_reparametrization(reparametrizer(master))
     halo_position = reduce(hcat, [Matrix(c.recording_lpdf.halo_position) for c in chains])
     halo_gradient = reduce(hcat, [Matrix(c.recording_lpdf.halo_gradient) for c in chains])
-    recorder = NonlinearRecorder(master; capacity=size(halo_position, 2))
-    find_reparametrization!(master, recorder, halo_position, halo_gradient, first(chains).position_and_gradient)
+    first_point = find_reparametrization!(master, recorder, halo_position, halo_gradient, first(chains).position_and_gradient)
     after = reparam_sources(master)
     after == before && return nothing
-    points = [_transport_active_evaluation(master, old_ir, c.position_and_gradient) for c in chains]
-    if !all(pg -> isfinite(pg.ℓq) && all(isfinite, pg.∇ℓq), points)
-        restore_reparam_sources!(master, before)
-        @warn "Rejected the pooled centering update: a chain's current point is not finite in the new coordinates; retaining the previous ones"
-        return nothing
+    points = [first_point]
+    for c in Iterators.drop(chains, 1)
+        pg, rejection = _checked_centering_point(master, old_ir, c.position_and_gradient)
+        if !isnothing(rejection)
+            restore_reparam_sources!(master, before)
+            @warn "Rejected the pooled centering update: $(rejection.reason)" chain=c.chain_index rejection.fields...
+            return nothing
+        end
+        push!(points, pg)
     end
     offset = 0
     for (c, pg, n) in zip(chains, points, columns)
@@ -685,9 +811,7 @@ _refit_reparametrization!(run::CoopRun) = begin
     # A finished chain keeps its own frame for its draws; its moments, in the old
     # frame, no longer pool.
     for c in run.chains
-        _running(c) && continue
-        c.geometry_current = false
-        _reset_moments!(c.moments)
+        _running(c) || (c.geometry_current = false)
     end
     after
 end
@@ -697,24 +821,31 @@ end
 # =============================================================================
 
 # The pooled ESS of the best subset of at least `min_chains` chains holding more
-# than 10 draws: the chains with the most draws, truncated to the shortest one's
+# than 10 draws: rank by per-chain minimum ESS, then truncate to the shortest
 # tail (`_stack_chain_tails`). Subsets of doubling size are tried, so this stays
-# O(log chains) ESS evaluations. Returns `(ess, n_chains)`.
-_best_pooled_ess(draws, min_chains) = begin
-    usable = sort!([d for d in draws if size(d, 2) > 10]; by=d -> -size(d, 2))
-    length(usable) >= min_chains || return (0.0, 0)
-    best = (0.0, 0)
+# O(log chains) pooled ESS evaluations. Return original chain indices.
+_best_pooled_ess(draws, min_chains; individual=nothing) = begin
+    usable = findall(d -> size(d, 2) > 10, draws)
+    length(usable) >= min_chains || return (0.0, Int[])
+    scores = map(usable) do i
+        e = _min_ess(isnothing(individual) ? _coordinate_ess(draws[i]) : individual[i])
+        isfinite(e) ? e : -Inf
+    end
+    usable = usable[sortperm(scores; rev=true)]
+    best_ess, best_k = 0.0, 0
     k = min_chains
     while true
-        stacked = _stack_chain_tails(view(usable, 1:k); min_chain_draws=11)
+        stacked = _stack_chain_tails(view(draws, view(usable, 1:k)); min_chain_draws=11)
         if !isnothing(stacked)
             e = _min_ess(vec(MCMCDiagnosticTools.ess(stacked)))
-            isfinite(e) && e > first(best) && (best = (e, k))
+            if isfinite(e) && e > best_ess
+                best_ess, best_k = e, k
+            end
         end
         k == length(usable) && break
         k = min(2k, length(usable))
     end
-    best
+    best_ess, usable[1:best_k]
 end
 
 _min_pooled_chains(run::CoopRun) = min(2, run.cfg.n_chains)
@@ -736,10 +867,11 @@ _check_stop!(run::CoopRun) = begin
     for c in run.chains
         c.monitor_ess && c.n_samples > 10 && (c.ess .= _coordinate_ess(chain_draws(c)))
     end
-    reason = _interrupted(run.progress) ? :interrupted :
+    reason = any(c -> c.status === :recovery_failed, run.chains) ? :recovery_failed :
+        _interrupted(run.progress) ? :interrupted :
         run.total_evaluations[] >= cfg.n_evaluations_budget ? :eval_budget :
         _elapsed(run) >= cfg.time_budget ? :time_budget : nothing
-    if isnothing(reason) && isfinite(cfg.target_ess)
+    if isnothing(reason) && !(run.lpdf isa CoopFamily) && isfinite(cfg.target_ess) && !any(_awaiting_recovery_draws, run.chains)
         holding = [c for c in run.chains if c.status !== :warming && c.n_samples > 10]
         proxy = sum(c -> _min_ess(c.ess), holding; init=0.0)
         if proxy >= cfg.target_ess && length(holding) >= _min_pooled_chains(run)
@@ -763,7 +895,7 @@ end
 
 _coop_chains_label(run::CoopRun) = begin
     n(status) = count(c -> c.status === status, run.chains)
-    parts = ["$(n(s)) $(s)" for s in (:sampling, :warming, :done) if n(s) > 0]
+    parts = ["$(n(s)) $(s)" for s in (:sampling, :warming, :waiting, :needs_replacement, :recovery_failed, :done) if n(s) > 0]
     k = length(run.clusters.centers)
     "$(length(run.chains)) chains: " * join(parts, ", ") * "; $k cluster" * (k == 1 ? "" : "s")
 end
@@ -773,7 +905,7 @@ _coop_batch_label(run::CoopRun) = begin
     "$(run.batch): $rounds round$(rounds == 1 ? "" : "s") of $(short_string(run.cfg.n_evaluations)) evaluations per chain"
 end
 
-_coop_pooled_ess_label(run::CoopRun) = isfinite(run.cfg.target_ess) ?
+_coop_pooled_ess_label(run::CoopRun) = run.lpdf isa CoopFamily ? "separate targets" : isfinite(run.cfg.target_ess) ?
     (isnan(run.last_pooled_ess) ? "not computed yet; target $(short_string(run.cfg.target_ess))" :
         "$(short_string(run.last_pooled_ess)) at the last check; target $(short_string(run.cfg.target_ess))") :
     "no target_ess"
@@ -854,7 +986,15 @@ chain_result(chain::CoopChain) = begin
         n_divergent_samples=chain.n_divergent_samples,
         total_evaluation_counter=chain.total_evaluation_counter,
         n_restarts=chain.n_restarts,
+        accounting=(; wave=chain.freeze.wave, source=chain.freeze.source,
+            warmup_transitions=chain.freeze.warmup_transitions, divergences=chain.freeze.divergences,
+            freeze_extensions=chain.freeze.total_extensions, pilot_draws=length(chain.freeze.pilot),
+            abandoned_freeze_scores=chain.freeze.abandoned_scores,
+            rescues=chain.freeze.prior_rescues + _coop_rescue_count(chain.batches),
+            replacements=chain.generation - 1,
+            gradient_evaluations=chain.total_evaluation_counter),
         batches=chain.batches,
+        chain.generation, chain.abandoned,
     )
 end
 
@@ -862,17 +1002,27 @@ _finalize(run::CoopRun) = begin
     for c in run.chains
         _finish_chain_progress!(c, c.status === :done ? "done" : "$(c.status) when the run stopped")
     end
-    results = map(chain_result, run.chains)
-    joint_ess, n_pooled = _best_pooled_ess([r.posterior_position for r in results], _min_pooled_chains(run))
+    results = map(run.chains) do chain
+        r = chain_result(chain)
+        if run.lpdf isa CoopFamily
+            id = isnothing(run.lpdf.ids) ? chain.chain_index : run.lpdf.ids[chain.chain_index]
+            return merge(r, (; target_id=id))
+        end
+        r
+    end
+    individual = run.cfg.monitor_ess ? [r.ess for r in results] : nothing
+    joint_ess, pooled_chains = run.cfg.family ? (nothing, Int[]) :
+        _best_pooled_ess([r.posterior_position for r in results], _min_pooled_chains(run); individual)
     (;
         results,
         stop_reason=run.stop_reason,
         n_used=count(r -> r.n_samples > 0, results),
         joint_ess,
-        n_pooled,
+        n_pooled=length(pooled_chains),
         n_batches=run.batch - 1,
         total_evaluation_counter=run.total_evaluations[],
         elapsed=_elapsed(run),
+        pooled_chains,
     )
 end
 
@@ -882,8 +1032,9 @@ _finish_run_progress!(run::CoopRun, result) = begin
     n = sum(r -> r.n_samples, result.results; init=0)
     divergent = n == 0 ? "no draws retained" :
         "divergent: $(short_string(100 * sum(r -> r.n_divergent_samples, result.results) / n))%"
+    ess = isnothing(result.joint_ess) ? "" : "joint ESS $(short_string(result.joint_ess)) over $(result.n_pooled) chains, "
     update_progress!(run.progress,
-        "$(result.stop_reason): joint ESS $(short_string(result.joint_ess)) over $(result.n_pooled) chains, " *
+        "$(result.stop_reason): $ess" *
         "$(result.n_used) of $(length(result.results)) chains hold draws, $divergent")
 end
 
@@ -907,21 +1058,48 @@ end
 _coop_scale_payload(L::Diagonal) = (; scale_options=(; diagonal=L), active_transformation=:diagonal)
 _coop_scale_payload(L::ScaleThenReflect) = (; scale_options=(; adaptive=L), active_transformation=:adaptive)
 
+function _coop_checkpoint_version(chain::CoopChain)
+    streaming = !isnothing(chain.nonlinear_recorder) &&
+        _effective_nonlinear_evidence(chain.nonlinear_recorder, chain.lpdf) !== :linear_pool
+    changed = _has_coop_recovery(chain) || !(chain.scale isa Diagonal) || !chain.geometry_current ||
+        chain.freeze.pending || chain.freeze.extensions > 0 || chain.status === :waiting || streaming
+    changed ? checkpoint_schema_version(Val(:cooperative)) : checkpoint_schema_version()
+end
+
+_coop_run_version(run) = run.lpdf isa CoopFamily ? checkpoint_schema_version(Val(:cooperative)) :
+    maximum(_coop_checkpoint_version, run.chains; init=checkpoint_schema_version())
+
+# Built-in container types let earlier readers inspect the sampler and schema
+# before deciding whether they can resume this checkpoint.
+_freeze_payload(f::CoopFreeze) = (; (k => getfield(f, k) for k in fieldnames(CoopFreeze))...)
+
+function _restore_freeze(payload, warmup)
+    state = CoopFreeze(warmup)
+    saved = get(payload, :freeze, nothing)
+    for k in fieldnames(CoopFreeze)
+        hasproperty(saved, k) && setproperty!(state, k, getproperty(saved, k))
+    end
+    state
+end
+
 _coop_payload(chain::CoopChain, run::CoopRun) = (;
-    schema_version=checkpoint_schema_version(),
+    schema_version=run.lpdf isa CoopFamily ? checkpoint_schema_version(Val(:cooperative)) :
+        _coop_checkpoint_version(chain),
     sampler=:cooperative,
     chain_index=chain.chain_index,
+    (run.lpdf isa CoopFamily ? (; target_id=run.lpdf.ids[chain.chain_index]) : (;))...,
+    chain.generation, chain.abandoned, chain.rescue_prior,
     status=chain.status,
-    stuck_reason=nothing,
-    is_final=chain.status === :done,
-    stop_reason=chain.status === :done ? :n_draws : :running,
+    stuck_reason=chain.status === :recovery_failed ? last(chain.abandoned).reason : nothing,
+    is_final=chain.status in (:done, :recovery_failed),
+    stop_reason=chain.status === :done ? :n_draws : chain.status === :recovery_failed ? :recovery_failed : :running,
     window=run.batch - 1,
     round=run.round,
     dimension=chain.dimension,
     chain.rng, chain.position_and_gradient, chain.stepsize,
-    _coop_scale_payload(chain.scale)..., chain.geometry_current,
+    _coop_scale_payload(chain.scale)...,
     chain.log_kappa, chain.kappa_prior, chain.backoff, chain.stepsizes, chain.acceptances,
-    chain.sampling_start, chain.moments, chain.current_transition_counter,
+    freeze=_freeze_payload(chain.freeze), chain.sampling_start, chain.moments, chain.current_transition_counter,
     chain.total_transition_counter, chain.total_evaluation_counter, chain.n_divergent,
     chain.n_divergent_samples, chain.n_samples, chain.steps_per_draw, chain.ess,
     chain.scale_changes, chain.n_restarts, chain.batches,
@@ -930,6 +1108,7 @@ _coop_payload(chain::CoopChain, run::CoopRun) = (;
     halo_position=chain.recording_lpdf.halo_position,
     halo_gradient=chain.recording_lpdf.halo_gradient,
     recorder=chain.recording_lpdf.recorder,
+    chain.nonlinear_recorder, chain.geometry_current,
     chain.dropped_posterior_position, chain.dropped_posterior_gradient,
     chain.dropped_n_divergent_samples,
     reparam_sources=reparam_sources(chain.lpdf),
@@ -947,8 +1126,10 @@ _write_checkpoints!(run::CoopRun, dir::AbstractString; batch_end) = begin
         _atomic_serialize(joinpath(chain_dir, "cp_latest.jls"), p)
     end
     _atomic_serialize(joinpath(dir, "run_latest.jls"), (;
-        schema_version=checkpoint_schema_version(), sampler=:cooperative,
+        schema_version=maximum(p -> p.schema_version, payloads), sampler=:cooperative,
         run.round, run.batch, total_evaluations=run.total_evaluations[], run.rng,
+        family=_family_checkpoint(run.lpdf),
+        replacement_init=_checkpoint_cold_init(run.init),
         run.clusters, chains=payloads, run.last_pooled_ess, run_elapsed=_elapsed(run),
         master_sources=isnothing(run.reparam_lpdf) ? nothing : reparam_sources(run.reparam_lpdf),
     ))
@@ -957,9 +1138,10 @@ end
 _write_coop_manifest(::Nothing, run) = nothing
 _write_coop_manifest(dir::AbstractString, run::CoopRun) = _write_json(
     joinpath(dir, "run_manifest.json"), Pair{String,Any}[
-        "schema_version" => checkpoint_schema_version(),
+        "schema_version" => _coop_run_version(run),
         "sampler" => "cooperative",
         "n_chains" => run.cfg.n_chains,
+        (run.lpdf isa CoopFamily ? ["target_ids" => run.lpdf.ids] : Pair{String,Any}[])...,
         "n_cores" => run.cfg.n_cores,
         # The stopping criteria in force; JSON has no Inf, so an unset bound is null.
         "n_draws" => run.cfg.n_draws == typemax(Int) ? nothing : run.cfg.n_draws,
@@ -976,7 +1158,7 @@ _write_coop_manifest(dir::AbstractString, run::CoopRun) = _write_json(
 _write_coop_summary(::Nothing, run, result) = nothing
 _write_coop_summary(dir::AbstractString, run::CoopRun, result) = _write_json(
     joinpath(dir, "run_summary.json"), Pair{String,Any}[
-        "schema_version" => checkpoint_schema_version(),
+        "schema_version" => _coop_run_version(run),
         "sampler" => "cooperative",
         "is_final" => true,
         "stop_reason" => string(result.stop_reason),
@@ -984,6 +1166,9 @@ _write_coop_summary(dir::AbstractString, run::CoopRun, result) = _write_json(
         "n_used" => result.n_used,
         "joint_ess" => result.joint_ess,
         "n_pooled" => result.n_pooled,
+        "pooled_chains" => result.pooled_chains,
+        "chain_generations" => [r.generation for r in result.results],
+        "failed_chains" => [r.chain_index for r in result.results if r.status === :recovery_failed],
         "n_batches" => result.n_batches,
         "total_evaluation_counter" => result.total_evaluation_counter,
         "elapsed" => result.elapsed,
@@ -992,7 +1177,7 @@ _write_coop_summary(dir::AbstractString, run::CoopRun, result) = _write_json(
 
 # A chain from its payload and a fresh `lpdf`; the configuration comes from the
 # resuming call. A finished chain resumes sampling when the call raises `n_draws`.
-_restore_coop_chain(p, lpdf, cfg; progress) = begin
+_restore_coop_chain(p, lpdf, cfg; progress, adapt_centering, geometry_current) = begin
     check_checkpoint_compatible(p, :cooperative, (:cooperative,))
     _check_schema_version(p)
     d = LogDensityProblems.dimension(lpdf)
@@ -1000,18 +1185,24 @@ _restore_coop_chain(p, lpdf, cfg; progress) = begin
         "the checkpoint holds a $(p.dimension)-dimensional problem but the supplied lpdf has dimension $d."))
     _check_candidate_scoring_compatible(p, lpdf)
     restore_reparam_sources!(lpdf, p.reparam_sources)
+    nonlinear_recorder = adapt_centering ? _coop_nonlinear_recorder(
+        p, lpdf, p.recorder.target, cfg.nonlinear_settings, p.rng) : nothing
     recording_lpdf = RecordingPosterior2(lpdf, p.halo_position, p.halo_gradient,
         p.posterior_position, p.posterior_gradient, NUTSLeaves(d), p.recorder, p.rng)
-    status = p.status === :warming ? :warming : p.n_samples >= cfg.n_draws ? :done : :sampling
+    freeze = _restore_freeze(p, cfg.stepsize_adaptation_limit)
+    status = p.status in (:done, :sampling) ?
+        (p.n_samples >= cfg.n_draws && length(freeze.pilot) >= freeze.pilot_quota ? :done : :sampling) : p.status
     scale = p.scale_options[p.active_transformation]
     chain = CoopChain(
-        p.chain_index, p.rng, lpdf, recording_lpdf, d, cfg.monitor_ess, time_ns(), progress,
+        p.chain_index, p.rng, lpdf, recording_lpdf, nonlinear_recorder, geometry_current,
+        d, cfg.monitor_ess, time_ns(), progress,
         p.position_and_gradient, scale, _coop_energy(scale), p.stepsize, p.log_kappa, p.kappa_prior,
         p.backoff, p.stepsizes, p.acceptances, p.sampling_start, p.moments, status,
         p.current_transition_counter, p.total_transition_counter, p.total_evaluation_counter, 0,
         p.n_divergent, p.n_divergent_samples, p.n_samples, p.steps_per_draw, p.ess,
         p.scale_changes, p.n_restarts, p.batches, p.dropped_posterior_position,
-        p.dropped_posterior_gradient, p.dropped_n_divergent_samples, get(p, :geometry_current, true),
+        p.dropped_posterior_gradient, p.dropped_n_divergent_samples, freeze,
+        get(p, :generation, 1), get(p, :abandoned, NamedTuple[]), get(p, :rescue_prior, nothing),
     )
     _initial_chain_progress!(progress, nothing, chain)
     update_progress!(progress, "$(chain.status) · restored at batch $(p.window + 1)")
@@ -1024,19 +1215,23 @@ _restore_coop_run(dir, lpdf, cfg, init, progress, description, adapt_centering) 
     _check_schema_version(state)
     length(state.chains) == cfg.n_chains || throw(ArgumentError(
         "resume needs the run's n_chains = $(length(state.chains)); got n_chains = $(cfg.n_chains)."))
+    isequal(get(state, :family, nothing), _family_checkpoint(lpdf)) ||
+        throw(ArgumentError("resume needs the checkpoint's ordered targets, features and first wave"))
     nodes = [initialize_progress!(progress; description="$description.$(p.chain_index)") for p in state.chains]
-    chains = [_restore_coop_chain(p, deepcopy(lpdf), cfg; progress=node) for (p, node) in zip(state.chains, nodes)]
-    # Legacy files predate the eligibility bit. A finished chain may still be
-    # in the frame it sampled before the last shared refit.
-    for (c, p) in zip(chains, state.chains)
-        if !haskey(p, :geometry_current) && !isnothing(state.master_sources)
-            c.geometry_current = p.reparam_sources == state.master_sources
-        end
+    controls = if isnothing(state.master_sources)
+        first(p.reparam_sources for p in state.chains if get(p, :geometry_current, true))
+    else
+        state.master_sources
     end
-    master = adapt_centering ? restore_reparam_sources!(deepcopy(lpdf), state.master_sources) : nothing
-    CoopRun(state.rng, lpdf, cfg, init, progress, string(description), time_ns(), state.run_elapsed, master,
+    chains = [_restore_coop_chain(p, deepcopy(_coop_target(lpdf, p.chain_index)), cfg; progress=node, adapt_centering,
+                geometry_current=get(p, :geometry_current, cfg.family || p.reparam_sources == controls))
+              for (p, node) in zip(state.chains, nodes)]
+    master = adapt_centering ? restore_reparam_sources!(deepcopy(lpdf), controls) : nothing
+    cold_init = ismissing(init) ? get(state, :replacement_init, missing) : init
+    stop_reason = any(c -> c.status === :recovery_failed, chains) ? :recovery_failed : nothing
+    CoopRun(state.rng, lpdf, cfg, cold_init, progress, string(description), time_ns(), state.run_elapsed, master,
         CoopChain[chains...], state.clusters, Threads.Atomic{Int}(state.total_evaluations),
-        state.round, state.batch, nothing, state.last_pooled_ess)
+        state.round, state.batch, stop_reason, state.last_pooled_ess)
 end
 
 # =============================================================================
@@ -1060,13 +1255,20 @@ up to `max_reflections` Householder reflections (default 16). With too little
 evidence or no retained reflection, a chain uses its pooled Nutpie diagonal.
 `max_reflections=0` selects diagonal-only adaptation. Work proceeds in rounds of
 `n_evaluations` gradient evaluations per chain; batch k is 2^(k-1) rounds. At a
-batch end a chain restarts warm-up under its pooled estimate only when that
+batch end a chain normally restarts warm-up under its pooled estimate when that
 estimate's relative condition number against its current metric, times the
 predicted step-size gain, exceeds `restart_threshold` (2). A restart drops the
 chain's draws; otherwise it keeps sampling under its fixed kernel, so every kept
 draw is an MCMC draw of an unchanging kernel. Step sizes follow a per-chain fit
-of acceptance ≈ 2Φ(-κε²) with the pooled κ as prior. No chain is ever parked or
-abandoned.
+of acceptance ≈ 2Φ(-κε²) with the pooled κ as prior.
+
+A poorly sampling singleton may restart at its own position with the majority
+cluster's geometry and step-size prior. Persistent extreme divergence or step-size
+collapse at consecutive batch ends with a rescue between them starts a fresh
+generation at the same index, using the slot's original init and a new seed-RNG
+stream. Each slot gets one replacement. Exhaustion stops the run with
+`:recovery_failed` and zero retained draws for the failed slot. Each result
+records its `generation` (starting at one) and `abandoned` attempt summaries.
 
 * `rng` seeds every chain: chain i's stream is drawn from it when chain i is
   created, so one seed reproduces the run at any thread count.
@@ -1078,7 +1280,9 @@ abandoned.
   retain their middle draw. The maximum includes both ordinary rank-normalized
   values and ranks of absolute deviations from the pooled median (folding).
   Every nonempty chain needs more than 10 draws;
-  empty chains do not contribute. This diagnostic cannot detect an unvisited mode.
+  an empty chain that has been rescued or replaced must sample again before an
+  ESS stop. Other empty chains do not contribute. This diagnostic cannot detect
+  an unvisited mode.
 * Also stops when `n_evaluations_budget` gradient evaluations are spent,
   `time_budget` seconds pass, every chain holds `n_draws` draws, or
   `Treebars.request_interrupt!` is called on `progress`, all checked at round
@@ -1087,6 +1291,16 @@ abandoned.
   The `target_ess` stop needs `monitor_ess` (the default).
 * `init` (as for [`adaptive_warmup_mcmc`](@ref)) is shared by every chain, or a
   vector of per-chain inits; a position vector of reals is one shared start.
+* With `nonlinear_adapt=true`, every running chain contributes to one shared
+  centering refit at a batch end where all of them already need to restart.
+  `nonlinear_evidence=:linear_pool` uses their combined retained halos.
+  A [`CandidateScoringPlan`](@ref) scores `:all_good_leaves` online even
+  under that default. `:all_good_leaves` uses noninitial leaves above
+  `nonlinear_good_leaf_threshold=log(1e-2)`. `:nuts_weighted` uses the
+  NUTS proposal weights. `nonlinear_trajectory_weighting=:unit` gives no
+  additional trajectory weight, and `:stepsize` multiplies by its step size.
+  A [`WindowSelectionPlan`](@ref) receives the combined halo in linear mode
+  or a weighted sample of `recording_target` columns in either streaming mode.
 * `blas_threads=1` holds BLAS at that many threads for the whole call and
   restores the caller's count afterwards, as for
   [`adaptive_warmup_mcmc`](@ref); `nothing` leaves BLAS untouched.
@@ -1101,14 +1315,20 @@ continues an unfinished run from its last round barrier: every chain's state,
 draws and stream, the seed RNG, the clusters and the counters are restored, so
 the run continues as if it had not stopped. The configuration comes from the
 resuming call (a larger `n_draws` extends finished chains; `n_chains` must
-match), the evaluation budget continues from the restored total, and
+match). The nonlinear recorder resumes with its accumulated evidence and
+random stream. Changing its mode, weighting or threshold starts fresh evidence.
+Older checkpoints use the original halo default.
+Numeric starts and explicit positions with squared scales are saved
+for future replacements. Supply custom initializers again on resume. The
+evaluation budget continues from the restored total, and
 `time_budget` from the run's live time. A finished run (`run_summary.json`
 exists) is refused; `overwrite=true` discards the directory's run.
 
 Returns `(; results, stop_reason, n_used, joint_ess, n_pooled, n_batches,
-total_evaluation_counter, elapsed)`. `results[i]` is chain `i`'s
+total_evaluation_counter, elapsed, pooled_chains)`. `results[i]` is chain `i`'s
 `chain_result`, its draws in the model frame. `joint_ess` is the pooled
-ESS over the `n_pooled` chains with the most draws (at least `min(2, n_chains)`).
+ESS of the best tested prefix ranked by individual minimum ESS, over a common
+tail of at least `min(2, n_chains)` chains. `pooled_chains` gives their indices.
 """
 cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     n_chains::Integer=4,
@@ -1131,6 +1351,9 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     recording_target=1000,
     init=missing,
     nonlinear_adapt=true,
+    nonlinear_evidence=nothing,
+    nonlinear_trajectory_weighting=nothing,
+    nonlinear_good_leaf_threshold=nothing,
     monitor_ess=true,
     progress=nothing,
     description="MCMC",
@@ -1142,11 +1365,15 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
     kwargs...
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:cooperative_warmup_mcmc, kwargs)
-    _refuse_unsafe_concurrent_gradients(:cooperative_warmup_mcmc, (lpdf,),
+    family = lpdf isa CoopFamily
+    any(k -> k in (:features, :n_wave1, :target_ids), keys(kwargs)) &&
+        throw(ArgumentError("features, n_wave1 and target_ids apply to a vector of targets"))
+    _refuse_unsafe_concurrent_gradients(:cooperative_warmup_mcmc, family ? lpdf.targets : (lpdf,),
         _concurrent_chains(n_chains, n_cores))
     guard_run_dir!(checkpoint_dir, resume, overwrite, :cooperative)
     max_reflections >= 0 || throw(ArgumentError("max_reflections must be nonnegative"))
     recording_target > 0 || throw(ArgumentError("recording_target must be positive"))
+    n_evaluations > 0 || throw(ArgumentError("n_evaluations must be positive"))
     n_chains >= 1 || throw(ArgumentError("cooperative_warmup_mcmc needs n_chains ≥ 1, got $n_chains."))
     isfinite(rhat_threshold) && rhat_threshold > 1 || throw(ArgumentError(
         "cooperative_warmup_mcmc needs a finite rhat_threshold > 1, got $rhat_threshold."))
@@ -1161,19 +1388,15 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
         throw(ArgumentError("a per-chain `init` vector needs one entry per chain: got $(length(init)) for n_chains = $n_chains."))
     _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     adapt_centering = nonlinear_adapt && has_reparametrization(reparametrizer(lpdf))
-    # Online candidate scoring keeps its evidence in a per-chain accumulator,
-    # which the pooled refit cannot merge yet: it would find no evidence and never
-    # adapt. Refuse rather than silently not adapting.
-    adapt_centering && _uses_online_candidate_scoring(candidate_scoring_plan(lpdf)) && throw(ArgumentError(
-        "cooperative_warmup_mcmc cannot yet adapt a reparametrization scored by a `CandidateScoringPlan` " *
-        "(its evidence is per chain and is not pooled). Pass `nonlinear_adapt=false` to sample under the " *
-        "centering you supplied, or use `adaptive_warmup_mcmc`."))
-    cfg = (; n_chains, n_cores=max(1, n_cores), target_ess=Float64(target_ess),
+    _check_nonlinear_evidence(something(nonlinear_evidence, :linear_pool),
+                              something(nonlinear_trajectory_weighting, :unit))
+    nonlinear_settings = (; nonlinear_evidence, nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold)
+    cfg = (; family, two_waves=family && any(!iszero, lpdf.source), n_chains, n_cores=max(1, n_cores), target_ess=Float64(target_ess),
         rhat_threshold=Float64(rhat_threshold), n_evaluations_budget,
         time_budget=Float64(time_budget), n_draws, n_evaluations, stepsize_adaptation_limit,
         target_acceptance_rate, algorithm=DynamicHMC.NUTS(; max_depth=max_tree_depth),
         restart_threshold, max_reflections, max_clusters, bandwidth, kappa_prior_weight, kappa_decay,
-        recording_target, monitor_ess, initializer_kw=(; kwargs..., pathfinder_kw...))
+        recording_target, monitor_ess, nonlinear_settings, initializer_kw=(; kwargs..., pathfinder_kw...))
     with_progress(progress; description) do progress
         _initial_run_labels!(progress, cfg)
         run = if resume
@@ -1186,14 +1409,25 @@ cooperative_warmup_mcmc(rng::Random.AbstractRNG, lpdf;
             _create_chains!(fresh, 1:n_chains)
             _update_clusters!(fresh.clusters, fresh.chains, cfg)
             _update_kappa_priors!(fresh.clusters, fresh.chains)
+            family && _write_checkpoints!(fresh, checkpoint_dir; batch_end=false)
             fresh
         end
         _run_progress!(run)
-        while true
+        while isnothing(run.stop_reason)
             run.round += 1
             _run_round!(run)
+            _replace_gate_failures!(run)
+            if run.cfg.two_waves && !_stop_requested(run)
+                _start_second_wave!(run)
+                _replace_gate_failures!(run)
+            end
             _update_clusters!(run.clusters, run.chains, cfg)
-            _check_stop!(run) && break
+            if _check_stop!(run)
+                if run.stop_reason === :recovery_failed || (family && run.stop_reason === :n_draws)
+                    _write_checkpoints!(run, checkpoint_dir; batch_end=false)
+                end
+                break
+            end
             batch_end = _batch_ends_after(run.round)
             if batch_end
                 _batch_end!(run)

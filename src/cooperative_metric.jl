@@ -98,6 +98,24 @@ end
 _cluster_metric(geometry, i, k) =
     _cluster_metric_choice(geometry.chains[i].scale, geometry.factors[k], geometry.stats[k])
 
+# All shared-target rescues use the same measured donors. In a family a
+# receiving slot has at most eight nearby donors. Cache each distinct fit for
+# this barrier so even simultaneous rescues use only pre-restart evidence.
+function _rescue_metric(geometry, i, donor, cfg, factors)
+    factor = if cfg.max_reflections > 0
+        key = cfg.family ? (donor.cluster, Tuple(donor.donors)) : donor.cluster
+        get!(factors, key) do
+            chains = view(geometry.chains, donor.donors)
+            weights = view(geometry.responsibilities, donor.donors, donor.cluster)
+            capacities = [size(c.recording_lpdf.halo_position, 2) for c in chains]
+            p, g = _cluster_sample(chains, weights, capacities, cfg.recording_target;
+                                   within_target=cfg.family)
+            _fit_cluster_factor!(p, g, cfg.max_reflections)
+        end
+    end
+    _cluster_metric_choice(geometry.chains[i].scale, factor, donor.moments)
+end
+
 function _cluster_metric_choice(current, factor, estimate)
     if isnothing(factor)
         scales = _moment_scales(estimate)

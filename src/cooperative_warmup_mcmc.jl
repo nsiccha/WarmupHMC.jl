@@ -1011,7 +1011,7 @@ _finalize(run::CoopRun) = begin
         r
     end
     individual = run.cfg.monitor_ess ? [r.ess for r in results] : nothing
-    joint_ess, pooled_chains = run.cfg.family ? (nothing, Int[]) :
+    joint_ess, pooled_chains = run.lpdf isa CoopFamily ? (nothing, Int[]) :
         _best_pooled_ess([r.posterior_position for r in results], _min_pooled_chains(run); individual)
     (;
         results,

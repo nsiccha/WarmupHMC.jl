@@ -1477,7 +1477,7 @@ since the most recent nonlinear reset, not a history: after a restarting window
 selects a candidate, the recorder is reset before that boundary's checkpoint is
 written. A cooperative chain's curve covers its own transitions. The shared
 refit merges the running chains' accumulators at the batch barrier. Payloads
-without a recorder, including cooperative checkpoints before 0.3.13, raise an
+without a recorder, including cooperative checkpoints before 0.3.14, raise an
 `ArgumentError`.
 
 The matrix method deliberately recomputes a retrospective curve. `positions`

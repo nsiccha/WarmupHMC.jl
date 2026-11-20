@@ -1877,6 +1877,7 @@ _finish_outer_iteration!(state::AWMState) = begin
     # restarts warm-up or the opt-in step-size halving resamples them.
     if state.n_samples >= state.n_draws && !_divergence_gate!(state)
         _halve_stepsize!(state) || return state
+        _reset_chain_progress!(progress, state, "step size halved")
         return _grow_window!(state)
     end
     _grow_window!(state)
@@ -1892,6 +1893,7 @@ _finish_outer_iteration!(state::AWMState) = begin
     state.stepsize = DynamicHMC.current_ϵ(state.stepsize_state)
     # Reset the so far recorded intermediate and MCMC positions and gradients
     state.current_transition_counter = 0
+    _reset_chain_progress!(progress, state, "warm-up restarted")
     state.n_divergent = 0
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.

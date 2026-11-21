@@ -41,4 +41,15 @@
     end
     @test W.chain_draws(c) == W.chain_draws(restored)
     @test c.freeze.probe_evaluations == restored.freeze.probe_evaluations > 0
+    # An old unfinished donor could already have returned its first pilot draw.
+    # Rebuild its warm-up segment and clear only the prematurely retained draws.
+    old_freeze = (; warmup=5, wave=1, source=0, pilot_quota=30,
+        pilot=[copy(c.position_and_gradient.q)], pending=false)
+    old = merge(deepcopy(W._coop_payload(c,run)), (; schema_version=3, status=:sampling, freeze=old_freeze))
+    old_chain = W._restore_coop_chain(old, deepcopy(c.lpdf), cfg; progress=nothing,
+        adapt_centering=false, geometry_current=true)
+    @test old_chain.status === :piloting && old_chain.n_samples == 0
+    @test isempty(old_chain.freeze.pilot) && isempty(W.chain_draws(old_chain))
+    @test old_chain.position_and_gradient.q == c.position_and_gradient.q
+
 end

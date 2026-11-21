@@ -5,6 +5,18 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.15
+
+### Changed
+
+- A family slot of `cooperative_warmup_mcmc` whose cold replacement also
+  fails no longer ends the run. That slot returns `:recovery_failed` with no
+  draws and its abandoned attempts, the other targets keep sampling, and the
+  run returns `stop_reason = :recovery_failed` once they hold their draws.
+  A failed first-wave slot's receivers start from the nearest qualified
+  first-wave slot instead. Runs on one shared target still stop at the
+  failure.
+
 ## 0.3.14
 
 ### Changed

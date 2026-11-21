@@ -867,7 +867,9 @@ _check_stop!(run::CoopRun) = begin
     for c in run.chains
         c.monitor_ess && c.n_samples > 10 && (c.ess .= _coordinate_ess(chain_draws(c)))
     end
-    reason = any(c -> c.status === :recovery_failed, run.chains) ? :recovery_failed :
+    failed = any(c -> c.status === :recovery_failed, run.chains)
+    failure_ends_run = _slot_failure_ends_run(run.lpdf)
+    reason = failed && failure_ends_run ? :recovery_failed :
         _interrupted(run.progress) ? :interrupted :
         run.total_evaluations[] >= cfg.n_evaluations_budget ? :eval_budget :
         _elapsed(run) >= cfg.time_budget ? :time_budget : nothing
@@ -884,7 +886,11 @@ _check_stop!(run::CoopRun) = begin
             end
         end
     end
-    isnothing(reason) && all(c -> c.status === :done, run.chains) && (reason = :n_draws)
+    # A family slot that failed is settled: once every other slot holds its
+    # draws, the run reports the failure.
+    if isnothing(reason) && all(c -> c.status === :done || c.status === :recovery_failed, run.chains)
+        reason = failed ? :recovery_failed : :n_draws
+    end
     run.stop_reason = reason
     !isnothing(reason)
 end
@@ -1228,7 +1234,8 @@ _restore_coop_run(dir, lpdf, cfg, init, progress, description, adapt_centering) 
               for (p, node) in zip(state.chains, nodes)]
     master = adapt_centering ? restore_reparam_sources!(deepcopy(lpdf), controls) : nothing
     cold_init = ismissing(init) ? get(state, :replacement_init, missing) : init
-    stop_reason = any(c -> c.status === :recovery_failed, chains) ? :recovery_failed : nothing
+    stop_reason = _slot_failure_ends_run(lpdf) && any(c -> c.status === :recovery_failed, chains) ?
+        :recovery_failed : nothing
     CoopRun(state.rng, lpdf, cfg, cold_init, progress, string(description), time_ns(), state.run_elapsed, master,
         CoopChain[chains...], state.clusters, Threads.Atomic{Int}(state.total_evaluations),
         state.round, state.batch, stop_reason, state.last_pooled_ess)
@@ -1273,9 +1280,12 @@ A poorly sampling singleton may restart at its own position with the majority
 cluster's geometry and step-size prior. Persistent extreme divergence or step-size
 collapse at consecutive batch ends with a rescue between them starts a fresh
 generation at the same index, using the slot's original init and a new seed-RNG
-stream. Each slot gets one replacement. Exhaustion stops the run with
-`:recovery_failed` and zero retained draws for the failed slot. Each result
-records its `generation` (starting at one) and `abandoned` attempt summaries.
+stream. Each slot gets one replacement. On one shared target, exhaustion
+stops the run with `:recovery_failed` and zero retained draws for the failed
+slot. In a family of targets only that slot fails: it returns
+`:recovery_failed` with zero draws while the other slots keep sampling (see
+the family method). Each result records its `generation` (starting at one)
+and `abandoned` attempt summaries.
 
 * `rng` seeds every chain: chain i's stream is drawn from it when chain i is
   created, so one seed reproduces the run at any thread count.

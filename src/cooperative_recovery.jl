@@ -120,7 +120,10 @@ function _replace_coop_chain!(run, chain, reason)
     if generation >= 2
         push!(abandoned, summary)
         chain.status = :recovery_failed
-        run.stop_reason = :recovery_failed
+        _slot_failure_ends_run(run.lpdf) && (run.stop_reason = :recovery_failed)
+        # Its checks leave the median the remaining slots still qualify against.
+        append!(chain.freeze.abandoned_scores, chain.freeze.scores)
+        empty!(chain.freeze.scores)
         reset!(chain.recording_lpdf)
         _reset_moments!(chain.moments)
         fill!(chain.ess, 0.0)

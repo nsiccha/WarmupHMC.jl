@@ -49,6 +49,12 @@ struct CoopFamily{T,I}
 end
 _coop_target(family::CoopFamily, i) = family.targets[i]
 
+# Chains on one shared target are interchangeable, so a slot that exhausts its
+# replacement ends the run. Family slots are distinct targets: a failed slot
+# returns its failure and the others still sample their own targets.
+_slot_failure_ends_run(lpdf) = true
+_slot_failure_ends_run(::CoopFamily) = false
+
 struct CoopFamilyInit{I}
     starts::I
 end
@@ -209,6 +215,15 @@ evaluation budget, including receiving-target evaluations and discarded
 transitions. Initializer and initial step-size searches are excluded. A cold
 replacement preserves the earlier counts and exposes its predecessor's gate
 scores as `abandoned_freeze_scores`. A budget can leave a slot `:waiting`.
+
+A slot whose replacement also fails ends with status `:recovery_failed`, zero
+draws and both attempts in `abandoned`; the other slots keep sampling. Once
+every other slot holds `n_draws` draws the run returns with `stop_reason`
+`:recovery_failed`. The sampler does not refit a failed slot: fit that target
+yourself, for example with [`adaptive_warmup_mcmc`](@ref) from its own
+initializer. A failed first-wave slot is no source: its receivers start from
+the nearest qualified first-wave slot, or cold when none qualified.
+
 Family `joint_ess` is `nothing` and `n_pooled` is zero. Use `target_ids` to
 identify the ordered targets when checkpointing and supply the same IDs,
 features and wave size on resume.
@@ -285,8 +300,14 @@ end
 function _start_second_wave!(run)
     waiting = filter(c -> c.status === :waiting, run.chains)
     isempty(waiting) && return
-    donors = filter(c -> c.freeze.wave == 1, run.chains)
+    # A first-wave slot that exhausted its recovery is no source.
+    donors = filter(c -> c.freeze.wave == 1 && c.status !== :recovery_failed, run.chains)
     all(c -> length(c.freeze.pilot) == _COOP_PILOT_DRAWS, donors) || return
+    if isempty(donors)
+        _cold_start_receivers!(run, waiting)
+        return
+    end
+    _reassign_failed_sources!(run.lpdf, waiting, donors)
     warmup = _second_wave_length(donors)
     _parallel_foreach(waiting, run.cfg.n_cores) do chain
         _stop_requested(run) && return
@@ -311,6 +332,39 @@ function _start_second_wave!(run)
             chain.freeze.warmup = warmup
             chain.status = :warming
         end
+    end
+end
+
+# A receiver of a failed first-wave slot starts from the nearest qualified one
+# in feature space, as each receiver's own source was chosen.
+function _reassign_failed_sources!(family::CoopFamily, waiting, donors)
+    sources = [d.chain_index for d in donors]
+    F = family.features
+    for chain in waiting
+        chain.freeze.source in sources && continue
+        distances = [sum(abs2(F[a, chain.chain_index] - F[a, j]) for a in axes(F, 1)) for j in sources]
+        chain.freeze.source = sources[argmin(distances)]
+    end
+end
+
+# With no qualified first-wave slot, every receiver starts cold from its own
+# initializer. Streams are drawn from the seed RNG serially, in index order.
+function _cold_start_receivers!(run, waiting)
+    streams = [Random.Xoshiro(rand(run.rng, UInt64)) for _ in waiting]
+    fresh = Vector{Any}(undef, length(waiting))
+    _parallel_foreach(eachindex(waiting), run.cfg.n_cores) do j
+        old = waiting[j]
+        i, rng = old.chain_index, streams[j]
+        init = _coop_cold_init(run.init, i, rng)
+        chain = _coop_chain(i, rng, deepcopy(_coop_target(run.lpdf, i)), init, run.cfg;
+            old.progress, old.start_time)
+        chain.freeze.wave = old.freeze.wave
+        chain.freeze.source = 0
+        chain.total_evaluation_counter = old.total_evaluation_counter
+        fresh[j] = chain
+    end
+    for chain in fresh
+        run.chains[chain.chain_index] = chain
     end
 end
 

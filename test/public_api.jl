@@ -120,6 +120,7 @@ const PUBLIC_RESULT_FIELDS = [
     :total_evaluation_counter,
     :sampling_evaluation_counter,
     :n_divergent_samples,
+    :n_nonfinite_leaves,
     :position_and_gradient,
     :scale_changes,
 ]

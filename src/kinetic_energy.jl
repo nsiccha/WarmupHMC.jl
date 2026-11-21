@@ -49,11 +49,17 @@ mutable struct TrajectoryEnergy{K<:DynamicHMC.GaussianKineticEnergy,V<:AbstractV
     p♯::Vector{Union{Nothing,V}}
     g::Vector{Union{Nothing,V}}
     g♯::Vector{Union{Nothing,V}}
+    # The transition's leapfrog points where the target answered a non-finite
+    # log density other than -Inf, or a finite one with a non-finite gradient
+    # (`_evaluate_leaf!`), and the first one's log density and up to five of its
+    # non-finite gradient coordinates.
+    nonfinite::Int
+    first_nonfinite::Union{Nothing,Tuple{Float64,Vector{Int}}}
 end
 TrajectoryEnergy(κ::DynamicHMC.GaussianKineticEnergy) = begin
     V = Vector{eltype(κ.M⁻¹)}
     slots() = Union{Nothing,V}[nothing, nothing, nothing]
-    TrajectoryEnergy{typeof(κ),V}(κ, slots(), slots(), slots(), slots())
+    TrajectoryEnergy{typeof(κ),V}(κ, slots(), slots(), slots(), slots(), 0, nothing)
 end
 
 # The Hamiltonian a sampler builds for its transitions. Only the Gaussian
@@ -103,7 +109,7 @@ function DynamicHMC.leapfrog(H::DynamicHMC.Hamiltonian{<:TrajectoryEnergy{K,V}},
     pₘ = p .+ (ϵ / 2) .* Q.∇ℓq
     p♯ₘ = p♯ .+ (ϵ / 2) .* g♯                  # M⁻¹ pₘ
     q′ = Q.q .+ ϵ .* p♯ₘ
-    Q′ = DynamicHMC.evaluate_ℓ(ℓ, q′)
+    Q′ = _evaluate_leaf!(κ, ℓ, q′)
     pₘ .+= (ϵ / 2) .* Q′.∇ℓq                    # p′
     if isfinite(Q′.ℓq)
         g♯′ = κ.κ.M⁻¹ * Q′.∇ℓq
@@ -117,4 +123,48 @@ function DynamicHMC.leapfrog(H::DynamicHMC.Hamiltonian{<:TrajectoryEnergy{K,V}},
         end
     end
     DynamicHMC.PhasePoint(Q′, pₘ)
+end
+
+# ------------------------------------------------------- non-finite target answers
+#
+# A leapfrog point where the target answers `+Inf` or `NaN`, or a finite log
+# density with a non-finite gradient, becomes a divergent leaf exactly as
+# DynamicHMC's `evaluate_ℓ` makes it: its log density is replaced by `-Inf` and
+# its gradient is never read, so the draws do not change. Unlike `-Inf`, the
+# answer for a point outside the support, it is never legitimate (warmuphmc-use
+# §1a), and as a plain divergence it is invisible: in snag
+# `hierarchical-spa-1a7808bd` Stan's linear-space `simplex` underflowed to 0,
+# `dirichlet` answered `+Inf`, and the run showed only 5.9–11% divergences. So
+# the leapfrog counts these answers, every sampler reports the count as
+# `n_nonfinite_leaves` (the one-step entry points as `nonfinite`), and a run warns
+# at its first one.
+function _evaluate_leaf!(e::TrajectoryEnergy, ℓ, q)
+    all(isfinite, q) || return DynamicHMC.evaluate_ℓ(ℓ, q)   # DynamicHMC's own error
+    ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(ℓ, q)
+    ((isfinite(ℓq) && all(isfinite, ∇ℓq)) || ℓq == -Inf) &&
+        return DynamicHMC.EvaluatedLogDensity(q, ℓq, ∇ℓq)
+    e.nonfinite += 1
+    isnothing(e.first_nonfinite) &&
+        (e.first_nonfinite = (Float64(ℓq), first(findall(!isfinite, ∇ℓq), 5)))
+    DynamicHMC.EvaluatedLogDensity(q, oftype(ℓq, -Inf), ∇ℓq)
+end
+
+# The non-finite answers of the transition `H` was built for (`_hamiltonian`).
+_nonfinite_leaves(H::DynamicHMC.Hamiltonian) = H.κ isa TrajectoryEnergy ? H.κ.nonfinite : 0
+
+# Adds a transition's non-finite answers to a run's `total` and warns at the
+# run's first one; returns the new total.
+function _take_nonfinite!(H::DynamicHMC.Hamiltonian, total::Integer)
+    n = _nonfinite_leaves(H)
+    n == 0 && return total
+    if total == 0
+        ℓq, coordinates = H.κ.first_nonfinite
+        @warn "The target answered a non-finite log density (+Inf or NaN), or a finite " *
+              "one with a non-finite gradient, at a leapfrog point (first: log density " *
+              "$ℓq, non-finite gradient coordinates $coordinates). It is counted as a " *
+              "divergence; `n_nonfinite_leaves` counts these answers. -Inf is the answer " *
+              "for a point outside the target's support; any other non-finite answer " *
+              "is a defect of the target, such as an underflow or overflow."
+    end
+    total + n
 end

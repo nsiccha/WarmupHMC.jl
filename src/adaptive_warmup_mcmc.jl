@@ -1227,6 +1227,10 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     dropped_n_divergent_samples::Int
     # Explicit target re-scoring is separate from sampler evaluation counters.
     rescored::Vector{NamedTuple}
+    # Leapfrog points of the whole run where the target answered +Inf or NaN, or
+    # a finite log density with a non-finite gradient (`_evaluate_leaf!`): counted
+    # as divergences, reported here, never reset. Checkpointed; ADDITIVE.
+    n_nonfinite_leaves::Int
 end
 
 function _fit_transformed_observation!(adaptation, position_memory, gradient_memory, scale,
@@ -1716,7 +1720,7 @@ init_state(
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
         restart, n_samples, 0, 0, stepsize_adaptation.δ, false, 0.0, Float64[],
         Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
-        NamedTuple[],
+        NamedTuple[], 0,
     )
     _initial_chain_progress!(progress, current_transition_counter, state)
     state
@@ -1785,6 +1789,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
         # products along this trajectory only (`TrajectoryEnergy`).
         hamiltonian = _hamiltonian(state.kinetic_energy, recording_lpdf)
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
+        state.n_nonfinite_leaves = _take_nonfinite!(hamiltonian, state.n_nonfinite_leaves)
         finalize_leaf_recording!(recording_lpdf, stats.depth)
         state.nonlinear_adapt && record_nonlinear!(
             state.nonlinear_recorder,
@@ -1967,6 +1972,7 @@ finalize_warmup!(state::AWMState) = begin
         total_evaluation_counter=state.total_evaluation_counter,
         sampling_evaluation_counter=state.sampling_evaluation_counter,
         n_divergent_samples=state.n_divergent_samples,
+        n_nonfinite_leaves=state.n_nonfinite_leaves,
         position_and_gradient=state.position_and_gradient,
         scale_changes=state.scale_changes,
     )
@@ -2102,7 +2108,7 @@ checkpoint_payload(state::AWMState) = (;
     state.retained_acceptance_sum, state.posterior_log_density,
     state.dropped_posterior_position, state.dropped_posterior_gradient,
     state.dropped_n_divergent_samples,
-    state.rescored,
+    state.rescored, state.n_nonfinite_leaves,
     reparam_sources=reparam_sources(state.lpdf),
     custom_candidate_scoring=_has_custom_candidate_scoring(state.lpdf),
 )
@@ -2692,6 +2698,7 @@ restore_state(p, lpdf, progress;
         get(p, :dropped_posterior_gradient, Matrix{Float64}(undef, p.dimension, 0)),
         get(p, :dropped_n_divergent_samples, 0),
         get(p, :rescored, NamedTuple[]),
+        get(p, :n_nonfinite_leaves, 0),
     )
 end
 
@@ -3077,8 +3084,14 @@ For the single-chain method, a `NamedTuple` with fields including
 `active_transformation`, `stepsize`, `stepsize_halvings`,
 `effective_target_acceptance_rate`, `total_evaluation_counter`,
 `sampling_evaluation_counter`,
-`n_divergent_samples`, `position_and_gradient`, `scale_changes`.
+`n_divergent_samples`, `n_nonfinite_leaves`, `position_and_gradient`, `scale_changes`.
 For the multi-chain method, a `Vector` of such `NamedTuple`s.
+
+`n_nonfinite_leaves` counts the leapfrog points of the whole run, over every
+transition, where the target answered `+Inf` or `NaN`, or a finite log density
+with a non-finite gradient. Such a point is a divergent leaf, as one outside the
+support (`-Inf`) is, but it is a defect of the target: the run warns at the
+first one.
 
 `posterior_log_density[j]` is the log density of the model, in its own
 parametrization, at the draw `posterior_position[:, j]`: for a
@@ -3259,6 +3272,7 @@ function _scale_centered_warmup_mcmc(rng, lpdf;
     merge(second_pass, (;
         total_evaluation_counter=first_pass.total_evaluation_counter +
                                  second_pass.total_evaluation_counter,
+        n_nonfinite_leaves=first_pass.n_nonfinite_leaves + second_pass.n_nonfinite_leaves,
         selected_centering=reparam_controls(selected),
         first_pass=first_summary,
     ))

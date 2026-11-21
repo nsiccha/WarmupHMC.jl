@@ -144,6 +144,7 @@ function _replace_coop_chain!(run, chain, reason)
         fresh.abandoned = push!(copy(abandoned), summary)
         fresh.total_evaluation_counter = chain.total_evaluation_counter
         fresh.total_transition_counter = chain.total_transition_counter
+        fresh.n_nonfinite_leaves = chain.n_nonfinite_leaves
         _coop_replacement_slot!(fresh, chain, run.lpdf)
         run.chains[chain_index] = fresh
     end

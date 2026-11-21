@@ -231,9 +231,11 @@ end
     fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=1)
 
 Take exactly one fixed-kernel NUTS transition under the supplied
-`LogDensityProblems` target. Return `(; state, divergent, stats)`, where `state`
-is the next in-memory state, `divergent` is this transition's
-divergence flag, and `stats` is the DynamicHMC tree statistics. The input state
+`LogDensityProblems` target. Return `(; state, divergent, nonfinite, stats)`,
+where `state` is the next in-memory state, `divergent` is this transition's
+divergence flag, `nonfinite` counts its leapfrog points where the target answered
+`+Inf` or `NaN` (or a finite log density with a non-finite gradient), each a
+divergent leaf, and `stats` is the DynamicHMC tree statistics. The input state
 is not advanced. Read the new source-frame position from `result.state.position`.
 
 The target may change on every call, but must keep the same dimension and
@@ -266,7 +268,8 @@ fixed_kernel_nuts_step(state::FixedKernelNUTSState, lpdf; blas_threads=_DEFAULT_
         rng, state.algorithm, hamiltonian, pg, state.stepsize)
     next_state = FixedKernelNUTSState(rng, copy(next_pg.q), state.kinetic_energy,
         state.stepsize, state.algorithm, state.reparam_sources)
-    (; state=next_state, divergent=DynamicHMC.is_divergent(stats.termination), stats)
+    (; state=next_state, divergent=DynamicHMC.is_divergent(stats.termination),
+       nonfinite=_nonfinite_leaves(hamiltonian), stats)
 end
 
 _stream_lpdfs(lpdf, n_chains) =
@@ -458,7 +461,7 @@ _stream_ess(samples, k) = _coordinate_ess(@view samples[:, 1:k])
 # ------------------------------------------------------------- the driver
 
 # The inner loop, shared by fresh runs and resumes. Mutates `samples` and the
-# `ring` in place; consumes `rng`. Returns `(pg, rng, n_divergent, n_written)`.
+# `ring` in place; consumes `rng`. Returns `(pg, rng, n_divergent, n_nonfinite, n_written)`.
 #
 # Progress (only when `progress !== nothing`): the counter is driven by the
 # `@progress … for` macro, so it advances by one on EVERY draw for free — there
@@ -479,6 +482,7 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
     ess_next = 16                                          # first ESS window
     ess_label = "pending..."                              # until the first window
     n_divergent = 0
+    n_nonfinite = 0                                        # non-finite target answers of THIS call
     show = progress !== nothing                            # no ESS/label cost when off
     # `@progress <parent> "<desc>" for` hangs a determinate counter (labeled with
     # the runtime `description`) under `progress` and increments it every
@@ -486,7 +490,9 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
     # label merge lands on the advancing bar. On resume it counts this session's
     # draws (n_written already on disk), while the labels report absolute counts.
     @progress progress "$description" for k in (n_written + 1):n_draws
-        pg, stats = DynamicHMC.sample_tree(rng, algorithm, _hamiltonian(kinetic_energy, lpdf), pg, stepsize)
+        hamiltonian = _hamiltonian(kinetic_energy, lpdf)
+        pg, stats = DynamicHMC.sample_tree(rng, algorithm, hamiltonian, pg, stepsize)
+        n_nonfinite = _take_nonfinite!(hamiltonian, n_nonfinite)
         @views samples[:, k] .= pg.q                      # raw SOURCE-frame draw
         diverged = DynamicHMC.is_divergent(stats.termination)
         divergences[k] = diverged ? Int8(1) : Int8(0)     # per-draw divergent flag
@@ -519,16 +525,17 @@ _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
             )
         end
     end
-    (pg, rng, n_divergent, n_draws)                       # n_draws columns now written
+    (pg, rng, n_divergent, n_nonfinite, n_draws)          # n_draws columns now written
 end
 
 _stream_result(samples_path, samples, rng_states, divergences,
-        dimension, n_written, n_divergent, ess, rng, position) = (;
+        dimension, n_written, n_divergent, n_nonfinite, ess, rng, position) = (;
     path = samples_path,
     draws = @view(samples[:, 1:n_written]),   # dimension × n_written SOURCE-frame draws (COLUMNS)
     samples,                                   # the live mapping — keeps `draws` valid
     n_drawn = n_written,
     n_divergent,                               # divergences of THIS call (not persisted)
+    n_nonfinite_leaves = n_nonfinite,          # +Inf/NaN target answers of THIS call (not persisted)
     divergences = @view(divergences[1:n_written]),  # per-draw 0/1 flag, ALL draws on disk
     rng_states = @view(rng_states[:, 1:n_written]), # per-draw Xoshiro state (5 × n_written), post-draw
     ess,                                       # per-coordinate bulk-ESS of `draws`, coordinate order (NaN if <=10 draws)
@@ -581,13 +588,13 @@ _stream_impl(lpdf; samples_path, ring_path, resumable,
     divergences = _open_mmap(_divergences_path(samples_path), Int8, (eff_n_draws,))
     start_time = time_ns()
     try
-        pg, rng, n_divergent, k = _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
+        pg, rng, n_divergent, n_nonfinite, k = _stream_loop!(rng, lpdf, pg, kinetic_energy, stepsize;
             n_draws=eff_n_draws, max_tree_depth, ring, samples, rng_states, divergences,
             dimension, n_written, durable, progress, description, start_time)
         Mmap.sync!(samples); Mmap.sync!(rng_states); Mmap.sync!(divergences)
         ess = k > 10 ? _stream_ess(samples, k) : fill(NaN, dimension)
         _stream_result(samples_path, samples, rng_states, divergences,
-            dimension, k, n_divergent, ess, rng, pg.q)
+            dimension, k, n_divergent, n_nonfinite, ess, rng, pg.q)
     finally
         close(ring.io)
     end
@@ -697,7 +704,10 @@ result NamedTuples.
 
 Returns a `NamedTuple`: `path`, `draws` (a view of the `dimension × n_drawn`
 mmapped source-frame draws), `samples` (the live mapping), `n_drawn`,
-`n_divergent` (of this call), `divergences` (a length-`n_drawn` `Int8` 0/1 view of
+`n_divergent` (of this call), `n_nonfinite_leaves` (of this call: leapfrog points
+where the target answered `+Inf` or `NaN`, or a finite log density with a
+non-finite gradient, each a divergent leaf; the call warns at the first one),
+`divergences` (a length-`n_drawn` `Int8` 0/1 view of
 EVERY draw's divergence flag — their sum is the total), `rng_states` (a
 `5 × n_drawn` `UInt64` view of every draw's post-draw Xoshiro state), `ess`
 (per-coordinate bulk-ESS of `draws`, in coordinate order — `ess[j]` is the ESS of

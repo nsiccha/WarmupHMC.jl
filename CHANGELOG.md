@@ -5,6 +5,24 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.16
+
+### Added
+
+- Every sampler reports the leapfrog points where the target answered `+Inf`
+  or `NaN`, or a finite log density with a non-finite gradient. They stay
+  divergent leaves, as before, and the draws do not change, but they are no
+  longer silent: `adaptive_warmup_mcmc`, `completion_warmup_mcmc` and
+  `cooperative_warmup_mcmc` results and checkpoints carry
+  `n_nonfinite_leaves` (the run's total), `stream_mcmc` results carry it for
+  the call, `fixed_kernel_nuts_step` and `continuous_nuts_step` return
+  `nonfinite` for the transition, a chain's progress node gains a
+  `nonfinite leaves` label once one occurs, and a run warns at its first one
+  with its log density and non-finite gradient coordinates. The answer `-Inf`,
+  for a point outside the target's support, is not counted. A Stan `simplex`
+  whose `dirichlet` concentration is near 1e-3 underflows to 0 and answers
+  `+Inf`; before this, such a run showed only extra divergences.
+
 ## 0.3.15
 
 ### Changed

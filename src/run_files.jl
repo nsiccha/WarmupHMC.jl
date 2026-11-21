@@ -45,8 +45,8 @@ Version of the shared boundary-checkpoint/manifest contract. The internal
 `checkpoint_schema_version(Val(sampler))` also reports a sampler's maximum
 readable version. Adaptive v3 describes an unfinished window. Cooperative v3
 covers target families, structured metrics, pending or extended first-draw
-checks, recovery, and shared streaming or historical-frame evidence. Both
-writers retain v2 for compatible boundaries.
+checks, recovery, and shared streaming or historical-frame evidence. Cooperative v4 also records unfinished pilot comparisons and independent same-target probes.
+Writers retain earlier versions at compatible boundaries.
 
 Policy (the contract, not just the number):
 
@@ -65,4 +65,4 @@ checkpoint_schema_version() = 2
 # for old consumers and leaving other samplers' checkpoint contracts unchanged.
 checkpoint_schema_version(::Val) = checkpoint_schema_version()
 checkpoint_schema_version(::Val{:adaptive}) = 3
-checkpoint_schema_version(::Val{:cooperative}) = 3
+checkpoint_schema_version(::Val{:cooperative}) = 4

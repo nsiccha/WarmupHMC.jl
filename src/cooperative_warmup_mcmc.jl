@@ -251,8 +251,8 @@ end
 
 chain_draws(chain::CoopChain) = chain.recording_lpdf.posterior_position
 n_chain_draws(chain::CoopChain) = size(chain_draws(chain), 2)
-_running(chain::CoopChain) = chain.status in (:warming, :sampling)
-_coop_geometry_current(chain::CoopChain) = chain.geometry_current && chain.status in (:warming, :sampling, :done)
+_running(chain::CoopChain) = chain.status in (:warming, :piloting, :probing, :sampling)
+_coop_geometry_current(chain::CoopChain) = chain.geometry_current && chain.status in (:warming, :piloting, :sampling, :done)
 
 function _coop_nonlinear_recorder(p, lpdf, capacity, settings, rng)
     recorder = _restore_nonlinear_recorder(p, lpdf, capacity; settings...)
@@ -321,8 +321,9 @@ end
 
 # One NUTS transition under the chain's current kernel. Warm-up transitions refit
 # κ and set the next step size; the transition that ends warm-up fixes it, and
-# every later one keeps a draw.
+# production starts after the disposable pilot checks pass.
 _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
+    chain.status === :probing && return _probe_transition!(chain, cfg, total_evaluations)
     recording_lpdf = chain.recording_lpdf
     reset!(recording_lpdf.leaves)
     ε = chain.stepsize
@@ -352,6 +353,11 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
     push!(chain.acceptances, acceptance)
     if chain.status === :warming
         chain.freeze.warmup_transitions += 1
+        if iszero(chain.freeze.pilot_quota)
+            h = chain.freeze.history
+            length(h) == _COOP_CHECK_DRAWS && popfirst!(h)
+            push!(h, chain.position_and_gradient.ℓq)
+        end
         # A divergence alone is not a step-size failure: leaving the support
         # diverges at any step size.
         failed = acceptance < 0.1
@@ -368,9 +374,17 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
             chain.freeze.pending = true
             chain.freeze.clean = !divergent && acceptance >= 0.6
         end
+    elseif chain.status === :piloting
+        f = chain.freeze
+        f.warmup_transitions += 1
+        push!(f.history, chain.position_and_gradient.ℓq)
+        f.pilot_quota > 0 && push!(f.pilot, copy(chain.position_and_gradient.q))
+        if length(f.history) >= max(_COOP_CHECK_DRAWS, f.pilot_quota)
+            f.anchor = copy(chain.position_and_gradient.q)
+            f.pending = true
+        end
     else
         f = chain.freeze
-        length(f.pilot) < f.pilot_quota && push!(f.pilot, copy(chain.position_and_gradient.q))
         if chain.n_samples < cfg.n_draws
             append!(recording_lpdf.posterior_position, chain.position_and_gradient.q)
             append!(recording_lpdf.posterior_gradient, chain.position_and_gradient.∇ℓq)
@@ -444,6 +458,12 @@ _restart!(chain::CoopChain, scale::AbstractMatrix, cc, cfg) = begin
     chain.current_transition_counter = 0
     chain.freeze.extensions = 0
     empty!(chain.freeze.pilot)
+    empty!(chain.freeze.history)
+    empty!(chain.freeze.anchor)
+    empty!(chain.freeze.probe_history)
+    chain.freeze.probe_moves = 0
+    chain.freeze.probe = nothing
+    chain.freeze.pending = false
     chain.n_divergent = 0
     chain.n_divergent_samples = 0
     chain.n_samples = 0
@@ -677,6 +697,7 @@ _run_round!(run::CoopRun) = begin
         end
         any(c -> c.freeze.pending, chains) || break
         _qualify_freezes!(run.chains)
+        _check_pilot_positions!(run)
         unfinished = filter(c -> _running(c) && c.round_evaluations < cfg.n_evaluations, chains)
     end
     # As at an adaptive window boundary (`_check_current_point`): every chain that
@@ -692,6 +713,7 @@ end
 _batch_ends_after(round) = ispow2(round + 1)
 
 include("cooperative_recovery.jl")
+include("cooperative_qualification.jl")
 
 # Each running chain's restart, decided from its cluster-pooled estimate, all from
 # the same pre-restart state.
@@ -703,7 +725,7 @@ _batch_end!(run::CoopRun) = begin
     decide(i, chain) = begin
         _running(chain) && _coop_geometry_current(chain) || return nothing
         action = _coop_recovery_action(recovery, chain, run.batch)
-        cfg.family && chain.status === :sampling && action.kind === :none && return nothing
+        cfg.family && chain.status in (:sampling, :piloting) && action.kind === :none && return nothing
         donor = action.kind === :rescue ? _coop_rescue_geometry(recovery, chain) : nothing
         metric = isnothing(donor) ? _cluster_metric(geometry, i) :
             _rescue_metric(geometry, i, donor, cfg, rescue_factors)
@@ -906,7 +928,7 @@ end
 
 _coop_chains_label(run::CoopRun) = begin
     n(status) = count(c -> c.status === status, run.chains)
-    parts = ["$(n(s)) $(s)" for s in (:sampling, :warming, :waiting, :needs_replacement, :recovery_failed, :done) if n(s) > 0]
+    parts = ["$(n(s)) $(s)" for s in (:sampling, :warming, :piloting, :probing, :waiting, :needs_replacement, :recovery_failed, :done) if n(s) > 0]
     k = length(run.clusters.centers)
     "$(length(run.chains)) chains: " * join(parts, ", ") * "; $k cluster" * (k == 1 ? "" : "s")
 end
@@ -1001,6 +1023,8 @@ chain_result(chain::CoopChain) = begin
         accounting=(; wave=chain.freeze.wave, source=chain.freeze.source,
             warmup_transitions=chain.freeze.warmup_transitions, divergences=chain.freeze.divergences,
             freeze_extensions=chain.freeze.total_extensions, pilot_draws=length(chain.freeze.pilot),
+            metric_reviews=chain.freeze.total_reviews, independent_probes=chain.freeze.probes,
+            peer_evaluations=chain.freeze.peer_evaluations, probe_evaluations=chain.freeze.probe_evaluations,
             abandoned_freeze_scores=chain.freeze.abandoned_scores,
             rescues=chain.freeze.prior_rescues + _coop_rescue_count(chain.batches),
             replacements=chain.generation - 1,
@@ -1071,15 +1095,17 @@ _coop_scale_payload(L::Diagonal) = (; scale_options=(; diagonal=L), active_trans
 _coop_scale_payload(L::ScaleThenReflect) = (; scale_options=(; adaptive=L), active_transformation=:adaptive)
 
 function _coop_checkpoint_version(chain::CoopChain)
+    f = chain.freeze
+    (chain.status in (:piloting, :probing) || (chain.status === :warming && f.reviews > 0)) && return 4
     streaming = !isnothing(chain.nonlinear_recorder) &&
         _effective_nonlinear_evidence(chain.nonlinear_recorder, chain.lpdf) !== :linear_pool
     changed = _has_coop_recovery(chain) || !(chain.scale isa Diagonal) || !chain.geometry_current ||
         chain.freeze.pending || chain.freeze.extensions > 0 || chain.status === :waiting || streaming
-    changed ? checkpoint_schema_version(Val(:cooperative)) : checkpoint_schema_version()
+    changed ? 3 : checkpoint_schema_version()
 end
 
-_coop_run_version(run) = run.lpdf isa CoopFamily ? checkpoint_schema_version(Val(:cooperative)) :
-    maximum(_coop_checkpoint_version, run.chains; init=checkpoint_schema_version())
+_coop_run_version(run) = maximum(_coop_checkpoint_version, run.chains;
+    init=run.lpdf isa CoopFamily ? 3 : checkpoint_schema_version())
 
 # Built-in container types let earlier readers inspect the sampler and schema
 # before deciding whether they can resume this checkpoint.
@@ -1095,8 +1121,7 @@ function _restore_freeze(payload, warmup)
 end
 
 _coop_payload(chain::CoopChain, run::CoopRun) = (;
-    schema_version=run.lpdf isa CoopFamily ? checkpoint_schema_version(Val(:cooperative)) :
-        _coop_checkpoint_version(chain),
+    schema_version=max(run.lpdf isa CoopFamily ? 3 : checkpoint_schema_version(), _coop_checkpoint_version(chain)),
     sampler=:cooperative,
     chain_index=chain.chain_index,
     (run.lpdf isa CoopFamily ? (; target_id=run.lpdf.ids[chain.chain_index]) : (;))...,
@@ -1204,6 +1229,20 @@ _restore_coop_chain(p, lpdf, cfg; progress, adapt_centering, geometry_current) =
     freeze = _restore_freeze(p, cfg.stepsize_adaptation_limit)
     status = p.status in (:done, :sampling) ?
         (p.n_samples >= cfg.n_draws && length(freeze.pilot) >= freeze.pilot_quota ? :done : :sampling) : p.status
+    # A legacy donor may already hold production draws while its pilot is incomplete.
+    # Rebuild that unfinished segment from its current point before it can lend or retain.
+    legacy_pilot = p.status === :sampling && !hasproperty(get(p, :freeze, nothing), :anchor) &&
+        (iszero(p.n_samples) || length(freeze.pilot) < freeze.pilot_quota)
+    if legacy_pilot
+        empty!(freeze.pilot)
+        reset!(recording_lpdf.posterior_position)
+        reset!(recording_lpdf.posterior_gradient)
+        freeze.anchor = copy(p.position_and_gradient.q)
+        status = :piloting
+    end
+    if status in (:sampling, :done) && isempty(freeze.anchor) && !isempty(freeze.pilot)
+        freeze.anchor = copy(last(freeze.pilot))
+    end
     scale = p.scale_options[p.active_transformation]
     chain = CoopChain(
         p.chain_index, p.rng, lpdf, recording_lpdf, nonlinear_recorder, geometry_current,
@@ -1211,7 +1250,7 @@ _restore_coop_chain(p, lpdf, cfg; progress, adapt_centering, geometry_current) =
         p.position_and_gradient, scale, _coop_energy(scale), p.stepsize, p.log_kappa, p.kappa_prior,
         p.backoff, p.stepsizes, p.acceptances, p.sampling_start, p.moments, status,
         p.current_transition_counter, p.total_transition_counter, p.total_evaluation_counter, 0,
-        p.n_divergent, p.n_divergent_samples, p.n_samples, p.steps_per_draw, p.ess,
+        p.n_divergent, legacy_pilot ? 0 : p.n_divergent_samples, legacy_pilot ? 0 : p.n_samples, p.steps_per_draw, p.ess,
         p.scale_changes, p.n_restarts, p.batches, p.dropped_posterior_position,
         p.dropped_posterior_gradient, p.dropped_n_divergent_samples, freeze,
         get(p, :generation, 1), get(p, :abandoned, NamedTuple[]), get(p, :rescue_prior, nothing),
@@ -1280,8 +1319,14 @@ Before retaining its first draw, each chain must finish warm-up with a
 nondivergent transition, acceptance of at least 0.6, and a finite squared
 whitened gradient per coordinate no larger than the greater of 10 and three
 times the median checked score. A failed check extends warm-up. A chain that
-exhausts 30 extensions requests a cold replacement. The same checks apply
-with a shared target and with an ordered family of targets.
+exhausts 30 extensions requests a cold replacement. The sampler then checks
+drift between halves of a warm-up segment and evaluates up to eight nearby
+warm-up endpoints on the chain's target. A large density deficit, drift, or
+evidence of an undersized movement scale prompts a local metric review.
+With unavailable peers or persistent disagreement, an independently tuned
+trajectory checks the same target. Each generation can repeat adaptation
+twice. Production starts with the next fixed-kernel transition after qualification.
+These checks apply to both shared targets and ordered families.
 
 A poorly sampling singleton may restart at its own position with the majority
 cluster's geometry and step-size prior. Persistent extreme divergence or step-size

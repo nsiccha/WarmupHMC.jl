@@ -168,7 +168,7 @@
             push!(chain.freeze.scores, score)
             chain.freeze.pending = chain.freeze.clean = true
             W._qualify_freezes!([observer, chain])
-            @test chain.status === (score > 10 ? :warming : :sampling)
+            @test chain.status === (score > 10 ? :warming : :piloting)
         end
         @test chain.freeze.extensions == 1
         out = cooperative_warmup_mcmc(Xoshiro(18), targets[1]; init=init(1), n_chains=1, n_draws=1)

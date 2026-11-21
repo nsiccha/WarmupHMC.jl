@@ -105,6 +105,7 @@ const _DEFAULT_MAX_ADMITTED_LOG_MASS_GAP = 25.0
 # first boundary and recovered at its second, which is why two boundaries count.
 const _WARMUP_STEPSIZE_MARGIN = 10.0
 const _LOG_MASS_GAP_STANDARD_ERRORS = 4.0
+const _COMPLETION_RESULT_SCHEMA = 5  # common final reference and joint mass uncertainty
 # A chain's mass is estimated only from more than this many draws, the floor
 # the per-coordinate ESS monitor uses too.
 const _MIN_LOG_MASS_DRAWS = 10
@@ -132,31 +133,81 @@ _validate_max_admitted_log_mass_gap(g) = begin
 end
 _mass_check(a::_CompletionAdmission) = isfinite(a.max_admitted_log_mass_gap)
 
-# The log posterior mass near a chain's draws, up to a constant shared by every
-# chain of one target: the mean log density of the draws plus the log of the
-# volume they spread over, `Σᵢ log sdᵢ` of their per-coordinate standard
-# deviations. For a Gaussian mode this is its log mass up to that constant and
-# to ignoring the draws' correlations, which only enlarges the volume. Not the
-# mean log density alone: a wide genuine mode has a lower one than a narrow mode
-# of equal mass. `se` is the Monte Carlo standard error of the mean log density,
-# `sd / √ESS`. Linear in the dimension; no covariance is formed.
-#
-# `positions` hold the draws in a sampling frame and `log_density` the density
-# `ℓq` there; `ir` maps them into the model frame (`nothing` when they are in it
-# already), which every chain of one target shares, whatever centering each
-# adapted. `nothing` with at most `_MIN_LOG_MASS_DRAWS` draws.
+# Correlation time of a contribution to the mass score. A constant series
+# places no constraint on the block length. A failed estimate cannot validate
+# an exclusion.
+function _mass_correlation_time(x)
+    allequal(x) && return 1.0
+    ess = MCMCDiagnosticTools.ess(reshape(x, :, 1, 1); kind=:basic)[1]
+    isfinite(ess) && ess > 0 ? max(1.0, length(x) / ess) : Inf
+end
+
+# Delete contiguous blocks from the *whole* nonlinear score. Center around
+# the full mean when subtracting moments. Only one block's O(d) sums are live.
+function _mass_jackknife(draw, lp, mu, m2)
+    n = length(lp)
+    mean_lp = mean(lp)
+    # First-order fluctuation of the log marginal volume at each draw.
+    volume = similar(lp)
+    for j in eachindex(lp)
+        _, x = draw(j)
+        volume[j] = (n - 1) / 2 * sum(k -> abs2(x[k] - mu[k]) / m2[k], eachindex(mu))
+    end
+    tau = max(_mass_correlation_time(lp), _mass_correlation_time(volume),
+        _mass_correlation_time(lp .- mean_lp .+ volume))
+    # Size blocks for both parts even when their fluctuations cancel. At least
+    # eight blocks are required here to estimate the sampling error.
+    width = max(sqrt(n), 2tau)
+    blocks = floor(Int, n / width)
+    blocks >= 8 || return nothing
+    offsets = [fld(b * n, blocks) for b in 0:blocks]
+    pseudovalues = zeros(blocks)
+    sums, squares = similar(mu), similar(m2)
+    for b in 1:blocks
+        rows = (offsets[b] + 1):offsets[b + 1]
+        count = length(rows)
+        remaining = n - count
+        fill!(sums, 0)
+        fill!(squares, 0)
+        for j in rows
+            _, x = draw(j)
+            for k in eachindex(mu)
+                z = x[k] - mu[k]
+                sums[k] += z
+                squares[k] += z * z
+            end
+        end
+        delta = -sum(j -> lp[j] - mean_lp, rows) / remaining
+        for k in eachindex(mu)
+            removed = (squares[k] + sums[k]^2 / remaining) / m2[k]
+            removed < 1 || return nothing  # zero variance after deletion
+            delta += (log1p(-removed) + log1p(count / (remaining - 1))) / 2
+        end
+        # The full score is a common additive constant and cancels in the SE.
+        pseudovalues[b] = -remaining / count * delta
+    end
+    weights = diff(offsets) ./ n
+    center = sum(weights .* pseudovalues)
+    se = sqrt(sum(b -> weights[b] * abs2(pseudovalues[b] - center), 1:blocks) / (blocks - 1))
+    isfinite(se) ? se : nothing
+end
+
+# Mean model-frame log density plus the log marginal volume. Use a joint
+# block error because coordinates and density can fluctuate together.
 function _log_mass_estimate(ir, positions, log_density)
     d, n = size(positions)
     length(log_density) == n || throw(DimensionMismatch(
         "one log density per draw is required; got $(length(log_density)) for $n draws"))
     n > _MIN_LOG_MASS_DRAWS || return nothing
     mapped = !isnothing(ir) && has_reparametrization(ir)
+    draw(j) = begin
+        x = view(positions, :, j)
+        mapped ? ir(x) : (0.0, x)
+    end
     lp = Vector{Float64}(undef, n)
-    # Welford's per-coordinate moments, so no model-frame copy of the draws is made.
     mu, m2 = zeros(d), zeros(d)
     for j in 1:n
-        x = view(positions, :, j)
-        ljac, y = mapped ? ir(x) : (0.0, x)
+        ljac, y = draw(j)
         lp[j] = log_density[j] - ljac
         for k in 1:d
             delta = y[k] - mu[k]
@@ -164,25 +215,15 @@ function _log_mass_estimate(ir, positions, log_density)
             m2[k] += delta * (y[k] - mu[k])
         end
     end
-    log_volume = sum(k -> log(m2[k] / (n - 1)) / 2, 1:d)
-    sd = std(lp)
-    ess = MCMCDiagnosticTools.ess(reshape(lp, n, 1, 1))[1]
-    # A non-finite ESS (a constant log density, say) is counted as one draw.
-    se = iszero(sd) ? 0.0 : sd / sqrt(isfinite(ess) && ess > 0 ? ess : 1.0)
-    (; log_mass=mean(lp) + log_volume, se)
+    all(>(0), m2) || return nothing
+    log_mass = mean(lp) + sum(v -> log(v / (n - 1)) / 2, m2)
+    isfinite(log_mass) || return nothing
+    (; log_mass, se=_mass_jackknife(draw, lp, mu, m2))
 end
-# A returned result is in the model frame already. A scheduling-test fixture
-# without log densities has no estimate.
+
+# Finished results have already been transformed into the common model frame.
 _result_log_mass(r) = hasproperty(r, :posterior_log_density) ?
     _log_mass_estimate(nothing, r.posterior_position, r.posterior_log_density) : nothing
-_state_log_mass(state) = _log_mass_estimate(reparametrizer(state.lpdf),
-    state.recording_lpdf.posterior_position, state.posterior_log_density)
-# A partial checkpoint's draws are in its own sampling frame; its saved
-# centering maps them. A checkpoint written before the log densities were
-# recorded has no estimate until the chain resumes and reaches a boundary.
-_payload_log_mass(payload, lpdf) = haskey(payload, :posterior_log_density) ?
-    _log_mass_estimate(_back_transform_reparametrizer(payload, lpdf, payload.dimension),
-        payload.posterior_position, payload.posterior_log_density) : nothing
 
 # The step size before any opt-in halving (`divergence_tolerance`,
 # `_halve_stepsize!`): what the stuck check compares. A halving answers
@@ -200,12 +241,14 @@ const _UNJUDGED = (; stuck_reason=nothing, stepsize=nothing, reference_stepsize=
     reference_log_mass=nothing, reference_log_mass_se=nothing)
 
 mutable struct _CompletionState{C}
-    lock::ReentrantLock
+    changed::Threads.Condition
     clock::C
     start::Float64
     min_completed::Int
     admission::_CompletionAdmission
+    provisional_at::Union{Nothing,Float64}
     quorum_at::Union{Nothing,Float64}
+    at_boundary::Vector{Bool}
     statuses::Vector{Symbol}
     results::Vector{Any}
     errors::Vector{Any}
@@ -220,61 +263,75 @@ mutable struct _CompletionState{C}
     # draws at any boundary, and then never publishes a sampling step size.
     warming_stepsizes::Vector{Union{Nothing,Float64}}
     previous_warming_stepsizes::Vector{Union{Nothing,Float64}}
-    # Each slot's `_log_mass_estimate` at its latest boundary, or `nothing` while
-    # it has none (too few draws kept there, or the mass check is off).
-    log_masses::Vector{Any}
     # Each judged slot's admission record; `_UNJUDGED` until it reaches `n_draws`.
     admissions::Vector{Any}
 end
 
 _CompletionState(n; clock, min_completed, admission=_ADMIT_EVERY_FULL_CHAIN) =
-    _CompletionState(ReentrantLock(), clock, Float64(clock()), min_completed, admission,
-        nothing, fill(:pending, n), Any[nothing for _ in 1:n], Any[nothing for _ in 1:n],
+    _CompletionState(Threads.Condition(), clock, Float64(clock()), min_completed, admission,
+        nothing, nothing, fill(false, n), fill(:pending, n), Any[nothing for _ in 1:n], Any[nothing for _ in 1:n],
         Union{Nothing,Float64}[nothing for _ in 1:n],
         Union{Nothing,Float64}[nothing for _ in 1:n],
         Union{Nothing,Float64}[nothing for _ in 1:n],
-        Union{Nothing,Float64}[nothing for _ in 1:n], Any[nothing for _ in 1:n],
+        Union{Nothing,Float64}[nothing for _ in 1:n],
         Any[_UNJUDGED for _ in 1:n])
 
 _completion_elapsed(s::_CompletionState) = Float64(s.clock()) - s.start
-function _completion_stop(s::_CompletionState)
-    lock(s.lock) do
-        !isnothing(s.quorum_at)
+# A provisional quorum becomes final once every running worker has either
+# delivered its round's result or reached a boundary with an incomplete chain.
+# Pending slots can wait without acquiring a worker or initializing a chain.
+function _confirm_quorum!(s)
+    if !isnothing(s.provisional_at) && (!_mass_check(s.admission) ||
+            all(i -> s.statuses[i] !== :running || s.at_boundary[i], eachindex(s.statuses)))
+        s.quorum_at = s.provisional_at
     end
 end
 
-# What a running chain sees of the batch. Calling it asks whether it should stop:
-# the quorum has requested a stop, or the chain was left out while warming up.
-# `_report_boundary!` publishes the step size it samples with and its mass
-# estimate, which a sibling's step-size and mass checks compare against.
+# Caller holds the condition lock. Waiting yields the Julia task, including on
+# a single thread. The adaptive sampler and RNG remain on its call stack.
+function _stop_at_boundary!(s, i)
+    if !isnothing(s.provisional_at) && isnothing(s.quorum_at)
+        s.at_boundary[i] = true
+        try
+            _confirm_quorum!(s)
+            notify(s.changed)
+            while !isnothing(s.provisional_at) && isnothing(s.quorum_at) && s.statuses[i] !== :stuck
+                wait(s.changed)
+            end
+        finally
+            s.at_boundary[i] = false
+        end
+    end
+    !isnothing(s.quorum_at) || s.statuses[i] === :stuck
+end
+
 struct _CompletionControl{S,P}
     state::S
     slot::Int
     progress::P
 end
-(c::_CompletionControl)() = _completion_stop(c.state) || _left_out(c)
+(c::_CompletionControl)() = lock(() -> _stop_at_boundary!(c.state, c.slot), c.state.changed)
 
 # Whether the chain was left out while it ran (`_judge_warming!`). Polled after
 # every transition, so a chain left out in the middle of a long window stops
 # there instead of finishing it. The resume pre-pass's restore control is a plain
 # function, and is never left out.
-_left_out(c::_CompletionControl) = lock(() -> c.state.statuses[c.slot] === :stuck, c.state.lock)
+_left_out(c::_CompletionControl) = lock(() -> c.state.statuses[c.slot] === :stuck, c.state.changed)
 _left_out(_) = false
 
 # `window` marks a warm-up window boundary (not initialization): there the
 # chain's step size is published for the warm-up check whether or not it keeps
 # draws.
-function _report_boundary!(c::_CompletionControl, stepsize, n_samples, log_mass=nothing;
+function _report_boundary!(c::_CompletionControl, stepsize, n_samples;
         window=false)
     s = c.state
-    changed = lock(s.lock) do
+    changed = lock(s.changed) do
         before = copy(s.statuses)
         s.sampling_stepsizes[c.slot] = n_samples > 0 ? Float64(stepsize) : nothing
         if window
             s.previous_warming_stepsizes[c.slot] = s.warming_stepsizes[c.slot]
             s.warming_stepsizes[c.slot] = Float64(stepsize)
         end
-        s.log_masses[c.slot] = log_mass
         _settle_admissions!(s, _completion_elapsed(s))
         s.statuses != before
     end
@@ -282,12 +339,10 @@ function _report_boundary!(c::_CompletionControl, stepsize, n_samples, log_mass=
     nothing
 end
 
-# Must hold `s.lock`. Judge slot `i`, whose result holds its full `n_draws`.
-# Divergences first, as they need no sibling; then the step size and the mass,
-# against the siblings', which may mean waiting for a sibling to keep draws.
-function _admit!(s::_CompletionState, i)
+# Register the full result. Divergence admission needs no sibling. Once the
+# cohort has seen the new step size, _settle_admissions! handles the other checks.
+function _admit!(s::_CompletionState, i, own)
     r = s.results[i]
-    own = s.log_masses[i]
     s.admissions[i] = (; stuck_reason=nothing, stepsize=_adapted_stepsize(r),
         reference_stepsize=nothing,
         divergent_fraction=r.n_divergent_samples / size(r.posterior_position, 2),
@@ -296,46 +351,45 @@ function _admit!(s::_CompletionState, i)
         reference_log_mass=nothing, reference_log_mass_se=nothing)
     if s.admissions[i].divergent_fraction > s.admission.max_admitted_divergent_fraction
         _leave_out!(s, i, :divergence)
-    elseif isinf(s.admission.stuck_stepsize_ratio) && !_mass_check(s.admission)
-        s.statuses[i] = :completed
     else
         s.statuses[i] = :awaiting_reference
-        _judge_against_siblings!(s, i)
     end
     nothing
 end
 
-# Must hold `s.lock`. Compare awaiting slot `i` with its siblings that keep
-# draws: its step size with their median, then its mass with the largest of
-# theirs. Without a sibling to compare with it keeps waiting, uncounted, while
-# one may still start sampling; once none can, the comparison is skipped. Each
-# comparison is made once, so a verdict is final and the quorum count only ever
-# grows. A chain without a mass estimate of its own (at most
-# `_MIN_LOG_MASS_DRAWS` draws) is not compared on mass.
-function _judge_against_siblings!(s::_CompletionState, i)
-    can_wait = any(k -> k != i && s.statuses[k] in (:pending, :running), eachindex(s.statuses))
-    a = s.admissions[i]
-    if !isinf(s.admission.stuck_stepsize_ratio) && isnothing(a.reference_stepsize)
-        reference = _sibling_stepsize(s, i)
-        if isnothing(reference)
-            can_wait && return nothing
-        else
-            s.admissions[i] = a = merge(a, (; reference_stepsize=reference))
-            a.stepsize < reference / s.admission.stuck_stepsize_ratio &&
-                return _leave_out!(s, i, :stepsize)
-        end
+function _judge_stepsize!(s, i)
+    if isinf(s.admission.stuck_stepsize_ratio)
+        s.statuses[i] = :completed
+        return
     end
-    if _mass_check(s.admission) && !isnothing(a.log_mass)
-        reference = _sibling_log_mass(s, i)
-        if isnothing(reference)
-            can_wait && return nothing
-        else
-            s.admissions[i] = a = merge(a, (; reference_log_mass=reference.log_mass,
-                reference_log_mass_se=reference.se))
-            _low_mass(a, s.admission) && return _leave_out!(s, i, :low_mass)
-        end
+    reference = _sibling_stepsize(s, i)
+    if isnothing(reference)
+        any(st -> st in (:pending, :running), s.statuses) && return
+    else
+        a = s.admissions[i]
+        s.admissions[i] = merge(a, (; reference_stepsize=reference))
+        a.stepsize < reference / s.admission.stuck_stepsize_ratio &&
+            return _leave_out!(s, i, :stepsize)
     end
     s.statuses[i] = :completed
+end
+
+# Revisit both previously passing and previously low-mass finishers. A new
+# best score with a larger error can also *restore* an earlier exclusion.
+function _judge_masses!(s)
+    scored = [i for i in eachindex(s.statuses) if
+        (s.statuses[i] === :completed || s.admissions[i].stuck_reason === :low_mass) &&
+        !isnothing(s.admissions[i].log_mass)]
+    length(scored) >= 2 || return
+    # argmax breaks ties by the first slot, independently of arrival order.
+    best = s.admissions[argmax(i -> s.admissions[i].log_mass, scored)]
+    for i in scored
+        a = s.admissions[i]
+        a = merge(a, (; reference_log_mass=best.log_mass, reference_log_mass_se=best.log_mass_se))
+        low = _low_mass(a, s.admission)
+        s.admissions[i] = merge(a, (; stuck_reason=low ? :low_mass : nothing))
+        s.statuses[i] = low ? :stuck : :completed
+    end
     nothing
 end
 
@@ -343,7 +397,8 @@ end
 # standard errors, which keeps a noisy estimate such as a funnel's.
 _low_mass(a, admission) = begin
     gap = a.reference_log_mass - a.log_mass
-    gap > admission.max_admitted_log_mass_gap &&
+    !isnothing(a.log_mass_se) && !isnothing(a.reference_log_mass_se) &&
+        gap > admission.max_admitted_log_mass_gap &&
         gap > _LOG_MASS_GAP_STANDARD_ERRORS * hypot(a.log_mass_se, a.reference_log_mass_se)
 end
 
@@ -353,27 +408,16 @@ function _leave_out!(s::_CompletionState, i, reason)
     nothing
 end
 
-# A stuck or failed sibling is no reference for a healthy step size.
+# Mass verdicts are provisional. Only a failure or a step-size/divergence
+# exclusion disqualifies a sibling as a step-size reference.
 function _sibling_stepsize(s::_CompletionState, i)
     steps = Float64[s.sampling_stepsizes[k] for k in eachindex(s.statuses)
-        if k != i && !isnothing(s.sampling_stepsizes[k]) && s.statuses[k] ∉ (:stuck, :failed)]
+        if k != i && !isnothing(s.sampling_stepsizes[k]) && (s.statuses[k] ∉ (:stuck, :failed) ||
+            s.admissions[k].stuck_reason === :low_mass)]
     isempty(steps) ? nothing : median(steps)
 end
 
-# Nor for a mass. The reference is the largest: a chain is compared with where
-# its siblings found the most mass, not with their typical place.
-function _sibling_log_mass(s::_CompletionState, i)
-    best = nothing
-    for k in eachindex(s.statuses)
-        k != i && s.statuses[k] ∉ (:stuck, :failed) || continue
-        estimate = s.log_masses[k]
-        isnothing(estimate) && continue
-        (isnothing(best) || estimate.log_mass > best.log_mass) && (best = estimate)
-    end
-    best
-end
-
-# Must hold `s.lock`. A chain still warming up (running, or a resumed slot not
+# Must hold `s.changed`. A chain still warming up (running, or a resumed slot not
 # yet restarted) whose step size at each of its last two window boundaries is
 # below its siblings' median by `stuck_stepsize_ratio * _WARMUP_STEPSIZE_MARGIN`
 # is left out at once, before it reaches `n_draws`. Its step size and metric have collapsed:
@@ -384,7 +428,7 @@ end
 # a chain back (user principle `caller-recovers-lost-chain`), so it is stopped
 # and left out, as the user asked the quorum sampler to do with a chain stuck in
 # warm-up (`quorum-sampler-everywhere`). The reference is the step-size check's:
-# siblings keeping draws, neither stuck nor failed. A verdict is final.
+# siblings keeping draws that still qualify on step size and divergence.
 function _judge_warming!(s::_CompletionState, i)
     ratio = s.admission.stuck_stepsize_ratio * _WARMUP_STEPSIZE_MARGIN
     isfinite(ratio) || return nothing
@@ -397,11 +441,10 @@ function _judge_warming!(s::_CompletionState, i)
     s.statuses[i] = :stuck
     # No longer a reference for its siblings.
     s.sampling_stepsizes[i] = nothing
-    s.log_masses[i] = nothing
     nothing
 end
 
-# Must hold `s.lock`. Judge every warming slot, then re-judge every awaiting slot
+# Must hold `s.changed`. Judge every warming slot, then re-judge every awaiting slot
 # after any change a judgement depends on, then record when the quorum is first
 # met. Warming slots come first: a collapsed chain that still keeps draws would
 # otherwise pull down the reference an awaiting slot is compared with.
@@ -409,24 +452,32 @@ function _settle_admissions!(s::_CompletionState, now)
     for i in eachindex(s.statuses)
         s.statuses[i] in (:pending, :running) && _judge_warming!(s, i)
     end
+    new_finisher = false
     for i in eachindex(s.statuses)
-        s.statuses[i] === :awaiting_reference && _judge_against_siblings!(s, i)
+        s.statuses[i] === :awaiting_reference || continue
+        _judge_stepsize!(s, i)
+        new_finisher |= s.statuses[i] === :completed
     end
-    if isnothing(s.quorum_at) && count(==(:completed), s.statuses) >= s.min_completed
-        s.quorum_at = now
+    new_finisher && _mass_check(s.admission) && _judge_masses!(s)
+    if count(==(:completed), s.statuses) >= s.min_completed
+        s.provisional_at = something(s.provisional_at, now)
+        _confirm_quorum!(s)
+    else
+        s.provisional_at = nothing
     end
+    notify(s.changed)
     nothing
 end
 
 function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing)
-    started = lock(s.lock) do
+    started = lock(s.changed) do
         if s.statuses[i] in (:completed, :stuck, :awaiting_reference)
             # Already judged by the resume pre-pass.
             false
-        elseif !isnothing(s.quorum_at) || _interrupted(progress)
+        elseif _interrupted(progress) || _stop_at_boundary!(s, i)
             # Quorum met, or a stop requested through the progress tree before
             # this slot started: never pay a fresh chain's initialization.
-            s.statuses[i] = :not_started
+            s.statuses[i] === :stuck || (s.statuses[i] = :not_started)
             _settle_admissions!(s, _completion_elapsed(s))
             false
         else
@@ -437,17 +488,17 @@ function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing
     if started
         try
             result, complete = run_chain(i, _CompletionControl(s, i, progress))
-            lock(s.lock) do
+            own = complete ? _result_log_mass(result) : nothing
+            lock(s.changed) do
                 now = _completion_elapsed(s)
                 s.results[i] = result
                 s.finished_at[i] = now
                 if s.statuses[i] !== :stuck
                     s.sampling_stepsizes[i] = size(result.posterior_position, 2) > 0 ?
                         _adapted_stepsize(result) : nothing
-                    s.log_masses[i] = _result_log_mass(result)
                     # Quorum requests a stop at the next checkpoint; it never closes
                     # admission. A full result from the final round is still judged.
-                    complete ? _admit!(s, i) : (s.statuses[i] = :stopped)
+                    complete ? _admit!(s, i, own) : (s.statuses[i] = :stopped)
                 end
                 # A chain left out while it warmed up keeps that verdict.
                 _settle_admissions!(s, now)
@@ -456,7 +507,7 @@ function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing
             # A failed chain cannot strand a worker or masquerade as a completion.
             # Preserve the exception AND backtrace, then join the other workers.
             failure = CapturedException(err, catch_backtrace())
-            lock(s.lock) do
+            lock(s.changed) do
                 now = _completion_elapsed(s)
                 s.errors[i] = failure
                 s.finished_at[i] = now
@@ -482,9 +533,9 @@ _completion_slots_text(slots) = isempty(slots) ? "none" : string(slots)
 # are harmless because the caller re-publishes the settled truth afterwards.
 function _update_completion_progress!(progress, s::_CompletionState)
     isnothing(progress) && return nothing
-    snap = lock(s.lock) do
+    snap = lock(s.changed) do
         (; n_completed=count(==(:completed), s.statuses),
-           stop_requested=!isnothing(s.quorum_at),
+           stop_requested=!isnothing(s.provisional_at) || !isnothing(s.quorum_at),
            stopped=findall(==(:stopped), s.statuses),
            not_started=findall(==(:not_started), s.statuses),
            failed=findall(==(:failed), s.statuses),
@@ -534,7 +585,7 @@ end
 function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_FULL_CHAIN,
         initial_results=Dict{Int,Any}(), initial_stepsizes=Dict{Int,Float64}(),
         initial_warming_stepsizes=Dict{Int,NTuple{2,Float64}}(),
-        initial_log_masses=Dict{Int,Any}(), clock=() -> time_ns() / 1e9, progress=nothing)
+        clock=() -> time_ns() / 1e9, progress=nothing)
     s = _CompletionState(n; clock, min_completed, admission)
     # A partial checkpoint past two window boundaries is judged by the warm-up
     # check before its slot resumes, so a chain left out before the run stopped is
@@ -543,32 +594,25 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
         s.previous_warming_stepsizes[i] = previous
         s.warming_stepsizes[i] = latest
     end
-    # Resume admission is a deterministic pre-pass, not a race between tasks
-    # restoring already-complete checkpoints. Every original slot's latest
-    # checkpointed step size and mass estimate are in place first, so each
-    # already-complete slot is judged against all of them, as a live chain is
-    # against its siblings.
+    # Publish all restored step sizes and full results before judging the
+    # cohort. Dictionary iteration order cannot set the mass reference.
     for (i, stepsize) in initial_stepsizes
         s.sampling_stepsizes[i] = stepsize
-    end
-    for (i, estimate) in initial_log_masses
-        s.log_masses[i] = estimate
     end
     for (i, result) in initial_results
         s.results[i] = result
         s.finished_at[i] = 0.0
         s.sampling_stepsizes[i] = _adapted_stepsize(result)
-        s.log_masses[i] = _result_log_mass(result)
+        _admit!(s, i, _result_log_mass(result))
     end
-    foreach(i -> _admit!(s, i), sort!(collect(keys(initial_results))))
-    _settle_admissions!(s, 0.0)
+    lock(() -> _settle_admissions!(s, 0.0), s.changed)
     _update_completion_progress!(progress, s)
     @sync for i in 1:n
         Threads.@spawn _completion_worker!(run_chain, s, i; progress)
     end
     # All workers are joined before any result or terminal file is published.
     # With no slot left running, every awaiting slot is judged here at the latest.
-    lock(() -> _settle_admissions!(s, _completion_elapsed(s)), s.lock)
+    lock(() -> _settle_admissions!(s, _completion_elapsed(s)), s.changed)
     completed = findall(==(:completed), s.statuses)
     failed = findall(==(:failed), s.statuses)
     stuck = findall(==(:stuck), s.statuses)
@@ -589,7 +633,7 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
     n_divergent_samples = sum(r -> r.n_divergent_samples, results; init=0)
     quorum_met = length(completed) >= min_completed
     reason = !quorum_met ? :quorum_unmet : isempty(omitted) ? :all_completed : :quorum_reached
-    completion = (; schema_version=4, policy=:completion_quorum,
+    completion = (; schema_version=_COMPLETION_RESULT_SCHEMA, policy=:completion_quorum,
         stop_policy=:finish_current_round, min_completed,
         admission.stuck_stepsize_ratio, admission.max_admitted_divergent_fraction,
         admission.max_admitted_log_mass_gap,
@@ -683,13 +727,12 @@ end
         max_admitted_log_mass_gap=25, checkpoint_dir=nothing, resume=false,
         overwrite=false, kwargs...)
 
-Opt-in completion quorum over independent [`adaptive_warmup_mcmc`](@ref)
-chains. For example, pass 16 RNGs and `min_completed=12` to request that
-unfinished chains finish their current round when the twelfth full chain
-returns. Every chain completing its requested production draws during that
-final round is retained too, in original index order, unless it is stuck (below).
-The call returns once all workers settle. The default samplers and their return
-types are unchanged.
+Run independent [`adaptive_warmup_mcmc`](@ref) chains until enough full chains
+pass admission. For example, with 16 RNGs and `min_completed=12`, reaching
+12 passing chains asks each running worker to finish its current round.
+Additional full results from that round participate in the same mass comparison.
+If the passing count drops below 12, unfinished workers continue from their
+round boundaries. Results are returned in original slot order after workers settle.
 
 **Stuck chains are left out.** Reaching `n_draws` first is no evidence of health:
 a chain whose step size collapsed, or whose transitions diverge, takes short,
@@ -703,25 +746,21 @@ only if
   size of its siblings that are keeping draws at that point. Both are the step
   sizes adaptation chose, before any opt-in halving (`divergence_tolerance`): a
   halving answers divergences, which the first check judges; and
-- its estimated log posterior mass is not more than `max_admitted_log_mass_gap`
-  nats below the largest of its siblings' estimates at that point, or not more
-  than 4 standard errors below it. The estimate is the mean model-frame log
-  density of the retained draws plus `Σᵢ log sdᵢ`, the log of the volume their
-  per-coordinate standard deviations span, so a wide mode is not mistaken for
-  a minor one for its lower density; the standard error is that of the mean log
-  density (`sd / √ESS`). Each chain is compared in the model's own
-  parametrization, whatever centering it adapted. Chains with at most 10 draws
-  are not compared.
+- its estimated log posterior mass passes a comparison with the highest score
+  among full chains that pass the first two checks. A chain is left out if its
+  gap exceeds both `max_admitted_log_mass_gap` nats and four combined standard
+  errors. The score adds the mean model-frame log density to the sum of the log
+  marginal standard deviations. Its error comes from deleting contiguous blocks
+  of draws and recomputing both terms together. A comparison requires a finite
+  score and an estimable error for both chains.
 
-Otherwise its status is `:stuck`: it is omitted from `results` and does not
-count, so the quorum waits for chains that pass. While no sibling keeps draws
-yet, a finished chain waits uncounted and is judged as soon as one does; if
-none ever can, it is admitted. A verdict is final once made. The mass check
-compares chains only with each other: when every chain sits in one minor mode
-it keeps them all, and its volume ignores correlations, so two genuine modes
-of equal mass that differ mainly in their correlations are compared by their
-marginal spreads. The step-size check cannot catch a run in which every chain
-collapsed together.
+A chain failing a check is marked `:stuck` and omitted. A chain can wait for
+a sampling sibling's step size. The mass check revisits earlier finishers
+when the reference changes. For a fixed set of otherwise eligible full
+results its verdicts are independent of finish order. Early stopping can
+change which slots finish. The score ignores differences in correlation
+structure between modes, and a run entirely in one minor mode has no other
+mode to compare with.
 
 **A chain whose step size collapses while it warms up is left out then, not at
 `n_draws`.** At every warm-up window boundary, its own or a sibling's, a running
@@ -787,10 +826,12 @@ adapted `stepsize` (before any halving; the result's own `stepsize` is the one
 it sampled with), `divergent_fraction`, the `reference_stepsize` it was compared with
 (`nothing` when it was not compared: no sibling ever kept draws, the step-size
 check is off, or the divergence check already left it out), its `log_mass` and
-`log_mass_se` (`nothing` with at most 10 draws), the `reference_log_mass` and
-`reference_log_mass_se` it was compared with (`nothing` when it was not
-compared), and, for a stuck chain, `stuck_reason` (`:divergence`, `:stepsize`
-or `:low_mass`). A chain left out while it warmed up records only
+`log_mass_se`, and the common `reference_log_mass` and
+`reference_log_mass_se`. A missing score or error is `nothing`. A reference
+is recorded for scored eligible finishers when at least two have scores
+and the check is enabled. The record includes the reference chain itself.
+Completion result schema 5 identifies this shared reference and joint error.
+A stuck chain records `stuck_reason` (`:divergence`, `:stepsize` or `:low_mass`). A chain left out while it warmed up records only
 `stuck_reason = :stepsize`, `stepsize` and `reference_stepsize`. A failed chain's `n_samples` is `nothing` because it
 has no finalized result; its `n_retained_samples` is zero. Failed and stuck
 chains are also omitted. If the quorum is unmet, throws
@@ -817,11 +858,9 @@ Checkpoint files remain ordinary adaptive source-frame state under original
 slots; existing checkpoints restore their saved RNG, while a slot that never
 checkpointed initializes from the supplied RNG. Re-pass original sampler
 settings. For an interrupted run, already-complete checkpoints are judged
-deterministically before workers launch, against every slot's latest
-checkpointed step size and mass estimate; no incomplete worker starts if the
-admitted ones already meet quorum. A partial checkpoint written before the samplers
-recorded log densities supplies no mass estimate until its chain resumes and
-reaches a boundary. A successful terminal run reopens its **recorded outcome**, and
+together before workers launch. Partial checkpoints can supply a step size.
+Only full results can supply the mass reference. A quorum from the restored
+results leaves the remaining slots unstarted. A successful terminal run reopens its **recorded outcome**, and
 warns iff its recorded `selection_warning` is non-empty (always, for runs
 recorded before the caveat followed the outcome):
 it never samples or admits omitted chains, and changing `n_draws`,
@@ -914,7 +953,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
     attempt_directory = _completion_directory(checkpoint_dir, n, resume, overwrite)
     if !isnothing(attempt_directory)
         _write_json(joinpath(attempt_directory, "run_manifest.json"), Pair{String,Any}[
-            "schema_version" => 4, "sampler" => "completion", "n_requested" => n,
+            "schema_version" => _COMPLETION_RESULT_SCHEMA, "sampler" => "completion", "n_requested" => n,
             "min_completed" => min_completed, "stop_policy" => "finish_current_round",
             # A switched-off step-size or mass check (`Inf`) is written as `null`.
             "stuck_stepsize_ratio" => admission.stuck_stepsize_ratio,
@@ -934,17 +973,17 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             resume_chain = resume && !isempty(_checkpoint_files(dir))
             boundary = (state, stage) -> begin
                 user_stop = _fire_callback(callback, state, stage)
-                # Published before the stop query: it can settle a sibling that
-                # waits for a step size or a mass to be compared with, and so
-                # the quorum. Read-only, so the chain samples as it would alone.
+                # A sampling step size can settle a sibling waiting at n_draws.
                 # `scale_centering`'s pass 1 publishes nothing: its draws are
                 # discarded and its step sizes belong to another frame, so only
                 # pass 2 is judged. Its boundaries still answer the quorum stop.
                 _is_first_pass_stage(stage) || _report_boundary!(control, _adapted_stepsize(state),
-                    size(state.recording_lpdf.posterior_position, 2),
-                    _mass_check(admission) ? _state_log_mass(state) : nothing;
+                    size(state.recording_lpdf.posterior_position, 2);
                     window=stage === :window)
-                control() || user_stop
+                # A full chain must deliver its result before the provisional
+                # stop can be confirmed by workers with incomplete rounds.
+                full = size(state.recording_lpdf.posterior_position, 2) >= n_draws
+                user_stop || (!full && control())
             end
             # Polled after every transition: a chain left out while it warms up
             # stops there, not at the end of its window, which for a collapsed
@@ -961,7 +1000,6 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         initial_results = Dict{Int,Any}()
         initial_stepsizes = Dict{Int,Float64}()
         initial_warming_stepsizes = Dict{Int,NTuple{2,Float64}}()
-        initial_log_masses = Dict{Int,Any}()
         if resume
             for i in 1:n
                 latest = joinpath(_chain_dir(checkpoint_dir, i), "cp_latest.jls")
@@ -976,8 +1014,6 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
                 else
                     if retained > 0
                         initial_stepsizes[i] = _adapted_stepsize(payload)
-                        _mass_check(admission) &&
-                            (initial_log_masses[i] = _payload_log_mass(payload, densities[i]))
                     end
                     # Written at a window boundary, as the live check reads it (not
                     # at initialization, nor inside a window), with the previous
@@ -991,7 +1027,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             end
         end
         out = _completion_batch(run_chain, n; min_completed=Int(min_completed), admission,
-            initial_results, initial_stepsizes, initial_warming_stepsizes, initial_log_masses,
+            initial_results, initial_stepsizes, initial_warming_stepsizes,
             progress=cprogress)
         out = (; out.results, completion=merge(out.completion, (; n_draws, attempt_directory)))
         _finish_completion_progress!(cprogress, out.completion)

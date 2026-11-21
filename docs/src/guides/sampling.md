@@ -136,6 +136,16 @@ draws in a downstream calculation. An evaluation budget can expire before
 every target qualifies for its first draw. Dropping an empty matrix would also
 drop its upstream draw and change the weighting of the calculation.
 
+A target that no chain can sample, even after one cold replacement, ends with
+`out.results[k].status === :recovery_failed` and no draw. The other targets
+still sample, and the run then returns `stop_reason === :recovery_failed`.
+Each failed result lists its attempts in `abandoned`, with the reason each one
+was given up. Find them with
+`findall(r -> r.status === :recovery_failed, out.results)`, fit each such
+target on its own, for example with
+`adaptive_warmup_mcmc(rng, targets[k]; init=starts[k], n_draws=100)`, and check
+that fit before you use its draw.
+
 Pass a `features` matrix with one column per target to let later chains
 start from a nearby pilot chain. Each
 receiving chain warms up and checks a transition on its own target before

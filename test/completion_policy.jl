@@ -418,6 +418,35 @@ end
     @test abs(WarmupHMC._log_mass_estimate(nothing, x, source_lp).log_mass - model.log_mass) > 0.1
 end
 
+@testset "a pending slot honors an interrupt received during a provisional quorum" begin
+    _Treebars.with_progress(:state; description="pending slot") do progress
+        s = WarmupHMC._CompletionState(4; clock=()->0., min_completed=2, admission=_MASS_CHECK)
+        entered = Channel{Nothing}(1)
+        finish = Channel{Nothing}(1)
+        late = Threads.@spawn WarmupHMC._completion_worker!(s, 4) do _, _
+            put!(entered, nothing)
+            take!(finish)
+            _mass_fixture(60.), true
+        end
+        take!(entered)
+        for i in 1:2
+            WarmupHMC._completion_worker!((_, _) -> (_mass_fixture(0.), true), s, i)
+        end
+        pending = Threads.@spawn WarmupHMC._completion_worker!(s, 3; progress) do _, _
+            error("Interrupted slot started a chain")
+        end
+        parked = timedwait(() -> lock(() -> s.at_boundary[3], s.changed), 10)
+        _Treebars.request_interrupt!(progress)
+        put!(finish, nothing)
+        fetch(late)
+        fetch(pending)
+        @test parked === :ok
+        @test isnothing(s.quorum_at)
+        @test s.statuses == [:stuck, :stuck, :not_started, :completed]
+        @test isnothing(s.errors[3])
+    end
+end
+
 @testset "common final mass for the same eligible finishers in either order" begin
     scores = [-1709.6, -1581.4, -1621.7, -1610.3]
     for order in ((1, 2, 3, 4), (2, 1, 4, 3))

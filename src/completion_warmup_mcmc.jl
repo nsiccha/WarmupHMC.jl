@@ -474,7 +474,7 @@ function _completion_worker!(run_chain, s::_CompletionState, i; progress=nothing
         if s.statuses[i] in (:completed, :stuck, :awaiting_reference)
             # Already judged by the resume pre-pass.
             false
-        elseif _interrupted(progress) || _stop_at_boundary!(s, i)
+        elseif _stop_at_boundary!(s, i) || _interrupted(progress)
             # Quorum met, or a stop requested through the progress tree before
             # this slot started: never pay a fresh chain's initialization.
             s.statuses[i] === :stuck || (s.statuses[i] = :not_started)

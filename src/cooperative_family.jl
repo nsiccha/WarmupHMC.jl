@@ -171,11 +171,12 @@ mutable struct CoopFreeze
     peer_evaluations::Int
     probe::Union{Nothing,ContinuousNUTSState}
     probe_history::Vector{Float64}
+    probe_moves::Int
     probes::Int
     probe_evaluations::Int
 end
 CoopFreeze(warmup) = CoopFreeze(warmup, 1, 0, 0, Vector{Float64}[], 0, 0, 0,
-    Float64[], Float64[], false, false, 0, 0, Float64[], Float64[], 0, 0, 0, nothing, Float64[], 0, 0)
+    Float64[], Float64[], false, false, 0, 0, Float64[], Float64[], 0, 0, 0, nothing, Float64[], 0, 0, 0)
 
 function _second_wave_length(donors)
     length(donors) >= 2 || return 50

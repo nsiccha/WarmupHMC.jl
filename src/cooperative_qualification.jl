@@ -86,6 +86,7 @@ function _accept_pilot!(chain)
     chain.sampling_start = length(chain.acceptances)
     chain.freeze.probe = nothing
     empty!(chain.freeze.probe_history)
+    chain.freeze.probe_moves = 0
 end
 
 function _check_pilot_positions!(run)
@@ -135,7 +136,9 @@ function _probe_transition!(chain, cfg, total)
         end
     end
     probe = f.probe
+    previous = probe.position
     step = continuous_nuts_step(probe, target; blas_threads=nothing)
+    f.probe_moves += Int(probe.position != previous)
     pg = _evaluate_if_finite(target, probe.position)
     push!(f.probe_history, isnothing(pg) ? -Inf : pg.ℓq)
     f.probe_evaluations += target.count[]
@@ -148,7 +151,9 @@ function _probe_transition!(chain, cfg, total)
         local_level = _pilot_level(chain, f.history)
         witness = _pilot_level(chain, f.probe_history)
         tolerance = max(local_level.tolerance, witness.tolerance)
-        if all(isfinite, f.probe_history) && median(probe.acceptances) >= 0.6 &&
+        # The witness is still tuning its step size. Actual moves show it
+        # explored the target even when its early acceptance rates were low.
+        if all(isfinite, f.probe_history) && f.probe_moves >= 2 &&
                 probe.n_divergent < length(f.probe_history) ÷ 2 &&
                 abs(witness.level - local_level.level) <= tolerance &&
                 max(witness.drift, local_level.drift) <= tolerance

@@ -461,6 +461,7 @@ _restart!(chain::CoopChain, scale::AbstractMatrix, cc, cfg) = begin
     empty!(chain.freeze.history)
     empty!(chain.freeze.anchor)
     empty!(chain.freeze.probe_history)
+    chain.freeze.probe_moves = 0
     chain.freeze.probe = nothing
     chain.freeze.pending = false
     chain.n_divergent = 0

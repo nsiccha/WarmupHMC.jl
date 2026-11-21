@@ -86,6 +86,10 @@ _initial_chain_progress!(progress, counter, chain) = update_progress!(progress, 
 _transition_progress!(::Nothing, counter, chain) = nothing
 _transition_progress!(progress, counter, chain) = update_progress!(progress, counter;
     divergent_samples=UncertainFrequency(chain.n_divergent_samples, chain.n_samples),
+    # Only once the target has answered +Inf or NaN (`_take_nonfinite!`), so a
+    # healthy chain's node keeps its six labels.
+    (chain.n_nonfinite_leaves > 0 ? (; nonfinite_leaves=
+        "$(chain.n_nonfinite_leaves) leapfrog points where the target answered +Inf or NaN (counted as divergences)") : (;))...,
     active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
     sampling_performance=SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw)),
     total_transition_counter=Speed(chain.total_transition_counter, time_ns()-chain.start_time),

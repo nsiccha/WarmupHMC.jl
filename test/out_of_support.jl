@@ -69,6 +69,10 @@ function runs(f)
         (; out..., calls=calls(p))
     end
 end
+# `+Inf`, `NaN` and a non-finite gradient are counted as non-finite answers
+# (`n_nonfinite_leaves` / `nonfinite`); `-Inf` is the legitimate out-of-support
+# answer and is not (snag `hierarchical-spa-1a7808bd`).
+const NONFINITE_ANSWERS = (:nan, :posinf, :nan_gradient)
 function check_same_run(results)
     reference = first(results)
     @test reference.calls > 0
@@ -77,6 +81,13 @@ function check_same_run(results)
         @test r.calls == reference.calls
         @test r.n_divergent == reference.n_divergent
         @test r.fingerprint == reference.fingerprint
+        if name in NONFINITE_ANSWERS
+            @test r.n_nonfinite > 0
+            @test r.n_nonfinite == results.nan.n_nonfinite
+            @test r.n_nonfinite <= r.calls
+        else
+            @test r.n_nonfinite == 0
+        end
     end
 end
 
@@ -89,7 +100,7 @@ try
                 fit = adaptive_warmup_mcmc(Xoshiro(1), p; init=init, n_draws=200)
                 @test all(>(0), fit.posterior_position[1, :])
                 (; fingerprint=(Matrix(fit.posterior_position), fit.stepsize),
-                   n_divergent=fit.n_divergent_samples)
+                   n_divergent=fit.n_divergent_samples, n_nonfinite=fit.n_nonfinite_leaves)
             end
             check_same_run(results)
         end
@@ -97,15 +108,16 @@ try
             results = runs() do p
                 state = FixedKernelNUTSState(Xoshiro(7), inside; metric=ones(3), stepsize=1.5)
                 positions = Vector{Float64}[]
-                n_divergent = 0
+                n_divergent = n_nonfinite = 0
                 for _ in 1:100
                     step = fixed_kernel_nuts_step(state, p)
                     state = step.state
                     n_divergent += step.divergent
+                    n_nonfinite += step.nonfinite
                     push!(positions, copy(state.position))
                 end
                 @test all(q -> q[1] > 0, positions)
-                (; fingerprint=positions, n_divergent)
+                (; fingerprint=positions, n_divergent, n_nonfinite)
             end
             check_same_run(results)
         end
@@ -113,17 +125,18 @@ try
             results = runs() do p
                 state = ContinuousNUTSState(Xoshiro(7), p; init=init)
                 positions = Vector{Float64}[]
-                n_divergent = 0
+                n_divergent = n_nonfinite = 0
                 for _ in 1:100
                     step = continuous_nuts_step(state, p)
                     n_divergent += step.divergent
+                    n_nonfinite += step.nonfinite
                     push!(positions, copy(state.position))
                 end
                 @test all(q -> q[1] > 0, positions)
                 # The metric adapted from the good leaves only: finite whatever
                 # the gradient outside the support was.
                 @test all(isfinite, state.scale.diag) && isfinite(state.stepsize)
-                (; fingerprint=(positions, state.scale.diag, state.stepsize), n_divergent)
+                (; fingerprint=(positions, state.scale.diag, state.stepsize), n_divergent, n_nonfinite)
             end
             check_same_run(results)
         end
@@ -135,7 +148,8 @@ try
                 try
                     @test all(>(0), result.draws[1, :])
                     @test count(!iszero, result.divergences) == result.n_divergent
-                    (; fingerprint=copy(result.draws), n_divergent=result.n_divergent)
+                    (; fingerprint=copy(result.draws), n_divergent=result.n_divergent,
+                       n_nonfinite=result.n_nonfinite_leaves)
                 finally
                     close_stream(result)
                 end
@@ -149,10 +163,29 @@ try
                 chains = pooled(cooperative_warmup_mcmc(Xoshiro(11), p;
                     n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000))
                 (; fingerprint=[Matrix(c.posterior_position) for c in chains],
-                   n_divergent=sum(c.n_divergent_samples for c in chains))
+                   n_divergent=sum(c.n_divergent_samples for c in chains),
+                   n_nonfinite=sum(c.n_nonfinite_leaves for c in chains))
             end
             check_same_run(results)
         end
+    end
+
+    @testset "a non-finite answer is warned about once and checkpointed" begin
+        warned(logs) = count(l -> occursin("non-finite log density", string(l.message)), logs)
+        dir = mktempdir()
+        logs, fit = Test.collect_test_logs(min_level=Base.CoreLogging.Warn) do
+            adaptive_warmup_mcmc(Xoshiro(1), TruncatedNormal(answers.posinf);
+                init=init, n_draws=200, checkpoint_dir=dir)
+        end
+        @test fit.n_nonfinite_leaves > 0
+        @test warned(logs) == 1
+        payload = WarmupHMC.deserialize(joinpath(dir, "cp_latest.jls"))
+        @test payload.n_nonfinite_leaves == fit.n_nonfinite_leaves
+        logs, fit = Test.collect_test_logs(min_level=Base.CoreLogging.Warn) do
+            adaptive_warmup_mcmc(Xoshiro(1), TruncatedNormal(answers.neginf_zero); init=init, n_draws=200)
+        end
+        @test fit.n_nonfinite_leaves == 0
+        @test warned(logs) == 0
     end
 
     @testset "a thrown error is never caught while sampling" begin

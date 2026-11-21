@@ -167,7 +167,11 @@ coordinates, so they cannot be paired with returned model-frame positions as
 though they shared a frame. The reported `ess` belongs to the returned positions.
 
 Use `n_divergent_samples` and effective sample size to inspect the retained
-sample. Compare multiple independently initialized chains for convergence;
+sample. `n_nonfinite_leaves` counts the run's leapfrog points where the target
+answered `+Inf` or `NaN`, or a finite log density with a non-finite gradient.
+The sampler treats such a point as a divergence, like a point outside the
+support (`-Inf`), but it is a defect of the target, such as an underflow, so
+the run also warns at the first one. Compare multiple independently initialized chains for convergence;
 single-chain ESS cannot establish agreement between chains or discovery of
 separated modes. `sampling_evaluation_counter` counts gradient evaluations for
 retained sampling transitions. `total_evaluation_counter` also includes work

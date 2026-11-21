@@ -243,6 +243,10 @@ mutable struct CoopChain{R,L,RL,N}
     generation::Int
     abandoned::Vector{NamedTuple}
     rescue_prior::Union{Nothing,Float64}
+    # Leapfrog points where the target answered +Inf or NaN, or a finite log
+    # density with a non-finite gradient, over every generation of this index
+    # (`_take_nonfinite!`). Checkpointed; ADDITIVE.
+    n_nonfinite_leaves::Int
 end
 
 chain_draws(chain::CoopChain) = chain.recording_lpdf.posterior_position
@@ -308,7 +312,7 @@ _coop_chain(index, rng, lpdf, init, cfg; progress, adapt_centering=false, waitin
         0, 0, 0, 0, 0, 0, 0, OnlineStatsBase.Mean(), zeros(dimension), Float64[], 0,
         NamedTuple[], Matrix{Float64}(undef, dimension, 0), Matrix{Float64}(undef, dimension, 0), 0,
         CoopFreeze(get(cfg, :stepsize_adaptation_limit, 50)),
-        1, NamedTuple[], nothing,
+        1, NamedTuple[], nothing, 0,
     )
     _initial_chain_progress!(progress, nothing, chain)
     update_progress!(progress, waiting ? "waiting for first wave" : "warming · initialized")
@@ -322,10 +326,11 @@ _coop_transition!(chain::CoopChain, cfg, total_evaluations) = begin
     recording_lpdf = chain.recording_lpdf
     reset!(recording_lpdf.leaves)
     ε = chain.stepsize
+    hamiltonian = _hamiltonian(chain.kinetic_energy, recording_lpdf)
     chain.position_and_gradient, stats = DynamicHMC.sample_tree(
-        chain.rng, cfg.algorithm, _hamiltonian(chain.kinetic_energy, recording_lpdf),
-        chain.position_and_gradient, ε,
+        chain.rng, cfg.algorithm, hamiltonian, chain.position_and_gradient, ε,
     )
+    chain.n_nonfinite_leaves = _take_nonfinite!(hamiltonian, chain.n_nonfinite_leaves)
     finalize_leaf_recording!(recording_lpdf, stats.depth)
     isnothing(chain.nonlinear_recorder) ||
         record_nonlinear!(chain.nonlinear_recorder, chain.lpdf, recording_lpdf.leaves, ε)
@@ -990,6 +995,7 @@ chain_result(chain::CoopChain) = begin
         status=chain.status,
         n_samples=chain.n_samples,
         n_divergent_samples=chain.n_divergent_samples,
+        n_nonfinite_leaves=chain.n_nonfinite_leaves,
         total_evaluation_counter=chain.total_evaluation_counter,
         n_restarts=chain.n_restarts,
         accounting=(; wave=chain.freeze.wave, source=chain.freeze.source,
@@ -1116,7 +1122,7 @@ _coop_payload(chain::CoopChain, run::CoopRun) = (;
     recorder=chain.recording_lpdf.recorder,
     chain.nonlinear_recorder, chain.geometry_current,
     chain.dropped_posterior_position, chain.dropped_posterior_gradient,
-    chain.dropped_n_divergent_samples,
+    chain.dropped_n_divergent_samples, chain.n_nonfinite_leaves,
     reparam_sources=reparam_sources(chain.lpdf),
     custom_candidate_scoring=_has_custom_candidate_scoring(chain.lpdf),
     run_elapsed=_elapsed(run),
@@ -1209,6 +1215,7 @@ _restore_coop_chain(p, lpdf, cfg; progress, adapt_centering, geometry_current) =
         p.scale_changes, p.n_restarts, p.batches, p.dropped_posterior_position,
         p.dropped_posterior_gradient, p.dropped_n_divergent_samples, freeze,
         get(p, :generation, 1), get(p, :abandoned, NamedTuple[]), get(p, :rescue_prior, nothing),
+        get(p, :n_nonfinite_leaves, 0),
     )
     _initial_chain_progress!(progress, nothing, chain)
     update_progress!(progress, "$(chain.status) · restored at batch $(p.window + 1)")

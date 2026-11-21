@@ -180,8 +180,10 @@ end
 
 Take one NUTS transition under the supplied `LogDensityProblems` target and,
 with `adapt=true`, adapt the state's diagonal metric and step size to what the
-transition saw. Return `(; state, divergent, stats)`: `state` is the same
-object, advanced in place; `divergent` is this transition's divergence flag;
+transition saw. Return `(; state, divergent, nonfinite, stats)`: `state` is the
+same object, advanced in place; `divergent` is this transition's divergence flag;
+`nonfinite` counts its leapfrog points where the target answered `+Inf` or `NaN`
+(or a finite log density with a non-finite gradient), each a divergent leaf;
 `stats` is DynamicHMC's tree statistics (`steps` counts the gradient
 evaluations). Read the new position from `state.position`.
 
@@ -230,7 +232,7 @@ continuous_nuts_step(state::ContinuousNUTSState, lpdf; adapt::Bool=true,
     divergent = DynamicHMC.is_divergent(stats.termination)
     divergent && (state.n_divergent += 1)
     adapt && _adapt_continuous!(state, ε, stats.acceptance_rate)
-    (; state, divergent, stats)
+    (; state, divergent, nonfinite=_nonfinite_leaves(hamiltonian), stats)
 end
 
 """

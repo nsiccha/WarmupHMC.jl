@@ -52,11 +52,11 @@ include("adaptive_warmup_mcmc.jl")
 include("weighted_scale.jl")
 include("checkpoint_rescore.jl")
 include("retained_rhat.jl")
+include("continuous_nuts.jl")
 include("cooperative_family.jl")
 include("cooperative_warmup_mcmc.jl")
 include("completion_warmup_mcmc.jl")
 include("interruptible_mcmc.jl")
-include("continuous_nuts.jl")
 include("progress.jl")
 
 end

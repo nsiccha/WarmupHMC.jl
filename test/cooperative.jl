@@ -186,6 +186,19 @@ end
     end
 end
 
+@testset "a broad mode can qualify beside a much higher narrow mode" begin
+    # Equal integrated mass, with a log-density difference of 8log(10).
+    d = 8
+    p = TwoModes(fill(0.2, d), fill(2., d))
+    starts = [(; position=fill(side * MODE, d), squared_scale=fill(scale^2, d))
+              for (side, scale) in ((-1,0.2), (-1,0.2), (1,2.))]
+    out = cooperative_warmup_mcmc(Xoshiro(25), fill(p,3); init=starts, n_draws=1)
+    @test all(r -> r.status === :done && r.generation == 1, out.results)
+    broad = last(out.results)
+    @test all(>(0), broad.posterior_position)
+    @test broad.accounting.independent_probes >= 1
+end
+
 @testset "pooling never moves a chain out of its mode; R-hat shows the split" begin
     # warmuphmc-use §5a (snag cooperative-warm-ef9483e4): chains pool metric and
     # step-size evidence, never positions, so chains started in separated modes stay

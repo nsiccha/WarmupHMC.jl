@@ -164,9 +164,18 @@ mutable struct CoopFreeze
     clean::Bool
     warmup_transitions::Int
     divergences::Int
+    history::Vector{Float64}      # bounded, in this chain's current frame
+    anchor::Vector{Float64}       # warm-up endpoint, never a selected production draw
+    reviews::Int                 # bounded per generation
+    total_reviews::Int
+    peer_evaluations::Int
+    probe::Union{Nothing,ContinuousNUTSState}
+    probe_history::Vector{Float64}
+    probes::Int
+    probe_evaluations::Int
 end
 CoopFreeze(warmup) = CoopFreeze(warmup, 1, 0, 0, Vector{Float64}[], 0, 0, 0,
-    Float64[], Float64[], false, false, 0, 0)
+    Float64[], Float64[], false, false, 0, 0, Float64[], Float64[], 0, 0, 0, nothing, Float64[], 0, 0)
 
 function _second_wave_length(donors)
     length(donors) >= 2 || return 50
@@ -205,6 +214,8 @@ or a function `init(rng, i)` or `init(i)` producing its cold initializer.
 A vector of feature vectors (or a feature-by-target matrix) enables a first
 wave of medoids. Each remaining chain inherits its nearest medoid's state,
 metric and step size and warms up on its own target before keeping a draw.
+The first wave collects 30 disposable pilot transitions before qualification.
+A receiver inherits the endpoint of its qualified donor's pilot.
 With no features, every chain starts cold. Family targets must be thread-safe.
 
 Only within-target variation trains a family metric. Each target retains its
@@ -212,7 +223,10 @@ own reparametrization controls. The result reports each slot's wave, source
 (zero for a cold start), warm-up transitions, divergences and freeze extensions
 in `results[i].accounting`. The gradient evaluation count follows the sampler's
 evaluation budget, including receiving-target evaluations and discarded
-transitions. Initializer and initial step-size searches are excluded. A cold
+transitions. Each slot reports `metric_reviews`, `independent_probes`,
+`peer_evaluations` and `probe_evaluations`. Probe tuning counts toward that
+budget. The chain's ordinary cold initializer and initial step-size search
+are excluded. A cold
 replacement preserves the earlier counts and exposes its predecessor's gate
 scores as `abandoned_freeze_scores`. A budget can leave a slot `:waiting`.
 
@@ -252,6 +266,7 @@ _family_checkpoint(lpdf) = nothing
 _family_checkpoint(f::CoopFamily) = (; target_ids=f.ids, features=f.features, source=f.source)
 
 function _qualify_freezes!(chains)
+    any(c -> c.status === :warming && c.freeze.pending, chains) || return
     scores = Float64[]
     for c in chains, score in c.freeze.scores
         isfinite(score) && push!(scores, score)
@@ -259,12 +274,13 @@ function _qualify_freezes!(chains)
     limit = isempty(scores) ? 10.0 : max(10.0, 3median!(scores))
     for chain in chains
         f = chain.freeze
-        f.pending || continue
+        chain.status === :warming && f.pending || continue
         f.pending = false
         score = last(f.scores)
         if f.clean && isfinite(score) && score <= limit
-            chain.status = :sampling
-            chain.sampling_start = length(chain.acceptances)
+            chain.status = :piloting
+            f.anchor = copy(chain.position_and_gradient.q)
+            f.pending = length(f.history) >= _COOP_CHECK_DRAWS
             chain.stepsize = last(chain.stepsizes)   # the kernel just checked
         elseif f.extensions < 30
             f.extensions += 1
@@ -286,6 +302,10 @@ function _coop_carry_freeze!(new, old)
     new.freeze.prior_rescues = old.freeze.prior_rescues + _coop_rescue_count(old.batches)
     new.freeze.warmup_transitions += old.freeze.warmup_transitions
     new.freeze.divergences += old.freeze.divergences
+    new.freeze.total_reviews = old.freeze.total_reviews
+    new.freeze.probes = old.freeze.probes
+    new.freeze.peer_evaluations = old.freeze.peer_evaluations
+    new.freeze.probe_evaluations = old.freeze.probe_evaluations
     new
 end
 
@@ -302,7 +322,7 @@ function _start_second_wave!(run)
     isempty(waiting) && return
     # A first-wave slot that exhausted its recovery is no source.
     donors = filter(c -> c.freeze.wave == 1 && c.status !== :recovery_failed, run.chains)
-    all(c -> length(c.freeze.pilot) == _COOP_PILOT_DRAWS, donors) || return
+    all(c -> c.status in (:sampling, :done) && length(c.freeze.pilot) == _COOP_PILOT_DRAWS, donors) || return
     if isempty(donors)
         _cold_start_receivers!(run, waiting)
         return
@@ -314,9 +334,10 @@ function _start_second_wave!(run)
         source = run.chains[chain.freeze.source]
         # A new conditional always evaluates its own gradient and density.
         old_ir, new_ir = reparametrizer(source.lpdf), reparametrizer(chain.lpdf)
-        x = copy(source.position_and_gradient.q)
+        endpoint = last(source.freeze.pilot)
+        x = copy(endpoint)
         if has_reparametrization(old_ir) || has_reparametrization(new_ir)
-            _transport_position!(x, similar(x), new_ir, old_ir, source.position_and_gradient.q)
+            _transport_position!(x, similar(x), new_ir, old_ir, endpoint)
         end
         point = _evaluate_if_finite(chain.lpdf, x)
         chain.total_evaluation_counter += 1

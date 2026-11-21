@@ -5,6 +5,16 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.17
+
+### Fixed
+
+- Cooperative sampling checks warm-up drift and nearby pilot positions on
+  each chain's own target before retaining its first draw or using it as a
+  donor. A suspect chain can update its metric in place and run an independent
+  same-target check. Qualification and probe transitions count toward the
+  budget. Production starts with a fresh fixed-kernel transition.
+
 ## 0.3.16
 
 ### Added

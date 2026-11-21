@@ -146,10 +146,14 @@ target on its own, for example with
 `adaptive_warmup_mcmc(rng, targets[k]; init=starts[k], n_draws=100)`, and check
 that fit before you use its draw.
 
-Pass a `features` matrix with one column per target to let later chains
-start from a nearby pilot chain. Each
-receiving chain warms up and checks a transition on its own target before
-retaining a draw. Pooled geometry uses variation within each conditional, so
+With `features` (one column per target), first-wave donors take 30 pilot
+transitions before seeding nearby chains. Each chain checks warm-up drift and
+rescores up to eight nearby endpoints on its own target. A large discrepancy
+triggers further adaptation. Unavailable peers or persistent disagreement
+trigger an independently tuned check. Production begins on the next transition
+after qualification. Each slot reports `metric_reviews`, `independent_probes`,
+`peer_evaluations` and `probe_evaluations` in `accounting`.
+Pooled geometry uses variation within each conditional, so
 moving their means farther apart does not by itself increase the estimated
 scale. Assess each conditional against draws or known quantities for that
 conditional. The variation across upstream draws also contributes to the

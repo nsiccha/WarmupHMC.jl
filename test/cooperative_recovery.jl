@@ -153,9 +153,9 @@
         failed = deserialize(joinpath(dir, "chain_1", "cp_latest.jls"))
         @test failed.is_final && failed.stuck_reason === :first_draw_gate
         @test failed.status === failed.stop_reason === :recovery_failed
-        @test failed.schema_version == W.checkpoint_schema_version(Val(:cooperative)) == 3
+        @test failed.schema_version == 3 < W.checkpoint_schema_version(Val(:cooperative))
         @test isnothing(W._check_schema_version(failed))
-        @test_throws ArgumentError W._check_schema_version(merge(failed, (; schema_version=4)))
+        @test_throws ArgumentError W._check_schema_version(merge(failed, (; schema_version=5)))
         @test isempty(failed.posterior_position)
     end
 

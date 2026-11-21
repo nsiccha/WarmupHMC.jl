@@ -103,7 +103,7 @@ function _check_kernel_checkpoint(payload)
     check_checkpoint_compatible(payload, :adaptive, (:adaptive, :cooperative))
     _check_schema_version(payload)
     if checkpoint_sampler(payload) === :cooperative &&
-            get(payload, :status, nothing) in (:waiting, :needs_replacement, :recovery_failed)
+            get(payload, :status, nothing) in (:waiting, :piloting, :probing, :needs_replacement, :recovery_failed)
         throw(ArgumentError("cooperative chain $(payload.chain_index) has status $(payload.status) and no usable NUTS kernel"))
     end
 end

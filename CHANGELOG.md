@@ -5,7 +5,7 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
-## 0.3.17
+## 0.3.18
 
 ### Fixed
 
@@ -14,6 +14,19 @@ refer to that version's tree.
   donor. A suspect chain can update its metric in place and run an independent
   same-target check. Qualification and probe transitions count toward the
   budget. Production starts with a fresh fixed-kernel transition.
+
+## 0.3.17
+
+### Changed
+
+- Completion compares eligible finished chains against one final best mass
+  score. A late finisher can change earlier verdicts. When that drops the
+  passing count below the requested quorum, unfinished chains continue from
+  their current round boundary. The mass error now uses contiguous blocks of
+  draws to estimate joint uncertainty in log density and marginal volume.
+  Chains with too little information for a mass exclusion pass that check.
+  Completion result and attempt schema 5 identify the new rule. Reopening
+  a successful terminal checkpoint preserves its original schema and verdicts.
 
 ## 0.3.16
 

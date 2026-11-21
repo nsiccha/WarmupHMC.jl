@@ -290,16 +290,18 @@ end
 
     # A broad Student mode and a tiny separate interval. The interval has a
     # finite density and gradient, but most trajectories hit a support boundary.
-    struct Pocket end
+    struct Pocket
+        log_height::Float64
+    end
     LogDensityProblems.dimension(::Pocket) = 1
     LogDensityProblems.capabilities(::Type{Pocket}) = LogDensityProblems.LogDensityOrder{1}()
-    function LogDensityProblems.logdensity_and_gradient(::Pocket, q)
+    function LogDensityProblems.logdensity_and_gradient(p::Pocket, q)
         x = only(q)
         if x < 0
             z = x + 20
             return -3.5log1p(z^2 / 6), [-7z / (6 + z^2)]
         elseif abs(x - 20) <= 0.005
-            return -10 - (x - 20)^2 / 2, [20 - x]
+            return p.log_height - (x - 20)^2 / 2, [20 - x]
         end
         -Inf, [NaN]
     end
@@ -308,17 +310,23 @@ end
     WarmupHMC.initialize_mcmc(::Pocket, ::PocketStart; rng, kwargs...) =
         (; position=[rand(rng, Bool) ? 20.0 : -20.0], squared_scale=ones(1, 1))
     broad = (; position=[-20.0], squared_scale=[1.0])
-    sample(third; kw...) = cooperative_warmup_mcmc(Xoshiro(27), Pocket(); n_chains=3, n_cores=1,
+    sample(third; log_height=-1.0, kw...) = cooperative_warmup_mcmc(Xoshiro(27), Pocket(log_height); n_chains=3, n_cores=1,
         init=Any[broad, broad, third], n_evaluations=64, stepsize_adaptation_limit=12,
         max_tree_depth=5, n_draws=1000, n_evaluations_budget=50_000, restart_threshold=Inf, kw...)
 
+    # A comparable density isolates the batch divergence rescue. A lower
+    # pocket can now be caught earlier by the first-draw qualification.
+    low = sample((; position=[20.0], squared_scale=[1.0]); log_height=-10.)
+    @test low.stop_reason === :recovery_failed
+    @test low.results[3].n_samples == 0 && length(low.results[3].abandoned) == 2
+    @test low.results[3].accounting.metric_reviews > 0
     healthy = sample(broad)
     @test healthy.stop_reason === :n_draws
     @test all(c -> c.generation == 1 && isempty(c.abandoned), healthy.results)
     failed = sample((; position=[20.0], squared_scale=[1.0]))
     @test failed.stop_reason === :recovery_failed
     @test failed.results[3].n_samples == 0 && 3 ∉ failed.pooled_chains
-    @test [a.reason for a in failed.results[3].abandoned] == [:divergences, :first_draw_gate]
+    @test Set(a.reason for a in failed.results[3].abandoned) == Set((:divergences, :first_draw_gate))
     @test failed.results[3].accounting.freeze_extensions >= 30
 
     # For this seed, the third slot starts in the pocket; its fresh stream

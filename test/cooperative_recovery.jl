@@ -326,7 +326,7 @@ end
     failed = sample((; position=[20.0], squared_scale=[1.0]))
     @test failed.stop_reason === :recovery_failed
     @test failed.results[3].n_samples == 0 && 3 ∉ failed.pooled_chains
-    @test Set(a.reason for a in failed.results[3].abandoned) == Set((:divergences, :first_draw_gate))
+    @test [a.reason for a in failed.results[3].abandoned] == [:first_draw_gate, :first_draw_gate]
     @test failed.results[3].accounting.freeze_extensions >= 30
 
     # For this seed, the third slot starts in the pocket; its fresh stream

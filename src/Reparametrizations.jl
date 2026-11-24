@@ -1743,6 +1743,34 @@ _transport_position!(x_new, model_position, new_ir, old_ir, x_old) = begin
     _inverse_with_logabsdet_jacobian!(x_new, new_ir, model_position)
 end
 
+# Adding a tiny group effect to a location can round away the effect entirely.
+# Compare each model coordinate separately so a large unrelated coordinate cannot
+# hide the loss. The unit absolute scale also allows roundoff close to zero.
+function _roundtrip_failure(before, after)
+    tol = sqrt(eps(eltype(before)))
+    for i in eachindex(before, after)
+        a, b = before[i], after[i]
+        if !(isfinite(a) && isfinite(b) && isapprox(a, b; atol=tol, rtol=tol))
+            return (; coordinate=i, before=a, after=b)
+        end
+    end
+    nothing
+end
+
+function _pool_roundtrip_rejection(old_ir, ir, old_position, position)
+    before = Vector{eltype(position)}(undef, size(position, 1))
+    after = similar(before)
+    for j in axes(position, 2)
+        _with_logabsdet_jacobian_into!(before, old_ir, view(old_position, :, j))
+        _with_logabsdet_jacobian_into!(after, ir, view(position, :, j))
+        failure = _roundtrip_failure(before, after)
+        isnothing(failure) || return (;
+            reason="the centering round trip changed a model coordinate of a retained point",
+            fields=(; pool_column=j, failure...))
+    end
+    nothing
+end
+
 # A centering switch changes coordinate meaning. Preserve the active physical
 # point, just as `_jointly_transport_halo!` preserves the stored history, then
 # refresh the density and gradient in the new source frame. Re-evaluating the
@@ -1756,6 +1784,11 @@ function _checked_centering_point(lpdf, old_ir, position_and_gradient)
         _point_rejection("the chain's current point has nonfinite coordinates in the new frame",
                          ir, source, findall(!isfinite, source))
     else
+        _, recovered = ir(source)
+        failure = _roundtrip_failure(physical, recovered)
+        isnothing(failure) || return position_and_gradient, (;
+            reason="the centering round trip changed a model coordinate of the chain's current point",
+            fields=failure)
         # Keep the actual nonfinite log density for the rejection diagnostic.
         ℓq, ∇ℓq = LogDensityProblems.logdensity_and_gradient(lpdf, source)
         isfinite(ℓq) && all(isfinite, ∇ℓq) &&
@@ -1775,8 +1808,7 @@ end
 # poison the metric, nor change the meaning of the preserved sampler state.
 # A rejection restores everything the update changed (the controls, the pool
 # and the current point), so the run continues exactly as if the selection had
-# kept the previous controls. Its warning names what was not finite: the pool,
-# or the current point's coordinates, log density or gradient.
+# kept the previous controls. Its warning identifies the failed check.
 function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
                                position, gradient, position_and_gradient)
     _jointly_transport_halo!(lpdf, old_ir, old_position, old_gradient,
@@ -1785,9 +1817,12 @@ function _validated_transport!(lpdf, old_ir, old_position, old_gradient,
     rejection = if !(all(isfinite, position) && all(isfinite, gradient))
         _pool_rejection(ir, position, gradient)
     else
+        _pool_roundtrip_rejection(old_ir, ir, old_position, position)
+    end
+    if isnothing(rejection)
         point, failure = _checked_centering_point(lpdf, old_ir, position_and_gradient)
         isnothing(failure) && return point
-        failure
+        rejection = failure
     end
     _restore_reparametrization!(ir, old_ir)
     _synchronize_scoring!(lpdf)
@@ -2012,7 +2047,7 @@ end
 # A selection plan's boundary step. `:linear_pool` hands over the retained pool;
 # the streaming modes filled `recorder.online` during the window. The same
 # transaction as the candidate path follows: snapshot, select, synchronize,
-# transport (or roll back on a nonfinite transport), then clear the sample.
+# validate the transport or roll back, then clear the sample.
 function _select_reparametrization!(plan::WindowSelectionPlan, lpdf,
                                     recorder::NonlinearRecorder,
                                     halo_position, halo_gradient,

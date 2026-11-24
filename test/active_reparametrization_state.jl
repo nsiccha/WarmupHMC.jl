@@ -84,6 +84,42 @@ end
     @test point.∇ℓq == g
 end
 
+# At a tiny group scale, adding the scaled effect to its location rounds to
+# the location itself. Both frames and their gradients can remain finite.
+@testset "finite loss of a model coordinate rolls back the whole update" begin
+    old_ir = WarmupHMC.IndexedReparametrization([
+        2 => WarmupHMC.Reparametrization(WarmupHMC.PartiallyCentered(0.0),
+            WarmupHMC.PartiallyCentered(0.0), 2.0, x -> x[1])])
+    # An unrelated large coordinate would hide the error in a vector-norm check.
+    accurate = [-2.0, 0.75, 1e12]
+    lossy = [-63.0, -5.793, 1e12]
+    for (pool, q, bad_column) in ((hcat(accurate, lossy), accurate, 2),
+                                  (hcat(accurate, accurate), lossy, nothing))
+        rp = WarmupHMC.ReparametrizedProblem(deepcopy(old_ir),
+            DiagGaussian(zeros(3), ones(3)), AutoEnzyme())
+        grad = reduce(hcat, (last(LogDensityProblems.logdensity_and_gradient(rp, p)) for p in eachcol(pool)))
+        active = WarmupHMC.DynamicHMC.evaluate_ℓ(rp, copy(q))
+        WarmupHMC.restore_reparam_sources!(rp, [2 => WarmupHMC.PartiallyCentered(1.0)])
+        position, gradient = copy(pool), copy(grad)
+        logs, result = Test.collect_test_logs() do
+            WarmupHMC._validated_transport!(rp, old_ir, pool, grad, position, gradient, active)
+        end
+        log = only(logs)
+        @test log.kwargs[:coordinate] == 2
+        @test log.kwargs[:before] == lossy[2]
+        @test log.kwargs[:after] == 0.0
+        if isnothing(bad_column)
+            @test occursin("chain's current point", log.message)
+            @test !haskey(log.kwargs, :pool_column)
+        else
+            @test log.kwargs[:pool_column] == bad_column
+        end
+        @test result === active
+        @test position == pool && gradient == grad
+        @test WarmupHMC.reparam_sources(rp) == [2 => WarmupHMC.PartiallyCentered(0.0)]
+    end
+end
+
 # Snag completion-warmu-b757327c: a chain's current point whose new coordinates
 # are not finite was rejected with "bad_positions = 0, bad_gradients = 0", the
 # counts of a pool that had moved without a fault. The warning now names what was

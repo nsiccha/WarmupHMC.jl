@@ -5,6 +5,15 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.19
+
+### Fixed
+
+- A centering update now rolls back when a retained warm-up point or the
+  current chain position loses a model coordinate to floating-point rounding.
+  The warning identifies the coordinate and its values before and after the
+  round trip. Metric adaptation continues with the original positions and gradients.
+
 ## 0.3.18
 
 ### Fixed

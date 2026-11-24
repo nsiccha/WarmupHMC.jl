@@ -259,15 +259,14 @@ coordinate convention of the returned draws: `posterior_position` is in the
 wrapped model's frame for either setting. The other retained working arrays
 are described in [Sampling](sampling.md).
 
-At a restarting window, a change of centering moves the retained states and
-the chain's current point into the new coordinates. If any of them is not
-finite there, the change is rolled back, and the run continues exactly as if
-the selection had kept the previous centering. In `adaptive_warmup_mcmc` the
-warning names what was not finite: the retained states, or the current point's
-coordinates, log density or gradient, with up to five coordinates and the
-location and log-scale their maps read there. A pair with equal centerings
-reads neither, so a location or log-scale that is not finite at the current
-point shows only once selection moves its pair.
+After changing centering, WarmupHMC maps every retained position and the
+current point back to model coordinates. Adding a small group effect to a
+large location can round away the effect. If any coordinate fails
+`isapprox` (absolute and relative tolerances `sqrt(eps(T))`), WarmupHMC
+restores the previous centering, pool and current point. Its warning gives
+the coordinate, values before and after, and pool column where applicable.
+Nonfinite positions, gradients or current log density also trigger rollback.
+Nonfinite-coordinate warnings include up to five indices and their map endpoints.
 
 The default candidate rule can be replaced with a `CandidateScoringPlan` or a
 `WindowSelectionPlan`. These advanced callbacks have different evidence and

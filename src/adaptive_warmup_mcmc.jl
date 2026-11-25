@@ -2730,16 +2730,22 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
   probabilities induced by all leaf Hamiltonian errors, including the
   probability of staying at the initial state. Up to `recording_target` such
   states are kept.
-* Learns three candidate linear transformations in parallel at the end
-  of every warm-up window:
-    * Pathfinder's initial transformation + an updated diagonal scaling,
-    * A standard diagonal "mass matrix",
-    * A novel, adaptive sequence of Householder reflections followed by
-      diagonal scaling.
+* Compares three candidate linear transformations when refitting the metric.
+    * `:diagonal` fits a diagonal scale.
+    * `:pathfinder` updates the diagonal scaling in Pathfinder's initial frame.
+    * `:adaptive` fits Householder reflections and a diagonal scale.
 
-  Selection minimises `loss(p', g') = sum(abs2(log(std(p') * std(g'))))`
-  on the transformed intermediate positions/gradients — zero for an
-  uncorrelated Normal target.
+  In each candidate's frame, let `pᵢ` and `gᵢ` be the recorded positions
+  and log-density gradients for coordinate `i`. The score is the arithmetic
+  mean of `std(pᵢ) * std(gᵢ)` over coordinates. A zero spread or an unusable
+  fitted scale in any coordinate gives the candidate a score of `Inf`.
+  The lowest finite score wins, with ties resolved in the order above.
+  If no score is finite, the sampler keeps the active transformation.
+
+  The `:adaptive` fit groups coordinates whose squared log-product
+  `log(std(pᵢ) * std(gᵢ))^2` reaches a threshold. It projects the positions
+  and gradients in that group onto proposed directions and takes the first
+  whose squared log-product is at or below the threshold for a reflection.
 * Adapts step size for only the first `stepsize_adaptation_limit`
   transitions per window (default 50), then freezes the step size and
   treats subsequent transitions as posterior samples.

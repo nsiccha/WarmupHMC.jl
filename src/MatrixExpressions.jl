@@ -457,12 +457,12 @@ _usable_scale(s) = isfinite(s) && s >= floatmin(s)
 # best loss possible, and won).
 update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i
     pi, gi = view(p, i, :), view(g, i, :)
-    s1, s2 = std(pi), std(gi)
-    # s1 = std(pi; mean=cv_mean(pi, gi))
-    # @info (i, cor(pi, gi), mean(pi)=>cv_mean(pi, gi), std(pi)=>s1)
+    mean_gradient = mean(gi)
+    s1, s2 = std(pi), std(gi; mean=mean_gradient)
+    tail_scale = sqrt(2.) / abs(mean_gradient)
     scale, loss = if s2 == 0
         # Constant gradient: assume Laplace.
-        sqrt(2.) / abs(mean(gi)), Inf
+        tail_scale, Inf
     elseif s1 == 0
         # The positions never moved, so the previous scale was too small to
         # resolve even one step there, and keeping it keeps the coordinate frozen
@@ -472,7 +472,16 @@ update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)
         # evidence of fit, so the frame still scores `Inf`.
         max(t[i,i], inv(s2)), Inf
     else
-        sqrt(s1 / s2), s1 * s2
+        curvature_scale = sqrt(s1 / s2)
+        # On one side of a Laplace tail the slope sets a length scale even
+        # when roundoff or slight curvature gives the gradients some spread.
+        fitted_scale = if isfinite(s1) && tail_scale < curvature_scale &&
+                (all(>=(0), gi) || all(<=(0), gi))
+            tail_scale
+        else
+            curvature_scale
+        end
+        fitted_scale, s1 * s2
     end
     _usable_scale(scale) || return Inf
     t[i,i] = scale

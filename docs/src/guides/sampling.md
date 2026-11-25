@@ -58,6 +58,14 @@ requested count as a floor, and inspect the actual matrix shape. Set
 compute ESS without a progress display. The random number generator is explicit,
 which allows independent seeds and avoids reliance on the process-global RNG.
 
+During a metric update, a moving coordinate normally gets a diagonal scale of
+`sqrt(std(position) / std(gradient))`. When its recorded gradients stay on one
+side of zero, the fit takes the smaller of that estimate and
+`sqrt(2) / abs(mean(gradient))`, the standard deviation of a Laplace
+distribution with the same tail slope.
+This prevents a nearly constant slope from producing a very large leapfrog
+step just because the gradient has little variation.
+
 ## Independent chains
 
 The vector-of-RNGs overload runs independent adaptive chains and returns a vector

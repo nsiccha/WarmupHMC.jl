@@ -63,6 +63,47 @@ const FROZEN_INIT = (; position=[0.0, 1.0], squared_scale=[1.0, 2.0^-140])
     @test H.diag ≈ sqrt.(s1 ./ s2)
 end
 
+@testset "diagonal scale in a one-sided tail" begin
+    function fit(x, g)
+        D = Diagonal([3.0])
+        loss = WarmupHMC.update_loss!(D, reshape(x, 1, :), reshape(g, 1, :))
+        D.diag[1], loss
+    end
+
+    # Gradient of a log-Gamma density on its unconstrained log coordinate.
+    x = collect(range(-26.0, -24.0; length=100))
+    g = 2 .- exp.(x) ./ 0.15
+    scale, loss = fit(x, g)
+    @test 0 < std(g) < 1e-8
+    @test scale ≈ sqrt(2) / mean(g)
+    @test loss ≈ std(x) * std(g)
+    for a in (0.125, -8.0)
+        scaled, scaled_loss = fit(a .* x, g ./ a)
+        @test scaled ≈ abs(a) * scale
+        @test scaled_loss ≈ loss
+    end
+    constant_scale, constant_loss = fit(x, fill(-2.0, length(x)))
+    @test constant_scale ≈ scale
+    @test constant_loss == Inf
+
+    # The same window with a single observation at zero still lies on one
+    # side. A gradient across zero instead calls for the spread estimate.
+    g[1] = 0.0
+    @test first(fit(x, g)) ≈ sqrt(2) / mean(g)
+    g[1] = -0.1
+    @test sqrt(2) / mean(g) < sqrt(std(x) / std(g))
+    @test first(fit(x, g)) ≈ sqrt(std(x) / std(g))
+
+    # A one-sided window can also have enough curvature to set a smaller scale.
+    curved_g = exp.(x .+ 25)
+    @test sqrt(std(x) / std(curved_g)) < sqrt(2) / mean(curved_g)
+    @test first(fit(x, curved_g)) ≈ sqrt(std(x) / std(curved_g))
+
+    @test fit(fill(1.0, length(x)), curved_g) == (max(3.0, inv(std(curved_g))), Inf)
+    x[1] = Inf
+    @test fit(x, curved_g) == (3.0, Inf)
+end
+
 @testset "transformation selection" begin
     rng = Xoshiro(2)
     # `pathfinder` mixes the coordinates, so a coordinate frozen in the raw frame

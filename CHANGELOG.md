@@ -5,6 +5,14 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.20
+
+### Fixed
+
+- A nearly constant gradient in a one-sided warm-up window could give a
+  moving coordinate an excessively large diagonal scale. The fit now limits
+  that scale using the mean gradient, as it already did for constant slopes.
+
 ## 0.3.19
 
 ### Fixed

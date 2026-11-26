@@ -59,6 +59,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
         :n_draws, :n_evaluations, :recording_target, :stepsize_adaptation_limit,
         :target_acceptance_rate, :max_tree_depth, :init, :progress, :description,
         :monitor_ess, :nonlinear_adapt, :nonlinear_evidence,
+        :centering_schedule, :centering_persistence, :centering_max_updates,
         :nonlinear_trajectory_weighting, :nonlinear_good_leaf_threshold,
         :variance_cond_target, :max_divergent_fraction, :divergence_tolerance, :callback,
         :linear_restart_source, :linear_trajectory_weighting,
@@ -75,6 +76,7 @@ const _SAMPLER_KWARGS = Dict{Symbol,Tuple{Vararg{Symbol}}}(
     :resume_warmup_mcmc => (
         :progress, :description, :callback, :checkpoint_dir, :checkpoint_interval, :stop_requested,
         :checkpoint_name, :parallel, :n_draws, :stepsize_adaptation_limit,
+        :centering_schedule, :centering_persistence, :centering_max_updates,
         :nonlinear_evidence, :nonlinear_trajectory_weighting,
         :nonlinear_good_leaf_threshold,
         :linear_restart_source, :linear_trajectory_weighting,

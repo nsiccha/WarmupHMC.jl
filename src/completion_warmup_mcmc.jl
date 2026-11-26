@@ -942,7 +942,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
     inits = ensurevector(init, n)
     # Refused here, before any chain starts, rather than as n failed chains.
     if scale_centering
-        checked = (; (k => kwargs[k] for k in (:nonlinear_adapt, :nonlinear_evidence,
+        checked = (; (k => kwargs[k] for k in (:nonlinear_adapt, :nonlinear_evidence, :centering_schedule,
                                                 :checkpoint_interval) if haskey(kwargs, k))...)
         for i in 1:n
             _check_scale_centering(; init=inits[i], checkpoint_dir, resume, overwrite, checked...)

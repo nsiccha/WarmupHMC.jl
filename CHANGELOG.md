@@ -5,6 +5,14 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.23
+
+- Adaptive and quorum completion warm-up accept `centering_schedule=:online`
+  for indexed constant source controls. Each chain scores candidate frames
+  from proposal-weighted NUTS nodes, installs stable controls between trees,
+  and records its installations and freeze transition. Interrupted runs resume
+  the schedule and its evidence from disk.
+
 ## 0.3.22
 
 ### Added

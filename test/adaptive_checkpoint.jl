@@ -44,7 +44,7 @@
                 @test readdir(dir) == ["cp_init.jls", "cp_latest.jls"]
                 @test size(partial.posterior_position, 2) == saved.n_samples
                 @test (saved.n_samples == 0) == (stop_at == 3)
-                @test_throws ArgumentError WH._check_schema_version(merge(saved, (; schema_version=4)))
+                @test_throws ArgumentError WH._check_schema_version(merge(saved, (; schema_version=WH.checkpoint_schema_version(Val(:adaptive)) + 1)))
                 resumed = run_case(dir; resume=true)
                 @test resumed.posterior_position == reference.posterior_position
                 @test resumed.posterior_gradient == reference.posterior_gradient

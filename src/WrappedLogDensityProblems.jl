@@ -90,7 +90,7 @@ struct RecordingPosterior2{P,T,L,R,G} <: LeafObservingPosterior{P}
     recorder::R
     rng::G
 end
-RecordingPosterior2(p; rng, recorder=nothing) = begin
+RecordingPosterior2(p; rng, recorder=nothing, leaves=NUTSLeaves(LogDensityProblems.dimension(p))) = begin
     n = LogDensityProblems.dimension(p) 
     RecordingPosterior2(
         p, 
@@ -98,7 +98,7 @@ RecordingPosterior2(p; rng, recorder=nothing) = begin
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
         ElasticMatrix{Float64,Vector{Float64}}(undef, n, 0),
-        NUTSLeaves(n),
+        leaves,
         recorder,
         rng
     )
@@ -118,8 +118,9 @@ function DynamicHMC.leaf(trajectory::DynamicHMC.TrajectoryNUTS{DynamicHMC.Hamilt
         (z, Δ, τ), v
     end
 end
+_observe_trajectory_leaf!(leaves::NUTSLeaves, lpdf, z, Δ) = record_leaf!(leaves, z, Δ)
 observe_leaf!(p::RecordingPosterior2, z, Δ, is_initial) = begin
-    record_leaf!(p.leaves, z, Δ)
+    _observe_trajectory_leaf!(p.leaves, parent(p), z, Δ)
     record!(p, z; is_initial, dH=Δ)
 end
 

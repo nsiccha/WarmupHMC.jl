@@ -1616,6 +1616,7 @@ init_state(
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
     centering_schedule=:window, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
@@ -1651,7 +1652,7 @@ init_state(
         capacity=recording_target,
     )
     leaves = _centering_leaves(lpdf, nonlinear_recorder, linear_restart_source, centering_schedule,
-                               centering_persistence, centering_max_updates, nonlinear_adapt)
+                               centering_persistence, centering_max_updates, nonlinear_adapt; terminal_buffer=centering_terminal_buffer)
     recording_lpdf = RecordingPosterior2(lpdf; recorder, rng, leaves)
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
@@ -2634,6 +2635,7 @@ restore_state(p, lpdf, progress;
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
     centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
     nonlinear_evidence=nothing, nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
@@ -2678,7 +2680,7 @@ restore_state(p, lpdf, progress;
     isnothing(centering_schedule) || centering_schedule === schedule ||
         throw(ArgumentError("checkpoint uses centering_schedule=:$schedule; resume with the saved schedule"))
     leaves = _centering_leaves(lpdf, nonlinear_recorder, restored_linear_source, schedule,
-                               centering_persistence, centering_max_updates, nonlinear_adapt; saved=saved_schedule)
+                               centering_persistence, centering_max_updates, nonlinear_adapt; terminal_buffer=centering_terminal_buffer, saved=saved_schedule)
     if !isnothing(saved_schedule) && nonlinear_recorder !== p.nonlinear_recorder
         fill!(saved_schedule.winners, NaN)
         fill!(saved_schedule.streaks, 0)
@@ -3027,9 +3029,12 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   for `centering_persistence` consecutive checks (default 3). A successful
   change clears all previous candidate evidence, restarts dual averaging with
   a unit diagonal metric and refreshes the gradient. `centering_max_updates`
-  optionally caps installations. The last eligible tree leaves another
-  observation for step-size tuning. The online result includes transition
-  numbers in `centering_installations` and `centering_frozen_after`.
+  optionally caps installations. `centering_terminal_buffer` reserves 16 full
+  dual-averaging updates by default, within the existing transition budget.
+  For an uninterrupted tuning horizon `L` and buffer `B`, the last eligible
+  tree is `max(0, L - B - 1)`. The online result reports the configured buffer,
+  every installation in `centering_installations`, and the effective freeze
+  boundary in `centering_frozen_after`.
 * `nonlinear_evidence=:linear_pool` — evidence used to fit the nonlinear
   reparametrization. The default preserves the existing bounded halo fit.
   `:all_good_leaves` streams every noninitial leaf whose log Hamiltonian error
@@ -3194,6 +3199,7 @@ _adaptive_warmup_mcmc(
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
     centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     # Nonlinear evidence source. `nothing` means `:linear_pool` for a fresh run
     # and inherits the persisted source on resume.
     nonlinear_evidence=nothing,
@@ -3241,8 +3247,8 @@ _adaptive_warmup_mcmc(
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
     control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
-    resume || _check_fresh_centering(lpdf, centering_schedule, centering_persistence,
-                                     centering_max_updates, nonlinear_adapt, nonlinear_evidence)
+    resume || _check_fresh_centering(lpdf, centering_schedule, centering_persistence, centering_max_updates,
+                                     centering_terminal_buffer, nonlinear_adapt, nonlinear_evidence)
     resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the
@@ -3256,7 +3262,7 @@ _adaptive_warmup_mcmc(
                 max_divergent_fraction, divergence_tolerance,
                 linear_restart_source, linear_trajectory_weighting,
                 linear_metric_fallback,
-                centering_schedule, centering_persistence, centering_max_updates,
+                centering_schedule, centering_persistence, centering_max_updates, centering_terminal_buffer,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,
                 max_tree_depth, recording_target, nonlinear_evidence,
                 nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
@@ -3268,7 +3274,8 @@ _adaptive_warmup_mcmc(
                 stepsize_adaptation_limit,
                 target_acceptance_rate, max_tree_depth, init, monitor_ess,
                 nonlinear_adapt,
-                centering_schedule=something(centering_schedule, :window), centering_persistence, centering_max_updates,
+                centering_schedule=something(centering_schedule, :window),
+                centering_persistence, centering_max_updates, centering_terminal_buffer,
                 nonlinear_evidence=something(nonlinear_evidence, centering_schedule === :online ? :nuts_weighted : :linear_pool),
                 nonlinear_trajectory_weighting=something(
                     nonlinear_trajectory_weighting, :unit,

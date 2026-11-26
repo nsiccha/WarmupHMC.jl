@@ -82,7 +82,7 @@ end
             synchronize! = ir -> (model.reject[] = reject_switch && last(ir.pairs[1]).source.c == 0))
         ReparametrizedProblem(ir, model, AutoEnzyme(); scoring_plan=plan)
     end
-    cfg = (; n_draws=20, n_evaluations=10000, stepsize_adaptation_limit=24, max_tree_depth=5,
+    cfg = (; n_draws=20, n_evaluations=10000, stepsize_adaptation_limit=48, max_tree_depth=5,
         recording_target=30, monitor_ess=false, max_divergent_fraction=1.,
         init=(; position=[0.1, -0.3, 0.5], squared_scale=ones(3)))
     mktempdir() do root
@@ -94,7 +94,7 @@ end
         @test length(result.centering_installations) == 2
         first_change, second_change = result.centering_installations
         @test first_change >= 5 && second_change >= first_change + 5
-        @test second_change <= result.centering_frozen_after == cfg.stepsize_adaptation_limit - 2
+        @test second_change <= result.centering_frozen_after == cfg.stepsize_adaptation_limit - result.centering_terminal_buffer - 1
         @test c.gradient_calls == p.problem.calls[]
         @test c.sampling_gradient_calls == c.sampling_evaluation_counter > 0
         @test c.gradient_calls == c.initialization_gradient_calls + c.total_evaluation_counter + length(result.centering_installations) + c.n_warmup_windows
@@ -127,6 +127,37 @@ end
         @test all(p -> last(p).c == 1, cp.reparam_sources) && !p.problem.reject[]
         @test W.OnlineStatsBase.nobs(cp.nonlinear_recorder.online) == cp.total_transition_counter
         @test cp.position_and_gradient.∇ℓq ≈ last(LogDensityProblems.logdensity_and_gradient(p, cp.position_and_gradient.q))
+    end
+    @testset "final-frame tuning stays inside the fixed transition budget" begin
+        mktempdir() do dir
+            # Three groups plus 13 confirmations make tree 15 the first
+            # possible installation and, for this 32-tree budget, the last.
+            r = adaptive_warmup_mcmc(Xoshiro(124), problem(); cfg..., centering_schedule=:online,
+                centering_persistence=13, stepsize_adaptation_limit=32, checkpoint_dir=dir)
+            cp = latest(dir)
+            @test r.centering_terminal_buffer == 16
+            @test r.centering_installations == [15]
+            @test r.centering_frozen_after == 15
+            @test cp.stepsize_state.m == 1 + r.centering_terminal_buffer
+            @test cp.total_transition_counter == 32 + cfg.n_draws
+            @test length(unique(Tuple.(eachcol(r.posterior_position)))) > 1
+        end
+        # Short horizons keep the initial chart. A caller may instead reserve
+        # fewer updates explicitly, and that choice survives a resume.
+        r = adaptive_warmup_mcmc(Xoshiro(124), problem(); cfg..., centering_schedule=:online,
+            stepsize_adaptation_limit=12)
+        @test isempty(r.centering_installations) && r.centering_frozen_after == 0
+        mktempdir() do dir
+            r = adaptive_warmup_mcmc(Xoshiro(124), problem(); cfg..., centering_schedule=:online,
+                stepsize_adaptation_limit=12, centering_terminal_buffer=4, checkpoint_dir=dir,
+                stop_requested=stop_after(4))
+            @test isnothing(r.centering_frozen_after)
+            r = adaptive_warmup_mcmc(Xoshiro(99), problem(); cfg..., stepsize_adaptation_limit=12,
+                                     checkpoint_dir=dir, resume=true)
+            @test r.centering_terminal_buffer == 4 && r.centering_frozen_after == 7
+            @test !isempty(r.centering_installations) && maximum(r.centering_installations) <= 7
+            @test latest(dir).total_transition_counter == 12 + cfg.n_draws
+        end
     end
     r = adaptive_warmup_mcmc(Xoshiro(124), problem(); cfg..., centering_schedule=:online,
         centering_persistence=1, centering_max_updates=1, linear_restart_source=:nuts_weighted)

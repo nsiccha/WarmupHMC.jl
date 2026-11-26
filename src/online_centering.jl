@@ -1,7 +1,11 @@
+# Completed dual-averaging updates to reserve in the final nonlinear frame.
+const _DEFAULT_CENTERING_TERMINAL_BUFFER = 16
+
 # The schedule is saved at completed transitions. The two speculative summaries
 # below live only for the duration of sample_tree and contain no leaf vectors.
 mutable struct _CenteringSchedule
     persistence::Int
+    terminal_buffer::Int
     max_updates::Union{Nothing,Int}
     winners::Vector{Float64}
     streaks::Vector{Int}
@@ -20,12 +24,13 @@ mutable struct _CenteringLeaves{O,L}
     doubling_logmass::Float64
 end
 
-function _check_centering_schedule(schedule, persistence, max_updates)
+function _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
     schedule in (:window, :online) || throw(ArgumentError(
         "centering_schedule must be :window or :online (got $schedule)"))
-    schedule === :window && !(isnothing(persistence) && isnothing(max_updates)) &&
-        throw(ArgumentError("centering_persistence and centering_max_updates require centering_schedule=:online"))
-    for (name, n) in ((:centering_persistence, persistence), (:centering_max_updates, max_updates))
+    schedule === :window && !all(isnothing, (persistence, max_updates, terminal_buffer)) &&
+        throw(ArgumentError("centering_persistence, centering_max_updates and centering_terminal_buffer require centering_schedule=:online"))
+    for (name, n) in ((:centering_persistence, persistence), (:centering_max_updates, max_updates),
+                      (:centering_terminal_buffer, terminal_buffer))
         isnothing(n) || (n isa Integer && !(n isa Bool) && 0 < n <= typemax(Int)) ||
             throw(ArgumentError("$name must be a positive integer"))
     end
@@ -44,30 +49,33 @@ end
 
 # Validate an explicit policy before a fresh run can overwrite any checkpoints.
 # A resume resolves omitted settings against the saved chain in restore_state.
-function _check_fresh_centering(lpdf, schedule, persistence, max_updates, adapt, evidence)
+function _check_fresh_centering(lpdf, schedule, persistence, max_updates, terminal_buffer, adapt, evidence)
     schedule = something(schedule, :window)
-    _check_centering_schedule(schedule, persistence, max_updates)
+    _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
     schedule === :online && _check_online_target(lpdf, adapt, something(evidence, :nuts_weighted))
     nothing
 end
 
 function _centering_leaves(lpdf, recorder, linear_source, schedule, persistence, max_updates,
-                           adapt; saved=nothing)
-    _check_centering_schedule(schedule, persistence, max_updates)
+                           adapt; terminal_buffer=nothing, saved=nothing)
+    _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
     d = LogDensityProblems.dimension(lpdf)
     schedule === :window && return NUTSLeaves(d)
     _check_online_target(lpdf, adapt, recorder.mode)
     n = length(recorder.online.pairs)
     policy = if isnothing(saved)
-        _CenteringSchedule(something(persistence, 3), max_updates, fill(NaN, n),
+        _CenteringSchedule(something(persistence, 3), something(terminal_buffer, _DEFAULT_CENTERING_TERMINAL_BUFFER),
+                           max_updates, fill(NaN, n),
                            zeros(Int, n), Int[], nothing)
     else
-        (isnothing(persistence) || persistence == saved.persistence) &&
+        buffer = get(saved, :terminal_buffer, 1)  # early online checkpoints reserved one update
+        (isnothing(terminal_buffer) || terminal_buffer == buffer) &&
+            (isnothing(persistence) || persistence == saved.persistence) &&
             (isnothing(max_updates) || max_updates == saved.max_updates) ||
-            throw(ArgumentError("resume with the saved centering_persistence and centering_max_updates"))
+            throw(ArgumentError("resume with the saved centering_persistence, centering_max_updates and centering_terminal_buffer"))
         length(saved.winners) == length(saved.streaks) == n ||
             throw(DimensionMismatch("saved online centering state does not match the supplied pairs"))
-        _CenteringSchedule(saved.persistence, saved.max_updates, saved.winners, saved.streaks,
+        _CenteringSchedule(saved.persistence, buffer, saved.max_updates, saved.winners, saved.streaks,
                            saved.installations, saved.frozen_after)
     end
     # Only a caller selecting a buffered *linear* evidence source needs the raw nodes.
@@ -164,20 +172,21 @@ _window_centering(::_CenteringLeaves) = false
 _centering_checkpoint(leaves) = (;)
 function _centering_checkpoint(leaves::_CenteringLeaves)
     s = leaves.schedule
-    (; online_centering=(; s.persistence, s.max_updates, s.winners, s.streaks,
+    (; online_centering=(; s.persistence, s.terminal_buffer, s.max_updates, s.winners, s.streaks,
                            s.installations, s.frozen_after))
 end
 _centering_result(leaves) = (;)
 _centering_result(leaves::_CenteringLeaves) = (;
     centering_installations=copy(leaves.schedule.installations),
+    centering_terminal_buffer=leaves.schedule.terminal_buffer,
     centering_frozen_after=leaves.schedule.frozen_after)
 
 _begin_centering_tree!(leaves, state) = reset!(leaves)
 function _begin_centering_tree!(leaves::_CenteringLeaves, state)
     s = leaves.schedule
-    # Leave a complete adaptation observation after the last possible change,
-    # then finalize the step size in that frame. Freeze across later restarts.
-    if isnothing(s.frozen_after) && state.current_transition_counter >= state.stepsize_adaptation_limit - 1
+    # The limit-th transition finalizes epsilon without fitting it. Leave B
+    # full updates before that transition, inside the caller's tuning budget.
+    if isnothing(s.frozen_after) && state.current_transition_counter >= state.stepsize_adaptation_limit - s.terminal_buffer
         s.frozen_after = state.total_transition_counter - 1
     end
     reset!(leaves)

@@ -34,12 +34,21 @@ end
 function _check_online_target(lpdf, adapt, evidence)
     ir = reparametrizer(lpdf)
     adapt && ir isa IndexedReparametrization && !isempty(ir.pairs) && isempty(ir.chains) &&
-        all(p -> last(p).source isa PartiallyCentered, ir.pairs) ||
+        all(p -> last(p) isa Reparametrization && last(p).source isa PartiallyCentered, ir.pairs) ||
         throw(ArgumentError("online centering requires nonlinear_adapt=true and indexed constant centering pairs without Markov-chain controls"))
     candidate_scoring_plan(lpdf) isa WindowSelectionPlan && throw(ArgumentError(
         "WindowSelectionPlan selects at a window boundary; use centering_schedule=:window"))
     evidence === :nuts_weighted || throw(ArgumentError(
         "online centering requires nonlinear_evidence=:nuts_weighted"))
+end
+
+# Validate an explicit policy before a fresh run can overwrite any checkpoints.
+# A resume resolves omitted settings against the saved chain in restore_state.
+function _check_fresh_centering(lpdf, schedule, persistence, max_updates, adapt, evidence)
+    schedule = something(schedule, :window)
+    _check_centering_schedule(schedule, persistence, max_updates)
+    schedule === :online && _check_online_target(lpdf, adapt, something(evidence, :nuts_weighted))
+    nothing
 end
 
 function _centering_leaves(lpdf, recorder, linear_source, schedule, persistence, max_updates,

@@ -3241,6 +3241,8 @@ _adaptive_warmup_mcmc(
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
     control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
+    resume || _check_fresh_centering(lpdf, centering_schedule, centering_persistence,
+                                     centering_max_updates, nonlinear_adapt, nonlinear_evidence)
     resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the

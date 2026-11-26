@@ -131,6 +131,14 @@ end
     r = adaptive_warmup_mcmc(Xoshiro(124), problem(); cfg..., centering_schedule=:online,
         centering_persistence=1, centering_max_updates=1, linear_restart_source=:nuts_weighted)
     @test only(r.centering_installations) == r.centering_frozen_after
-    @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), problem(); cfg...,
-        centering_schedule=:online, nonlinear_evidence=:all_good_leaves)
+    mktempdir() do dir
+        path = joinpath(dir, "cp_latest.jls")
+        write(path, "existing checkpoint")
+        @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(1), problem(); cfg...,
+            checkpoint_dir=dir, overwrite=true, centering_schedule=:online, nonlinear_evidence=:all_good_leaves)
+        @test read(path, String) == "existing checkpoint"
+        @test_throws ArgumentError completion_warmup_mcmc([Xoshiro(1)], problem(); cfg...,
+            checkpoint_dir=dir, overwrite=true, centering_schedule=:online, centering_persistence=0)
+        @test readdir(dir) == ["cp_latest.jls"]
+    end
 end

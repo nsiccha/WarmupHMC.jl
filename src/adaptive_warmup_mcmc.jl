@@ -1170,6 +1170,8 @@ mutable struct AWMState{L,K,A,DA,P,R,RL,NR,SO,EO,VP,VG,TA,POS,PG,SS,MN}
     # retained draws are discarded (a restart reset). The cost denominator for
     # min-ESS-per-gradient reporting over the draws the run keeps.
     sampling_evaluation_counter::Int
+    # Draws restored from a checkpoint that predates the retained-cost counter.
+    uncosted_retained_draws::Int
     outer_counter::Int
     # A suspended window resumes without entering a new window or refitting its
     # metric. The budget spent in this window used to live only on the stack.
@@ -1490,6 +1492,7 @@ _drop_retained_draws!(state::AWMState) = begin
     # The draws are gone, so their sampling cost goes with them: the next epoch
     # re-accumulates from zero.
     state.sampling_evaluation_counter = 0
+    state.uncosted_retained_draws = 0
     # `n_samples` mirrors `size(posterior_position, 2)`, and the CP-N checkpoint
     # is serialized after this, so it must be zeroed with the draws: a stale value
     # would pair a non-zero `n_samples` with zero retained draws in the payload.
@@ -1515,15 +1518,23 @@ end
 # so when no candidate has one the active transformation is kept. `argmin` alone
 # resolves that all-`Inf` tie to the first key, `:diagonal`: a frame switch on no
 # evidence at all.
-function _select_transformation!(scale_options, active, positions, gradients; kwargs...)
-    losses = _candidate_losses!(scale_options, positions, gradients; kwargs...)
-    any(isfinite, losses) ? argmin(losses) : active
+_select_transformation!(scale_options, active, positions, gradients; kwargs...) =
+    first(_select_transformation!(scale_options, active, positions, gradients, nothing; kwargs...))
+function _select_transformation!(scale_options, active, positions, gradients, report; kwargs...)
+    limits = isnothing(report) ? map(_ -> nothing, scale_options) : report.limits
+    losses = _candidate_losses!(scale_options, positions, gradients; tail_limits=limits, kwargs...)
+    winner = any(isfinite, losses) ? argmin(losses) : active
+    winner, losses
 end
 # Refit every candidate on the window's evidence and return its loss. The
 # `:adaptive` fit reflects `positions` and `gradients` in place, after the other
 # candidates have read them.
-_candidate_losses!(scale_options, positions, gradients; kwargs...) =
-    map(L -> update_loss!(L, positions, gradients; kwargs...), scale_options)
+function _candidate_losses!(scale_options, positions, gradients;
+                            tail_limits=map(_ -> nothing, scale_options), kwargs...)
+    map(scale_options, tail_limits) do L, limits
+        update_loss!(L, positions, gradients; tail_limits=limits, kwargs...)
+    end
+end
 
 # The loss of the frame `L` as it stands, refitting nothing: the mean over
 # coordinates of std(position) · std(gradient) in that frame, the loss
@@ -1714,7 +1725,7 @@ init_state(
         variance_position, variance_gradient,
         transformed_adaptation, variance_cond, scale_changes, 0,
         position_and_gradient, stepsize, stepsize_state, n_evaluations,
-        total_evaluation_counter, sampling_evaluation_counter, outer_counter,
+        total_evaluation_counter, sampling_evaluation_counter, 0, outer_counter,
         false, 0,
         current_transition_counter,
         total_transition_counter, ess, steps_per_draw, n_divergent, n_divergent_samples,
@@ -1885,6 +1896,7 @@ _finish_outer_iteration!(state::AWMState) = begin
         _reset_chain_progress!(progress, state, "step size halved")
         return _grow_window!(state)
     end
+    reached_budget = state.current_evaluation_counter >= state.n_evaluations
     _grow_window!(state)
     state.restart || return state
     _drop_retained_draws!(state)
@@ -1905,29 +1917,24 @@ _finish_outer_iteration!(state::AWMState) = begin
     uses_running_restart = _uses_running_linear_restart(state.linear_restart_source)
     old_active = state.active_transformation
     old_diagonal = uses_running_restart ? copy(state.scale_options.diagonal.diag) : nothing
-    old_sources = uses_running_restart ? reparam_sources(lpdf) : nothing
+    report = _refit_snapshot(progress, state, reached_budget)
+    old_sources = uses_running_restart || !isnothing(report) ? reparam_sources(lpdf) : nothing
     state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(
         lpdf, state.nonlinear_recorder, recording_lpdf.halo_position,
         recording_lpdf.halo_gradient, state.position_and_gradient,
     ))
     # Update the new linear transformation to be the one with the minimal estimated transformation loss.
-    state.active_transformation = _select_transformation!(
-        state.scale_options, old_active,
-        recording_lpdf.halo_position, recording_lpdf.halo_gradient; state.kwargs...
-    )
-    if uses_running_restart
-        nonlinear_changed = reparam_sources(lpdf) != old_sources
-        fallback_applied = _apply_linear_metric_fallback!(
-            state.scale_options, old_diagonal, state.variance_memory;
-            enabled=state.linear_metric_fallback,
-            old_active,
-            new_active=state.active_transformation,
-            nonlinear_changed,
-        )
-        fallback_applied && (state.linear_metric_fallbacks += 1)
-    end
+    state.active_transformation, losses = _select_transformation!(state.scale_options,
+        old_active, recording_lpdf.halo_position, recording_lpdf.halo_gradient, report; state.kwargs...)
+    nonlinear_changed = !isnothing(old_sources) && reparam_sources(lpdf) != old_sources
+    fallback_applied = uses_running_restart && _apply_linear_metric_fallback!(
+        state.scale_options, old_diagonal, state.variance_memory;
+        enabled=state.linear_metric_fallback, old_active,
+        new_active=state.active_transformation, nonlinear_changed)
+    fallback_applied && (state.linear_metric_fallbacks += 1)
     state.kinetic_energy = state.energy_options[state.active_transformation]
     _transformation_progress!(progress, state)
+    _refit_progress!(report, state, losses, nonlinear_changed, fallback_applied)
     uses_running_restart && reset!(state.transformed_adaptation)
     reset!(recording_lpdf)
     state
@@ -2054,7 +2061,8 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 # key is ADDITIVE like `dropped_*` (no schema move): checkpoints written before
 # it existed resume with the counter starting at zero at resume time — exact
 # from resume onward, with the pre-resume sampling cost of the live epoch
-# unrecoverable and never estimated.
+# unrecoverable and never estimated. When such draws survive a resume,
+# `uncosted_retained_draws` carries their count until the epoch ends.
 #
 # `divergence_gate_restarts` counts the restarts `_divergence_gate!` requested,
 # so a resumed run keeps its bound. ADDITIVE as well: a checkpoint written before
@@ -2100,6 +2108,7 @@ checkpoint_payload(state::AWMState) = (;
     state.linear_metric_fallbacks, state.position_and_gradient, state.stepsize,
     state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
     state.sampling_evaluation_counter,
+    (state.uncosted_retained_draws > 0 ? (; state.uncosted_retained_draws) : (;))...,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.window_in_progress, state.current_evaluation_counter,
     state.ess, state.steps_per_draw, state.n_divergent, state.n_divergent_samples,
@@ -2684,6 +2693,7 @@ restore_state(p, lpdf, progress;
         get(p, :linear_metric_fallbacks, 0),
         p.position_and_gradient, p.stepsize, p.stepsize_state, p.n_evaluations,
         p.total_evaluation_counter, get(p, :sampling_evaluation_counter, 0),
+        get(p, :uncosted_retained_draws, haskey(p, :sampling_evaluation_counter) ? 0 : size(p.posterior_position, 2)),
         p.outer_counter, get(p, :window_in_progress, false), get(p, :current_evaluation_counter, 0),
         p.current_transition_counter,
         p.total_transition_counter, p.ess, p.steps_per_draw, p.n_divergent, p.n_divergent_samples,

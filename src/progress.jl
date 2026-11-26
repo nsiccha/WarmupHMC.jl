@@ -11,9 +11,26 @@ Base.string(uf::UncertainFrequency) = "$(uf.obs) out of $(uf.n) ($(short_string(
 
 struct SamplingPerformance
     stepsize::Float64
-    steps_per_draw::Float64
+    steps::Union{Nothing,Float64}
+    unit::String
 end
-Base.string(x::SamplingPerformance) = "$(short_string(x.steps_per_draw)) steps per draw (stepsize = $(short_string(x.stepsize)))"
+function Base.string(x::SamplingPerformance)
+    rate = isnothing(x.steps) ? "awaiting $(x.unit)" : "$(short_string(x.steps)) steps per $(x.unit)"
+    "$rate (stepsize = $(short_string(x.stepsize)))"
+end
+_sampling_performance(chain) = SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw), "draw")
+function _sampling_performance(state::AWMState)
+    if state.n_samples > 0
+        n = state.n_samples - state.uncosted_retained_draws
+        return SamplingPerformance(state.stepsize, n > 0 ? state.sampling_evaluation_counter / n : nothing,
+                                   "retained draw")
+    end
+    if OnlineStatsBase.nobs(state.steps_per_draw) > 0
+        return SamplingPerformance(state.stepsize, mean(state.steps_per_draw), "tuning transition")
+    end
+    unit = state.current_transition_counter < state.stepsize_adaptation_limit ? "tuning transition" : "retained draw"
+    SamplingPerformance(state.stepsize, nothing, unit)
+end
 
 struct ActiveTransformation{K}
     kinetic_energy::K
@@ -78,7 +95,7 @@ _initial_chain_progress!(progress, counter, chain) = update_progress!(progress, 
     divergent_samples=UncertainFrequency(chain.n_divergent_samples, chain.n_samples),
     (chain.monitor_ess ? (;ess="pending...") : (;))...,
     active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
-    sampling_performance=SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw)),
+    sampling_performance=_sampling_performance(chain),
     chain.total_transition_counter,
     chain.total_evaluation_counter,
 )
@@ -87,11 +104,11 @@ _transition_progress!(::Nothing, counter, chain) = nothing
 _transition_progress!(progress, counter, chain) = update_progress!(progress, counter;
     divergent_samples=UncertainFrequency(chain.n_divergent_samples, chain.n_samples),
     # Only once the target has answered +Inf or NaN (`_take_nonfinite!`), so a
-    # healthy chain's node keeps its six labels.
+    # healthy chain gets no nonfinite-leaf label.
     (chain.n_nonfinite_leaves > 0 ? (; nonfinite_leaves=
         "$(chain.n_nonfinite_leaves) leapfrog points where the target answered +Inf or NaN (counted as divergences)") : (;))...,
     active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
-    sampling_performance=SamplingPerformance(chain.stepsize, mean(chain.steps_per_draw)),
+    sampling_performance=_sampling_performance(chain),
     total_transition_counter=Speed(chain.total_transition_counter, time_ns()-chain.start_time),
     total_evaluation_counter=Speed(chain.total_evaluation_counter, time_ns()-chain.start_time),
 )
@@ -104,13 +121,63 @@ _ess_progress!(progress, chain) = update_progress!(progress, nothing;
 _reset_chain_progress!(::Nothing, state, event) = nothing
 function _reset_chain_progress!(progress, state, event)
     update_progress!(progress, "$event after window $(state.outer_counter)")
-    update_progress!(progress, state.current_transition_counter)
+    update_progress!(progress, state.current_transition_counter; sampling_performance=_sampling_performance(state))
 end
 # After a restart reselected the linear transformation.
 _transformation_progress!(::Nothing, chain) = nothing
 _transformation_progress!(progress, chain) = update_progress!(progress, nothing;
     active_transformation=ActiveTransformation(chain.kinetic_energy, chain.scale_changes),
 )
+
+# The diagonal entries of L in its own axes. A change in the outer rotation or
+# nonlinear controls makes entrywise ratios to the previous metric meaningless.
+_axis_scales(L::Diagonal) = L.diag
+_axis_scales(L::MatrixFactorization) = L.m2.diag
+_fit_axes(L) = nothing
+_fit_axes(L::ScaleThenReflect) = (L.m1.idxs, L.m1.reflections)
+
+function _axis_extrema(values)
+    bad = findfirst(x -> !(isfinite(x) && x > 0), values)
+    isnothing(bad) || return "unmeasurable at axis $bad"
+    lo, i = findmin(values)
+    hi, j = findmax(values)
+    "min $(short_string(lo)) at axis $i, max $(short_string(hi)) at axis $j"
+end
+
+_refit_snapshot(::Nothing, state, reached_budget) = nothing
+function _refit_snapshot(progress, state, reached_budget)
+    active = state.active_transformation
+    scale = state.scale_options[active]
+    (; active, scales=copy(_axis_scales(scale)), axes=deepcopy(_fit_axes(scale)),
+       incoming=reached_budget ? _axis_extrema(state.variance_memory) : nothing,
+       limits=map(L -> falses(size(L, 1)), state.scale_options))
+end
+
+_refit_progress!(::Nothing, state, losses, nonlinear_changed, fallback) = nothing
+function _refit_progress!(report, state, losses, nonlinear_changed, fallback)
+    selected = state.active_transformation
+    scale = state.scale_options[selected]
+    same_axes = selected === report.active && !nonlinear_changed && _fit_axes(scale) == report.axes
+    installed = _axis_scales(scale)
+    range = same_axes ? "scale multipliers " * _axis_extrema(installed ./ report.scales) :
+                        "new-frame scales " * _axis_extrema(installed)
+    scores = join(("$name $(round(loss; sigdigits=6))" for (name, loss) in pairs(losses)), ", ")
+    choice = if !isfinite(losses[selected])
+        " (no finite loss)"
+    elseif count(==(losses[selected]), losses) > 1
+        " (tied minimum)"
+    else
+        ""
+    end
+    incoming = isnothing(report.incoming) ? "" : " | incoming corrections $(report.incoming)"
+    reflections = length(state.scale_options.adaptive.m1.reflections)
+    reflection_label = reflections == 1 ? "1 reflection" : "$reflections reflections"
+    limits = "one-sided limits $(count(report.limits[selected]))"
+    fallback && (limits *= " in fit, streaming correction installed")
+    update_progress!(state.progress, nothing; metric_refit=
+        "window $(state.outer_counter), $(report.active) → $selected$choice | losses $scores ($reflection_label)" *
+        incoming * " | $range | $limits")
+end
 
 struct Speeds
     n::Vector{Int}

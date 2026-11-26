@@ -5,6 +5,15 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.21
+
+### Changed
+
+- Adaptive and completion progress trees report the scores from the latest
+  linear metric refit, the fitted reflection count, directional scale changes
+  and one-sided limits. Sampling performance distinguishes step-size tuning
+  from retained draws.
+
 ## 0.3.20
 
 ### Fixed

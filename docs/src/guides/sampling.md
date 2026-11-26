@@ -58,6 +58,12 @@ requested count as a floor, and inspect the actual matrix shape. Set
 compute ESS without a progress display. The random number generator is explicit,
 which allows independent seeds and avoids reliance on the process-global RNG.
 
+Adaptive and completion chains display tuning steps per transition, then
+evaluations per retained draw. At each restart, **metric refit** shows the
+candidate losses, winner, reflection count and one-sided limits. Axis indices
+locate the smallest and largest incoming corrections and installed scale
+multipliers. A change of coordinates gives absolute scales in the new frame.
+
 During a metric update, a moving coordinate normally gets a diagonal scale of
 `sqrt(std(position) / std(gradient))`. When its recorded gradients stay on one
 side of zero, the fit takes the smaller of that estimate and

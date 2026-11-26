@@ -105,7 +105,7 @@ const _DEFAULT_MAX_ADMITTED_LOG_MASS_GAP = 25.0
 # first boundary and recovered at its second, which is why two boundaries count.
 const _WARMUP_STEPSIZE_MARGIN = 10.0
 const _LOG_MASS_GAP_STANDARD_ERRORS = 4.0
-const _COMPLETION_RESULT_SCHEMA = 5  # common final reference and joint mass uncertainty
+const _COMPLETION_RESULT_SCHEMA = 6  # per-slot and whole-run cost accounting
 # A chain's mass is estimated only from more than this many draws, the floor
 # the per-coordinate ESS monitor uses too.
 const _MIN_LOG_MASS_DRAWS = 10
@@ -267,8 +267,8 @@ mutable struct _CompletionState{C}
     admissions::Vector{Any}
 end
 
-_CompletionState(n; clock, min_completed, admission=_ADMIT_EVERY_FULL_CHAIN) =
-    _CompletionState(Threads.Condition(), clock, Float64(clock()), min_completed, admission,
+_CompletionState(n; clock, min_completed, admission=_ADMIT_EVERY_FULL_CHAIN, start=clock()) =
+    _CompletionState(Threads.Condition(), clock, Float64(start), min_completed, admission,
         nothing, nothing, fill(false, n), fill(:pending, n), Any[nothing for _ in 1:n], Any[nothing for _ in 1:n],
         Union{Nothing,Float64}[nothing for _ in 1:n],
         Union{Nothing,Float64}[nothing for _ in 1:n],
@@ -585,8 +585,9 @@ end
 function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_FULL_CHAIN,
         initial_results=Dict{Int,Any}(), initial_stepsizes=Dict{Int,Float64}(),
         initial_warming_stepsizes=Dict{Int,NTuple{2,Float64}}(),
-        clock=() -> time_ns() / 1e9, progress=nothing)
-    s = _CompletionState(n; clock, min_completed, admission)
+        costs=[_CompletionCost() for _ in 1:n],
+        clock=() -> time_ns() / 1e9, start=clock(), progress=nothing)
+    s = _CompletionState(n; clock, min_completed, admission, start)
     # A partial checkpoint past two window boundaries is judged by the warm-up
     # check before its slot resumes, so a chain left out before the run stopped is
     # not restarted. Each entry is (previous, latest).
@@ -626,8 +627,11 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
            # A failed worker may have checkpointed draws before throwing; no
            # finalized result exists from which to claim its sampled count.
            n_samples=s.statuses[i] === :failed ? nothing : isnothing(r) ? 0 : size(r.posterior_position, 2),
-           n_retained_samples=i in completed ? size(r.posterior_position, 2) : 0,
-           error=s.errors[i], s.admissions[i]...)
+           n_retained_samples=s.statuses[i] === :completed ? size(r.posterior_position, 2) : 0,
+           error=s.errors[i], s.admissions[i]..., _slot_cost(costs[i])...)
+    end
+    cost_totals = map(_COMPLETION_COST_FIELDS) do field
+        mapreduce(ch -> getproperty(ch, field), _add_cost, chains; init=0)
     end
     n_samples = sum(r -> r.n_samples, results; init=0)
     n_divergent_samples = sum(r -> r.n_divergent_samples, results; init=0)
@@ -645,6 +649,7 @@ function _completion_batch(run_chain, n; min_completed, admission=_ADMIT_EVERY_F
         omitted_chain_indices=omitted, chains, quorum_met, stop_reason=reason,
         quorum_at_seconds=s.quorum_at, stop_requested_at_seconds=s.quorum_at,
         elapsed_seconds=_completion_elapsed(s), n_samples, n_divergent_samples,
+        NamedTuple{_COMPLETION_COST_FIELDS}(cost_totals)...,
         selection_warning=_runtime_selected(s.statuses) ? _COMPLETION_SELECTION_WARNING : "")
     (; results, completion)
 end
@@ -702,6 +707,11 @@ function _write_completion_summary(dir, completion)
     push!(fields, "chain_n_retained_samples" => getproperty.(completion.chains, :n_retained_samples))
     push!(fields, "chain_errors" => [isnothing(c.error) ? nothing : sprint(showerror, c.error)
         for c in completion.chains])
+    if haskey(completion, :gradient_calls)
+        for key in _COMPLETION_COST_FIELDS
+            push!(fields, "chain_$key" => getproperty.(completion.chains, key))
+        end
+    end
     # A terminal record from before the admission checks, or from before the
     # mass check, has no such fields.
     if haskey(completion, :stuck_chain_indices)
@@ -820,7 +830,25 @@ Returns `(; results, completion)`. Only admitted full chains appear in
 and actual `n_samples`. `completion` records policy and the three admission
 thresholds, requested/started/completed/failed/stuck/omitted identities, all
 chain dispositions and captured errors, quorum and stop-request times (seconds
-since worker scheduling begins), and retained draw/divergence counts. Each
+since the attempt began), and retained draw/divergence counts.
+
+Each chain entry and the run record carry the same cost fields. `gradient_calls`
+counts requests to the target's gradient interface, including calls that throw.
+`initialization_gradient_calls` covers setup and restore. `sampling_gradient_calls`
+counts calls in trajectories behind the chain's final sampling draws, even when
+admission rejects the chain. Subtract it from `gradient_calls` for the cost of
+setup, tuning, discarded epochs and other work outside those trajectories.
+The native `total_evaluation_counter` and `sampling_evaluation_counter` count
+transition steps, respectively across all completed transitions and those behind
+the chain's final sampling draws. `n_warmup_windows` counts windows entered,
+including a partial last window and both centering passes. Run fields sum every
+slot. A fresh, never-started slot contributes zero.
+
+On resume these totals include work saved in the selected checkpoints.
+`attempt_gradient_calls / elapsed_seconds` gives gradient requests per wall
+second for this invocation, including the restore pre-pass. Work after the last
+recoverable checkpoint of a crashed attempt cannot be reconstructed. An unknown
+historical count is `nothing`, including in any sum that depends on it. Each
 `completion.chains[i]` of a chain that reached `n_draws` also records its
 adapted `stepsize` (before any halving; the result's own `stepsize` is the one
 it sampled with), `divergent_fraction`, the `reference_stepsize` it was compared with
@@ -968,6 +996,8 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
     # counter fills at `min_completed`, each chain hangs its ordinary adaptive
     # subtree under it labelled by ORIGINAL slot index.
     outcome = with_progress(progress, Int(min_completed); description) do cprogress
+        start = time_ns() / 1e9
+        costs = [_CompletionCost() for _ in 1:n]
         run_chain = function (i, control)
             dir = _chain_dir(checkpoint_dir, i)
             resume_chain = resume && !isempty(_checkpoint_files(dir))
@@ -991,7 +1021,8 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             # boundary (it finishes the current round).
             stop_requested = () -> _left_out(control) ||
                 _external_stop_requested(caller_stop_requested)
-            result = adaptive_warmup_mcmc(rngs[i], densities[i]; n_draws, init=deepcopy(inits[i]),
+            target = _CompletionTarget(densities[i], costs[i])
+            result = adaptive_warmup_mcmc(rngs[i], target; n_draws, init=deepcopy(inits[i]),
                 checkpoint_dir=dir, resume=resume_chain, callback=boundary,
                 progress=cprogress, description=description * ".$i", monitor_ess, blas_threads,
                 scale_centering, stop_requested, chain_kwargs...)
@@ -1005,6 +1036,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
                 latest = joinpath(_chain_dir(checkpoint_dir, i), "cp_latest.jls")
                 isfile(latest) || continue
                 payload = deserialize(latest)
+                _restore_completion_cost!(costs[i], payload)
                 retained = size(payload.posterior_position, 2)
                 if retained >= n_draws
                     # A complete restore runs no window, so it reaches no boundary.
@@ -1027,7 +1059,7 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
             end
         end
         out = _completion_batch(run_chain, n; min_completed=Int(min_completed), admission,
-            initial_results, initial_stepsizes, initial_warming_stepsizes,
+            initial_results, initial_stepsizes, initial_warming_stepsizes, costs, start,
             progress=cprogress)
         out = (; out.results, completion=merge(out.completion, (; n_draws, attempt_directory)))
         _finish_completion_progress!(cprogress, out.completion)

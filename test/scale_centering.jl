@@ -199,6 +199,11 @@ end
     for r in out.results
         @test size(r.posterior_position, 2) == r.n_samples >= 60
         @test haskey(r, :selected_centering) && haskey(r, :first_pass)
+        c = out.completion.chains[r.chain_index]
+        @test c.total_evaluation_counter == r.total_evaluation_counter
+        @test c.sampling_evaluation_counter == r.sampling_evaluation_counter
+        @test c.gradient_calls > c.total_evaluation_counter
+        @test c.initialization_gradient_calls > 0 && c.n_warmup_windows >= 2
         @test r.total_evaluation_counter > r.first_pass.total_evaluation_counter
         @test all(p -> last(p) isa Union{PartiallyCentered,ScaleCentered}, r.selected_centering)
     end
@@ -209,9 +214,18 @@ end
     # A user callback sees both passes' stages, per chain.
     stages = Set{Symbol}()
     lk = ReentrantLock()
-    completion_warmup_mcmc([Xoshiro(31), Xoshiro(32)], rp; n_draws=40, scale_centering=true,
-        callback=(state, stage) -> (Base.@lock lk push!(stages, stage); false))
+    windows = Ref(0)
+    function count_boundary(state, stage)
+        lock(lk) do
+            push!(stages, stage)
+            stage in (:window, :first_pass_window) && (windows[] += 1)
+        end
+        false
+    end
+    observed = completion_warmup_mcmc([Xoshiro(31), Xoshiro(32)], rp;
+        n_draws=40, scale_centering=true, callback=count_boundary)
     @test stages ⊇ Set([:first_pass_init, :init])
+    @test observed.completion.n_warmup_windows == windows[]
 end
 
 @testitem "completion_warmup_mcmc refuses what scale_centering cannot honour, before any chain" setup=[ScaleCenteringFixtures] begin

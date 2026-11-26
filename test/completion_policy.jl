@@ -610,6 +610,8 @@ LogDensityProblems.logdensity(p::CompletionWall, x) = first(LogDensityProblems.l
     @test c.stop_reason === :quorum_reached
     @test getproperty.(out.results, :chain_index) == [1, 2, 4]
     @test c.chains[3].stuck_reason === :divergence
+    @test c.chains[3].sampling_gradient_calls > 0
+    @test c.gradient_calls == sum(ch.gradient_calls for ch in c.chains)
     @test c.chains[3].n_samples == 200
     @test c.chains[3].divergent_fraction > 0.5
     @test all(i -> c.chains[i].divergent_fraction == 0, (1, 2, 4))
@@ -910,6 +912,10 @@ end
         @test out.completion.omitted_chain_indices == [1]
         @test out.results[1].posterior_position == ordinary.posterior_position
         @test out.completion.chains[1].status === :not_started
+        @test out.completion.chains[1].attempt_gradient_calls == 0
+        @test out.completion.chains[1].gradient_calls > 0  # its earlier initialization
+        @test isnothing(out.completion.chains[2].gradient_calls)  # ordinary adaptive checkpoint
+        @test isnothing(out.completion.gradient_calls)
         # Chain 2 is kept and chain 1 never started: a runtime selection, warned
         # once, after the chains settled, and recorded in every run record.
         caveat = WarmupHMC._COMPLETION_SELECTION_WARNING
@@ -919,9 +925,9 @@ end
             "run_manifest.json"))["selection_warning"] == caveat
         @test _run_json(joinpath(out.completion.attempt_directory,
             "run_summary.json"))["selection_warning"] == caveat
-        @test out.completion.schema_version == 5
-        @test _run_json(joinpath(out.completion.attempt_directory, "run_manifest.json"))["schema_version"] == 5
-        @test _run_json(joinpath(out.completion.attempt_directory, "run_summary.json"))["schema_version"] == 5
+        @test out.completion.schema_version == 6
+        @test _run_json(joinpath(out.completion.attempt_directory, "run_manifest.json"))["schema_version"] == 6
+        @test _run_json(joinpath(out.completion.attempt_directory, "run_summary.json"))["schema_version"] == 6
         @test out.completion.max_admitted_log_mass_gap == Inf
         # The judged chain's own estimate is recorded even with the check off.
         @test isfinite(out.completion.chains[2].log_mass)
@@ -975,15 +981,19 @@ end
             unchecked..., max_admitted_log_mass_gap=3.0)
         # A schema-4 success reopens with its density-only error, even with
         # just 40 draws (too few for the new joint error at these settings).
-        old_chains = Any[out.completion.chains...]
+        without_cost(nt) = (; (k => v for (k, v) in pairs(nt)
+            if k ∉ WarmupHMC._COMPLETION_COST_FIELDS)...)
+        old_chains = Any[without_cost(ch) for ch in out.completion.chains]
         old_chains[2] = merge(old_chains[2], (; log_mass_se=3.0))
-        old = (; out.results, completion=merge(out.completion, (; schema_version=4, chains=old_chains)))
+        old = (; out.results, completion=merge(without_cost(out.completion), (; schema_version=4, chains=old_chains)))
         WarmupHMC._atomic_serialize_manifest(joinpath(dir, "completion_terminal.jls"),
             (; schema_version=2, n_draws=40, outcome=old))
+        rm(summary)
         _, reopened_old = _selection_warnings(() -> completion_warmup_mcmc(
             [Xoshiro(1), Xoshiro(2)], p; n_draws=40, min_completed=1,
             checkpoint_dir=dir, resume=true, unchecked...))
         @test reopened_old.completion == old.completion
+        @test !haskey(_run_json(summary), "chain_gradient_calls")
         # A run recorded before the mass check has no mass threshold: it reopens
         # as recorded whatever `max_admitted_log_mass_gap` is passed.
         pre_mass = (; out.results, completion=(; (k => v for (k, v) in pairs(out.completion)

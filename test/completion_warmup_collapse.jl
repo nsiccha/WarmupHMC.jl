@@ -199,6 +199,8 @@
         @test c.completed_chain_indices == [1, 2]
         # Stopped long before 200 draws.
         @test c.chains[3].n_samples < 200
+        @test c.chains[3].n_warmup_windows >= 2
+        @test c.chains[3].gradient_calls >= c.chains[3].total_evaluation_counter > 0
         @test occursin("left out during warm-up", sprint(showerror, err))
     end
 

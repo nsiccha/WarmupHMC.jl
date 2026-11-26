@@ -19,10 +19,12 @@ struct CountingPosterior{P} <: WrappedLogDensityProblem{P}
     CountingPosterior(p) = new{typeof(p)}(p, Ref(0))
 end
 Base.parent(p::CountingPosterior) = p.posterior
-LogDensityProblems.logdensity_and_gradient(p::CountingPosterior, x) = begin
-    p.count[] += 1
-    LogDensityProblems.logdensity_and_gradient(parent(p), x)
+function _counted_gradient(counter, target, x)
+    counter[] += 1
+    LogDensityProblems.logdensity_and_gradient(target, x)
 end
+LogDensityProblems.logdensity_and_gradient(p::CountingPosterior, x) =
+    _counted_gradient(p.count, parent(p), x)
 
 """
     count_and_time(f, problem) -> (; elapsed, n_evaluations, result)

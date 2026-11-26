@@ -5,6 +5,15 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.22
+
+### Added
+
+- Quorum completion records save model-gradient calls, transition steps and
+  windows entered for every chain, including failed and omitted chains.
+  The run totals distinguish initialization, final sampling draws and calls made
+  during the current attempt. These fields also appear in the JSON run summary.
+
 ## 0.3.21
 
 ### Changed

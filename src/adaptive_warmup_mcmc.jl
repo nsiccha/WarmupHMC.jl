@@ -1492,6 +1492,7 @@ _drop_retained_draws!(state::AWMState) = begin
     # The draws are gone, so their sampling cost goes with them: the next epoch
     # re-accumulates from zero.
     state.sampling_evaluation_counter = 0
+    _reset_sampling_cost!(_completion_cost(parent(recording_lpdf)))
     state.uncosted_retained_draws = 0
     # `n_samples` mirrors `size(posterior_position, 2)`, and the CP-N checkpoint
     # is serialized after this, so it must be zeroed with the draws: a stale value
@@ -1711,7 +1712,7 @@ init_state(
     n_samples = 0
     stepsize_state = DynamicHMC.initial_adaptation_state(stepsize_adaptation, stepsize)
     state = AWMState(
-        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        _callback_target(lpdf), n_draws, stepsize_adaptation_limit, variance_cond_target,
         max_divergent_fraction, divergence_tolerance,
         linear_restart_source, linear_trajectory_weighting,
         linear_metric_fallback, nonlinear_adapt,
@@ -1779,7 +1780,9 @@ _window_has_transitions(state::AWMState) =
     state.current_evaluation_counter < state.n_evaluations
 
 run_outer_iteration!(state::AWMState, control=nothing) = begin
-    (; progress, lpdf, recording_lpdf, algorithm, stepsize_adaptation) = state
+    (; progress, recording_lpdf, algorithm, stepsize_adaptation) = state
+    lpdf = parent(recording_lpdf)
+    cost = _completion_cost(lpdf)
     # Some setup that has to happen at the beginning of every warm-up window
     if !state.window_in_progress
         state.outer_counter += 1
@@ -1799,7 +1802,10 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
         # A fresh Hamiltonian per transition: its kinetic energy carries M⁻¹
         # products along this trajectory only (`TrajectoryEnergy`).
         hamiltonian = _hamiltonian(state.kinetic_energy, recording_lpdf)
+        before = _call_count(cost)
         state.position_and_gradient, stats = DynamicHMC.sample_tree(state.rng, algorithm, hamiltonian, state.position_and_gradient, state.stepsize)
+        trajectory_calls = _call_count(cost) - before
+        state.total_evaluation_counter += stats.steps
         state.n_nonfinite_leaves = _take_nonfinite!(hamiltonian, state.n_nonfinite_leaves)
         finalize_leaf_recording!(recording_lpdf, stats.depth)
         state.nonlinear_adapt && record_nonlinear!(
@@ -1808,7 +1814,6 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             recording_lpdf.leaves,
             state.stepsize,
         )
-        state.total_evaluation_counter += stats.steps
         state.current_evaluation_counter += stats.steps
         OnlineStatsBase.fit!(state.steps_per_draw, stats.steps)
         is_divergent = DynamicHMC.is_divergent(stats.termination)
@@ -1845,6 +1850,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             # `posterior_position` — never the step-size-adaptation transitions
             # above, never a discarded epoch's.
             state.sampling_evaluation_counter += stats.steps
+            _charge_draw!(cost, trajectory_calls)
         end
         if state.current_evaluation_counter >= state.n_evaluations
             scale = state.scale_options[state.active_transformation]
@@ -1881,7 +1887,8 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
 end
 
 _finish_outer_iteration!(state::AWMState) = begin
-    (; progress, lpdf, recording_lpdf) = state
+    (; progress, recording_lpdf) = state
+    lpdf = parent(recording_lpdf)
     _check_current_point(lpdf, state.position_and_gradient,
         "adaptive_warmup_mcmc, at the end of warm-up window $(state.outer_counter)")
     if state.monitor_ess && state.n_samples > 10
@@ -2108,6 +2115,7 @@ checkpoint_payload(state::AWMState) = (;
     state.linear_metric_fallbacks, state.position_and_gradient, state.stepsize,
     state.stepsize_state, state.n_evaluations, state.total_evaluation_counter,
     state.sampling_evaluation_counter,
+    _cost_fields(_completion_cost(parent(state.recording_lpdf)))...,
     (state.uncosted_retained_draws > 0 ? (; state.uncosted_retained_draws) : (;))...,
     state.outer_counter, state.current_transition_counter, state.total_transition_counter,
     state.window_in_progress, state.current_evaluation_counter,
@@ -2676,7 +2684,7 @@ restore_state(p, lpdf, progress;
     transformed_adaptation = can_reuse_linear ?
         saved_linear_recorder.adaptation : WeightedScaleAdaptation(p.dimension)
     AWMState(
-        lpdf, n_draws, stepsize_adaptation_limit, variance_cond_target,
+        _callback_target(lpdf), n_draws, stepsize_adaptation_limit, variance_cond_target,
         _validate_max_divergent_fraction(max_divergent_fraction),
         _validate_divergence_tolerance(divergence_tolerance),
         restored_linear_source, restored_linear_weighting,
@@ -3207,8 +3215,21 @@ _adaptive_warmup_mcmc(
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the
         # original run already did both at that boundary.
-        state, stop = if isnothing(resumed)
-            s = init_state(
+        cost = _completion_cost(lpdf)
+        fresh = isnothing(resumed)
+        state = _measure_setup(cost, fresh) do
+            fresh || return restore_state(
+                resumed, lpdf, progress;
+                n_draws, stepsize_adaptation_limit, variance_cond_target,
+                max_divergent_fraction, divergence_tolerance,
+                linear_restart_source, linear_trajectory_weighting,
+                linear_metric_fallback,
+                nonlinear_adapt, monitor_ess, target_acceptance_rate,
+                max_tree_depth, recording_target, nonlinear_evidence,
+                nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
+                max_reflections, kwargs...
+            )
+            init_state(
                 rng, lpdf, progress;
                 n_draws, n_evaluations, recording_target=something(recording_target, 1000),
                 stepsize_adaptation_limit,
@@ -3227,23 +3248,15 @@ _adaptive_warmup_mcmc(
                 linear_metric_fallback, max_reflections,
                 kwargs..., pathfinder_kw...
             )
-            _write_checkpoint(checkpoint_dir, s, :init)                    # CP-0
-            s, _stop_requested(callback, s, :init)
-        else
-            restore_state(
-                resumed, lpdf, progress;
-                n_draws, stepsize_adaptation_limit, variance_cond_target,
-                max_divergent_fraction, divergence_tolerance,
-                linear_restart_source, linear_trajectory_weighting,
-                linear_metric_fallback,
-                nonlinear_adapt, monitor_ess, target_acceptance_rate,
-                max_tree_depth, recording_target, nonlinear_evidence,
-                nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
-                max_reflections, kwargs...
-            ), false
         end
-        _checkpoint_saved!(control)
-        stop ? finalize_warmup!(state) : _run_adaptive_windows!(state, callback, checkpoint_dir, control)
+        try
+            fresh && _write_checkpoint(checkpoint_dir, state, :init)
+            stop = fresh && _stop_requested(callback, state, :init)
+            _checkpoint_saved!(control)
+            stop ? finalize_warmup!(state) : _run_adaptive_windows!(state, callback, checkpoint_dir, control)
+        finally
+            _finish_pass!(cost, state, fresh)
+        end
     end
 end
 
@@ -3327,6 +3340,9 @@ end
 _scale_centering_problem(lpdf) = throw(ArgumentError(
     "`scale_centering = true` needs a ReparametrizedProblem whose IndexedReparametrization " *
     "has a pair with a callable log-scale; got a $(nameof(typeof(lpdf)))"))
+# Both passes share the slot's call counter while the inner model changes frame.
+_scale_centering_problem(p::_CompletionTarget) =
+    _CompletionTarget(_scale_centering_problem(parent(p)), p.cost)
 function _scale_centering_problem(p::ReparametrizedProblem)
     ir = p.reparametrizer
     ir isa IndexedReparametrization || throw(ArgumentError(

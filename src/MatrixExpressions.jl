@@ -455,14 +455,14 @@ _usable_scale(s) = isfinite(s) && s >= floatmin(s)
 # positions never moved (s1 = 0), makes the frame score `Inf`, so it can never
 # look BETTER fitted than a frame with real evidence (s1 = 0 used to score 0, the
 # best loss possible, and won).
-update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i
+update_loss!(t::Diagonal, p, g; tail_limits=nothing, kwargs...) = mean(1:LinearAlgebra.checksquare(t)) do i
     pi, gi = view(p, i, :), view(g, i, :)
     mean_gradient = mean(gi)
     s1, s2 = std(pi), std(gi; mean=mean_gradient)
     tail_scale = sqrt(2.) / abs(mean_gradient)
-    scale, loss = if s2 == 0
+    scale, loss, limited = if s2 == 0
         # Constant gradient: assume Laplace.
-        tail_scale, Inf
+        tail_scale, Inf, true
     elseif s1 == 0
         # The positions never moved, so the previous scale was too small to
         # resolve even one step there, and keeping it keeps the coordinate frozen
@@ -470,20 +470,19 @@ update_loss!(t::Diagonal, p, g; kwargs...) = mean(1:LinearAlgebra.checksquare(t)
         # alone, 1/std(gradient) (the scale a Gaussian's gradient spread implies),
         # never below the scale that was already too small. A restart point, not
         # evidence of fit, so the frame still scores `Inf`.
-        max(t[i,i], inv(s2)), Inf
+        max(t[i,i], inv(s2)), Inf, false
     else
         curvature_scale = sqrt(s1 / s2)
         # On one side of a Laplace tail the slope sets a length scale even
         # when roundoff or slight curvature gives the gradients some spread.
-        fitted_scale = if isfinite(s1) && tail_scale < curvature_scale &&
-                (all(>=(0), gi) || all(<=(0), gi))
-            tail_scale
-        else
-            curvature_scale
-        end
-        fitted_scale, s1 * s2
+        use_tail = isfinite(s1) && tail_scale < curvature_scale &&
+            (all(>=(0), gi) || all(<=(0), gi))
+        (use_tail ? tail_scale : curvature_scale), s1 * s2, use_tail
     end
-    _usable_scale(scale) || return Inf
+    usable = _usable_scale(scale)
+    # mean(f, axes) can evaluate f twice on the first axis.
+    isnothing(tail_limits) || (tail_limits[i] = usable && limited)
+    usable || return Inf
     t[i,i] = scale
     loss
 end

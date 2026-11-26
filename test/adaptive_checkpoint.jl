@@ -4,6 +4,27 @@
     using .AdaptiveCheckpointCases: Banana, WatchingBanana, CONFIG, RESTART_CONFIG, stop_after, latest, comparable, same, run_case
     const WH = WarmupHMC
 
+    @testset "retained-draw cost after resuming a checkpoint without that counter" begin
+        mktempdir() do dir
+            run_case(dir; stop_at=20)
+            old = latest(dir)
+            @test old.n_samples > 0
+            serialize(joinpath(dir, "cp_latest.jls"),
+                      Base.structdiff(old, (; sampling_evaluation_counter=nothing)))
+            for stop_at in (3, 5)
+                _Treebars.with_progress(:state; description="resume probe") do progress
+                    result = run_case(dir; resume=true, stop_at, progress)
+                    saved = latest(dir)
+                    @test saved.uncosted_retained_draws == old.n_samples
+                    n = saved.n_samples - old.n_samples
+                    @test n > 0
+                    rate = _Treebars.short_string(result.sampling_evaluation_counter / n)
+                    @test occursin("$rate steps per retained draw", _Treebars.render_text(progress))
+                end
+            end
+        end
+    end
+
     @testset "stop during adaptation or retained sampling, unchanged boundary callbacks" begin
         mktempdir() do root
             full = joinpath(root, "full")

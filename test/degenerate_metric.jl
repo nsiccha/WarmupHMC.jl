@@ -73,6 +73,11 @@ end
     # Gradient of a log-Gamma density on its unconstrained log coordinate.
     x = collect(range(-26.0, -24.0; length=100))
     g = 2 .- exp.(x) ./ 0.15
+    limits = falses(2)
+    D = Diagonal([3.0, 3.0])
+    WarmupHMC.update_loss!(D, permutedims(hcat(x, x)), permutedims(hcat(g, x .- mean(x)));
+                           tail_limits=limits)
+    @test limits == [true, false]
     scale, loss = fit(x, g)
     @test 0 < std(g) < 1e-8
     @test scale ≈ sqrt(2) / mean(g)

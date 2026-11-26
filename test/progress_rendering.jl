@@ -80,6 +80,11 @@ end
             @test length(names) == 1
             union!(seen, names)
             @test occursin("warm-up restarted after window $window", chain_line)
+            @test count("metric refit:", tree) == 1
+            @test occursin("window $window,", tree)
+            @test occursin("losses diagonal ", tree)
+            @test occursin("one-sided limits", tree)
+            @test occursin("awaiting tuning transition", tree)
         end
         @test seen == Set(chains)
         final_tree = _Treebars.render_text(root)
@@ -87,7 +92,33 @@ end
             @test count("$name (110/110)", final_tree) == 1
         end
         @test occursin("divergent:", final_tree)
+        @test occursin("steps per retained draw", final_tree)
         @test !occursin("warm-up restarted", final_tree)
         @test !occursin("✗", final_tree)
     end
+end
+
+@testitem "refit reporting preserves transitions and retained costs" setup=[WarmupHMCSharedFixtures] begin
+    using Random, Test, WarmupHMC
+
+    target = KinkedGaussian([0.5, 2.0], [1.0 0.0; -1.0 0.0], zeros(2), 0.2)
+    settings = (; init=(; position=zeros(2), squared_scale=ones(2)), n_draws=20,
+        stepsize_adaptation_limit=4, n_evaluations=24, variance_cond_target=1.0,
+        max_divergent_fraction=1.0, monitor_ess=false, max_reflections=0)
+    silent = adaptive_warmup_mcmc(Xoshiro(91), target; settings...)
+    shown = _Treebars.with_progress(:state; description="cost probe") do progress
+        result = adaptive_warmup_mcmc(Xoshiro(91), target; progress, settings...)
+        tree = _Treebars.render_text(progress)
+        @test count("metric refit:", tree) == 1
+        @test occursin("(0 reflections)", tree)
+        n = size(result.posterior_position, 2)
+        rate = _Treebars.short_string(result.sampling_evaluation_counter / n)
+        @test occursin("$rate steps per retained draw", tree)
+        result
+    end
+    @test shown.posterior_position == silent.posterior_position
+    @test shown.total_evaluation_counter == silent.total_evaluation_counter
+    @test shown.sampling_evaluation_counter == silent.sampling_evaluation_counter
+    @test shown.active_transformation == silent.active_transformation
+    @test shown.stepsize == silent.stepsize
 end

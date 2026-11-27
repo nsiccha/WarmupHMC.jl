@@ -276,6 +276,6 @@ checkpoint contracts; their interfaces are in the
 The [Gaussian calibration example](../examples/gaussian.md) evaluates a
 transformed density and checks its coordinate map and Jacobian.
 
-For tree-boundary updates, pass `centering_schedule=:online` to adaptive or
-quorum completion warm-up. The [online centering reference](../reference/transformations.md#Centering-between-NUTS-trees)
-describes the eligible controls, score history and freeze.
+Adaptive and quorum warm-up support [grid-based tree-boundary updates](../reference/transformations.md#Centering-between-NUTS-trees)
+with `centering_schedule=:online` and [joint continuous centering and diagonal adaptation](../reference/transformations.md#Continuous-centering-and-diagonal-adaptation)
+with `centering_schedule=:continuous`.

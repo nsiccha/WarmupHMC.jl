@@ -5,6 +5,17 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.24
+
+- Adaptive and quorum completion warm-up accept `centering_schedule=:continuous`.
+  Each adapting tree fits continuous centering, diagonal inverse mass and
+  step size. Plain and fixed-control targets use the online diagonal directly.
+  Cached starting positions and full gradients initialize the batch fit.
+  Historical observations have a 20-tree half-life. Each chain returns a
+  source-frame `centering_handoff` for a subsequent initializer or warm-up.
+  Adaptive v5 checkpoints resume the optimizer and its frame-dependent evidence.
+- Preserve the inferred vector type on cached kinetic-energy products during NUTS.
+
 ## 0.3.23
 
 - Adaptive and quorum completion warm-up accept `centering_schedule=:online`

@@ -62,7 +62,10 @@ function _centering_leaves(lpdf, recorder, linear_source, schedule, persistence,
     _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
     d = LogDensityProblems.dimension(lpdf)
     schedule === :window && return NUTSLeaves(d)
-    schedule === :continuous && return _continuous_leaves(lpdf, adapt, linear_source, saved)
+    if schedule === :continuous
+        _check_continuous_input(lpdf, schedule, adapt, recorder.mode, nothing)
+        return _continuous_leaves(lpdf, adapt, linear_source, saved)
+    end
     _check_online_target(lpdf, adapt, recorder.mode)
     n = length(recorder.online.pairs)
     policy = if isnothing(saved)
@@ -214,6 +217,7 @@ function _stable_centering_pairs!(s, ir, online)
     proposed
 end
 
+_update_centering!(state, leaves, trajectory_stepsize) = _update_centering!(state, leaves)
 _update_centering!(state, leaves) = nothing
 function _update_centering!(state, leaves::_CenteringLeaves)
     s = leaves.schedule

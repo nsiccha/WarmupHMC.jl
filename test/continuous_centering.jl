@@ -112,6 +112,30 @@
         nt = cp.continuous_centering.trees
         @test cp.continuous_centering.moments.weight ≈ size(P,2)*decay^nt + sum(decay^i for i in 0:nt-1)
         @test sum(cp.continuous_centering.anchors.weights[1:cp.continuous_centering.anchors.seeds]) ≈ size(P,2)*decay^nt
+        # Identical anchors, different historical sufficient statistics.
+        # Shared-parent moments and the dependent cell must still distinguish
+        # the two histories after an installation. The spectator is invariant.
+        function transport_history(factor)
+            oldp = problem()
+            W.restore_reparam_sources!(oldp, cp.reparam_sources)
+            s = W._continuous_leaves(oldp, true, :halo, deepcopy(cp.continuous_centering)).schedule
+            s.moments.gradient_m2[1] *= factor
+            info = copy(s.information)
+            info[:,:,2] .*= factor
+            next = copy(s.parameters)
+            next[1,:] .= (0.73, 0.26)
+            q, g, w = W._anchor_sample(s.anchors)
+            previous = W._anchor_scores(next, oldp, q, g)
+            newp = problem()
+            W.restore_reparam_sources!(newp, [i=>PartiallyCentered(next[1,j]) for (j,(i,_)) in enumerate(cp.reparam_sources)])
+            @test W._transport_joint_history!(s, next, info, newp, W.reparametrizer(oldp), previous, q, g, w)
+            @test s.moments.gradient_m2[4] == cp.continuous_centering.moments.gradient_m2[4]
+            s.moments.gradient_m2[1], info[:,:,2]
+        end
+        v1, H1 = transport_history(1.)
+        v3, H3 = transport_history(3.)
+        @test v3 ≈ 3v1
+        @test H3 ≈ 3H1
         @test_throws ArgumentError adaptive_warmup_mcmc(Xoshiro(8), problem(); cfg...,
             checkpoint_dir=partial, resume=true, nonlinear_evidence=:linear_pool)
         resumed = adaptive_warmup_mcmc(Xoshiro(8), problem(); cfg..., checkpoint_dir=partial, resume=true)

@@ -424,6 +424,28 @@ function _batch_profile(lpdf, j, P, G, c)
     fit
 end
 
+# The direct scorer uses the model-space parents of a cached row at every
+# candidate c. These parents stay fixed until the batch has finished fitting.
+# Project each row once across all cells, and retain just one cell's scalar
+# arguments during its search. A custom scorer keeps its transient frame API.
+_batch_model_positions(::CandidateScoringPlan, ir, P) = nothing
+_batch_model_positions(::DirectCandidateScoring, ir, P) =
+    [convert(Vector{Float64}, last(ir(q))) for q in eachcol(P)]
+_batch_cell_profile(::Nothing, lpdf, j, P, G) = c -> _batch_profile(lpdf, j, P, G, c)
+function _batch_cell_profile(model_positions, lpdf, j, P, G)
+    idx, rule = reparametrizer(lpdf).pairs[j]
+    args = [_framed_rargs(rule, P[idx,k], G[idx,k], _pair_frames(rule, model_positions[k]))
+            for k in axes(P,2)]
+    function profile(c)
+        candidate = PartiallyCentered(c)
+        fit = WeightedReparametrizationLoss()
+        for row in args
+            OnlineStatsBase.fit!(fit, reparam(candidate, row...); count=false)
+        end
+        fit
+    end
+end
+
 function _batch_control(profile, start)
     loss(c) = begin
         f = profile(c)
@@ -492,8 +514,9 @@ function _initialize_continuous!(leaves, lpdf, point, scale, ensemble)
     s.initial_scale .= scale
     isempty(s.parameters) && return point
     batch = copy(s.parameters)
+    model_positions = _batch_model_positions(candidate_scoring_plan(lpdf), ir, P)
     for (j, (idx, rule)) in enumerate(ir.pairs)
-        profile = c -> _batch_profile(lpdf, j, P, G, c)
+        profile = _batch_cell_profile(model_positions, lpdf, j, P, G)
         start = rule.source.c
         _batch_offsets!(s.parameters, j, profile(start), scale[idx])
         c = oftype(start, _batch_control(profile, start))

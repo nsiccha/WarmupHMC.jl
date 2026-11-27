@@ -177,6 +177,33 @@
     end
 end
 
+@testitem "A cached direct batch evaluates each candidate in the original source frame" begin
+    using WarmupHMC, Random
+    const W = WarmupHMC
+    # The second cell reads the first cell after it has been mapped to model space.
+    calls = Ref(0)
+    location(i) = q -> (calls[] += 1; q[i])
+    ir = IndexedReparametrization([
+        2 => Reparametrization(PartiallyCentered(1.), PartiallyCentered(.25), location(1), 0.35),
+        3 => Reparametrization(PartiallyCentered(1.), PartiallyCentered(.7), location(2), -0.2)])
+    problem = ReparametrizedProblem(ir, nothing)
+    rng = Xoshiro(19)
+    for T in (Float32, Float64)
+        P, G = randn(rng, T, 3, 9), randn(rng, T, 3, 9)
+        rows = W._batch_model_positions(W.candidate_scoring_plan(problem), ir, P)
+        for j in eachindex(ir.pairs)
+            profile = W._batch_cell_profile(rows, problem, j, P, G)
+            for c in (0., .38, 1.)
+                reads = calls[]
+                cached = profile(c)
+                @test calls[] == reads
+                reference = W._batch_profile(problem, j, P, G, c)
+                @test all(k -> isequal(getfield(cached,k), getfield(reference,k)), fieldnames(typeof(cached)))
+            end
+        end
+    end
+end
+
 @testitem "Inactive continuous adaptation uses the diagonal algorithm for plain and fixed targets" begin
     using WarmupHMC, Random, LogDensityProblems
     include(joinpath(@__DIR__, "checkpoint_cases.jl"))

@@ -156,8 +156,8 @@ end
     # WarmupHMC's settings (snag `atlas-pathfinder-5cae9aa7`). With our fork's
     # `save_trace=false` it keeps the selected fit, and WarmupHMC its
     # `_TrajectoryRecorder` (`_RECORDED_ITERATES` iterates) and the checks'
-    # summary (`_pathfinder_path`): what grows with the iterations is a few
-    # scalars per iterate (snag `pathfinder-start-30deca51`). This target's
+    # summary (`_pathfinder_path`), with no per-iteration diagnostic history
+    # (snag `pathfinder-save-e0ee7944`). This target's
     # L-BFGS runs to the cap.
     if WarmupHMC._PATHFINDER_SAVE_TRACE_OPTIONAL
         n = 200
@@ -175,8 +175,8 @@ end
         # Positive control: with the trace, the same run retains O(d) words per iterate.
         traced = retained(400; save_trace=true) - retained(50; save_trace=true)
         @test traced > 8 * n * 350 * 20
-        # Without it, less than one word per coordinate and iterate.
-        @test long - short < 8 * n * 350
+        # No per-iteration allowance: both runs have filled their bounded histories.
+        @test long == short
         @test long < 8 * n * (4 * WarmupHMC._RECORDED_ITERATES + 200)
     end
 end

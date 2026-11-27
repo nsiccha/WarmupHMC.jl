@@ -30,6 +30,8 @@ mode = zeros(d)
     # nothing is scored, so without the recovery the start cannot initialize.
     result = quietly(() -> WarmupHMC.mypathfinder(target; rng=Xoshiro(1), init=mode, maxiters=100))
     @test isempty(result.elbo_estimates)
+    @test isnothing(result.fit_elbo_estimate)
+    @test result.fit_iteration == 0
     @test length(result.optim_trace) == 1
     @test WarmupHMC._stationary_start(zeros(d))
     @test !WarmupHMC._stationary_start(fill(1e-7, d))

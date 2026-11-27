@@ -1,7 +1,7 @@
 name = "WarmupHMC"
 uuid = "60658175-6863-4866-a322-ab51a11c0cfe"
 authors = ["Nikolas Siccha and contributors"]
-version = "0.3.25"
+version = "0.3.26"
 
 [deps]
 CRC32c = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
@@ -89,4 +89,4 @@ rev = "8f7d382df700d3780ed31d093bc4983d3734a6c6"
 # consumer pins this source itself (warmuphmc-use §2).
 [sources.Pathfinder]
 url = "https://github.com/nsiccha/Pathfinder.jl"
-rev = "c24c1317b2c7cd13f3c194944061549e2145b315"
+rev = "b084d1588ddcce03f71e8639cb7aa3480be102d1"

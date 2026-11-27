@@ -54,9 +54,12 @@ gradient, and `a` and `b` for their estimated means. A stochastic
 Gauss–Newton step fits the control, both means and the log inverse mass
 `r` to minimize the weighted mean of
 `((x-a)^2 * exp(-r) + (g-b)^2 * exp(r)) / 2`. The inverse mass entry is
-`exp(r)`. The ordinary diagonal estimator uses the standard deviation of
-position divided by the standard deviation of gradient, regularized by the
-starting scale. Dual averaging carries its count and acceptance history
+`exp(r)`. For the direct scalar map, once the control is installed, its
+candidate position and score equal the source position and gradient. The
+sampler updates both means from their accumulated moments in that frame and
+sets the inverse mass to the ratio of their standard deviations, regularized
+by the starting scale. A custom scoring plan keeps the joint fit to its own
+candidate observations. Dual averaging carries its count and acceptance history
 across updates. Its log step size and running average shift with the geometric
 mean change in the diagonal scale factor.
 

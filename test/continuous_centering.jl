@@ -174,6 +174,51 @@
         @test cp.position_and_gradient.∇ℓq ≈ last(LDP.logdensity_and_gradient(rejecting, cp.position_and_gradient.q))
         approx = W._map_joint_marginal([1.,2.,3.], [-1.,-3.,-5.], ones(3), 12., 17., false)
         @test approx.mean ≈ -23. && approx.m2 ≈ 68.
+        # The direct scorer sees the actual source position and score at the
+        # installed control. A single-start chain must fit the offsets and
+        # inverse mass to that evidence, even when both children share a parent.
+        direct = ReparametrizedProblem(make_rules(), JointFunnel(Ref(0), Ref(false)), AutoEnzyme())
+        directdir = joinpath(root, "direct")
+        adaptive_warmup_mcmc(Xoshiro(31), direct; cfg..., centering_schedule=:continuous,
+            checkpoint_dir=directdir, stop_requested=stop_after(10))
+        saved = latest(directdir)
+        live = saved.continuous_centering
+        @test live.trees > 0 && live.supplied == 0 && !isempty(live.installations)
+        for (j, (idx, _)) in enumerate(make_rules().pairs)
+            m = live.moments
+            prior = live.initial_scale[idx]^2
+            mass = sqrt((m.position_m2[idx] + prior) / (m.gradient_m2[idx] + inv(prior)))
+            @test live.parameters[2:3,j] ≈ [m.position_mean[idx], m.gradient_mean[idx]]
+            @test exp(live.parameters[4,j]) ≈ mass
+            @test saved.scale_options.diagonal.diag[idx]^2 ≈ mass
+        end
+    end
+end
+
+@testitem "A cached direct batch evaluates each candidate in the original source frame" begin
+    using WarmupHMC, Random
+    const W = WarmupHMC
+    # The second cell reads the first cell after it has been mapped to model space.
+    calls = Ref(0)
+    location(i) = q -> (calls[] += 1; q[i])
+    ir = IndexedReparametrization([
+        2 => Reparametrization(PartiallyCentered(1.), PartiallyCentered(.25), location(1), 0.35),
+        3 => Reparametrization(PartiallyCentered(1.), PartiallyCentered(.7), location(2), -0.2)])
+    problem = ReparametrizedProblem(ir, nothing)
+    rng = Xoshiro(19)
+    for T in (Float32, Float64)
+        P, G = randn(rng, T, 3, 9), randn(rng, T, 3, 9)
+        rows = W._batch_model_positions(W.candidate_scoring_plan(problem), ir, P)
+        for j in eachindex(ir.pairs)
+            profile = W._batch_cell_profile(rows, problem, j, P, G)
+            for c in (0., .38, 1.)
+                reads = calls[]
+                cached = profile(c)
+                @test calls[] == reads
+                reference = W._batch_profile(problem, j, P, G, c)
+                @test all(k -> isequal(getfield(cached,k), getfield(reference,k)), fieldnames(typeof(cached)))
+            end
+        end
     end
 end
 

@@ -398,8 +398,18 @@ function _joint_fit!(s, tree, lpdf, point, scale; batch=nothing)
         end
     end
     moved && _continuous_scales!(next_scale, s.moments, s.initial_scale, prior_weight, scale)
+    direct_profile = isnothing(batch) && candidate_scoring_plan(lpdf) isa DirectCandidateScoring
     for (j, (idx, _)) in enumerate(ir.pairs)
-        balance[j] && (next_scale[idx] = exp(next[4,j]/2))
+        balance[j] || continue
+        # At the installed control the direct score is the source gradient.
+        # Its conditional offsets and regularized diagonal are available from
+        # the transported moments, including evidence from earlier trees.
+        x, g = s.moments.position_mean[idx], s.moments.gradient_mean[idx]
+        if direct_profile && isfinite(x) && isfinite(g)
+            next[2,j], next[3,j], next[4,j] = x, g, 2log(next_scale[idx])
+        else
+            next_scale[idx] = exp(next[4,j]/2)
+        end
     end
     copyto!(s.parameters, next)
     copyto!(s.information, information)
@@ -422,6 +432,28 @@ function _batch_profile(lpdf, j, P, G, c)
         OnlineStatsBase.fit!(fit, obs; count=false)
     end
     fit
+end
+
+# The direct scorer uses the model-space parents of a cached row at every
+# candidate c. These parents stay fixed until the batch has finished fitting.
+# Project each row once across all cells, and retain just one cell's scalar
+# arguments during its search. A custom scorer keeps its transient frame API.
+_batch_model_positions(::CandidateScoringPlan, ir, P) = nothing
+_batch_model_positions(::DirectCandidateScoring, ir, P) =
+    [convert(Vector{Float64}, last(ir(q))) for q in eachcol(P)]
+_batch_cell_profile(::Nothing, lpdf, j, P, G) = c -> _batch_profile(lpdf, j, P, G, c)
+function _batch_cell_profile(model_positions, lpdf, j, P, G)
+    idx, rule = reparametrizer(lpdf).pairs[j]
+    args = [_framed_rargs(rule, P[idx,k], G[idx,k], _pair_frames(rule, model_positions[k]))
+            for k in axes(P,2)]
+    function profile(c)
+        candidate = PartiallyCentered(c)
+        fit = WeightedReparametrizationLoss()
+        for row in args
+            OnlineStatsBase.fit!(fit, reparam(candidate, row...); count=false)
+        end
+        fit
+    end
 end
 
 function _batch_control(profile, start)
@@ -492,8 +524,9 @@ function _initialize_continuous!(leaves, lpdf, point, scale, ensemble)
     s.initial_scale .= scale
     isempty(s.parameters) && return point
     batch = copy(s.parameters)
+    model_positions = _batch_model_positions(candidate_scoring_plan(lpdf), ir, P)
     for (j, (idx, rule)) in enumerate(ir.pairs)
-        profile = c -> _batch_profile(lpdf, j, P, G, c)
+        profile = _batch_cell_profile(model_positions, lpdf, j, P, G)
         start = rule.source.c
         _batch_offsets!(s.parameters, j, profile(start), scale[idx])
         c = oftype(start, _batch_control(profile, start))

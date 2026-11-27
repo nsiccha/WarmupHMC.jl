@@ -55,6 +55,15 @@
     @test !isempty(reflections.m1.reflections)
     scales = (; diagonal=Diagonal(fill(0.8, d)), pathfinder, adaptive=reflections)
 
+    @testset "a vector product stays inferred on a miss and a hit" begin
+        energy = WarmupHMC.TrajectoryEnergy(counting_energy(scales.diagonal))
+        momentum = randn(Xoshiro(17), d)
+        product = @inferred DynamicHMC.calculate_p♯(energy, momentum)
+        @test product ≈ scales.diagonal.diag.^2 .* momentum
+        @test (@inferred DynamicHMC.calculate_p♯(energy, momentum)) === product
+        @test energy.κ.M⁻¹.n[] == 1
+    end
+
     @testset "M⁻¹ products per gradient: $name" for (name, L) in pairs(scales)
         state = FixedKernelNUTSState(Xoshiro(5), zeros(d);
             metric=counting_energy(L), stepsize=0.2, max_tree_depth=6)

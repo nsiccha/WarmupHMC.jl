@@ -44,7 +44,8 @@ end
 Version of the shared boundary-checkpoint/manifest contract. The internal
 `checkpoint_schema_version(Val(sampler))` also reports a sampler's maximum
 readable version. Adaptive v3 describes an unfinished window. Adaptive v4 resumes a tree-boundary
-centering schedule and its frame-specific score history. Cooperative v3
+centering schedule and its frame-specific score history. Adaptive v5 stores continuous
+centering parameters, information and diagonal metric moments. Cooperative v3
 covers target families, structured metrics, pending or extended first-draw
 checks, recovery, and shared streaming or historical-frame evidence. Cooperative v4 also records unfinished pilot comparisons and independent same-target probes.
 Writers retain earlier versions at compatible boundaries.
@@ -64,5 +65,5 @@ checkpoint_schema_version() = 2
 # Maximum readable version per sampler. Adaptive window-schedule checkpoints
 # still use v2 at completed boundaries and v3 inside windows.
 checkpoint_schema_version(::Val) = checkpoint_schema_version()
-checkpoint_schema_version(::Val{:adaptive}) = 4
+checkpoint_schema_version(::Val{:adaptive}) = 5
 checkpoint_schema_version(::Val{:cooperative}) = 4

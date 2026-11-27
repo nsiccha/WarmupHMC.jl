@@ -81,7 +81,7 @@ end
 # a slot, or multiplied directly and kept in slot 3.
 _carried_product!(e::TrajectoryEnergy{K,V}, keys, values, x) where {K,V} = begin
     i = _slot(keys, x)
-    i == 0 || return values[i]
+    i == 0 || return something(values[i])  # a stored vector key always has a product
     v = e.κ.M⁻¹ * x
     if x isa V && v isa V
         keys[3] = x

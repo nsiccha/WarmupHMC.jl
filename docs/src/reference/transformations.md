@@ -39,6 +39,60 @@ WarmupHMC.candidate_scoring_losses
 WarmupHMC.WindowSelectionPlan
 ```
 
+## Continuous centering and diagonal adaptation
+
+Pass `centering_schedule=:continuous` to `completion_warmup_mcmc` or
+`adaptive_warmup_mcmc`. On each adapting tree, the sampler uses the NUTS
+proposal probabilities to fit a diagonal inverse mass and update eligible
+scalar centering controls for the next tree. Each control can take any value
+in `[0, 1]`. A plain target, or a reparametrized target with
+`nonlinear_adapt=false`, goes directly through the diagonal update.
+The default schedule is `:window`.
+
+For an adjustable effect, write `x` and `g` for its candidate position and
+gradient, and `a` and `b` for their estimated means. A stochastic
+Gauss–Newton step fits the control, both means and the log inverse mass
+`r` to minimize the weighted mean of
+`((x-a)^2 * exp(-r) + (g-b)^2 * exp(r)) / 2`. The inverse mass entry is
+`exp(r)`. The ordinary diagonal estimator uses the standard deviation of
+position divided by the standard deviation of gradient, regularized by the
+starting scale. Dual averaging carries its count and acceptance history
+across updates. Its log step size and running average shift with the geometric
+mean change in the diagonal scale factor.
+
+A `CandidateScoringPlan` scores real-valued `PartiallyCentered(c)`. The
+direct scalar map has an analytic derivative. Every adapting tree discounts
+earlier observations with a 20-tree half-life. Each installation transports
+the current physical point and refreshes its full gradient. Shared-parent
+gradients include the Jacobian term. Invariant marginals keep their discounted
+moments. Changed marginals carry those moments through an affine map estimated
+from paired positions and gradients. Dependent cells carry their curvature
+through the corresponding old and new Cholesky factors. This transport is
+approximate after the first tree. Up to 16 initializer representatives and 16
+recent NUTS proposals calibrate it. All trees contribute to the running fit.
+
+Pass `centering_initial_ensemble=(; positions, gradients, source_controls)`.
+Columns of both matrices are in starting source coordinates, shared with
+`init.position`. Supply full transformed log-density gradients and centeredness
+in `ir.pairs` order (empty for a plain target). Before tree 1 the sampler fits
+each control on all columns, profiles out both means and the diagonal scale,
+and transports every column into the installed frame. Reusing gradients costs
+no target calls. Each changed current point needs one fresh gradient.
+
+With `stepsize_adaptation_limit=L`, trees 1 through `L-1` adapt and tree
+`L` finalizes step size. Retained draws use the frozen kernel. Results count
+`initializer_rows` and `adaptation_trees` separately. Completion counts actual
+`gradient_calls`. Checkpoints restore the fit without re-consuming cached rows.
+
+Each chain returns `h = result.centering_handoff`. Rebuild the same model with
+`h.ensemble.source_controls` at `source_indices`. An initializer can use
+`h.init`, its diagonal `squared_scale`, and the paired source-frame
+`h.ensemble.positions` and `gradients`. Another warm-up accepts
+`init=h.init, centering_initial_ensemble=h.ensemble`. The handoff also records
+`stepsize` and `frozen`. Before any retained draw it contains the current
+point. Custom fixed frames expose native `reparam_sources` and may lack a
+portable ensemble.
+
 ## Centering between NUTS trees
 
 Use `centering_schedule=:online` in `completion_warmup_mcmc` or

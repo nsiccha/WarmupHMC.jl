@@ -121,7 +121,7 @@ end
 _observe_trajectory_leaf!(leaves::NUTSLeaves, lpdf, z, Δ) = record_leaf!(leaves, z, Δ)
 observe_leaf!(p::RecordingPosterior2, z, Δ, is_initial) = begin
     _observe_trajectory_leaf!(p.leaves, parent(p), z, Δ)
-    record!(p, z; is_initial, dH=Δ)
+    _record_halo(p.leaves) && record!(p, z; is_initial, dH=Δ)
 end
 
 mutable struct LimitedRecorder2

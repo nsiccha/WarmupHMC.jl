@@ -13,8 +13,8 @@ mutable struct _CenteringSchedule
     frozen_after::Union{Nothing,Int}
 end
 
-mutable struct _CenteringLeaves{O,L}
-    schedule::_CenteringSchedule
+mutable struct _CenteringLeaves{S,O,L}
+    schedule::S
     prefix::O
     doubling::O
     linear::L
@@ -25,9 +25,9 @@ mutable struct _CenteringLeaves{O,L}
 end
 
 function _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
-    schedule in (:window, :online) || throw(ArgumentError(
-        "centering_schedule must be :window or :online (got $schedule)"))
-    schedule === :window && !all(isnothing, (persistence, max_updates, terminal_buffer)) &&
+    schedule in (:window, :online, :continuous) || throw(ArgumentError(
+        "centering_schedule must be :window, :online or :continuous (got $schedule)"))
+    schedule !== :online && !all(isnothing, (persistence, max_updates, terminal_buffer)) &&
         throw(ArgumentError("centering_persistence, centering_max_updates and centering_terminal_buffer require centering_schedule=:online"))
     for (name, n) in ((:centering_persistence, persistence), (:centering_max_updates, max_updates),
                       (:centering_terminal_buffer, terminal_buffer))
@@ -49,9 +49,10 @@ end
 
 # Validate an explicit policy before a fresh run can overwrite any checkpoints.
 # A resume resolves omitted settings against the saved chain in restore_state.
-function _check_fresh_centering(lpdf, schedule, persistence, max_updates, terminal_buffer, adapt, evidence)
+function _check_fresh_centering(lpdf, schedule, persistence, max_updates, terminal_buffer, adapt, evidence, ensemble=nothing)
     schedule = something(schedule, :window)
     _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
+    _check_continuous_input(lpdf, schedule, adapt, evidence, ensemble)
     schedule === :online && _check_online_target(lpdf, adapt, something(evidence, :nuts_weighted))
     nothing
 end
@@ -61,6 +62,7 @@ function _centering_leaves(lpdf, recorder, linear_source, schedule, persistence,
     _check_centering_schedule(schedule, persistence, max_updates, terminal_buffer)
     d = LogDensityProblems.dimension(lpdf)
     schedule === :window && return NUTSLeaves(d)
+    schedule === :continuous && return _continuous_leaves(lpdf, adapt, linear_source, saved)
     _check_online_target(lpdf, adapt, recorder.mode)
     n = length(recorder.online.pairs)
     policy = if isnothing(saved)
@@ -143,9 +145,11 @@ function _observe_trajectory_leaf!(leaves::_CenteringLeaves, lpdf, z, dh)
         leaves.doubling_logmass = total
         summary, weight = leaves.doubling, exp(dh - total)
     end
-    iszero(weight) || _observe_nonlinear!(candidate_scoring_plan(lpdf), reparametrizer(lpdf),
-                                         summary, z.Q.q, z.Q.∇ℓq, weight)
+    iszero(weight) || _observe_tree_summary!(summary, leaves.schedule, lpdf, z.Q.q, z.Q.∇ℓq, weight)
 end
+
+_observe_tree_summary!(summary, ::_CenteringSchedule, lpdf, q, g, weight) =
+    _observe_nonlinear!(candidate_scoring_plan(lpdf), reparametrizer(lpdf), summary, q, g, weight)
 
 function finalize_leaf_weights!(leaves::_CenteringLeaves, depth)
     isnothing(leaves.linear) || finalize_leaf_weights!(leaves.linear, depth)

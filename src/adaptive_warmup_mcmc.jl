@@ -1616,7 +1616,7 @@ init_state(
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
     centering_schedule=:window, centering_persistence=nothing, centering_max_updates=nothing,
-    centering_terminal_buffer=nothing,
+    centering_terminal_buffer=nothing, centering_initial_ensemble=nothing,
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
@@ -1671,7 +1671,7 @@ init_state(
         DynamicHMC.GaussianKineticEnergy(MatrixFactorization(L, L'), MatrixInverse(L'))
     end
     # At the beginning, we will use Pathfinder's transformation.
-    active_transformation = :pathfinder # Pathfinder
+    active_transformation = centering_schedule === :continuous ? :diagonal : :pathfinder
     kinetic_energy = energy_options[active_transformation]
     # Online variance recorders
     variance_memory = zeros(dimension)
@@ -1684,6 +1684,11 @@ init_state(
 
     # The below tries to find a good initial stepsize.
     position_and_gradient = DynamicHMC.evaluate_ℓ(lpdf, position; strict=true)
+    if centering_schedule === :continuous
+        position_and_gradient = _initialize_continuous!(leaves, lpdf, position_and_gradient,
+                                                       scale_options.diagonal.diag, centering_initial_ensemble)
+        position = position_and_gradient.q
+    end
     position_gradient_and_momentum = DynamicHMC.PhasePoint(position_and_gradient, DynamicHMC.rand_p(rng, kinetic_energy))
     stepsize = DynamicHMC.find_initial_stepsize(
         stepsize_search,
@@ -1857,7 +1862,11 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             state.sampling_evaluation_counter += stats.steps
             _charge_draw!(cost, trajectory_calls)
         end
-        if state.current_evaluation_counter >= state.n_evaluations
+        if state.current_evaluation_counter >= state.n_evaluations && _continuous_schedule(recording_lpdf.leaves)
+            # Evaluation windows still bound callbacks, quorum checks and checkpoints.
+            # A continuous diagonal fit spans them until the tuning horizon.
+            state.restart = false
+        elseif state.current_evaluation_counter >= state.n_evaluations
             scale = state.scale_options[state.active_transformation]
             _linear_restart_scales!(
                 state.variance_memory, state.linear_restart_source,
@@ -1924,6 +1933,11 @@ _finish_outer_iteration!(state::AWMState) = begin
     state.current_transition_counter = 0
     _reset_chain_progress!(progress, state, "warm-up restarted")
     state.n_divergent = 0
+    if _continuous_schedule(recording_lpdf.leaves)
+        recording_lpdf.leaves.schedule.frozen_after = nothing
+        reset!(recording_lpdf)
+        return state
+    end
     # Update the linear transformation candidates and estimate the transformation loss,
     # using the INTERMEDIATE POSITIONS AND GRADIENTS.
     uses_running_restart = _uses_running_linear_restart(state.linear_restart_source)
@@ -2102,7 +2116,8 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 checkpoint_payload(state::AWMState) = (;
     # Old readers may ignore additive keys at a completed boundary, but must
     # NEVER mistake an unfinished window for the beginning of the next one.
-    schema_version=!_window_centering(state.recording_lpdf.leaves) ? 4 :
+    schema_version=_continuous_schedule(state.recording_lpdf.leaves) ? 5 :
+                   !_window_centering(state.recording_lpdf.leaves) ? 4 :
                    state.window_in_progress ? 3 : checkpoint_schema_version(),
     _centering_checkpoint(state.recording_lpdf.leaves)...,
     sampler=:adaptive,
@@ -2635,7 +2650,7 @@ restore_state(p, lpdf, progress;
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
     centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
-    centering_terminal_buffer=nothing,
+    centering_terminal_buffer=nothing, centering_initial_ensemble=nothing,
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
     nonlinear_evidence=nothing, nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
@@ -2675,13 +2690,13 @@ restore_state(p, lpdf, progress;
         linear_restart_source,
         isnothing(saved_linear_recorder) ? :halo : saved_linear_recorder.source,
     )
-    saved_schedule = get(p, :online_centering, nothing)
-    schedule = isnothing(saved_schedule) ? :window : :online
+    saved_schedule = get(p, :continuous_centering, get(p, :online_centering, nothing))
+    schedule = haskey(p, :continuous_centering) ? :continuous : isnothing(saved_schedule) ? :window : :online
     isnothing(centering_schedule) || centering_schedule === schedule ||
         throw(ArgumentError("checkpoint uses centering_schedule=:$schedule; resume with the saved schedule"))
     leaves = _centering_leaves(lpdf, nonlinear_recorder, restored_linear_source, schedule,
                                centering_persistence, centering_max_updates, nonlinear_adapt; terminal_buffer=centering_terminal_buffer, saved=saved_schedule)
-    if !isnothing(saved_schedule) && nonlinear_recorder !== p.nonlinear_recorder
+    if schedule === :online && nonlinear_recorder !== p.nonlinear_recorder
         fill!(saved_schedule.winners, NaN)
         fill!(saved_schedule.streaks, 0)
     end
@@ -3199,7 +3214,7 @@ _adaptive_warmup_mcmc(
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
     centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
-    centering_terminal_buffer=nothing,
+    centering_terminal_buffer=nothing, centering_initial_ensemble=nothing,
     # Nonlinear evidence source. `nothing` means `:linear_pool` for a fresh run
     # and inherits the persisted source on resume.
     nonlinear_evidence=nothing,
@@ -3248,7 +3263,7 @@ _adaptive_warmup_mcmc(
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
     control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
     resume || _check_fresh_centering(lpdf, centering_schedule, centering_persistence, centering_max_updates,
-                                     centering_terminal_buffer, nonlinear_adapt, nonlinear_evidence)
+                                     centering_terminal_buffer, nonlinear_adapt, nonlinear_evidence, centering_initial_ensemble)
     resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the
@@ -3275,8 +3290,8 @@ _adaptive_warmup_mcmc(
                 target_acceptance_rate, max_tree_depth, init, monitor_ess,
                 nonlinear_adapt,
                 centering_schedule=something(centering_schedule, :window),
-                centering_persistence, centering_max_updates, centering_terminal_buffer,
-                nonlinear_evidence=something(nonlinear_evidence, centering_schedule === :online ? :nuts_weighted : :linear_pool),
+                centering_persistence, centering_max_updates, centering_terminal_buffer, centering_initial_ensemble,
+                nonlinear_evidence=something(nonlinear_evidence, centering_schedule in (:online, :continuous) ? :nuts_weighted : :linear_pool),
                 nonlinear_trajectory_weighting=something(
                     nonlinear_trajectory_weighting, :unit,
                 ),

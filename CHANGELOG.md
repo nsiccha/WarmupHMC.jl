@@ -5,6 +5,13 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.25
+
+- Continuous warm-up with the direct scalar centering map fits the position
+  and gradient means and diagonal inverse mass from discounted moments in the
+  installed frame. This stabilizes metric adaptation from a single start
+  when many effects share scale parameters.
+
 ## 0.3.24
 
 - Adaptive and quorum completion warm-up accept `centering_schedule=:continuous`.

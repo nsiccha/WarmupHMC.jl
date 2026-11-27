@@ -398,8 +398,18 @@ function _joint_fit!(s, tree, lpdf, point, scale; batch=nothing)
         end
     end
     moved && _continuous_scales!(next_scale, s.moments, s.initial_scale, prior_weight, scale)
+    direct_profile = isnothing(batch) && candidate_scoring_plan(lpdf) isa DirectCandidateScoring
     for (j, (idx, _)) in enumerate(ir.pairs)
-        balance[j] && (next_scale[idx] = exp(next[4,j]/2))
+        balance[j] || continue
+        # At the installed control the direct score is the source gradient.
+        # Its conditional offsets and regularized diagonal are available from
+        # the transported moments, including evidence from earlier trees.
+        x, g = s.moments.position_mean[idx], s.moments.gradient_mean[idx]
+        if direct_profile && isfinite(x) && isfinite(g)
+            next[2,j], next[3,j], next[4,j] = x, g, 2log(next_scale[idx])
+        else
+            next_scale[idx] = exp(next[4,j]/2)
+        end
     end
     copyto!(s.parameters, next)
     copyto!(s.information, information)

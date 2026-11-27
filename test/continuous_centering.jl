@@ -174,6 +174,24 @@
         @test cp.position_and_gradient.∇ℓq ≈ last(LDP.logdensity_and_gradient(rejecting, cp.position_and_gradient.q))
         approx = W._map_joint_marginal([1.,2.,3.], [-1.,-3.,-5.], ones(3), 12., 17., false)
         @test approx.mean ≈ -23. && approx.m2 ≈ 68.
+        # The direct scorer sees the actual source position and score at the
+        # installed control. A single-start chain must fit the offsets and
+        # inverse mass to that evidence, even when both children share a parent.
+        direct = ReparametrizedProblem(make_rules(), JointFunnel(Ref(0), Ref(false)), AutoEnzyme())
+        directdir = joinpath(root, "direct")
+        adaptive_warmup_mcmc(Xoshiro(31), direct; cfg..., centering_schedule=:continuous,
+            checkpoint_dir=directdir, stop_requested=stop_after(10))
+        saved = latest(directdir)
+        live = saved.continuous_centering
+        @test live.trees > 0 && live.supplied == 0 && !isempty(live.installations)
+        for (j, (idx, _)) in enumerate(make_rules().pairs)
+            m = live.moments
+            prior = live.initial_scale[idx]^2
+            mass = sqrt((m.position_m2[idx] + prior) / (m.gradient_m2[idx] + inv(prior)))
+            @test live.parameters[2:3,j] ≈ [m.position_mean[idx], m.gradient_mean[idx]]
+            @test exp(live.parameters[4,j]) ≈ mass
+            @test saved.scale_options.diagonal.diag[idx]^2 ≈ mass
+        end
     end
 end
 

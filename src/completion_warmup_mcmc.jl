@@ -940,9 +940,17 @@ completion_warmup_mcmc(rngs::AbstractVector, lpdfs::AbstractVector;
         throw(ArgumentError("stop_requested must be a callable with no arguments"))
     chain_kwargs = Base.structdiff(values(kwargs), NamedTuple{(:stop_requested,)})
     inits = ensurevector(init, n)
+    if !resume && any(k -> haskey(kwargs, k), (:centering_schedule, :centering_persistence, :centering_max_updates, :centering_terminal_buffer))
+        for lpdf in lpdfs
+            _check_fresh_centering(lpdf, get(kwargs, :centering_schedule, nothing),
+                get(kwargs, :centering_persistence, nothing), get(kwargs, :centering_max_updates, nothing),
+                get(kwargs, :centering_terminal_buffer, nothing), get(kwargs, :nonlinear_adapt, true),
+                get(kwargs, :nonlinear_evidence, nothing))
+        end
+    end
     # Refused here, before any chain starts, rather than as n failed chains.
     if scale_centering
-        checked = (; (k => kwargs[k] for k in (:nonlinear_adapt, :nonlinear_evidence,
+        checked = (; (k => kwargs[k] for k in (:nonlinear_adapt, :nonlinear_evidence, :centering_schedule,
                                                 :checkpoint_interval) if haskey(kwargs, k))...)
         for i in 1:n
             _check_scale_centering(; init=inits[i], checkpoint_dir, resume, overwrite, checked...)

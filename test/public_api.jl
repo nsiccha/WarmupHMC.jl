@@ -178,6 +178,7 @@ const PUBLIC_ADAPTIVE_KWARGS = [
     # nonlinear adaptation
     :nonlinear_adapt, :nonlinear_evidence, :nonlinear_trajectory_weighting,
     :nonlinear_good_leaf_threshold, :scale_centering,
+    :centering_schedule, :centering_persistence, :centering_max_updates, :centering_terminal_buffer,
     # starting point, reporting, observation
     :init, :progress, :description, :monitor_ess, :callback,
     # checkpointing

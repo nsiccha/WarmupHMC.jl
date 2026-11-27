@@ -55,6 +55,10 @@ a stateless plan.
 
 A custom plan interprets `nonlinear_evidence=:linear_pool` as online
 all-good-leaf evidence; it never replays the retained linear pool.
+With `centering_schedule=:online` the evidence is `:nuts_weighted`.
+Callbacks consume borrowed node vectors during tree construction and may
+score speculative nodes. The sampler discards a failed doubling and clears
+all accumulated scores after a successful control installation.
 
 # Checkpoints
 

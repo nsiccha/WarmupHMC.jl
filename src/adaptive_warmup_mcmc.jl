@@ -1615,6 +1615,8 @@ init_state(
     target_acceptance_rate, max_tree_depth, init, monitor_ess,
     nonlinear_adapt, nonlinear_evidence, nonlinear_trajectory_weighting,
     nonlinear_good_leaf_threshold, variance_cond_target,
+    centering_schedule=:window, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     max_divergent_fraction=_DEFAULT_MAX_DIVERGENT_FRACTION,
     divergence_tolerance=_DEFAULT_DIVERGENCE_TOLERANCE,
     linear_restart_source=:halo, linear_trajectory_weighting=:unit,
@@ -1641,7 +1643,6 @@ init_state(
         # `n_evaluations` gradient evaluations fills the whole ring.
         max(1, n_evaluations ÷ recording_target),
     )
-    recording_lpdf = RecordingPosterior2(lpdf; recorder, rng)
     _check_nonlinear_adaptable(lpdf, nonlinear_adapt)
     nonlinear_recorder = NonlinearRecorder(
         lpdf;
@@ -1650,6 +1651,9 @@ init_state(
         good_leaf_threshold=nonlinear_good_leaf_threshold,
         capacity=recording_target,
     )
+    leaves = _centering_leaves(lpdf, nonlinear_recorder, linear_restart_source, centering_schedule,
+                               centering_persistence, centering_max_updates, nonlinear_adapt; terminal_buffer=centering_terminal_buffer)
+    recording_lpdf = RecordingPosterior2(lpdf; recorder, rng, leaves)
     # Use Stan's initialization procedure if no initial position is given
     (;position, squared_scale) = initialize_mcmc(lpdf, init; rng, progress, kwargs...)
     # We currently learn three linear transformation options
@@ -1797,7 +1801,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
         state.current_transition_counter += 1
         state.total_transition_counter += 1
         # One MCMC transition
-        reset!(recording_lpdf.leaves)
+        _begin_centering_tree!(recording_lpdf.leaves, state)
         trajectory_stepsize = state.stepsize
         # A fresh Hamiltonian per transition: its kinetic energy carries M⁻¹
         # products along this trajectory only (`TrajectoryEnergy`).
@@ -1823,7 +1827,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
                 state.transformed_adaptation,
                 state.transformed_position_memory, state.variance_memory,
                 state.scale_options[state.active_transformation],
-                recording_lpdf.leaves, state.linear_restart_source,
+                _linear_leaves(recording_lpdf.leaves), state.linear_restart_source,
                 state.linear_trajectory_weighting, trajectory_stepsize,
             )
         end
@@ -1832,6 +1836,7 @@ run_outer_iteration!(state::AWMState, control=nothing) = begin
             # Continue adapting the step size.
             state.stepsize_state = DynamicHMC.adapt_stepsize(stepsize_adaptation, state.stepsize_state, stats.acceptance_rate)
             state.stepsize = DynamicHMC.current_ϵ(state.stepsize_state)
+            _update_centering!(state, recording_lpdf.leaves)
         elseif state.current_transition_counter == state.stepsize_adaptation_limit
             # The current warm-up window hits the step size adaptation limit.
             # Finalize the stepsize.
@@ -1926,7 +1931,8 @@ _finish_outer_iteration!(state::AWMState) = begin
     old_diagonal = uses_running_restart ? copy(state.scale_options.diagonal.diag) : nothing
     report = _refit_snapshot(progress, state, reached_budget)
     old_sources = uses_running_restart || !isnothing(report) ? reparam_sources(lpdf) : nothing
-    state.nonlinear_adapt && (state.position_and_gradient = find_reparametrization!(
+    state.nonlinear_adapt && _window_centering(recording_lpdf.leaves) &&
+        (state.position_and_gradient = find_reparametrization!(
         lpdf, state.nonlinear_recorder, recording_lpdf.halo_position,
         recording_lpdf.halo_gradient, state.position_and_gradient,
     ))
@@ -1967,6 +1973,7 @@ finalize_warmup!(state::AWMState) = begin
     # `ReparametrizedProblem` carrying no spec.
     reparametrize!(lpdf, recording_lpdf.posterior_position, state.posterior_log_density)
     (;
+        _centering_result(recording_lpdf.leaves)...,
         initial_position=state.position,
         halo_position=recording_lpdf.halo_position,
         halo_gradient=recording_lpdf.halo_gradient,
@@ -2095,7 +2102,9 @@ reparam_sources(lpdf) = reparam_controls(reparametrizer(lpdf))
 checkpoint_payload(state::AWMState) = (;
     # Old readers may ignore additive keys at a completed boundary, but must
     # NEVER mistake an unfinished window for the beginning of the next one.
-    schema_version=state.window_in_progress ? checkpoint_schema_version(Val(:adaptive)) : checkpoint_schema_version(),
+    schema_version=!_window_centering(state.recording_lpdf.leaves) ? 4 :
+                   state.window_in_progress ? 3 : checkpoint_schema_version(),
+    _centering_checkpoint(state.recording_lpdf.leaves)...,
     sampler=:adaptive,
     state.dimension,
     halo_position=state.recording_lpdf.halo_position,
@@ -2625,6 +2634,8 @@ restore_state(p, lpdf, progress;
     linear_restart_source=nothing, linear_trajectory_weighting=nothing,
     linear_metric_fallback=true,
     nonlinear_adapt=true, monitor_ess=!isnothing(progress),
+    centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     target_acceptance_rate=.8, max_tree_depth=10, recording_target=nothing,
     nonlinear_evidence=nothing, nonlinear_trajectory_weighting=nothing,
     nonlinear_good_leaf_threshold=nothing,
@@ -2656,10 +2667,6 @@ restore_state(p, lpdf, progress;
         "and its retained contents are part of the persisted state. Omit it to inherit."
     ))
     restore_reparam_sources!(lpdf, p.reparam_sources)
-    recording_lpdf = RecordingPosterior2(
-        lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
-        NUTSLeaves(p.dimension), p.recorder, p.rng,
-    )
     nonlinear_recorder = _restore_nonlinear_recorder(p, lpdf, p.recorder.target;
         nonlinear_evidence, nonlinear_trajectory_weighting,
         nonlinear_good_leaf_threshold)
@@ -2667,6 +2674,20 @@ restore_state(p, lpdf, progress;
     restored_linear_source = something(
         linear_restart_source,
         isnothing(saved_linear_recorder) ? :halo : saved_linear_recorder.source,
+    )
+    saved_schedule = get(p, :online_centering, nothing)
+    schedule = isnothing(saved_schedule) ? :window : :online
+    isnothing(centering_schedule) || centering_schedule === schedule ||
+        throw(ArgumentError("checkpoint uses centering_schedule=:$schedule; resume with the saved schedule"))
+    leaves = _centering_leaves(lpdf, nonlinear_recorder, restored_linear_source, schedule,
+                               centering_persistence, centering_max_updates, nonlinear_adapt; terminal_buffer=centering_terminal_buffer, saved=saved_schedule)
+    if !isnothing(saved_schedule) && nonlinear_recorder !== p.nonlinear_recorder
+        fill!(saved_schedule.winners, NaN)
+        fill!(saved_schedule.streaks, 0)
+    end
+    recording_lpdf = RecordingPosterior2(
+        lpdf, p.halo_position, p.halo_gradient, p.posterior_position, p.posterior_gradient,
+        leaves, p.recorder, p.rng,
     )
     restored_linear_weighting = something(
         linear_trajectory_weighting,
@@ -2812,8 +2833,9 @@ and [nutpie](https://github.com/pymc-devs/nutpie)'s warm-up procedures, but diff
 
 If `nonlinear_adapt=true` (the default) and `lpdf` wraps a
 [`ReparametrizedProblem`](@ref), the active [`IndexedReparametrization`](@ref)
-is optimised at the end of every warm-up window, and posterior samples
-are transformed back to the original parametrization before returning.
+is optimized at restarting windows by default. The online centering schedule
+considers stable controls between completed trees during step-size adaptation.
+Both schedules return posterior draws in the original parametrization.
 
 # Scale-dependent centering (`scale_centering = true`)
 
@@ -3000,6 +3022,19 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
 * `scale_centering=false` — opt-in two-pass warm-up that can select a
   centering following each pair's sampled scale; see "Scale-dependent
   centering" above.
+* `centering_schedule=:window` considers source controls at restarting windows.
+  `:online` considers indexed constant `PartiallyCentered` controls between
+  completed adapting trees using `nonlinear_evidence=:nuts_weighted` (the
+  online default). Each coordinate needs three tree groups and a finite winner
+  for `centering_persistence` consecutive checks (default 3). A successful
+  change clears all previous candidate evidence, restarts dual averaging with
+  a unit diagonal metric and refreshes the gradient. `centering_max_updates`
+  optionally caps installations. `centering_terminal_buffer` reserves 16 full
+  dual-averaging updates by default, within the existing transition budget.
+  For an uninterrupted tuning horizon `L` and buffer `B`, the last eligible
+  tree is `max(0, L - B - 1)`. The online result reports the configured buffer,
+  every installation in `centering_installations`, and the effective freeze
+  boundary in `centering_frozen_after`.
 * `nonlinear_evidence=:linear_pool` — evidence used to fit the nonlinear
   reparametrization. The default preserves the existing bounded halo fit.
   `:all_good_leaves` streams every noninitial leaf whose log Hamiltonian error
@@ -3011,11 +3046,10 @@ independent adaptation, or `fill(lpdf, n)` to deliberately share one object.
   streaming evidence mode, independent of the selected evidence source.
   The only alternative is `:stepsize`; a policy never changes when step-size
   adaptation ends.
-  These settings change only the nonlinear fit: selection/application remains
-  subordinate to a restart independently requested by the linear criterion.
+  On the window schedule these settings change the evidence used at a restart.
 * `variance_cond_target=2.0` — restart threshold on the marginal-scale
-  condition number. With `nonlinear_adapt=true` it also decides whether the
-  centering is refit, since that happens only at a restarting window. The scales
+  condition number. With windowed centering and `nonlinear_adapt=true` it
+  also decides whether the centering is refit. The scales
   are computed per coordinate in the active linear transformation's frame, so
   two square roots of the same metric can restart differently. The same factor
   bounds the shape test: a window also restarts when the metric its halo would
@@ -3164,6 +3198,8 @@ _adaptive_warmup_mcmc(
     description="MCMC",
     monitor_ess=!isnothing(progress),
     nonlinear_adapt=true,
+    centering_schedule=nothing, centering_persistence=nothing, centering_max_updates=nothing,
+    centering_terminal_buffer=nothing,
     # Nonlinear evidence source. `nothing` means `:linear_pool` for a fresh run
     # and inherits the persisted source on resume.
     nonlinear_evidence=nothing,
@@ -3211,6 +3247,8 @@ _adaptive_warmup_mcmc(
 ) = _with_blas_threads(blas_threads) do
     _check_kwargs(:adaptive_warmup_mcmc, kwargs)
     control = _adaptive_checkpoint_control(stop_requested, checkpoint_interval, checkpoint_dir)
+    resume || _check_fresh_centering(lpdf, centering_schedule, centering_persistence, centering_max_updates,
+                                     centering_terminal_buffer, nonlinear_adapt, nonlinear_evidence)
     resumed = resolve_checkpoint_dir(checkpoint_dir, resume, overwrite)
     with_progress(progress, n_draws+stepsize_adaptation_limit; description) do progress
         # On resume, do NOT re-fire the init callback or rewrite CP-0: the
@@ -3224,6 +3262,7 @@ _adaptive_warmup_mcmc(
                 max_divergent_fraction, divergence_tolerance,
                 linear_restart_source, linear_trajectory_weighting,
                 linear_metric_fallback,
+                centering_schedule, centering_persistence, centering_max_updates, centering_terminal_buffer,
                 nonlinear_adapt, monitor_ess, target_acceptance_rate,
                 max_tree_depth, recording_target, nonlinear_evidence,
                 nonlinear_trajectory_weighting, nonlinear_good_leaf_threshold,
@@ -3235,7 +3274,9 @@ _adaptive_warmup_mcmc(
                 stepsize_adaptation_limit,
                 target_acceptance_rate, max_tree_depth, init, monitor_ess,
                 nonlinear_adapt,
-                nonlinear_evidence=something(nonlinear_evidence, :linear_pool),
+                centering_schedule=something(centering_schedule, :window),
+                centering_persistence, centering_max_updates, centering_terminal_buffer,
+                nonlinear_evidence=something(nonlinear_evidence, centering_schedule === :online ? :nuts_weighted : :linear_pool),
                 nonlinear_trajectory_weighting=something(
                     nonlinear_trajectory_weighting, :unit,
                 ),
@@ -3276,10 +3317,10 @@ end
 # pass 1 stopped short of `n_draws` (callback, predicate or Treebars interrupt)
 # runs no pass 2: the call returns pass 1's draws so far.
 function _scale_centered_warmup_mcmc(rng, lpdf;
-        n_draws=1000, init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
+        n_draws=1000, init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing, centering_schedule=nothing,
         callback=nothing, checkpoint_dir=nothing, checkpoint_interval=nothing,
         stop_requested=nothing, resume=false, overwrite=false, kwargs...)
-    _check_scale_centering(; init, nonlinear_adapt, nonlinear_evidence, checkpoint_dir,
+    _check_scale_centering(; init, nonlinear_adapt, nonlinear_evidence, centering_schedule, checkpoint_dir,
                            checkpoint_interval, resume, overwrite)
     problem = _scale_centering_problem(lpdf)
     initial = snapshot_reparametrization(reparametrizer(problem))
@@ -3314,8 +3355,10 @@ _is_first_pass_stage(stage) = stage === :first_pass_init || stage === :first_pas
 
 # What `scale_centering = true` cannot honour, refused before any work. Shared
 # with `completion_warmup_mcmc`, which checks it before starting a chain.
-function _check_scale_centering(; init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing,
+function _check_scale_centering(; init=missing, nonlinear_adapt=true, nonlinear_evidence=nothing, centering_schedule=nothing,
         checkpoint_dir=nothing, checkpoint_interval=nothing, resume=false, overwrite=false)
+    something(centering_schedule, :window) === :window || throw(ArgumentError(
+        "scale_centering=true requires centering_schedule=:window"))
     nonlinear_adapt || throw(ArgumentError(
         "`scale_centering = true` selects the centering during warm-up, so it cannot be " *
         "combined with `nonlinear_adapt = false`"))

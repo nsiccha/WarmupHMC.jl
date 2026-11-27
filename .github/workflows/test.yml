@@ -76,7 +76,7 @@ jobs:
           # Our Pathfinder fork's `save_trace=false` (Project.toml [sources]); the
           # fork's version equals the registered 0.10.9, so only a develop takes it.
           git clone https://github.com/nsiccha/Pathfinder.jl.git "$RUNNER_TEMP/Pathfinder.jl"
-          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach c24c1317b2c7cd13f3c194944061549e2145b315
+          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach b084d1588ddcce03f71e8639cb7aa3480be102d1
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),
@@ -147,7 +147,7 @@ jobs:
           # Our Pathfinder fork's `save_trace=false` (Project.toml [sources]); the
           # fork's version equals the registered 0.10.9, so only a develop takes it.
           git clone https://github.com/nsiccha/Pathfinder.jl.git "$RUNNER_TEMP/Pathfinder.jl"
-          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach c24c1317b2c7cd13f3c194944061549e2145b315
+          git -C "$RUNNER_TEMP/Pathfinder.jl" checkout --detach b084d1588ddcce03f71e8639cb7aa3480be102d1
           julia --project=web/src/test -e 'using Pkg; Pkg.develop([
             PackageSpec(path=pwd()),
             PackageSpec(path="Treebars.jl"),

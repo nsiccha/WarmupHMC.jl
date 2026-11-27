@@ -160,8 +160,13 @@ try
         pooled(out) = sort(out.results; by=c -> c.chain_index)
         @testset "cooperative_warmup_mcmc" begin
             results = runs() do p
-                chains = pooled(cooperative_warmup_mcmc(Xoshiro(11), p;
-                    n_chains=2, init=init, n_draws=200, n_evaluations_budget=20000))
+                # A single leapfrog step can cross the support boundary while
+                # giving the warm-up probes enough clean trees to qualify.
+                fit = cooperative_warmup_mcmc(Xoshiro(11), p; n_chains=2, init=init,
+                    n_draws=200, n_evaluations_budget=20000, max_tree_depth=1)
+                @test fit.stop_reason === :n_draws
+                chains = pooled(fit)
+                @test all(c -> size(c.posterior_position, 2) == 200, chains)
                 (; fingerprint=[Matrix(c.posterior_position) for c in chains],
                    n_divergent=sum(c.n_divergent_samples for c in chains),
                    n_nonfinite=sum(c.n_nonfinite_leaves for c in chains))

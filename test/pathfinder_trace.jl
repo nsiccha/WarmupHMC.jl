@@ -84,13 +84,34 @@ end
         recorder = WarmupHMC._TrajectoryRecorder(target)
         result = WarmupHMC._pathfinder_or_refit(target; rng=Xoshiro(seed), init=starts(target, seed),
             callback=no_progress, maxiters=100, recorder)
-        @test result.optim_trace.log_densities == traced.optim_trace.log_densities
+        @test isempty(result.optim_trace.log_densities)
+        @test result.fit_log_density == traced.optim_trace.log_densities[result.fit_iteration + 1]
         @test recorder.n == length(P)
         @test recorder.start == first(P)
         @test [(i, x) for (i, x, _) in recorder.iterates] ==
             [(i - 1, P[i]) for i in max(1, length(P) - WarmupHMC._RECORDED_ITERATES + 1):length(P)]
-        @test recorder.accepted == [WarmupHMC._accepts_pair(P[l], G[l], P[l + 1], G[l + 1]) for l in 1:length(P) - 1]
     end
+end
+
+@testset "the recorder has bounded retention even on long rejected histories" begin
+    target = first(targets)
+    recorder = WarmupHMC._TrajectoryRecorder(target)
+    x, g = zeros(2), ones(2)
+    for i in 0:99
+        x .= i
+        WarmupHMC._record!(recorder, x, g)
+    end
+    bytes = Base.summarysize(recorder)
+    for i in 100:100_000
+        x .= i
+        WarmupHMC._record!(recorder, x, g)
+    end
+    @test recorder.n == 100_001
+    @test length(recorder.iterates) == WarmupHMC._RECORDED_ITERATES
+    @test Base.summarysize(recorder) == bytes
+    @test WarmupHMC._recorded_history_start(recorder, 100_000, 1) === nothing
+    @test WarmupHMC._recorded_history_start(recorder, 100_000, 0) == 0
+    @test WarmupHMC._recorded_history_start(recorder, 10, 1) === nothing
 end
 
 @testset "the checks read what they read from the whole trajectory" begin

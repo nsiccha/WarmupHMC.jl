@@ -5,6 +5,15 @@ Notable changes to WarmupHMC.jl. The public compatibility boundary is in
 Released entries describe the version that shipped; historical paths below
 refer to that version's tree.
 
+## 0.3.26
+
+- Bound retained Pathfinder initialization state independently of iteration count.
+  The pinned fork's `save_trace=false` leaves all per-iteration histories empty
+  and exposes `fit_elbo_estimate` and `fit_log_density` for the selected fit.
+  WarmupHMC consumes those fields and reconstructs recovery history with bounded
+  storage. Fit selection, draws and RNG state are preserved; an early selected
+  fit can require an additional deterministic optimizer replay.
+
 ## 0.3.25
 
 - Continuous warm-up with the direct scalar centering map fits the position

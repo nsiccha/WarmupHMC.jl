@@ -89,14 +89,17 @@ _nonfinite_init_message(logdensity, gradient, init) = """
     a badly scaled parameterization; or an `init=` outside the model's support.
     """
 
+_has_pathfinder_fit(result) = hasproperty(result, :fit_elbo_estimate) ?
+    !isnothing(result.fit_elbo_estimate) : !isempty(result.elbo_estimates)
+
 _empty_elbo_message(result) = """
     Initialization failed: Pathfinder produced no ELBO estimates, so there is no
     variational fit to initialize from.
 
-    An empty `elbo_estimates` means the L-BFGS trajectory had length zero — not one
+    No scored fit means the L-BFGS trajectory had length zero — not one
     step was ever accepted, so no approximating distribution was formed and there was
     nothing to score. Pathfinder does not throw for this: it warns ("Pathfinder failed
-    after N tries") and returns a structurally valid result whose ELBO vector is empty.
+    after N tries") and returns a structurally valid result without a scored fit.
     This one reports num_tries = $(result.num_tries), fit_iteration = $(result.fit_iteration).
 
     Three ways to get here:
@@ -196,7 +199,7 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
         end
         stationary = recover && _stationary_start(gradient)
         result, recorder = stationary ? (nothing, nothing) : pathfind(init)
-        if recover && (stationary || isempty(result.elbo_estimates))
+        if recover && (stationary || !_has_pathfinder_fit(result))
             why = stationary ?
                 "the start is a stationary point of the log density (largest gradient " *
                 "component $(maximum(abs, gradient)))" :
@@ -205,9 +208,9 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
                 jittered = init .+ scale .* randn(rng, length(init))
                 isnothing(_evaluate_if_finite(lpdf, jittered)) && continue
                 result, recorder = pathfind(jittered)
-                isempty(result.elbo_estimates) || break
+                _has_pathfinder_fit(result) && break
             end
-            if isnothing(result) || isempty(result.elbo_estimates)
+            if isnothing(result) || !_has_pathfinder_fit(result)
                 @warn "Initialization: $why, and Pathfinder found no fit from the jittered starts " *
                     "either (per-coordinate sd $(join(_STATIONARY_START_JITTERS, ", "))). The " *
                     "chain starts exactly at the given position with a unit diagonal metric."
@@ -221,7 +224,7 @@ _pathfinder_from_start(lpdf, init; rng, progress, maxiters=100, recover, kwargs.
     end
 initialize_mcmc(lpdf, init::PathfinderResult; rng=init.rng, progress=nothing, maxiters=100,
         recorder=nothing, kwargs...) = begin
-    isempty(init.elbo_estimates) && error(_empty_elbo_message(init))
+    _has_pathfinder_fit(init) || error(_empty_elbo_message(init))
     # What the checks read of the L-BFGS trajectory, in memory independent of
     # its length: `recorder` rode along WarmupHMC's own run; a caller's result
     # without its trace is replayed (`_pathfinder_path`).
@@ -350,7 +353,7 @@ _pathfinder_optimizer(history_length) = Pathfinder.Optim.LBFGS(;
 # in its reports). Our fork's `save_trace=false` (nsiccha/Pathfinder.jl
 # `save-trace-false`, upstream draft mlcolab/Pathfinder.jl#437, pinned in
 # Project.toml's [sources]) scores each fit as its iterate is reached and keeps
-# only the selected one, its draws and the per-iterate log densities.
+# only the selected one, its ELBO estimate, draws and log density.
 # `mypathfinder` asks for it whenever the loaded Pathfinder has it; a caller's
 # `save_trace` in `pathfinder_kw` overrides that.
 #
@@ -409,10 +412,9 @@ const _RECORDED_ITERATES = 32
 
 What WarmupHMC keeps of a Pathfinder run's L-BFGS trajectory, filled by
 `_record!` from the run's callback: the number of iterates seen, the start
-(iterate 0), the last `_RECORDED_ITERATES` iterates with the log-density
-gradients there, and for every curvature pair (iterates `l - 1` and `l`)
-whether Pathfinder's inverse-Hessian history takes it (`_accepts_pair`). Memory:
-O(d · _RECORDED_ITERATES) and one bit per iterate. `lpdf` supplies a gradient
+(iterate 0), and the last `_RECORDED_ITERATES` iterates with the log-density
+gradients there. Memory: O(d · _RECORDED_ITERATES), independent of iteration
+count. `lpdf` supplies a gradient
 the optimizer does not report.
 """
 mutable struct _TrajectoryRecorder{P}
@@ -420,16 +422,14 @@ mutable struct _TrajectoryRecorder{P}
     n::Int
     const start::Vector{Float64}
     const iterates::Vector{Tuple{Int,Vector{Float64},Vector{Float64}}}
-    const accepted::BitVector
 end
 _TrajectoryRecorder(lpdf) = _TrajectoryRecorder(lpdf, 0, Float64[],
-    Tuple{Int,Vector{Float64},Vector{Float64}}[], BitVector())
+    Tuple{Int,Vector{Float64},Vector{Float64}}[])
 
 function Base.empty!(recorder::_TrajectoryRecorder)
     recorder.n = 0
     empty!(recorder.start)
     empty!(recorder.iterates)
-    empty!(recorder.accepted)
     recorder
 end
 
@@ -463,10 +463,6 @@ Add the next iterate `x` of the trajectory, with log-density gradient `g`.
 function _record!(recorder::_TrajectoryRecorder, x, g)
     i = recorder.n
     iszero(i) && append!(recorder.start, x)
-    if !isempty(recorder.iterates)
-        _, xs, gs = last(recorder.iterates)
-        push!(recorder.accepted, _accepts_pair(xs, gs, x, g))
-    end
     if length(recorder.iterates) == _RECORDED_ITERATES
         # Reuse the oldest iterate's buffers: no allocation per iterate.
         _, xo, go = popfirst!(recorder.iterates)
@@ -838,6 +834,41 @@ function _replay_trajectory(visit, lpdf, result, stop)
     nothing
 end
 
+"The history's first iterate when the recorder contains it, otherwise `nothing`."
+function _recorded_history_start(recorder, k, history_length)
+    kept = recorder.iterates
+    isempty(kept) && return nothing
+    first(first(kept)) <= k <= first(last(kept)) || return nothing
+    iszero(history_length) && return 0
+    n = 0
+    for j in length(kept):-1:2
+        i, x, g = kept[j]
+        i > k && continue
+        _, xs, gs = kept[j - 1]
+        _accepts_pair(xs, gs, x, g) && (n += 1)
+        n == history_length && return i - 1
+    end
+    first(first(kept)) == 0 ? 0 : nothing
+end
+
+"Replay to the selected fit, keeping only its last `history_length` accepted pair indices."
+function _replay_history(lpdf, result, k, history_length)
+    recorder = _TrajectoryRecorder(lpdf)
+    accepted = Int[]
+    _replay_trajectory(lpdf, result, k) do i, x, g
+        if history_length > 0 && !isempty(recorder.iterates)
+            _, xs, gs = last(recorder.iterates)
+            if _accepts_pair(xs, gs, x, g)
+                length(accepted) == history_length && popfirst!(accepted)
+                push!(accepted, i)
+            end
+        end
+        _record!(recorder, x, g)
+    end
+    lo = history_length > 0 && length(accepted) == history_length ? first(accepted) - 1 : 0
+    recorder, lo
+end
+
 """
     _pathfinder_path(lpdf, result, recorder=nothing)
 
@@ -845,8 +876,9 @@ What the checks of a start from the Pathfinder run `result` read of its L-BFGS
 trajectory (`_PathfinderPath`). With the trajectory in `result` (Pathfinder's
 trace) it is read from there. Without it (`save_trace=false`), from `recorder`,
 the `_TrajectoryRecorder` that rode along the run; when the fit's history
-stretch lies before the iterates it kept, L-BFGS is replayed to the fit's
-iterate (`_replay_trajectory`). A `result` without its trace and without the
+stretch lies before the iterates it kept, L-BFGS is replayed to find its start,
+keeping only the last accepted history indices. A second replay accumulates
+the span when it exceeds the retained tail (`_replay_trajectory`). A `result` without its trace and without the
 recorder of its run (a caller's `PathfinderResult`) is replayed to its fit's
 iterate first, to record it. Memory: O(d · (history + _RECORDED_ITERATES)),
 whatever the trajectory's length.
@@ -863,20 +895,28 @@ function _pathfinder_path(lpdf, result, recorder=nothing)
         return _PathfinderPath(collect(Float64, first(P)), span,
             [(i - 1, P[i]) for i in length(P):-1:1], length(P))
     end
-    # Pathfinder keeps the log density of every iterate, so this counts them.
     n_iterates = length(trace)
     if isnothing(recorder) || recorder.n != n_iterates
-        recorder = _TrajectoryRecorder(lpdf)
-        _replay_trajectory((_, x, g) -> _record!(recorder, x, g), lpdf, result, k)
+        recorder, lo = _replay_history(lpdf, result, k, history_length)
+        history_recorder = recorder
+    else
+        lo = _recorded_history_start(recorder, k, history_length)
+        if isnothing(lo)
+            history_recorder, lo = _replay_history(lpdf, result, k, history_length)
+        else
+            history_recorder = recorder
+        end
     end
-    span = _HistorySpan(Σ, _history_span_start(recorder.accepted, k, history_length), k)
-    kept = recorder.iterates
+    span = _HistorySpan(Σ, lo, k)
+    kept = history_recorder.iterates
     if first(first(kept)) <= span.lo && first(last(kept)) >= k
         foreach(((i, x, g),) -> _visit!(span, i, x, g), kept)
     else
         _replay_trajectory((i, x, g) -> _visit!(span, i, x, g), lpdf, result, k)
     end
-    iterates = [(i, x) for (i, x, _) in Iterators.reverse(kept)]
+    # Preserve the original run's tail for the finite-start fallback, even when
+    # the selected fit's history required a separate replay.
+    iterates = [(i, x) for (i, x, _) in Iterators.reverse(recorder.iterates)]
     first(last(iterates)) == 0 || push!(iterates, (0, recorder.start))
     _PathfinderPath(copy(recorder.start), span, iterates, n_iterates)
 end
@@ -900,7 +940,9 @@ normalization; far below zero where the fit is far too wide.
 function _fit_log_weight_change(result, path, θ, ℓθ)
     q = result.fit_distribution
     x = path.span.fit_point
-    (ℓθ - result.optim_trace.log_densities[result.fit_iteration + 1]) - (logpdf(q, θ) - logpdf(q, x))
+    ℓx = hasproperty(result, :fit_log_density) ? result.fit_log_density :
+        result.optim_trace.log_densities[result.fit_iteration + 1]
+    (ℓθ - ℓx) - (logpdf(q, θ) - logpdf(q, x))
 end
 
 """
@@ -1049,7 +1091,7 @@ function _rescaled_pathfinder_start(lpdf, result, path; rng, progress, maxiters,
         _pathfinder_or_refit(scaled; rng, init=start ./ scale,
             callback=pathfinder_callback(pprogress), maxiters, recorder, kwargs...)
     end
-    if !isempty(rescaled.elbo_estimates)
+    if _has_pathfinder_fit(rescaled)
         draw = _finite_pathfinder_start(scaled, rescaled, _pathfinder_path(scaled, rescaled, recorder), rng)
         if !isnothing(draw)
             position = scale .* draw.q

@@ -22,12 +22,13 @@
 """
     _with_empty_elbo(result)
 
-Rebuild `result` with an empty `elbo_estimates` and every other field unchanged.
+Rebuild `result` without a scored fit, clearing its history and selected estimate.
 Field-NAME driven rather than positional, so it survives a `PathfinderResult`
 layout change instead of silently mis-assigning fields.
 """
 _with_empty_elbo(result) = WarmupHMC.Pathfinder.PathfinderResult(
-    (field === :elbo_estimates ? empty(getfield(result, field)) : getfield(result, field)
+    (field === :elbo_estimates ? empty(getfield(result, field)) :
+        field === :fit_elbo_estimate ? nothing : getfield(result, field)
      for field in fieldnames(typeof(result)))...
 )
 
@@ -88,7 +89,7 @@ end
 
     # Positive control: a real Pathfinder result on this problem is non-empty and
     # initializes. Without it, a check that always fired would pass below.
-    @test !isempty(result.elbo_estimates)
+    @test WarmupHMC._has_pathfinder_fit(result)
     @test WarmupHMC.initialize_mcmc(problem, result) isa NamedTuple
 
     err = _init_error() do

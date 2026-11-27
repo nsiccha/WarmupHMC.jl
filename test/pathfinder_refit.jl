@@ -64,7 +64,7 @@ end
         @test result.fit_iteration == reference.fit_iteration
         @test result.draws == reference.draws
         @test WarmupHMC._xoshiro_words(rng) == WarmupHMC._xoshiro_words(reference_rng)
-        @test !isempty(result.elbo_estimates)
+        @test WarmupHMC._has_pathfinder_fit(result)
         # The recorder holds the refit's trajectory, not the failed run's.
         @test recorder.n == f
         # The longest such prefix: one more iteration no longer factorizes.
